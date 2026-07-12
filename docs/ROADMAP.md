@@ -128,9 +128,9 @@
 - Al menos un widget que use directamente funciones del repositorio de análisis.
 - Documentación en `/docs/ANALYSIS.md` explicando qué se reutiliza.
 
-## Fase 6 – Widgets personalizables + sincronización conceptual con transmisiones
+## Fase 6 – Widgets personalizables + sincronización conceptual con F1TV
 
-**Objetivo:** hacer el sistema “tipo dashboard en vivo”:
+**Objetivo:** hacer el sistema “tipo F1TV Premium”:
 
 - Persistencia de layouts:
   - Guardar `Layout` en DB (PostgreSQL) o archivos JSON.
