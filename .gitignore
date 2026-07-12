@@ -1,0 +1,19 @@
+# Haskell / cabal
+dist-newstyle/
+*.hi
+*.o
+
+# Nix
+result
+result-*
+.direnv/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+*.swp
