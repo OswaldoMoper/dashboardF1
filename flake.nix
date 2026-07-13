@@ -19,10 +19,24 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
-      perSystem = { pkgs, self', ... }: {
+      perSystem = { pkgs, self', system, ... }:
+      let
+        reflexPkgs = import inputs.nixpkgs-reflex { inherit system; };
+        jsPkgs = reflexPkgs.pkgsCross.ghcjs.haskell.packages.ghc910;
+        frontendJs = jsPkgs.callCabal2nix "frontend" ./frontend { };
+      in
+      {
         # ── Backend Servant (Fase 0: endpoint /home en :8080, override con PORT) ──
         packages.backend = pkgs.haskellPackages.callCabal2nix "backend" ./backend { };
         packages.default = self'.packages.backend;
+
+        # ── Frontend Reflex (GHCJS) — Fase 0 skeleton ──
+        # Copia el .jsexe compilado + el index.html propio, listo para servir.
+        packages.frontend = pkgs.runCommand "dashboardF1-frontend" { } ''
+          mkdir -p $out
+          cp -r ${frontendJs}/bin/frontend.jsexe/. $out/
+          install -m644 ${./frontend/index.html} $out/index.html
+        '';
 
         # `nix run .#backend` (o `nix run`) — levanta el backend.
         apps.backend = {
