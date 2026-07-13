@@ -60,6 +60,20 @@
             echo "  backend : cabal run backend   # Servant en :8080 (Fase 0, sesión 3)"
           '';
         };
+
+        # ── Python dev shell del microservicio FastF1 (Fase 4) ──
+        devShells.telemetry = pkgs.mkShell {
+          name = "dashboardF1-telemetry";
+          packages = with pkgs; [
+            python3
+            python3Packages.pip
+            python3Packages.virtualenv
+          ];
+          shellHook = ''
+            echo "telemetry-service — Python dev shell (FastF1, Fase 4)"
+            echo "  deps declaradas en telemetry-service/requirements.txt (sin lógica aún)"
+          '';
+        };
       };
     };
 }
