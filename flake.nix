@@ -19,7 +19,18 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
-      perSystem = { pkgs, ... }: {
+      perSystem = { pkgs, self', ... }: {
+        # ── Backend Servant (Fase 0: endpoint /home en :8080, override con PORT) ──
+        packages.backend = pkgs.haskellPackages.callCabal2nix "backend" ./backend { };
+        packages.default = self'.packages.backend;
+
+        # `nix run .#backend` (o `nix run`) — levanta el backend.
+        apps.backend = {
+          type = "app";
+          program = "${self'.packages.backend}/bin/backend";
+        };
+        apps.default = self'.apps.backend;
+
         # ── Haskell dev shell (backend + frontend source-level tooling) ──
         devShells.default = pkgs.mkShell {
           name = "dashboardF1-dev";
