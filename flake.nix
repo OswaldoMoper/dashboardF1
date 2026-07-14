@@ -58,7 +58,12 @@
             cabal-install
             haskell-language-server
             ormolu
+            stylish-haskell
             hlint
+            pkg-config
+          ];
+          buildInputs = with pkgs; [
+            zlib
           ];
           shellHook = ''
             echo "F1 Functional Dashboard — dev shell (Haskell)"
