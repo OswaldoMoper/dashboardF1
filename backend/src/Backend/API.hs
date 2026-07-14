@@ -4,7 +4,13 @@
 -- widgets bajo @\/api@ con datos dummy estáticos. Se añaden @\/api\/live@ y @\/api\/historical@.
 module Backend.API where
 
-import Common.Types (HistoricalStat (..), LiveTimingRow (..), TelemetryPoint (..))
+import Common.Types
+  ( HistoricalStat (..)
+  , LapComparison (..)
+  , LiveTimingRow (..)
+  , TelemetryPoint (..)
+  , TyreStint (..)
+  )
 import Data.Aeson (ToJSON)
 import Data.Text (Text)
 import GHC.Generics (Generic)
@@ -25,12 +31,20 @@ type API =
   :<|> "api" :> "live" :> Get '[JSON] [LiveTimingRow]
   :<|> "api" :> "historical" :> Get '[JSON] [HistoricalStat]
   :<|> "api" :> "telemetry" :> Get '[JSON] [TelemetryPoint]
+  :<|> "api" :> "comparison" :> Get '[JSON] LapComparison
+  :<|> "api" :> "tyre-strategy" :> Get '[JSON] [TyreStint]
 
 api :: Proxy API
 api = Proxy
 
 server :: Server API
-server = homeH :<|> liveH :<|> historicalH :<|> telemetryH
+server =
+  homeH
+    :<|> liveH
+    :<|> historicalH
+    :<|> telemetryH
+    :<|> comparisonH
+    :<|> tyreStrategyH
   where
     homeH :: Handler Home
     homeH = pure (Home "F1 Functional Dashboard")
@@ -43,6 +57,12 @@ server = homeH :<|> liveH :<|> historicalH :<|> telemetryH
 
     telemetryH :: Handler [TelemetryPoint]
     telemetryH = pure telemetryDummy
+
+    comparisonH :: Handler LapComparison
+    comparisonH = pure comparisonDummy
+
+    tyreStrategyH :: Handler [TyreStint]
+    tyreStrategyH = pure tyreStrategyDummy
 
 -- | Datos dummy de live timing (top 3 estático).
 liveDummy :: [LiveTimingRow]
@@ -68,4 +88,24 @@ telemetryDummy =
   , TelemetryPoint 1.0 78 265.3 0.0 1.0 5 9200
   , TelemetryPoint 1.5 110 289.7 0.8 0.0 6 10100
   , TelemetryPoint 2.0 156 320.4 1.0 0.0 8 12000
+  ]
+
+-- | Datos dummy de comparación de vuelta entre dos drivers.
+comparisonDummy :: LapComparison
+comparisonDummy =
+  MkLapComparison
+    { lcDriverA = "VER"
+    , lcDriverB = "LEC"
+    , lcLapA = "1:29.345"
+    , lcLapB = "1:29.512"
+    , lcDelta = [0.0, -0.05, 0.08, 0.12, 0.167]
+    }
+
+-- | Datos dummy de estrategia de neumáticos (stints por driver).
+tyreStrategyDummy :: [TyreStint]
+tyreStrategyDummy =
+  [ TyreStint "VER" "MEDIUM" 1 18
+  , TyreStint "VER" "HARD" 19 44
+  , TyreStint "LEC" "SOFT" 1 14
+  , TyreStint "LEC" "HARD" 15 44
   ]
