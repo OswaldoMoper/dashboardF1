@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Backend.API (homeAPI, server)
+import Backend.API (api, server)
 import Network.Wai.Handler.Warp (run)
 import Servant (serve)
 import System.Environment (lookupEnv)
@@ -14,4 +14,4 @@ main :: IO ()
 main = do
   port <- resolvePort
   putStrLn $ "F1 Dashboard backend en http://localhost:" <> show port <> "/"
-  run port (serve homeAPI server)
+  run port (serve api server)
