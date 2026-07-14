@@ -29,4 +29,4 @@ executable backend
       , text
       , wai
       , warp
-    ghc-options: -Wall
+    ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N

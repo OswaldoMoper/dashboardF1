@@ -4,7 +4,7 @@
 -- widgets bajo @\/api@ con datos dummy estáticos. Se añaden @\/api\/live@ y @\/api\/historical@.
 module Backend.API where
 
-import Common.Types (HistoricalStat (..), LiveTimingRow (..))
+import Common.Types (HistoricalStat (..), LiveTimingRow (..), TelemetryPoint (..))
 import Data.Aeson (ToJSON)
 import Data.Text (Text)
 import GHC.Generics (Generic)
@@ -24,12 +24,13 @@ type API =
        "home" :> Get '[JSON] Home
   :<|> "api" :> "live" :> Get '[JSON] [LiveTimingRow]
   :<|> "api" :> "historical" :> Get '[JSON] [HistoricalStat]
+  :<|> "api" :> "telemetry" :> Get '[JSON] [TelemetryPoint]
 
 api :: Proxy API
 api = Proxy
 
 server :: Server API
-server = homeH :<|> liveH :<|> historicalH
+server = homeH :<|> liveH :<|> historicalH :<|> telemetryH
   where
     homeH :: Handler Home
     homeH = pure (Home "F1 Functional Dashboard")
@@ -39,6 +40,9 @@ server = homeH :<|> liveH :<|> historicalH
 
     historicalH :: Handler [HistoricalStat]
     historicalH = pure historicalDummy
+
+    telemetryH :: Handler [TelemetryPoint]
+    telemetryH = pure telemetryDummy
 
 -- | Datos dummy de live timing (top 3 estático).
 liveDummy :: [LiveTimingRow]
@@ -54,4 +58,14 @@ historicalDummy =
   [ HistoricalStat "Wins" 63 "races"
   , HistoricalStat "Pole positions" 44 "quali"
   , HistoricalStat "Fastest laps" 34 "laps"
+  ]
+
+-- | Datos dummy de telemetría (muestreo a lo largo de una vuelta).
+telemetryDummy :: [TelemetryPoint]
+telemetryDummy =
+  [ TelemetryPoint 0.0 0 312.5 1.0 0.0 8 11800
+  , TelemetryPoint 0.5 42 298.1 0.0 0.6 7 10500
+  , TelemetryPoint 1.0 78 265.3 0.0 1.0 5 9200
+  , TelemetryPoint 1.5 110 289.7 0.8 0.0 6 10100
+  , TelemetryPoint 2.0 156 320.4 1.0 0.0 8 12000
   ]
