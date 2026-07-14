@@ -24,10 +24,15 @@
         reflexPkgs = import inputs.nixpkgs-reflex { inherit system; };
         jsPkgs = reflexPkgs.pkgsCross.ghcjs.haskell.packages.ghc910;
         frontendJs = jsPkgs.callCabal2nix "frontend" ./frontend { };
+
+        hp = pkgs.haskellPackages.extend (hf: _hp: {
+          common = hf.callCabal2nix "common" ./common { };
+          backend = hf.callCabal2nix "backend" ./backend { };
+        });
       in
       {
-        # ── Backend Servant (Fase 0: endpoint /home en :8080, override con PORT) ──
-        packages.backend = pkgs.haskellPackages.callCabal2nix "backend" ./backend { };
+        # ── Backend Servant (Fase 1: /home + /api/* en :8080, override con PORT) ──
+        packages.backend = hp.backend;
         packages.default = self'.packages.backend;
 
         # ── Frontend Reflex (GHCJS) — Fase 0 skeleton ──
