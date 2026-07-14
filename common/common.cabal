@@ -1,0 +1,28 @@
+cabal-version:      2.4
+name:               common
+version:            0.1.0.0
+synopsis:           Tipos compartidos del F1 Functional Dashboard (backend + frontend).
+description:
+  Paquete de dominio con los tipos compartidos entre el backend Servant y el
+  frontend Reflex (Fase 2). Se mantiene libre de dependencias pesadas para que
+  el deriving genérico de aeson compile también bajo GHCJS.
+author:             Oscar Oswaldo Moya Pérez
+maintainer:         oswaldomoyap@gmail.com
+build-type:         Simple
+
+library
+    default-language: Haskell2010
+    default-extensions:
+        DeriveGeneric
+        DerivingStrategies
+        GeneralizedNewtypeDeriving
+        OverloadedStrings
+    hs-source-dirs:   src
+    exposed-modules:
+        Common.Types
+    build-depends:
+        base        >= 4.14 && < 5
+      , aeson
+      , containers
+      , text
+    ghc-options: -Wall
