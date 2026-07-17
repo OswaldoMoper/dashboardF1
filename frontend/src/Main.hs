@@ -1,14 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Frontend del F1 Functional Dashboard (Reflex-DOM).
+-- | Punto de entrada del frontend (Reflex-DOM).
 --
--- En Fase 0 es solo el skeleton: monta un widget estático. El sistema de
--- widgets y layouts (@Dynamic t Layout@, @renderWidget@) llega en Fase 2.
-module Main (main) where
+-- Solo ensambla la infra: monta el @\<head\>@ y el @\<body\>@ definidos en 'App'.
+-- El sistema de widgets/layouts vive bajo 'App' (dispatch), @Pages.*@ y @Widgets.*@.
+module Main where
 
-import Reflex.Dom
+import qualified App
+import           Reflex.Dom (mainWidgetWithHead)
 
 main :: IO ()
-main = mainWidget $ do
-  el "h1" $ text "F1 Dashboard skeleton"
-  el "p" $ text "Fase 0 — frontend Reflex operativo."
+main = mainWidgetWithHead App.headW App.bodyW

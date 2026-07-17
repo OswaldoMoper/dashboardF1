@@ -16,8 +16,11 @@ executable frontend
         OverloadedStrings
     hs-source-dirs:   src
     main-is:          Main.hs
+    other-modules:
+        App
     build-depends:
         base        >= 4.14 && < 5
+      , common
       , reflex
       , reflex-dom
       , text

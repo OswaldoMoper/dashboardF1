@@ -22,8 +22,11 @@
       perSystem = { pkgs, self', system, ... }:
       let
         reflexPkgs = import inputs.nixpkgs-reflex { inherit system; };
-        jsPkgs = reflexPkgs.pkgsCross.ghcjs.haskell.packages.ghc910;
-        frontendJs = jsPkgs.callCabal2nix "frontend" ./frontend { };
+        jsPkgs = reflexPkgs.pkgsCross.ghcjs.haskell.packages.ghc910.extend (hf: _hp: {
+          common = hf.callCabal2nix "common" ./common { };
+          frontend = hf.callCabal2nix "frontend" ./frontend { };
+        });
+        frontendJs = jsPkgs.frontend;
 
         hp = pkgs.haskellPackages.extend (hf: _hp: {
           common = hf.callCabal2nix "common" ./common { };
