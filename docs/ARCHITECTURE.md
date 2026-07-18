@@ -36,8 +36,11 @@ Responsabilidades:
 
 Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
 
-- **INFRA (raíz):** `Config`, `App` (`Env`/`mkEnv`), `Server` (`Api` + `app` + `spaApp`),
-  `Html` (shell Lucid). Futuros: `Db` (`SqlM`/`runDB`), `Model/*` (Persistent), auth.
+- **INFRA (raíz):** `Config` (incl. `cfgStaticDir`/`STATIC_DIR`), `App` (`Env`/`mkEnv`),
+  `Server` (`Api` + `app` + `spaApp`), `Html` (shell Lucid, **superseded** desde Fase 2 s2).
+  `spaApp` (`wai-app-static`) **ya sirve el bundle del frontend** en el mismo puerto que
+  `/api/*` (same-origin; `GET /` → `index.html`/`all.js`). Futuros: `Db` (`SqlM`/`runDB`),
+  `Model/*` (Persistent), auth.
 - **NEGOCIO (`Handler/`) por área:** `Handler.<Área>{,.Context,.Helper,.Manager}` (interfaz → orquestación → efectos → pureza). Áreas: `Live`, `Historical`, `Telemetry`, `Comparison`, `TyreStrategy`; luego `OpenF1`/`Jolpica`/`FastF1` como `Manager`s. Cache en memoria (STM) como infra cuando llegue (Fase 3).
 - **DTOs compartidos:** paquete `common` (`Common.Types`).
 - **DB:** `Database.Esqueleto.Legacy` + `Database.Esqueleto.PostgreSQL`; `Persist` solo modelos.
