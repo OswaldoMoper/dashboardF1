@@ -18,10 +18,12 @@ executable frontend
     main-is:          Main.hs
     other-modules:
         App
+        Client
         Pages.Dashboard
         Widgets.LiveTiming
     build-depends:
         base        >= 4.14 && < 5
+      , aeson
       , common
       , reflex
       , reflex-dom

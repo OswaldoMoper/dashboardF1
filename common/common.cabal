@@ -16,9 +16,11 @@ library
         DeriveGeneric
         DerivingStrategies
         GeneralizedNewtypeDeriving
+        LambdaCase
         OverloadedStrings
     hs-source-dirs:   src
     exposed-modules:
+        Common.Route
         Common.Types
     build-depends:
         base        >= 4.14 && < 5
