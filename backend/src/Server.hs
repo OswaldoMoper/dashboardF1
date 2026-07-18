@@ -1,13 +1,14 @@
 -- | Aplicación WAI de nivel superior (INFRA).
 --
--- Define el tipo de la API Servant y ensambla el 'server': los endpoints de
--- infra (@GET \/@ shell HTML, @GET \/home@ JSON de bienvenida) se resuelven
--- aquí; los @GET \/api\/*@ de negocio delegan en los @Handler.<Área>@. El
--- servido del bundle estático del SPA (@spaApp@) se añadirá cuando exista el
--- build del frontend.
+-- Define el tipo de la API Servant y ensambla el 'server': @GET \/home@ (JSON
+-- de bienvenida) y los @GET \/api\/*@ de negocio (delegados en los
+-- @Handler.<Área>@) se resuelven aquí; cualquier otra ruta cae en 'spaApp',
+-- que sirve el bundle del frontend (SPA) desde 'cfgStaticDir'. Así el frontend
+-- y la API comparten proceso y puerto (misma-origen; el widget hace fetch
+-- relativo a @\/api\/*@).
 module Server where
 
-import App (Env)
+import App (Env (..))
 import Common.Types
   ( HistoricalStat
   , LapComparison
@@ -15,6 +16,7 @@ import Common.Types
   , TelemetryPoint
   , TyreStint
   )
+import Config (cfgStaticDir)
 import Data.Aeson (ToJSON)
 import Data.Text (Text)
 import GHC.Generics (Generic)
@@ -23,10 +25,12 @@ import qualified Handler.Historical as Historical
 import qualified Handler.Live as Live
 import qualified Handler.Telemetry as Telemetry
 import qualified Handler.TyreStrategy as TyreStrategy
-import Html (page)
-import Lucid (Html)
+import Network.HTTP.Types (hContentType, status200)
+import Network.Wai (Application, responseFile)
+import Network.Wai.Application.Static (defaultWebAppSettings, staticApp)
 import Servant
-import Servant.HTML.Lucid (HTML)
+import System.FilePath ((</>))
+import WaiAppStatic.Types (StaticSettings (..))
 
 -- | Respuesta del endpoint de bienvenida.
 newtype Home = Home {message :: Text}
@@ -34,15 +38,17 @@ newtype Home = Home {message :: Text}
 
 instance ToJSON Home
 
--- | API completa del backend.
+-- | API completa del backend. El @Raw@ final atrapa @/@ y toda ruta no-API,
+-- delegando en 'spaApp' (bundle del frontend). Va al final: Servant prueba en
+-- orden, así que @/home@ y @/api/*@ ganan y el resto cae en el SPA.
 type Api =
-       Get '[HTML] (Html ())
-  :<|> "home" :> Get '[JSON] Home
+       "home" :> Get '[JSON] Home
   :<|> "api" :> "live" :> Get '[JSON] [LiveTimingRow]
   :<|> "api" :> "historical" :> Get '[JSON] [HistoricalStat]
   :<|> "api" :> "telemetry" :> Get '[JSON] [TelemetryPoint]
   :<|> "api" :> "comparison" :> Get '[JSON] LapComparison
   :<|> "api" :> "tyre-strategy" :> Get '[JSON] [TyreStint]
+  :<|> Raw
 
 api :: Proxy Api
 api = Proxy
@@ -51,19 +57,32 @@ api = Proxy
 app :: Env -> Application
 app env = serve api (server env)
 
--- | Cableado: infra (@/@, @/home@) + delegación a los handlers de negocio.
+-- | Cableado: @/home@ + delegación a los handlers de negocio + fallback SPA.
 server :: Env -> Server Api
 server env =
-  rootH
-    :<|> homeH
+  homeH
     :<|> Live.liveHandler env
     :<|> Historical.historicalHandler env
     :<|> Telemetry.telemetryHandler env
     :<|> Comparison.comparisonHandler env
     :<|> TyreStrategy.tyreStrategyHandler env
+    :<|> Tagged (spaApp env)
   where
-    rootH :: Handler (Html ())
-    rootH = pure page
-
     homeH :: Handler Home
     homeH = pure (Home "F1 Functional Dashboard")
+
+-- | Sirve el bundle estático del frontend desde 'cfgStaticDir'. Un archivo
+-- concreto gana; cualquier otra ruta cae en @index.html@ (fallback SPA), para
+-- que los deep-links del enrutado client-side resuelvan en vez de dar 404.
+spaApp :: Env -> Application
+spaApp env = staticApp settings
+  where
+    dir = cfgStaticDir (envConfig env)
+    settings = (defaultWebAppSettings dir) {ss404Handler = Just serveIndex}
+    serveIndex _req send =
+      send $
+        responseFile
+          status200
+          [(hContentType, "text/html; charset=utf-8")]
+          (dir </> "index.html")
+          Nothing

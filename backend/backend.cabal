@@ -32,11 +32,14 @@ executable backend
         base            >= 4.14 && < 5
       , aeson
       , common
+      , filepath
+      , http-types
       , lucid
       , servant
       , servant-lucid
       , servant-server
       , text
       , wai
+      , wai-app-static
       , warp
     ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
