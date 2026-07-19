@@ -21,6 +21,7 @@ executable frontend
         Client
         Pages.Dashboard
         Widgets.LiveTiming
+        Widgets.Telemetry
     build-depends:
         base        >= 4.14 && < 5
       , aeson
