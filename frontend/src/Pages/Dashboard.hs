@@ -6,9 +6,13 @@
 -- La pantalla no monta widgets hardcodeados: se **deriva de un 'Layout'**
 -- ('Common.Types'). 'renderWidget' despacha por
 -- 'widgetType' a los widgets existentes ('liveTimingWidget' \/ 'telemetryWidget') y
--- da un placeholder para los tipos aún no implementados. Primer uso real de
+-- da un placeholder para los tipos aún no implementados. Dos botones conmutan entre
+-- dos 'Layout' fijos ('raceOverview' \/ 'qualy') sosteniendo un @Dynamic t Layout@;
+-- 'dyn_' re-monta la lista de widgets en cada cambio. Primer uso real de
 -- 'Layout'\/'WidgetConfig'\/'WidgetType'\/'WidgetParams'\/'WidgetId' en el frontend.
--- La conmutación entre layouts (botones Race Overview \/ Qualy) llega después.
+--
+-- Observación: al conmutar, 'dyn_' re-monta los widgets, así que 'liveTimingWidget'
+-- re-dispara su fetch (@getPostBuild@ corre al montar). Aceptable en esta fase.
 module Pages.Dashboard where
 
 import           Common.Types       (Layout (..), LayoutId (..),
@@ -19,12 +23,30 @@ import           Reflex.Dom
 import           Widgets.LiveTiming (liveTimingWidget)
 import           Widgets.Telemetry  (telemetryWidget)
 
--- | Pantalla del dashboard: monta la lista de widgets del layout actual.
--- Todavía fijo ('raceOverview'); la conmutación llega en el Commit B.
+-- | Pantalla del dashboard: barra de conmutación de layouts + la lista de widgets
+-- del layout activo (re-montada con 'dyn_' en cada cambio).
 dashboardPage :: MonadWidget t m => m ()
 dashboardPage = divClass "page page--dashboard" $ do
   el "h1" $ text "F1 Functional Dashboard"
-  mapM_ renderWidget (widgets raceOverview)
+  layoutDyn <- layoutSwitcher
+  dyn_ $ ffor layoutDyn $ \l -> mapM_ renderWidget (widgets l)
+
+-- | Barra de botones que conmutan entre los layouts fijos. Sostiene el layout
+-- activo en un @Dynamic t Layout@ (arranca en 'raceOverview').
+layoutSwitcher :: MonadWidget t m => m (Dynamic t Layout)
+layoutSwitcher = divClass "layout-switcher" $ do
+  overviewClick <- layoutButton "Race Overview"
+  qualyClick    <- layoutButton "Qualy"
+  holdDyn raceOverview $ leftmost
+    [ raceOverview <$ overviewClick
+    , qualy        <$ qualyClick
+    ]
+
+-- | Botón que emite un 'Event' al hacer click.
+layoutButton :: DomBuilder t m => T.Text -> m (Event t ())
+layoutButton label = do
+  (e, _) <- elClass' "button" "layout-switcher__btn" $ text label
+  pure (domEvent Click e)
 
 -- | Despacha una 'WidgetConfig' a su widget según 'widgetType'. Total sobre los
 -- seis constructores de 'WidgetType'; los aún no implementados caen en un
