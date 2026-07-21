@@ -7,6 +7,7 @@ module Common.Route
   ( ApiRoute (..)
   , apiPath
   , livePath
+  , telemetryPath
   ) where
 
 import           Data.Text (Text)
@@ -32,3 +33,7 @@ apiPath = \case
 -- | Atajo para el endpoint de live timing (primer consumidor).
 livePath :: Text
 livePath = apiPath LiveApi
+
+-- | Atajo para el endpoint de telemetría.
+telemetryPath :: Text
+telemetryPath = apiPath TelemetryApi
