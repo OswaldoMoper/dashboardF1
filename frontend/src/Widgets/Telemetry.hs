@@ -4,25 +4,46 @@
 -- | Widget de Telemetría (categoría Telemetry).
 --
 -- Renderiza una tabla con los 'TelemetryPoint' del dominio compartido
--- ('Common.Types'). Los datos son dummy locales, espejo del
--- @telemetryHandler@ del backend (@backend\/src\/Handler\/Telemetry.hs@). El
--- fetch real de @\/api\/telemetry@ (y un sparkline) llegan más adelante; por
--- ahora este módulo aporta el segundo widget de la pantalla.
+-- ('Common.Types'). Consume @GET \/api\/telemetry@ en runtime
+-- vía 'Client.fetchJson' + 'Common.Route.telemetryPath' (relativo, misma-origen:
+-- el backend sirve el bundle y la API en el mismo puerto). Modela los tres
+-- estados del fetch ('Loading' \/ 'Failed' \/ 'Loaded'); ya no hay datos dummy
+-- locales (patrón espejo de 'Widgets.LiveTiming').
 module Widgets.Telemetry where
 
+import           Client       (fetchJson)
+import           Common.Route (telemetryPath)
 import           Common.Types (TelemetryPoint (..))
 import           Data.Text    (Text)
 import qualified Data.Text    as T
 import           Reflex.Dom
 
--- | Tabla estática de telemetría.
-telemetryWidget :: DomBuilder t m => m ()
+-- | Estado del fetch de @\/api\/telemetry@. 'Failed' (no 'Error') para no chocar
+-- con nombres de @base@\/@Prelude@ (mismo criterio que 'Widgets.LiveTiming').
+data TState
+  = Loading
+  | Failed
+  | Loaded [TelemetryPoint]
+
+-- | Tabla de telemetría alimentada por @\/api\/telemetry@.
+telemetryWidget :: MonadWidget t m => m ()
 telemetryWidget = divClass "widget widget--telemetry" $ do
   el "h2" $ text "Telemetry"
-  elClass "table" "telemetry" $ do
-    el "thead" $ el "tr" $ mapM_ (el "th" . text) headers
-    el "tbody" $ mapM_ row dummy
+  pb    <- getPostBuild
+  resp  <- fetchJson (telemetryPath <$ pb)
+  state <- holdDyn Loading (ffor resp (maybe Failed Loaded))
+  dyn_ (renderState <$> state)
   where
+    renderState :: DomBuilder t m => TState -> m ()
+    renderState Loading =
+      elClass "p" "status status--loading" $ text "Cargando…"
+    renderState Failed =
+      elClass "p" "status status--error" $ text "Error al cargar /api/telemetry"
+    renderState (Loaded points) =
+      elClass "table" "telemetry" $ do
+        el "thead" $ el "tr" $ mapM_ (el "th" . text) headers
+        el "tbody" $ mapM_ row points
+
     headers :: [Text]
     headers =
       ["Session Time", "Distance", "Speed", "Throttle", "Brake", "Gear", "RPM"]
@@ -37,14 +58,3 @@ telemetryWidget = divClass "widget widget--telemetry" $ do
       , T.pack (show (tpGear p))
       , T.pack (show (tpRpm p))
       ]
-
--- | Muestreo dummy a lo largo de una vuelta, espejo del @dummy@ de
--- @Handler.Telemetry@ (placeholder hasta el fetch real de @\/api\/telemetry@).
-dummy :: [TelemetryPoint]
-dummy =
-  [ TelemetryPoint 0.0 0   312.5 1.0 0.0 8 11800
-  , TelemetryPoint 0.5 42  298.1 0.0 0.6 7 10500
-  , TelemetryPoint 1.0 78  265.3 0.0 1.0 5 9200
-  , TelemetryPoint 1.5 110 289.7 0.8 0.0 6 10100
-  , TelemetryPoint 2.0 156 320.4 1.0 0.0 8 12000
-  ]
