@@ -24,6 +24,9 @@ executable backend
         Server
         Html
         Handler.Live
+        Handler.Live.Context
+        Handler.Live.Helper
+        Handler.Live.Manager
         Handler.Historical
         Handler.Telemetry
         Handler.Comparison
@@ -35,9 +38,11 @@ executable backend
       , filepath
       , http-types
       , lucid
+      , req
       , servant
       , servant-lucid
       , servant-server
+      , stm
       , text
       , wai
       , wai-app-static
