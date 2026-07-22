@@ -1,15 +1,22 @@
 -- | Bootstrap del backend: construye el 'Env' a partir de la 'Config' (INFRA).
 --
--- Fase 1: el 'Env' solo transporta la configuración. El pool de PostgreSQL y
--- los clientes de servicios externos se añaden aquí (en @mkEnv@) conforme
--- lleguen (Fases 3–4).
+-- El 'Env' transporta la configuración y el estado mutable compartido entre
+-- handlers. Fase 3: gana la cache en memoria (STM) de live timing, poblada por
+-- 'Handler.Live.Context' con la última respuesta buena de OpenF1. El pool de
+-- PostgreSQL y otros clientes externos aterrizan aquí conforme lleguen.
 module App where
 
-import Config (Config)
+import           Common.Types           (LiveTimingRow)
+import           Config                 (Config)
+import           Control.Concurrent.STM (TVar, newTVarIO)
 
-newtype Env = Env
-  { envConfig :: Config
+data Env = Env
+  { envConfig    :: Config
+  , envLiveCache :: TVar (Maybe [LiveTimingRow])
+    -- ^ Última respuesta buena de @/api/live@ (respaldo si OpenF1 falla).
   }
 
 mkEnv :: Config -> IO Env
-mkEnv cfg = pure (Env cfg)
+mkEnv cfg = do
+  liveCache <- newTVarIO Nothing
+  pure (Env cfg liveCache)
