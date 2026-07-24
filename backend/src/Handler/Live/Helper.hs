@@ -6,9 +6,8 @@
 -- entrada por piloto y se ensambla la tabla ordenada por posición. Sin
 -- efectos: todo es determinista y testeable.
 module Handler.Live.Helper
-  ( -- * Tipos crudos OpenF1
-    Of1Driver (..)
-  , Of1Position (..)
+  ( -- * Tipos crudos OpenF1 específicos de Live
+    Of1Position (..)
   , Of1Interval (..)
   , Of1Lap (..)
     -- * Transformaciones puras
@@ -17,32 +16,18 @@ module Handler.Live.Helper
   , formatLap
   ) where
 
-import           Common.Types     (LiveTimingRow (..))
-import           Data.Aeson       (FromJSON (..), Value (..), withObject, (.:),
-                                   (.:?))
-import           Data.Aeson.Types (Parser)
-import           Data.Function    (on)
-import           Data.List        (find, groupBy, maximumBy, sortOn)
-import           Data.Maybe       (fromMaybe, mapMaybe)
-import           Data.Ord         (comparing)
-import           Data.Text        (Text)
-import qualified Data.Text        as T
-import           Text.Printf      (printf)
-
--- | @/drivers@: identidad y equipo del piloto.
-data Of1Driver = Of1Driver
-  { odNumber  :: Int
-  , odAcronym :: Text
-  , odTeam    :: Text
-  }
-  deriving (Eq, Show)
-
-instance FromJSON Of1Driver where
-  parseJSON = withObject "Of1Driver" $ \o ->
-    Of1Driver
-      <$> o .: "driver_number"
-      <*> o .: "name_acronym"
-      <*> o .: "team_name"
+import           Common.Types          (LiveTimingRow (..))
+import           Data.Aeson            (FromJSON (..), Value (..), withObject,
+                                        (.:), (.:?))
+import           Data.Aeson.Types      (Parser)
+import           Data.Function         (on)
+import           Data.List             (find, groupBy, maximumBy, sortOn)
+import           Data.Maybe            (fromMaybe, mapMaybe)
+import           Data.Ord              (comparing)
+import           Data.Text             (Text)
+import qualified Data.Text             as T
+import           Handler.OpenF1.Helper (Of1Driver (..))
+import           Text.Printf           (printf)
 
 -- | @/position@: posición del piloto en un instante (@date@).
 data Of1Position = Of1Position

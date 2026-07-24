@@ -14,6 +14,7 @@ import           Control.Exception      (SomeException, try)
 import           Data.Maybe             (fromMaybe)
 import           Handler.Live.Helper    (assembleRows)
 import qualified Handler.Live.Manager   as Manager
+import qualified Handler.OpenF1.Manager as OpenF1
 
 -- | Devuelve la tabla de live timing (real de OpenF1, cache o dummy).
 getLiveTiming :: Env -> IO [LiveTimingRow]
@@ -30,7 +31,7 @@ getLiveTiming env = do
 -- | Fetch de los 4 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
 fetchRows :: IO [LiveTimingRow]
 fetchRows = do
-  drivers   <- Manager.fetchDrivers
+  drivers   <- OpenF1.fetchDrivers
   positions <- Manager.fetchPositions
   intervals <- Manager.fetchIntervals
   laps      <- Manager.fetchLaps

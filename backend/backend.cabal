@@ -23,6 +23,8 @@ executable backend
         App
         Server
         Html
+        Handler.OpenF1.Helper
+        Handler.OpenF1.Manager
         Handler.Live
         Handler.Live.Context
         Handler.Live.Helper
