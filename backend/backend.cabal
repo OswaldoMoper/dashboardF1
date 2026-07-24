@@ -30,6 +30,9 @@ executable backend
         Handler.Live.Helper
         Handler.Live.Manager
         Handler.Historical
+        Handler.Historical.Context
+        Handler.Historical.Helper
+        Handler.Historical.Manager
         Handler.Telemetry
         Handler.Comparison
         Handler.TyreStrategy

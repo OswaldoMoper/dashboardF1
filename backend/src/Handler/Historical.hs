@@ -1,21 +1,14 @@
--- | Área estadísticas históricas — capa de interfaz (BUSINESS).
+-- | Área estadísticas históricas — capa de interfaz.
 --
--- Expone @GET \/api\/historical@. Fase 1: dummy estático (ignora el 'Env'); en
--- Fase 3 lo alimenta un @Handler.Historical.Manager@ sobre Jolpica, orquestado
--- por un @Handler.Historical.Context@.
+-- Expone @GET \/api\/historical@ y delega en 'Handler.Historical.Context', que
+-- orquesta el fetch a Jolpica con cache STM y respaldo al dummy.
 module Handler.Historical where
 
-import           App          (Env)
-import           Common.Types (HistoricalStat (..))
-import           Servant      (Handler)
+import           App                        (Env)
+import           Common.Types               (HistoricalStat)
+import           Control.Monad.IO.Class     (liftIO)
+import qualified Handler.Historical.Context as Context
+import           Servant                    (Handler)
 
 historicalHandler :: Env -> Handler [HistoricalStat]
-historicalHandler _env = pure dummy
-
--- | Estadísticas dummy (placeholder de la futura consulta a Jolpica).
-dummy :: [HistoricalStat]
-dummy =
-  [ HistoricalStat "Wins" 63 "races"
-  , HistoricalStat "Pole positions" 44 "quali"
-  , HistoricalStat "Fastest laps" 34 "laps"
-  ]
+historicalHandler env = liftIO (Context.getHistorical env)

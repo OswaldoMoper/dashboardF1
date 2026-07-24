@@ -1,0 +1,24 @@
+-- | Cliente Jolpica (Ergast) — plumbing HTTP de estadísticas históricas.
+--
+-- Acceso a la API pública de Jolpica (@api.jolpi.ca\/ergast\/f1@) con el cliente
+-- @req@. Base de URL propia: NO reusa 'Handler.OpenF1.Manager.fetchList', que está
+-- fijado a @openf1Base@ + @session_key=latest@. Si más adelante hay >1 consumidor de
+-- Jolpica, se extraerá un cliente compartido (mismo criterio que OpenF1).
+module Handler.Historical.Manager
+  ( jolpicaBase
+  , fetchStandings
+  ) where
+
+import           Handler.Historical.Helper (Root)
+import           Network.HTTP.Req
+
+-- | Base de la API pública de Jolpica (sucesor de Ergast).
+jolpicaBase :: Url 'Https
+jolpicaBase = https "api.jolpi.ca" /: "ergast" /: "f1"
+
+-- | Clasificación de pilotos de la temporada en curso (@\/current\/driverStandings@),
+-- decodificada a la envoltura 'Root'.
+fetchStandings :: IO Root
+fetchStandings = runReq defaultHttpConfig $ do
+  res <- req GET (jolpicaBase /: "current" /: "driverStandings") NoReqBody jsonResponse mempty
+  pure (responseBody res)
