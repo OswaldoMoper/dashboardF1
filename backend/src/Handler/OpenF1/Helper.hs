@@ -9,8 +9,8 @@ module Handler.OpenF1.Helper
   ( Of1Driver (..)
   ) where
 
-import Data.Aeson (FromJSON (..), withObject, (.:))
-import Data.Text  (Text)
+import           Data.Aeson (FromJSON (..), withObject, (.:))
+import           Data.Text  (Text)
 
 -- | @/drivers@: identidad y equipo del piloto.
 data Of1Driver = Of1Driver

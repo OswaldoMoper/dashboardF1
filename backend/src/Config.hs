@@ -7,9 +7,9 @@
 -- conforme lleguen (Fases 3–6).
 module Config where
 
-import Data.Maybe (fromMaybe)
-import System.Environment (lookupEnv)
-import Text.Read (readMaybe)
+import           Data.Maybe         (fromMaybe)
+import           System.Environment (lookupEnv)
+import           Text.Read          (readMaybe)
 
 data Config = Config
   { cfgPort      :: Int      -- ^ PORT (default 8080)

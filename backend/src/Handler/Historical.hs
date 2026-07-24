@@ -5,9 +5,9 @@
 -- por un @Handler.Historical.Context@.
 module Handler.Historical where
 
-import App (Env)
-import Common.Types (HistoricalStat (..))
-import Servant (Handler)
+import           App          (Env)
+import           Common.Types (HistoricalStat (..))
+import           Servant      (Handler)
 
 historicalHandler :: Env -> Handler [HistoricalStat]
 historicalHandler _env = pure dummy

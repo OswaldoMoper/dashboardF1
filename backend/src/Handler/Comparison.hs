@@ -5,9 +5,9 @@
 -- un @Handler.Comparison.Context@.
 module Handler.Comparison where
 
-import App (Env)
-import Common.Types (LapComparison (..))
-import Servant (Handler)
+import           App          (Env)
+import           Common.Types (LapComparison (..))
+import           Servant      (Handler)
 
 comparisonHandler :: Env -> Handler LapComparison
 comparisonHandler _env = pure dummy

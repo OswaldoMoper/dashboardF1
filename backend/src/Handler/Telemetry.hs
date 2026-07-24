@@ -5,9 +5,9 @@
 -- microservicio FastF1, orquestado por un @Handler.Telemetry.Context@.
 module Handler.Telemetry where
 
-import App (Env)
-import Common.Types (TelemetryPoint (..))
-import Servant (Handler)
+import           App          (Env)
+import           Common.Types (TelemetryPoint (..))
+import           Servant      (Handler)
 
 telemetryHandler :: Env -> Handler [TelemetryPoint]
 telemetryHandler _env = pure dummy

@@ -8,29 +8,26 @@
 -- relativo a @\/api\/*@).
 module Server where
 
-import App (Env (..))
-import Common.Types
-  ( HistoricalStat
-  , LapComparison
-  , LiveTimingRow
-  , TelemetryPoint
-  , TyreStint
-  )
-import Config (cfgStaticDir)
-import Data.Aeson (ToJSON)
-import Data.Text (Text)
-import GHC.Generics (Generic)
-import qualified Handler.Comparison as Comparison
-import qualified Handler.Historical as Historical
-import qualified Handler.Live as Live
-import qualified Handler.Telemetry as Telemetry
-import qualified Handler.TyreStrategy as TyreStrategy
-import Network.HTTP.Types (hContentType, status200)
-import Network.Wai (Application, responseFile)
-import Network.Wai.Application.Static (defaultWebAppSettings, staticApp)
-import Servant
-import System.FilePath ((</>))
-import WaiAppStatic.Types (StaticSettings (..))
+import           App                            (Env (..))
+import           Common.Types                   (HistoricalStat, LapComparison,
+                                                 LiveTimingRow, TelemetryPoint,
+                                                 TyreStint)
+import           Config                         (cfgStaticDir)
+import           Data.Aeson                     (ToJSON)
+import           Data.Text                      (Text)
+import           GHC.Generics                   (Generic)
+import qualified Handler.Comparison             as Comparison
+import qualified Handler.Historical             as Historical
+import qualified Handler.Live                   as Live
+import qualified Handler.Telemetry              as Telemetry
+import qualified Handler.TyreStrategy           as TyreStrategy
+import           Network.HTTP.Types             (hContentType, status200)
+import           Network.Wai                    (Application, responseFile)
+import           Network.Wai.Application.Static (defaultWebAppSettings,
+                                                 staticApp)
+import           Servant
+import           System.FilePath                ((</>))
+import           WaiAppStatic.Types             (StaticSettings (..))
 
 -- | Respuesta del endpoint de bienvenida.
 newtype Home = Home {message :: Text}

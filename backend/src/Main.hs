@@ -2,10 +2,10 @@
 -- levanta la app WAI con Warp.
 module Main where
 
-import App (mkEnv)
-import Config (Config (..), loadConfig)
-import Network.Wai.Handler.Warp (run)
-import Server (app)
+import           App                      (mkEnv)
+import           Config                   (Config (..), loadConfig)
+import           Network.Wai.Handler.Warp (run)
+import           Server                   (app)
 
 main :: IO ()
 main = do

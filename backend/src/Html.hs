@@ -5,7 +5,7 @@
 -- @frontend.js@.
 module Html where
 
-import Lucid
+import           Lucid
 
 -- | Shell: @div#app@ + script del bundle Reflex.
 page :: Html ()
