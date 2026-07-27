@@ -8,6 +8,7 @@ module Common.Route
   , apiPath
   , livePath
   , telemetryPath
+  , historicalPath
   ) where
 
 import           Data.Text (Text)
@@ -37,3 +38,7 @@ livePath = apiPath LiveApi
 -- | Atajo para el endpoint de telemetría.
 telemetryPath :: Text
 telemetryPath = apiPath TelemetryApi
+
+-- | Atajo para el endpoint de estadísticas históricas.
+historicalPath :: Text
+historicalPath = apiPath HistoricalApi
