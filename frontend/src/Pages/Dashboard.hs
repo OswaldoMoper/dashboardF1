@@ -20,6 +20,7 @@ import           Common.Types       (Layout (..), LayoutId (..),
                                      WidgetParams (..), WidgetType (..))
 import qualified Data.Text          as T
 import           Reflex.Dom
+import           Widgets.Historical (historicalWidget)
 import           Widgets.LiveTiming (liveTimingWidget)
 import           Widgets.Telemetry  (telemetryWidget)
 
@@ -57,7 +58,7 @@ renderWidget wc = case widgetType wc of
   Telemetry       -> telemetryWidget
   LapComparison   -> placeholderWidget "Lap Comparison"
   TyreStrategy    -> placeholderWidget "Tyre Strategy"
-  HistoricalStats -> placeholderWidget "Historical Stats"
+  HistoricalStats -> historicalWidget
   Custom          -> placeholderWidget "Custom"
 
 -- | Widget aún no disponible: recuadro con etiqueta del tipo.
@@ -79,7 +80,7 @@ cfg wt = WidgetConfig
 raceOverview :: Layout
 raceOverview = Layout
   { layoutId = LayoutId "race-overview"
-  , widgets  = [cfg LiveTiming, cfg Telemetry]
+  , widgets  = [cfg LiveTiming, cfg Telemetry, cfg HistoricalStats]
   }
 
 -- | Layout "Qualy": solo live timing (conjunto distinto → valida la conmutación).

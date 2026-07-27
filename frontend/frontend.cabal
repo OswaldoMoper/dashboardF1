@@ -20,6 +20,7 @@ executable frontend
         App
         Client
         Pages.Dashboard
+        Widgets.Historical
         Widgets.LiveTiming
         Widgets.Telemetry
     build-depends:
