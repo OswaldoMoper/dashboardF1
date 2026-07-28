@@ -71,11 +71,17 @@ data TyreStint = TyreStint
 instance ToJSON TyreStint
 instance FromJSON TyreStint
 
--- | Estadística histórica (KPI etiquetado).
+-- | Estadística histórica (KPI de un piloto).
+--
+-- La identidad del piloto va __estructurada__ (código + nombre + apellido) en vez
+-- de una sola etiqueta: el consumidor elige qué mostrar sin poder reconstruir el
+-- código a partir del nombre. Ver (2026-07-28).
 data HistoricalStat = HistoricalStat
-  { hsLabel :: Text
-  , hsValue :: Double
-  , hsUnit  :: Text
+  { hsCode       :: Text    -- ^ Acrónimo del piloto (p. ej. @"VER"@).
+  , hsGivenName  :: Text    -- ^ Nombre (p. ej. @"Max"@).
+  , hsFamilyName :: Text    -- ^ Apellido (p. ej. @"Verstappen"@).
+  , hsValue      :: Double
+  , hsUnit       :: Text
   }
   deriving stock (Eq, Show, Generic)
 

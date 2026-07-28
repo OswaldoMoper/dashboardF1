@@ -29,10 +29,12 @@ getHistorical env = do
 fetchStats :: IO [HistoricalStat]
 fetchStats = assembleStats <$> Manager.fetchStandings
 
--- | Estadísticas dummy (respaldo cuando Jolpica nunca dio datos).
+-- | Estadísticas dummy (respaldo cuando Jolpica nunca dio datos). Misma forma que
+-- emite 'assembleStats' — filas de piloto con identidad estructurada y unidades
+-- @points@\/@wins@ — para que el widget se pueda ejercitar sin red.
 dummy :: [HistoricalStat]
 dummy =
-  [ HistoricalStat "Wins" 63 "races"
-  , HistoricalStat "Pole positions" 44 "quali"
-  , HistoricalStat "Fastest laps" 34 "laps"
+  [ HistoricalStat "VER" "Max" "Verstappen" 393 "points"
+  , HistoricalStat "VER" "Max" "Verstappen" 9 "wins"
+  , HistoricalStat "NOR" "Lando" "Norris" 331 "points"
   ]
