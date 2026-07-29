@@ -7,6 +7,7 @@
 module Handler.Historical.Manager
   ( jolpicaBase
   , fetchStandings
+  , fetchConstructorStandings
   ) where
 
 import           Handler.Historical.Helper (Root)
@@ -21,4 +22,13 @@ jolpicaBase = https "api.jolpi.ca" /: "ergast" /: "f1"
 fetchStandings :: IO Root
 fetchStandings = runReq defaultHttpConfig $ do
   res <- req GET (jolpicaBase /: "current" /: "driverStandings") NoReqBody jsonResponse mempty
+  pure (responseBody res)
+
+-- | Clasificación de constructores de la temporada en curso
+-- (@\/current\/constructorStandings@). Misma envoltura 'Root': el nivel
+-- @StandingsList@ trae @ConstructorStandings@ en vez de @DriverStandings@ y ambas
+-- claves son opcionales allí.
+fetchConstructorStandings :: IO Root
+fetchConstructorStandings = runReq defaultHttpConfig $ do
+  res <- req GET (jolpicaBase /: "current" /: "constructorStandings") NoReqBody jsonResponse mempty
   pure (responseBody res)

@@ -1,6 +1,6 @@
 -- | Área estadísticas históricas — orquestación del caso de uso.
 --
--- Coordina el fetch a Jolpica ('Handler.Historical.Manager') y el mapeo puro
+-- Coordina los fetch a Jolpica ('Handler.Historical.Manager') y el mapeo puro
 -- ('Handler.Historical.Helper'), con la cache STM del 'Env' como respaldo: intenta
 -- el fetch real; si funciona, refresca la cache y devuelve; ante fallo o lista
 -- vacía sirve la última respuesta buena; sin ninguna, el dummy (espejo de
@@ -8,11 +8,11 @@
 module Handler.Historical.Context where
 
 import           App                        (Env (..))
-import           Common.Types               (HistoricalStat (..))
+import           Common.Types               (HistoricalStat (..), StatEntity (..))
 import           Control.Concurrent.STM     (atomically, readTVarIO, writeTVar)
 import           Control.Exception          (SomeException, try)
 import           Data.Maybe                 (fromMaybe)
-import           Handler.Historical.Helper  (assembleStats)
+import           Handler.Historical.Helper  (assembleConstructorStats, assembleStats)
 import qualified Handler.Historical.Manager as Manager
 
 getHistorical :: Env -> IO [HistoricalStat]
@@ -26,15 +26,25 @@ getHistorical env = do
       cached <- readTVarIO (envHistoricalCache env)
       pure (fromMaybe dummy cached)
 
+-- | Las __dos__ clasificaciones en una sola lista, en orden determinista (pilotos y
+-- luego constructores). Vive dentro del mismo 'try' del llamador a propósito: si
+-- cualquiera de los dos fetch falla, se degrada a la última respuesta buena
+-- __completa__ en vez de servir media lista.
 fetchStats :: IO [HistoricalStat]
-fetchStats = assembleStats <$> Manager.fetchStandings
+fetchStats = do
+  drivers      <- assembleStats <$> Manager.fetchStandings
+  constructors <- assembleConstructorStats <$> Manager.fetchConstructorStandings
+  pure (drivers <> constructors)
 
 -- | Estadísticas dummy (respaldo cuando Jolpica nunca dio datos). Misma forma que
--- emite 'assembleStats' — filas de piloto con identidad estructurada y unidades
--- @points@\/@wins@ — para que el widget se pueda ejercitar sin red.
+-- emiten 'assembleStats' y 'assembleConstructorStats' — identidad estructurada,
+-- marca de entidad y unidades @points@\/@wins@ — y con __las dos entidades__, para
+-- que el filtro del widget sea ejercitable sin red.
 dummy :: [HistoricalStat]
 dummy =
-  [ HistoricalStat "VER" "Max" "Verstappen" 393 "points"
-  , HistoricalStat "VER" "Max" "Verstappen" 9 "wins"
-  , HistoricalStat "NOR" "Lando" "Norris" 331 "points"
+  [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 "points"
+  , HistoricalStat DriverStat "VER" "Max" "Verstappen" 9 "wins"
+  , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 "points"
+  , HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 "points"
+  , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 "points"
   ]

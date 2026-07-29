@@ -71,13 +71,33 @@ data TyreStint = TyreStint
 instance ToJSON TyreStint
 instance FromJSON TyreStint
 
--- | Estadística histórica (KPI de un piloto).
+-- | A qué entidad de la clasificación pertenece un 'HistoricalStat'.
 --
--- La identidad del piloto va __estructurada__ (código + nombre + apellido) en vez
--- de una sola etiqueta: el consumidor elige qué mostrar sin poder reconstruir el
--- código a partir del nombre. Ver (2026-07-28).
+-- La lista que sirve @\/api\/historical@ es __heterogénea__ (pilotos y
+-- constructores) y una fila de constructor no tiene acrónimo ni nombre\/apellido,
+-- así que el consumidor necesita saber qué proyección de etiqueta aplicar. Ver
+-- (2026-07-29).
+data StatEntity
+  = DriverStat
+  | ConstructorStat
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON StatEntity
+instance FromJSON StatEntity
+
+-- | Estadística histórica (KPI de un piloto o de un constructor).
+--
+-- La identidad va __estructurada__ (código + nombre + apellido) en vez de una sola
+-- etiqueta: el consumidor elige qué mostrar sin poder reconstruir el código a partir
+-- del nombre. Ver (2026-07-28).
+--
+-- 'hsEntity' marca de qué clasificación viene la fila
+-- (2026-07-29). Para un constructor la convención es @hsCode@ = @constructorId@
+-- (p. ej. @"red_bull"@), @hsFamilyName@ = @name@ (@"Red Bull"@) y @hsGivenName@
+-- vacío.
 data HistoricalStat = HistoricalStat
-  { hsCode       :: Text    -- ^ Acrónimo del piloto (p. ej. @"VER"@).
+  { hsEntity     :: StatEntity  -- ^ Piloto o constructor.
+  , hsCode       :: Text    -- ^ Acrónimo del piloto (p. ej. @"VER"@).
   , hsGivenName  :: Text    -- ^ Nombre (p. ej. @"Max"@).
   , hsFamilyName :: Text    -- ^ Apellido (p. ej. @"Verstappen"@).
   , hsValue      :: Double
