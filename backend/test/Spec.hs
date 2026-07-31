@@ -1,19 +1,21 @@
--- | Invariantes de la lógica pura del área Historical
--- ('Handler.Historical.Helper').
+-- | Invariantes de la lógica pura de las áreas Historical
+-- ('Handler.Historical.Helper') y Telemetry ('Handler.Telemetry.Helper').
 --
--- Los fixtures son recortes reales de Jolpica en 'ByteString' y se decodifican con
--- 'eitherDecodeStrict', así que cada caso ejercita __el 'FromJSON' y el
--- @assemble*@ juntos__: los dos son la unidad que el 'Handler.Historical.Context'
--- consume, y separarlos dejaría sin cubrir precisamente los campos opcionales, que
--- viven en el decode.
+-- Los fixtures son recortes reales de la respuesta de cada servicio en
+-- 'ByteString' y se decodifican con 'eitherDecodeStrict', así que cada caso
+-- ejercita __el 'FromJSON' y la función de ensamblado juntos__: los dos son la
+-- unidad que el @Context@ del área consume, y separarlos dejaría sin cubrir
+-- precisamente los campos opcionales, que viven en el decode.
 module Main (main) where
 
-import           Common.Types              (HistoricalStat (..), StatEntity (..))
+import           Common.Types              (HistoricalStat (..), StatEntity (..),
+                                            TelemetryPoint (..))
 import           Data.Aeson                (eitherDecodeStrict)
 import           Data.ByteString           (ByteString)
 import qualified Data.Text                 as T
 import           Handler.Historical.Helper (Root, assembleConstructorStats,
                                             assembleStats, parseNum)
+import           Handler.Telemetry.Helper  (FastF1Point, assemblePoints)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck     (prop)
 import           Test.QuickCheck           (Property, (===))
@@ -78,6 +80,28 @@ main = hspec $ do
       parseNum "-" `shouldBe` Nothing
       parseNum "12 points" `shouldBe` Nothing
 
+  describe "assemblePoints" $ do
+    it "mapea cada muestra conservando las ocho magnitudes, el orden y los bloques por piloto" $
+      pointsOf telemetryArray
+        `shouldBe`
+          [ TelemetryPoint "VER" 0.0 0 312.5 1.0 0.0 8 11800
+          , TelemetryPoint "VER" 0.5 42 298.1 0.0 0.6 7 10500
+          , TelemetryPoint "NOR" 0.0 0 309.8 1.0 0.0 8 11650
+          ]
+
+    it "descarta solo la muestra sin canal de coche, no la vuelta de los demás" $
+      pointsOf sampleWithoutBrake
+        `shouldBe`
+          [ TelemetryPoint "VER" 0.0 0 312.5 1.0 0.0 8 11800
+          , TelemetryPoint "NOR" 0.0 0 309.8 1.0 0.0 8 11650
+          ]
+
+    it "descarta la muestra sin ningún canal de coche en vez de inventar ceros" $
+      pointsOf sampleWithoutCarData `shouldBe` []
+
+    it "devuelve [] sobre un arreglo vacío (sesión sin telemetría publicada)" $
+      pointsOf emptyArray `shouldBe` []
+
 -- * Propiedades
 
 -- | @points@\/@wins@ llegan de Ergast como enteros en cadena; es la forma que
@@ -106,6 +130,16 @@ constructorStatsOf = assembleConstructorStats . decodeRoot
 
 decodeRoot :: ByteString -> Root
 decodeRoot raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
+
+-- | Espejo de 'driverStatsOf' para el área Telemetry: decodifica el arreglo plano
+-- que emite el microservicio y le aplica el mapeo puro, para que cada caso
+-- ejercite el 'FromJSON' y 'assemblePoints' __juntos__.
+pointsOf :: ByteString -> [TelemetryPoint]
+pointsOf = assemblePoints . decodePoints
+
+decodePoints :: ByteString -> [FastF1Point]
+decodePoints raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
 
 -- * Fixtures
@@ -172,3 +206,48 @@ driverWithoutWins =
 -- un fallo de parseo y el 'Handler.Historical.Context' degradaría a cache\/dummy.
 standingsListWithoutKeys :: ByteString
 standingsListWithoutKeys = envelope ""
+
+-- | Recorte del arreglo de @telemetry-service@: dos muestras de un piloto y una
+-- de otro, con las ocho claves. Sin envoltura —a diferencia de Ergast, el
+-- microservicio devuelve el arreglo desnudo—, así que 'envelope' no se reusa.
+telemetryArray :: ByteString
+telemetryArray =
+  "[{\"tpDriver\":\"VER\",\"tpSessionTime\":0.0,\"tpDistance\":0.0,\
+  \\"tpSpeed\":312.5,\"tpThrottle\":1.0,\"tpBrake\":0.0,\
+  \\"tpGear\":8,\"tpRpm\":11800},\
+  \{\"tpDriver\":\"VER\",\"tpSessionTime\":0.5,\"tpDistance\":42.0,\
+  \\"tpSpeed\":298.1,\"tpThrottle\":0.0,\"tpBrake\":0.6,\
+  \\"tpGear\":7,\"tpRpm\":10500},\
+  \{\"tpDriver\":\"NOR\",\"tpSessionTime\":0.0,\"tpDistance\":0.0,\
+  \\"tpSpeed\":309.8,\"tpThrottle\":1.0,\"tpBrake\":0.0,\
+  \\"tpGear\":8,\"tpRpm\":11650}]"
+
+-- | La muestra de en medio llega con @tpBrake@ en @null@ (FastF1 no midió el
+-- canal). Con @.:@ una sola lectura ausente tumbaba el decode del arreglo
+-- __completo__ y degradaba @/api/telemetry@ a cache\/dummy, perdiendo también la
+-- vuelta de los demás pilotos.
+sampleWithoutBrake :: ByteString
+sampleWithoutBrake =
+  "[{\"tpDriver\":\"VER\",\"tpSessionTime\":0.0,\"tpDistance\":0.0,\
+  \\"tpSpeed\":312.5,\"tpThrottle\":1.0,\"tpBrake\":0.0,\
+  \\"tpGear\":8,\"tpRpm\":11800},\
+  \{\"tpDriver\":\"VER\",\"tpSessionTime\":0.5,\"tpDistance\":42.0,\
+  \\"tpSpeed\":298.1,\"tpThrottle\":0.0,\"tpBrake\":null,\
+  \\"tpGear\":7,\"tpRpm\":10500},\
+  \{\"tpDriver\":\"NOR\",\"tpSessionTime\":0.0,\"tpDistance\":0.0,\
+  \\"tpSpeed\":309.8,\"tpThrottle\":1.0,\"tpBrake\":0.0,\
+  \\"tpGear\":8,\"tpRpm\":11650}]"
+
+-- | Muestra con solo los cuatro campos obligatorios (traza de posición sin
+-- canales de coche): decodifica y se descarta, en vez de publicar un frenazo y un
+-- punto muerto que FastF1 nunca midió.
+sampleWithoutCarData :: ByteString
+sampleWithoutCarData =
+  "[{\"tpDriver\":\"VER\",\"tpSessionTime\":0.5,\"tpDistance\":42.0,\
+  \\"tpSpeed\":298.1}]"
+
+-- | Sesión sin telemetría publicada. Es este @[]@ el que hace que el
+-- 'Handler.Telemetry.Context' caiga a cache\/dummy en vez de servir una tabla
+-- vacía.
+emptyArray :: ByteString
+emptyArray = "[]"
