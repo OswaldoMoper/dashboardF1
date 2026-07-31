@@ -32,8 +32,22 @@ instance ToJSON LiveTimingRow
 instance FromJSON LiveTimingRow
 
 -- | Punto de telemetría a lo largo de una vuelta.
+--
+-- La lista que sirve @\/api\/telemetry@ es __plana y multi-piloto__: trae la
+-- vuelta rápida de varios coches concatenada, así que cada punto va etiquetado
+-- con 'tpDriver' y el consumidor agrupa o filtra. Lista etiquetada en vez de
+-- lista anidada por el mismo criterio que hizo heterogéneo a 'HistoricalStat'
+-- (2026-07-29): el tipo de @Server.Api@ sigue siendo
+-- @[TelemetryPoint]@ y ni el enrutado ni el widget cambian de forma.
+--
+-- La identidad aquí es __solo el acrónimo__, a diferencia de 'HistoricalStat'
+-- (código + nombre + apellido, 2026-07-28): una fila de
+-- telemetría no es una fila de identidad — el acrónimo es la etiqueta de serie,
+-- y repetir tres campos de identidad en cada una de las ~60 muestras por piloto
+-- es payload sin información nueva. Ver (2026-07-31).
 data TelemetryPoint = TelemetryPoint
-  { tpSessionTime :: Double  -- ^ Tiempo de sesión en segundos.
+  { tpDriver      :: Text    -- ^ Acrónimo del piloto (p. ej. @"VER"@).
+  , tpSessionTime :: Double  -- ^ Tiempo de sesión en segundos.
   , tpDistance    :: Double  -- ^ Distancia recorrida en metros.
   , tpSpeed       :: Double
   , tpThrottle    :: Double

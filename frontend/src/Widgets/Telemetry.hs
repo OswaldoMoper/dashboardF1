@@ -44,13 +44,25 @@ telemetryWidget = divClass "widget widget--telemetry" $ do
         el "thead" $ el "tr" $ mapM_ (el "th" . text) headers
         el "tbody" $ mapM_ row points
 
+    -- 'Driver' encabeza la tabla porque la lista es __multi-piloto__: trae la
+    -- vuelta rápida de varios coches concatenada y sin la etiqueta las filas no
+    -- serían atribuibles (2026-07-31).
     headers :: [Text]
     headers =
-      ["Session Time", "Distance", "Speed", "Throttle", "Brake", "Gear", "RPM"]
+      [ "Driver"
+      , "Session Time"
+      , "Distance"
+      , "Speed"
+      , "Throttle"
+      , "Brake"
+      , "Gear"
+      , "RPM"
+      ]
 
     row :: DomBuilder t m => TelemetryPoint -> m ()
     row p = el "tr" $ mapM_ (el "td" . text)
-      [ T.pack (show (tpSessionTime p))
+      [ tpDriver p
+      , T.pack (show (tpSessionTime p))
       , T.pack (show (tpDistance p))
       , T.pack (show (tpSpeed p))
       , T.pack (show (tpThrottle p))
