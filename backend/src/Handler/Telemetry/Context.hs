@@ -6,18 +6,22 @@
 -- ('Handler.Telemetry.Helper') y el degradado @cache -> dummy@ con
 -- 'App.envTelemetryCache'.
 --
--- __Scaffold deliberado__: hoy devuelve solo el dummy, así que @\/api\/telemetry@
--- responde exactamente lo mismo que antes de existir este módulo. El fetch real
--- entra en su propio commit porque es el que cambia comportamiento observable y
--- hay que validarlo con el servicio encendido __y apagado__ — el camino
--- degradado importa aquí más que en las otras tres áreas, porque el servicio es
--- nuestro y estará apagado la mayor parte del tiempo (precedente: sesiones 2, 3
--- y 4 de Fase 3).
+-- El camino degradado importa aquí __más__ que en las otras tres áreas: los
+-- otros clientes hablan con servicios públicos que están siempre en pie,
+-- mientras que este es nuestro y estará apagado la mayor parte del tiempo. Que
+-- @\/api\/telemetry@ siga respondiendo con el servicio caído no es un extra, es
+-- el caso normal.
 module Handler.Telemetry.Context where
 
-import           App          (Env)
-import           Common.Types (TelemetryPoint (..))
-import           Data.Text    (Text)
+import           App                       (Env (..))
+import           Common.Types              (TelemetryPoint (..))
+import           Config                    (Config)
+import           Control.Concurrent.STM    (atomically, readTVarIO, writeTVar)
+import           Control.Exception         (SomeException, try)
+import           Data.Maybe                (fromMaybe)
+import           Data.Text                 (Text)
+import           Handler.Telemetry.Helper  (assemblePoints)
+import qualified Handler.Telemetry.Manager as Manager
 
 -- | Sesión que se consulta. @\/api\/telemetry@ no recibe parámetros, así que la
 -- elección es de este módulo. Los query params (sesión y piloto) son __deuda
@@ -33,11 +37,31 @@ defaultSession = "latest"
 defaultDrivers :: Text
 defaultDrivers = "all"
 
--- | Devuelve la telemetría de la vuelta rápida de cada piloto. Ignora el 'Env'
--- mientras no haya fetch real; la firma ya es la definitiva ('IO' + 'Env') para
--- que el commit siguiente toque solo el cuerpo y no al llamador.
+-- | Devuelve la telemetría de la vuelta rápida de cada piloto: intenta el fetch
+-- real; si funciona, refresca la cache y devuelve; ante fallo o lista vacía sirve
+-- la última respuesta buena; sin ninguna, el dummy (espejo exacto de
+-- 'Handler.Historical.Context.getHistorical').
+--
+-- La lista vacía cuenta como fallo, no como respuesta: el microservicio devuelve
+-- @[]@ cuando la sesión no publicó telemetría, y servir una tabla vacía sería
+-- peor que servir la vuelta anterior.
 getTelemetry :: Env -> IO [TelemetryPoint]
-getTelemetry _env = pure dummy
+getTelemetry env = do
+  result <- try (fetchPoints (envConfig env)) :: IO (Either SomeException [TelemetryPoint])
+  case result of
+    Right points | not (null points) -> do
+      atomically (writeTVar (envTelemetryCache env) (Just points))
+      pure points
+    _ -> do
+      cached <- readTVarIO (envTelemetryCache env)
+      pure (fromMaybe dummy cached)
+
+-- | El GET al microservicio y el mapeo puro, encadenados. Vive fuera del @try@
+-- del llamador solo por legibilidad: cualquier excepción que lance —servicio
+-- apagado, timeout, JSON con otra forma— la atrapa 'getTelemetry'.
+fetchPoints :: Config -> IO [TelemetryPoint]
+fetchPoints cfg =
+  assemblePoints <$> Manager.fetchTelemetry cfg defaultSession defaultDrivers
 
 -- | Telemetría dummy (respaldo cuando el microservicio nunca dio datos). Misma
 -- forma que emite 'Handler.Telemetry.Helper.assemblePoints' —lista plana con los
