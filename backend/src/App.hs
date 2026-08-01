@@ -13,6 +13,9 @@ import           Common.Types           (HistoricalStat, LiveTimingRow,
                                          TelemetryPoint, TyreStint)
 import           Config                 (Config)
 import           Control.Concurrent.STM (TVar, newTVarIO)
+import           Data.Map.Strict        (Map)
+import qualified Data.Map.Strict        as Map
+import           Data.Text              (Text)
 
 data Env = Env
   { envConfig          :: Config
@@ -22,10 +25,16 @@ data Env = Env
     -- ^ Última respuesta buena de @/api/tyre-strategy@ (respaldo si OpenF1 falla).
   , envHistoricalCache :: TVar (Maybe [HistoricalStat])
     -- ^ Última respuesta buena de @/api/historical@ (respaldo si Jolpica falla).
-  , envTelemetryCache  :: TVar (Maybe [TelemetryPoint])
-    -- ^ Última respuesta buena de @/api/telemetry@ (respaldo si el microservicio
-    -- FastF1 no responde). Vacía mientras el 'Handler.Telemetry.Context' sirva
-    -- solo el dummy.
+  , envTelemetryCache  :: TVar (Map (Text, Text) [TelemetryPoint])
+    -- ^ Última respuesta buena de @/api/telemetry@ __por clave__ @(sesión,
+    -- piloto)@ ya resuelta (respaldo si el microservicio FastF1 no responde).
+    --
+    -- Es la única de las cuatro cajas que no es un @Maybe@, y la diferencia no
+    -- es de rendimiento sino de __correctitud__: desde que el endpoint acepta
+    -- parámetros (2026-08-01), una caja única serviría la
+    -- última respuesta buena de @all@ a quien pidió un piloto concreto — datos
+    -- de otros coches presentados como suyos. Con clave, una combinación nunca
+    -- pedida degrada al dummy, que es honesto.
   }
 
 mkEnv :: Config -> IO Env
@@ -33,5 +42,5 @@ mkEnv cfg = do
   liveCache <- newTVarIO Nothing
   tyreCache <- newTVarIO Nothing
   historicalCache <- newTVarIO Nothing
-  telemetryCache <- newTVarIO Nothing
+  telemetryCache <- newTVarIO Map.empty
   pure (Env cfg liveCache tyreCache historicalCache telemetryCache)

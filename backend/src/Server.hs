@@ -38,11 +38,21 @@ instance ToJSON Home
 -- | API completa del backend. El @Raw@ final atrapa @/@ y toda ruta no-API,
 -- delegando en 'spaApp' (bundle del frontend). Va al final: Servant prueba en
 -- orden, así que @/home@ y @/api/*@ ganan y el resto cae en el SPA.
+--
+-- @/api/telemetry@ estrena los primeros 'QueryParam' del repo. Los dos son
+-- __opcionales__ (sin @Required@, así que el handler recibe 'Maybe'): sin
+-- parámetros el endpoint tiene que comportarse exactamente como antes de
+-- existir ellos, y es 'Handler.Telemetry.Context.resolveParams' quien aplica los
+-- defaults. El espejo del lado frontend es
+-- 'Common.Route.telemetryPathFor'.
 type Api =
        "home" :> Get '[JSON] Home
   :<|> "api" :> "live" :> Get '[JSON] [LiveTimingRow]
   :<|> "api" :> "historical" :> Get '[JSON] [HistoricalStat]
-  :<|> "api" :> "telemetry" :> Get '[JSON] [TelemetryPoint]
+  :<|> "api" :> "telemetry"
+         :> QueryParam "session" Text
+         :> QueryParam "driver" Text
+         :> Get '[JSON] [TelemetryPoint]
   :<|> "api" :> "comparison" :> Get '[JSON] LapComparison
   :<|> "api" :> "tyre-strategy" :> Get '[JSON] [TyreStint]
   :<|> Raw

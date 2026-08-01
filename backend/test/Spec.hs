@@ -1,5 +1,6 @@
 -- | Invariantes de la lógica pura de las áreas Historical
--- ('Handler.Historical.Helper') y Telemetry ('Handler.Telemetry.Helper').
+-- ('Handler.Historical.Helper') y Telemetry ('Handler.Telemetry.Helper' y la
+-- resolución de parámetros de 'Handler.Telemetry.Context').
 --
 -- Los fixtures son recortes reales de la respuesta de cada servicio en
 -- 'ByteString' y se decodifican con 'eitherDecodeStrict', así que cada caso
@@ -15,6 +16,7 @@ import           Data.ByteString           (ByteString)
 import qualified Data.Text                 as T
 import           Handler.Historical.Helper (Root, assembleConstructorStats,
                                             assembleStats, parseNum)
+import           Handler.Telemetry.Context (resolveParams)
 import           Handler.Telemetry.Helper  (FastF1Point, assemblePoints)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck     (prop)
@@ -101,6 +103,14 @@ main = hspec $ do
 
     it "devuelve [] sobre un arreglo vacío (sesión sin telemetría publicada)" $
       pointsOf emptyArray `shouldBe` []
+
+  describe "resolveParams" $ do
+    it "sin parámetros aplica los defaults, que es el comportamiento previo a que existieran" $
+      resolveParams Nothing Nothing `shouldBe` ("latest", "all")
+
+    it "respeta el parámetro presente y deja el ausente en su defecto" $ do
+      resolveParams (Just "2026-13-R") Nothing `shouldBe` ("2026-13-R", "all")
+      resolveParams Nothing (Just "1,4") `shouldBe` ("latest", "1,4")
 
 -- * Propiedades
 
