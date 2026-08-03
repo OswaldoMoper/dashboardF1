@@ -1,11 +1,18 @@
 """telemetry-service — FastF1 detrás de una interfaz HTTP estable.
 
 Microservicio que encapsula FastF1 para que el backend Haskell no tenga que
-hablar Python ni pandas. Fase 4: un solo endpoint,
-``GET /fastf1/telemetry/{session_key}/{driver}``, que devuelve un arreglo JSON
-plano de muestras de telemetría, cada una **etiquetada con el acrónimo del
-piloto** (``tpDriver``), con exactamente las claves de
-``Common.Types.TelemetryPoint`` para que el decode del backend sea directo.
+hablar Python ni pandas. Fase 4, dos endpoints:
+
+* ``GET /fastf1/telemetry/{session_key}/{driver}`` — arreglo JSON plano de
+  muestras de telemetría, cada una **etiquetada con el acrónimo del piloto**
+  (``tpDriver``), con exactamente las claves de
+  ``Common.Types.TelemetryPoint``.
+* ``GET /fastf1/comparison/{session_key}?drivers=1,16`` — **un objeto** (no una
+  lista) con las cinco claves de ``Common.Types.LapComparison``, comparando la
+  vuelta rápida de exactamente **dos** coches.
+
+En los dos casos las claves son las del DTO de Haskell, para que el decode del
+backend sea directo.
 
 Contrato con el lado Haskell (ver 2026-07-31):
 
@@ -21,13 +28,12 @@ Contrato con el lado Haskell (ver 2026-07-31):
   ``[]`` (no un error): el ``Handler.Telemetry.Context`` es quien decide caer a
   su cache o al dummy.
 
-Endpoints del contrato **todavía no implementados**
-(``docs/ARCHITECTURE.md §2.3``): ``GET /fastf1/laps/{session_key}`` y
-``GET /fastf1/comparison/{session_key}?drivers=VER,LEC``. El segundo alimenta
-``/api/comparison``, que es otra área de negocio y otra sesión.
+Endpoint del contrato **todavía no implementado**
+(``docs/ARCHITECTURE.md §2.3``): ``GET /fastf1/laps/{session_key}``.
 
 Variables de entorno: ``FASTF1_CACHE`` (default ``.fastf1-cache``) y
-``TELEMETRY_MAX_POINTS`` (default ``60``, muestras por piloto).
+``TELEMETRY_MAX_POINTS`` (default ``60``, muestras por piloto y puntos del
+delta de comparación).
 """
 
 from __future__ import annotations
@@ -144,6 +150,19 @@ def _resolve_drivers(session: Any, spec: str) -> List[str]:
     return numbers
 
 
+def _driver_label(session: Any, number: str) -> str:
+    """Acrónimo del piloto que va en ese coche, o el número si no se resuelve.
+
+    Entra número de coche y sale acrónimo: es la traducción que **solo** este
+    servicio sabe hacer, y la razón por la que los endpoints toman números
+    (``_resolve_drivers``) y devuelven acrónimos.
+    """
+    try:
+        return str(session.get_driver(number)["Abbreviation"])
+    except Exception:
+        return str(number)
+
+
 # ── Saneado numérico ──────────────────────────────────────────────────────────
 
 
@@ -171,6 +190,54 @@ def _seconds(value: Any) -> Optional[float]:
         return _num(value.total_seconds())
     except AttributeError:
         return _num(value)
+
+
+def _lap_time(value: Any) -> Optional[str]:
+    """Un tiempo de vuelta de FastF1 como ``M:SS.mmm``, o ``None``.
+
+    Formatear es trabajo de este servicio y no del ``Helper`` de Haskell
+    (2026-07-31): ``lcLapA``\\ /``lcLapB`` son ``Text`` en
+    el DTO, y un ``Timedelta`` de pandas pasado por ``str()`` daría
+    ``0 days 00:01:29.345000``.
+    """
+    total = _seconds(value)
+    if total is None or total < 0:
+        return None
+    minutes = int(total // 60)
+    # `06.3f` da `09.345`, no `9.345`: los segundos van siempre a dos dígitos.
+    return f"{minutes}:{total - minutes * 60:06.3f}"
+
+
+def _interp(x: float, xs: List[float], ys: List[float]) -> Optional[float]:
+    """``y`` en ``x`` por interpolación lineal sobre ``xs``, que debe crecer.
+
+    Fuera del rango **satura** en el extremo en vez de extrapolar: las dos
+    vueltas no cubren exactamente la misma distancia, y extrapolar inventaría
+    tiempo donde no hay traza.
+
+    A mano y no con ``numpy.interp`` a propósito: este módulo evita las
+    dependencias científicas en la superficie (ver ``_latest_race``, que detecta
+    ``NaT`` con ``date != date`` para no importar pandas), y con ≤60 puntos la
+    bisección es gratis. Además ``requirements.txt`` no está pineado, así que
+    cada API de librería que se usa es superficie que puede cambiar sola.
+    """
+    if not xs:
+        return None
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    lo, hi = 0, len(xs) - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if xs[mid] <= x:
+            lo = mid
+        else:
+            hi = mid
+    span = xs[hi] - xs[lo]
+    if span == 0:
+        return ys[lo]
+    return ys[lo] + (ys[hi] - ys[lo]) * (x - xs[lo]) / span
 
 
 def _sample(label: str, row: Any) -> Optional[Dict[str, Any]]:
@@ -237,10 +304,7 @@ def _driver_points(session: Any, number: str) -> List[Dict[str, Any]]:
     if len(telemetry) == 0:
         return []
 
-    try:
-        label = str(session.get_driver(number)["Abbreviation"])
-    except Exception:
-        label = str(number)
+    label = _driver_label(session, number)
 
     step = max(1, len(telemetry) // MAX_POINTS)
     points: List[Dict[str, Any]] = []
@@ -264,3 +328,117 @@ def telemetry(session_key: str, driver: str) -> List[Dict[str, Any]]:
     for number in _resolve_drivers(session, driver):
         points.extend(_driver_points(session, number))
     return points
+
+
+# ── Comparación de vueltas ────────────────────────────────────────────────────
+
+
+def _lap_trace(
+    session: Any, number: str
+) -> Optional[Tuple[str, str, List[float], List[float]]]:
+    """``(acrónimo, tiempo de vuelta, distancias, tiempos)`` de la vuelta rápida.
+
+    Espejo estructural de ``_driver_points``, pero devuelve la vuelta como **dos
+    series paralelas** en vez de muestras: es la forma que necesita ``_interp``
+    para leer el tiempo de un coche a la distancia del otro.
+
+    ``None`` si el coche no tiene vuelta comparable (no salió, sin telemetría,
+    ``LapTime`` ausente, o menos de dos puntos útiles). Quien decide qué hacer
+    con eso es el endpoint, no esta función.
+    """
+    try:
+        lap = session.laps.pick_drivers([number]).pick_fastest()
+    except Exception:
+        return None
+    if lap is None or getattr(lap, "empty", False):
+        return None
+
+    lap_time = _lap_time(lap["LapTime"])
+    if lap_time is None:
+        return None
+
+    try:
+        telemetry = lap.get_car_data().add_distance()
+    except Exception:
+        return None
+
+    distances: List[float] = []
+    times: List[float] = []
+    for _, row in telemetry.iterrows():
+        distance = _num(row.get("Distance"))
+        elapsed = _seconds(row.get("Time"))
+        if distance is None or elapsed is None:
+            continue
+        # `Distance` tiene que ser estrictamente creciente: `_interp` busca por
+        # bisección y un retroceso (ruido de GPS, muestra repetida) rompería el
+        # invariante en silencio.
+        if distances and distance <= distances[-1]:
+            continue
+        distances.append(distance)
+        times.append(elapsed)
+
+    if len(distances) < 2:
+        return None
+    return _driver_label(session, number), lap_time, distances, times
+
+
+@app.get("/fastf1/comparison/{session_key}")
+def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
+    """Comparación de la vuelta rápida de **exactamente dos** coches.
+
+    Devuelve **un objeto**, no una lista: ``LapComparison`` tiene A y B, así que
+    ``?drivers=1`` o ``?drivers=1,4,16`` (y ``all``) son un **400**, no una
+    respuesta parcial.
+
+    ``lcDelta`` es el delta acumulado **A−B** sobre la rejilla de distancias de
+    A: en cada punto, el tiempo que A llevaba menos el que B llevaba a esa misma
+    distancia. Positivo = A va por detrás. Submuestreado con el mismo
+    ``TELEMETRY_MAX_POINTS`` que la telemetría, y saneado con ``_num``, porque un
+    solo ``NaN`` tumba el decode del objeto **completo** en aeson.
+
+    Una sesión sin vueltas comparables devuelve ``lcDelta: []`` y los tiempos en
+    ``""``, **no un error**: degradar es trabajo del backend
+    (2026-07-31), y las cinco claves están siempre.
+    """
+    session = _resolve_session(session_key)
+    numbers = _resolve_drivers(session, drivers)
+    if len(numbers) != 2:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "drivers debe ser exactamente dos números de coche "
+                "(p. ej. '1,16'); la comparación es de A contra B"
+            ),
+        )
+
+    trace_a = _lap_trace(session, numbers[0])
+    trace_b = _lap_trace(session, numbers[1])
+    if trace_a is None or trace_b is None:
+        return {
+            "lcDriverA": _driver_label(session, numbers[0]),
+            "lcDriverB": _driver_label(session, numbers[1]),
+            "lcLapA": "",
+            "lcLapB": "",
+            "lcDelta": [],
+        }
+
+    label_a, lap_a, distances_a, times_a = trace_a
+    label_b, lap_b, distances_b, times_b = trace_b
+
+    step = max(1, len(distances_a) // MAX_POINTS)
+    delta: List[float] = []
+    for index in range(0, len(distances_a), step):
+        reference = _interp(distances_a[index], distances_b, times_b)
+        if reference is None:
+            continue
+        value = _num(times_a[index] - reference)
+        if value is not None:
+            delta.append(value)
+
+    return {
+        "lcDriverA": label_a,
+        "lcDriverB": label_b,
+        "lcLapA": lap_a,
+        "lcLapB": lap_b,
+        "lcDelta": delta,
+    }

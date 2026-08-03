@@ -2,7 +2,7 @@
 
 Microservicio Python que encapsula FastF1 para exponer telemetría avanzada y comparación de vueltas mediante una interfaz HTTP estable consumida por el backend Haskell. Ver [`docs/ARCHITECTURE.md §2.3`](../docs/ARCHITECTURE.md#23-microservicio-fastf1-python).
 
-> **Estado (Fase 4):** el endpoint de telemetría está implementado en [`main.py`](main.py). Los de vueltas y comparación siguen pendientes. El empaquetado como derivación Nix también está pendiente: `fastf1` arrastra pandas/numpy/matplotlib y no bloquea nada hoy (2026-07-31).
+> **Estado (Fase 4):** los endpoints de telemetría y comparación están implementados en [`main.py`](main.py). El de vueltas sigue pendiente. El empaquetado como derivación Nix también está pendiente: `fastf1` arrastra pandas/numpy/matplotlib y no bloquea nada hoy (2026-07-31).
 
 ## Cómo levantarlo
 
@@ -22,7 +22,7 @@ El backend Haskell lo localiza con `TELEMETRY_HOST` (default `127.0.0.1`) y `TEL
 | Variable | Default | Qué hace |
 | --- | --- | --- |
 | `FASTF1_CACHE` | `.fastf1-cache` | Directorio de cache de FastF1 (se crea si no existe). **La primera llamada a una sesión nueva descarga datos y tarda minutos**; con la cache caliente responde al instante. |
-| `TELEMETRY_MAX_POINTS` | `60` | Muestras por piloto tras el submuestreo. Una vuelta a 10 Hz son miles de muestras y el widget pinta una tabla. |
+| `TELEMETRY_MAX_POINTS` | `60` | Muestras por piloto tras el submuestreo, y puntos del delta de `/fastf1/comparison`. Una vuelta a 10 Hz son miles de muestras y el widget pinta una tabla. |
 
 ## Endpoints
 
@@ -52,7 +52,28 @@ Contrato con el lado Haskell (2026-07-31):
 
 Nota operativa: las sesiones cargadas se memorizan en proceso, así que **`latest` se congela mientras `uvicorn` viva**. Reiniciarlo para volver a resolverlo.
 
+### `GET /fastf1/comparison/{session_key}?drivers=1,16` — implementado
+
+- **`session_key`**: igual que en telemetría.
+- **`drivers`**: **exactamente dos** números de coche. Obligatorio. `all`, uno solo o tres son **`400`**: `LapComparison` tiene A y B, no una lista, así que no hay respuesta parcial que dar.
+- **Vuelta**: la **más rápida** de cada coche, igual que en telemetría.
+
+Devuelve **un objeto** (no un arreglo) con las cinco claves de `Common.Types.LapComparison`:
+
+```sh
+curl 'localhost:8000/fastf1/comparison/latest?drivers=1,16'
+```
+
+```json
+{"lcDriverA":"VER","lcDriverB":"LEC","lcLapA":"1:29.345","lcLapB":"1:29.512",
+ "lcDelta":[0.0,-0.048,0.081,0.124,0.167]}
+```
+
+- **`lcDelta` es el delta acumulado A−B** sobre la rejilla de distancias de A: en cada punto, el tiempo que A llevaba menos el que B llevaba **a esa misma distancia**, interpolado linealmente. Positivo = A va por detrás. Submuestreado con `TELEMETRY_MAX_POINTS` y saneado con el mismo criterio de `NaN` (un solo `NaN` tumbaría el decode del objeto **completo**).
+- **El servicio formatea los tiempos** (`M:SS.mmm`): `lcLapA`/`lcLapB` son `Text` en el DTO, y un `Timedelta` por `str()` daría `0 days 00:01:29.345000`.
+- **Entra número de coche, sale acrónimo**: la traducción la sabe hacer solo este servicio (`session.get_driver`). Mismo vocabulario que `/fastf1/telemetry`.
+- **Degradar es del backend.** Una sesión sin vueltas comparables devuelve `lcDelta: []` y los tiempos en `""`, no un error: `Handler.Comparison.Context` es quien cae a su cache o al dummy. Las cinco claves están siempre.
+
 ### Pendientes
 
 - `GET /fastf1/laps/{session_key}`
-- `GET /fastf1/comparison/{session_key}?drivers=VER,LEC` — alimenta `/api/comparison`, que es otra área de negocio y otra sesión.

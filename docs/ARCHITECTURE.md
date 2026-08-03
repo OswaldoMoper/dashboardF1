@@ -79,7 +79,11 @@ Endpoints:
 
 - `/fastf1/telemetry/{session_key}/{driver}`
 - `/fastf1/laps/{session_key}`
-- `/fastf1/comparison/{session_key}?drivers=VER,LEC`
+- `/fastf1/comparison/{session_key}?drivers=1,16`
+
+`driver`/`drivers` son **números de coche** (o `all` en telemetría), no acrónimos: la traducción
+número→acrónimo la conoce solo el microservicio, así que entra número y **sale acrónimo**
+(2026-08-01 y 2026-08-03). La comparación es de **exactamente dos** coches.
 
 ---
 
