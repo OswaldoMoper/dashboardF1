@@ -22,7 +22,10 @@ import qualified Handler.Live                   as Live
 import qualified Handler.Telemetry              as Telemetry
 import qualified Handler.TyreStrategy           as TyreStrategy
 import           Network.HTTP.Types             (hContentType, status200)
-import           Network.Wai                    (Application, responseFile)
+-- 'Application' no se importa aquí: lo reexporta 'Servant', y pedirlo también a
+-- 'Network.Wai' era el warning de @-Wall@ que este archivo arrastraba desde la
+-- Fase 2.
+import           Network.Wai                    (responseFile)
 import           Network.Wai.Application.Static (defaultWebAppSettings,
                                                  staticApp)
 import           Servant
@@ -39,12 +42,17 @@ instance ToJSON Home
 -- delegando en 'spaApp' (bundle del frontend). Va al final: Servant prueba en
 -- orden, así que @/home@ y @/api/*@ ganan y el resto cae en el SPA.
 --
--- @/api/telemetry@ estrena los primeros 'QueryParam' del repo. Los dos son
--- __opcionales__ (sin @Required@, así que el handler recibe 'Maybe'): sin
--- parámetros el endpoint tiene que comportarse exactamente como antes de
--- existir ellos, y es 'Handler.Telemetry.Context.resolveParams' quien aplica los
--- defaults. El espejo del lado frontend es
--- 'Common.Route.telemetryPathFor'.
+-- @/api/telemetry@ estrena los primeros 'QueryParam' del repo y
+-- @/api/comparison@ los repite. Todos son __opcionales__ (sin @Required@, así
+-- que el handler recibe 'Maybe'): sin parámetros cada endpoint tiene que
+-- comportarse exactamente como antes de existir ellos, y es el @resolveParams@
+-- del @Context@ de cada área quien aplica los defaults. Los espejos del lado
+-- frontend son 'Common.Route.telemetryPathFor' y
+-- 'Common.Route.comparisonPathFor'.
+--
+-- Nótese que el parámetro de comparación es @drivers@ en plural y no @driver@:
+-- la comparación es de __exactamente dos__ coches y el microservicio responde
+-- 400 a cualquier otra cantidad, mientras que el de telemetría admite @all@.
 type Api =
        "home" :> Get '[JSON] Home
   :<|> "api" :> "live" :> Get '[JSON] [LiveTimingRow]
@@ -53,7 +61,10 @@ type Api =
          :> QueryParam "session" Text
          :> QueryParam "driver" Text
          :> Get '[JSON] [TelemetryPoint]
-  :<|> "api" :> "comparison" :> Get '[JSON] LapComparison
+  :<|> "api" :> "comparison"
+         :> QueryParam "session" Text
+         :> QueryParam "drivers" Text
+         :> Get '[JSON] LapComparison
   :<|> "api" :> "tyre-strategy" :> Get '[JSON] [TyreStint]
   :<|> Raw
 

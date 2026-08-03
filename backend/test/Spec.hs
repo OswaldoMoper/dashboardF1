@@ -1,6 +1,7 @@
 -- | Invariantes de la lógica pura de las áreas Historical
--- ('Handler.Historical.Helper') y Telemetry ('Handler.Telemetry.Helper' y la
--- resolución de parámetros de 'Handler.Telemetry.Context').
+-- ('Handler.Historical.Helper'), Telemetry ('Handler.Telemetry.Helper' y la
+-- resolución de parámetros de 'Handler.Telemetry.Context') y Comparison
+-- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context').
 --
 -- Los fixtures son recortes reales de la respuesta de cada servicio en
 -- 'ByteString' y se decodifican con 'eitherDecodeStrict', así que cada caso
@@ -9,15 +10,19 @@
 -- precisamente los campos opcionales, que viven en el decode.
 module Main (main) where
 
-import           Common.Types              (HistoricalStat (..), StatEntity (..),
-                                            TelemetryPoint (..))
-import           Data.Aeson                (eitherDecodeStrict)
-import           Data.ByteString           (ByteString)
-import qualified Data.Text                 as T
-import           Handler.Historical.Helper (Root, assembleConstructorStats,
-                                            assembleStats, parseNum)
-import           Handler.Telemetry.Context (resolveParams)
-import           Handler.Telemetry.Helper  (FastF1Point, assemblePoints)
+import           Common.Types                (HistoricalStat (..),
+                                              LapComparison (..),
+                                              StatEntity (..),
+                                              TelemetryPoint (..))
+import           Data.Aeson                  (eitherDecodeStrict)
+import           Data.ByteString             (ByteString)
+import qualified Data.Text                   as T
+import qualified Handler.Comparison.Context  as Comparison
+import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
+import           Handler.Historical.Helper   (Root, assembleConstructorStats,
+                                              assembleStats, parseNum)
+import qualified Handler.Telemetry.Context   as Telemetry
+import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck     (prop)
 import           Test.QuickCheck           (Property, (===))
@@ -104,13 +109,50 @@ main = hspec $ do
     it "devuelve [] sobre un arreglo vacío (sesión sin telemetría publicada)" $
       pointsOf emptyArray `shouldBe` []
 
-  describe "resolveParams" $ do
+  describe "Telemetry.resolveParams" $ do
     it "sin parámetros aplica los defaults, que es el comportamiento previo a que existieran" $
-      resolveParams Nothing Nothing `shouldBe` ("latest", "all")
+      Telemetry.resolveParams Nothing Nothing `shouldBe` ("latest", "all")
 
     it "respeta el parámetro presente y deja el ausente en su defecto" $ do
-      resolveParams (Just "2026-13-R") Nothing `shouldBe` ("2026-13-R", "all")
-      resolveParams Nothing (Just "1,4") `shouldBe` ("latest", "1,4")
+      Telemetry.resolveParams (Just "2026-13-R") Nothing `shouldBe` ("2026-13-R", "all")
+      Telemetry.resolveParams Nothing (Just "1,4") `shouldBe` ("latest", "1,4")
+
+  describe "assembleComparison" $ do
+    it "mapea las cinco claves del objeto conservando el orden de la serie del delta" $
+      comparisonOf comparisonObject
+        `shouldBe`
+          MkLapComparison
+            { lcDriverA = "VER"
+            , lcDriverB = "LEC"
+            , lcLapA = "1:29.345"
+            , lcLapB = "1:29.512"
+            , lcDelta = [0.0, -0.048, 0.081, 0.167]
+            }
+
+    it "decodifica la sesión sin vueltas comparables en vez de fallar el parseo" $
+      -- Es este objeto el que hace que el criterio de fallo del Context sea
+      -- `null . lcDelta`: llega bien formado, así que el `try` no lo ve, y sin
+      -- delta no hay nada que dibujar.
+      comparisonOf comparisonWithoutDelta
+        `shouldBe`
+          MkLapComparison
+            { lcDriverA = "VER"
+            , lcDriverB = "LEC"
+            , lcLapA = ""
+            , lcLapB = ""
+            , lcDelta = []
+            }
+
+    it "trata la clave lcDelta ausente igual que la serie vacía" $
+      lcDelta (comparisonOf comparisonWithoutDeltaKey) `shouldBe` []
+
+  describe "Comparison.resolveParams" $ do
+    it "sin parámetros compara los dos coches del dummy, en números y no en acrónimos" $
+      Comparison.resolveParams Nothing Nothing `shouldBe` ("latest", "1,16")
+
+    it "respeta el parámetro presente y deja el ausente en su defecto" $ do
+      Comparison.resolveParams (Just "2026-13-Q") Nothing `shouldBe` ("2026-13-Q", "1,16")
+      Comparison.resolveParams Nothing (Just "44,63") `shouldBe` ("latest", "44,63")
 
 -- * Propiedades
 
@@ -150,6 +192,18 @@ pointsOf = assemblePoints . decodePoints
 
 decodePoints :: ByteString -> [FastF1Point]
 decodePoints raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
+
+-- | Espejo de 'pointsOf' para el área Comparison. Aquí el par decode + ensamblado
+-- importa __más__ que en las otras dos: el criterio del área vive precisamente en
+-- que el objeto sin delta __decodifique__ (@.:? … .!= []@) para que el @Context@
+-- pueda tratarlo como fallo. Probar 'assembleComparison' sobre un
+-- 'RawComparison' construido a mano no cubriría eso.
+comparisonOf :: ByteString -> LapComparison
+comparisonOf = assembleComparison . decodeComparison
+
+decodeComparison :: ByteString -> RawComparison
+decodeComparison raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
 
 -- * Fixtures
@@ -261,3 +315,30 @@ sampleWithoutCarData =
 -- vacía.
 emptyArray :: ByteString
 emptyArray = "[]"
+
+-- | Recorte de @GET \/fastf1\/comparison\/{session_key}?drivers=1,16@: __un
+-- objeto__, no un arreglo, con las cinco claves. Es la única respuesta del repo
+-- que no es una colección, y de ahí que el área necesite su propio criterio de
+-- fallo.
+comparisonObject :: ByteString
+comparisonObject =
+  "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
+  \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\",\
+  \\"lcDelta\":[0.0,-0.048,0.081,0.167]}"
+
+-- | Sesión sin vueltas comparables: el servicio emite el objeto completo con
+-- @lcDelta@ vacío y los tiempos en @\"\"@ en vez de un error, porque degradar es
+-- trabajo del backend (2026-07-31).
+comparisonWithoutDelta :: ByteString
+comparisonWithoutDelta =
+  "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
+  \\"lcLapA\":\"\",\"lcLapB\":\"\",\"lcDelta\":[]}"
+
+-- | La clave @lcDelta@ __ausente__, no vacía. El servicio de hoy siempre la emite,
+-- así que este caso protege contra un cambio futuro del contrato: con @.:@ tumbaría
+-- el decode del objeto completo y el degradado ocurriría por excepción de parseo en
+-- vez de por el criterio del 'Handler.Comparison.Context'.
+comparisonWithoutDeltaKey :: ByteString
+comparisonWithoutDeltaKey =
+  "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
+  \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\"}"

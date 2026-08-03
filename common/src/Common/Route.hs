@@ -9,6 +9,8 @@ module Common.Route
   , livePath
   , telemetryPath
   , telemetryPathFor
+  , comparisonPath
+  , comparisonPathFor
   , historicalPath
   ) where
 
@@ -66,11 +68,40 @@ telemetryPath = apiPath TelemetryApi
 --   vocabulario del __widget__ (@tpDriver@), no el de la API.
 telemetryPathFor :: Maybe Text -> Maybe Text -> Text
 telemetryPathFor session driver =
-  case catMaybes [param "session" session, param "driver" driver] of
-    []     -> telemetryPath
-    params -> telemetryPath <> "?" <> T.intercalate "&" params
-  where
-    param key = fmap (\value -> key <> "=" <> value)
+  pathWith telemetryPath [("session", session), ("driver", driver)]
+
+-- | Atajo para el endpoint de comparación de vueltas.
+comparisonPath :: Text
+comparisonPath = apiPath ComparisonApi
+
+-- | Path de comparación con sesión y\/o coches en el query string, omitiendo los
+-- ausentes: sin ninguno devuelve 'comparisonPath' tal cual. Espejo del
+-- @QueryParam \"session\" :> QueryParam \"drivers\"@ de @Server.Api@ — ambos
+-- opcionales en los dos extremos.
+--
+-- Hereda los dos supuestos de 'telemetryPathFor' (sin escapado de query; los
+-- valores son números de coche, no acrónimos) y añade uno propio: __@drivers@ son
+-- exactamente dos__, separados por coma (@\"1,16\"@). El microservicio responde
+-- 400 a cualquier otra cantidad, así que no hay análogo del @all@ de telemetría —
+-- 'Common.Types.LapComparison' tiene A y B, no una lista.
+comparisonPathFor :: Maybe Text -> Maybe Text -> Text
+comparisonPathFor session drivers =
+  pathWith comparisonPath [("session", session), ("drivers", drivers)]
+
+-- | Un path con los parámetros presentes en el query string, en el orden dado, y
+-- sin @?@ cuando no hay ninguno. Único sitio del módulo que compone query
+-- strings: lo comparten 'telemetryPathFor' y 'comparisonPathFor', y con el
+-- segundo endpoint parametrizado la alternativa era el mismo @case@ duplicado dos
+-- veces.
+--
+-- Aquí vive el supuesto de __no escapar__: correcto para los valores de hoy
+-- (alfanuméricos, guiones y comas), y el día que uno admita espacios o @&@ este es
+-- el único punto que hay que cambiar.
+pathWith :: Text -> [(Text, Maybe Text)] -> Text
+pathWith path params =
+  case catMaybes [fmap ((key <> "=") <>) value | (key, value) <- params] of
+    []      -> path
+    present -> path <> "?" <> T.intercalate "&" present
 
 -- | Atajo para el endpoint de estadísticas históricas.
 historicalPath :: Text

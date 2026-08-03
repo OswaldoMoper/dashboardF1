@@ -44,6 +44,9 @@ library
         Handler.Telemetry.Helper
         Handler.Telemetry.Manager
         Handler.Comparison
+        Handler.Comparison.Context
+        Handler.Comparison.Helper
+        Handler.Comparison.Manager
         Handler.TyreStrategy
         Handler.TyreStrategy.Context
         Handler.TyreStrategy.Helper

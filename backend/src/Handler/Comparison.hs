@@ -1,24 +1,23 @@
 -- | Área comparación de vueltas — capa de interfaz (BUSINESS).
 --
--- Expone @GET \/api\/comparison@. Fase 1: dummy estático (ignora el 'Env'); en
--- Fase 4 lo alimenta un @Handler.Comparison.Manager@ (FastF1), orquestado por
--- un @Handler.Comparison.Context@.
+-- Expone @GET \/api\/comparison@ y delega en 'Handler.Comparison.Context', que
+-- orquesta el caso de uso: fetch al microservicio FastF1, cache STM con clave y
+-- respaldo al dummy. El dummy que vivía aquí desde la Fase 1 se mudó al
+-- 'Handler.Comparison.Context', como en las otras cuatro áreas.
 module Handler.Comparison where
 
-import           App          (Env)
-import           Common.Types (LapComparison (..))
-import           Servant      (Handler)
+import           App                        (Env)
+import           Common.Types               (LapComparison)
+import           Control.Monad.IO.Class     (liftIO)
+import           Data.Text                  (Text)
+import qualified Handler.Comparison.Context as Context
+import           Servant                    (Handler)
 
-comparisonHandler :: Env -> Handler LapComparison
-comparisonHandler _env = pure dummy
-
--- | Comparación dummy entre dos drivers (placeholder de FastF1).
-dummy :: LapComparison
-dummy =
-  MkLapComparison
-    { lcDriverA = "VER"
-    , lcDriverB = "LEC"
-    , lcLapA = "1:29.345"
-    , lcLapB = "1:29.512"
-    , lcDelta = [0.0, -0.05, 0.08, 0.12, 0.167]
-    }
+-- | Los dos 'Maybe' vienen de los @QueryParam@ opcionales de 'Server.Api' y bajan
+-- sin interpretar: quien decide qué significa su ausencia es
+-- 'Handler.Comparison.Context.resolveParams'. Espejo de
+-- 'Handler.Telemetry.telemetryHandler', que es el otro endpoint parametrizado del
+-- repo.
+comparisonHandler :: Env -> Maybe Text -> Maybe Text -> Handler LapComparison
+comparisonHandler env session drivers =
+  liftIO (Context.getComparison env session drivers)

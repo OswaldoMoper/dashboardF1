@@ -1,0 +1,106 @@
+-- | Área comparación de vueltas — orquestación del caso de uso.
+--
+-- Quinta y última área de la Fase 4, y la primera cuya respuesta es __un
+-- objeto__ y no una colección. La escalera es la misma de las otras cuatro
+-- (@try@ → cache → dummy, 2026-07-22) pero el criterio de
+-- fallo no puede ser el habitual: no hay lista vacía que mirar.
+--
+-- El criterio es @'null' . 'lcDelta'@ (2026-08-03). Es el
+-- análogo exacto de la lista vacía de las otras áreas: @lcDelta@ es la única
+-- serie del DTO —los otros cuatro campos son etiquetas— y sin ella no hay nada
+-- que dibujar, así que un objeto bien formado y sin delta es tan poco servible
+-- como una tabla vacía. Sin este criterio, el @try@ solo cubriría el servicio
+-- caído, el 404 y el JSON con otra forma: la comparación sin traza pasaría
+-- limpia hasta el widget.
+module Handler.Comparison.Context where
+
+import           App                        (Env (..))
+import           Common.Types               (LapComparison (..))
+import           Config                     (Config)
+import           Control.Concurrent.STM     (atomically, modifyTVar', readTVarIO)
+import           Control.Exception          (SomeException, try)
+import           Data.Map.Strict            (Map)
+import qualified Data.Map.Strict            as Map
+import           Data.Maybe                 (fromMaybe)
+import           Data.Text                  (Text)
+import           Handler.Comparison.Helper  (assembleComparison)
+import qualified Handler.Comparison.Manager as Manager
+
+-- | Sesión que se consulta cuando @\/api\/comparison@ no recibe @?session=@.
+-- @latest@ es la última carrera disputada, resuelta por el microservicio.
+defaultSession :: Text
+defaultSession = "latest"
+
+-- | Coches que se comparan cuando @\/api\/comparison@ no recibe @?drivers=@:
+-- __números de coche__, no acrónimos, porque es lo que acepta el microservicio
+-- (2026-08-01). Son los dos del 'dummy' —@1@ es VER y @16@
+-- es LEC—, para que la respuesta sin parámetros y el respaldo hablen de los
+-- mismos coches.
+--
+-- __Exactamente dos.__ El servicio responde 400 a cualquier otra cantidad, así
+-- que no hay defecto análogo al @all@ de telemetría: 'Common.Types.LapComparison'
+-- tiene A y B, no una lista.
+defaultDrivers :: Text
+defaultDrivers = "1,16"
+
+-- | Aplica los defaults a los @QueryParam@ opcionales de 'Server.Api'. Espejo de
+-- 'Handler.Telemetry.Context.resolveParams', y por la misma razón: es lo único
+-- testeable sin red del módulo, y el par que devuelve es también la __clave de
+-- cache__, resuelta una sola vez y aquí para que @?session=latest@ y la ausencia
+-- del parámetro no ocupen dos entradas con el mismo contenido.
+resolveParams :: Maybe Text -> Maybe Text -> (Text, Text)
+resolveParams session drivers =
+  (fromMaybe defaultSession session, fromMaybe defaultDrivers drivers)
+
+-- | Devuelve la comparación de la vuelta rápida de dos coches: intenta el fetch
+-- real; si funciona __y trae delta__, refresca la cache y devuelve; ante fallo o
+-- delta vacío sirve la última respuesta buena __de esa misma clave__; sin
+-- ninguna, el dummy.
+--
+-- La cache nace con clave, sin fase intermedia de caja única: es aplicación
+-- directa del 2026-08-01 —no una re-discusión— y nacer sin ella sería
+-- reintroducir a sabiendas el bug que esa decisión arregló, con el mismo agravante
+-- de silencio (una petición de dos coches recibiría la comparación de otros dos
+-- presentada como suya).
+getComparison :: Env -> Maybe Text -> Maybe Text -> IO LapComparison
+getComparison env session drivers = do
+  let key@(sessionKey, driversKey) = resolveParams session drivers
+  result <-
+    try (fetchLapComparison (envConfig env) sessionKey driversKey)
+      :: IO (Either SomeException LapComparison)
+  case result of
+    Right comparison | not (null (lcDelta comparison)) -> do
+      atomically (modifyTVar' (envComparisonCache env) (Map.insert key comparison))
+      pure comparison
+    _ -> do
+      cached <- readTVarIO (envComparisonCache env)
+      pure (lookupCached key cached)
+
+-- | Respaldo para una clave: la última respuesta buena de __esa__ combinación, o
+-- el dummy. Nunca la de otra clave (espejo de
+-- 'Handler.Telemetry.Context.lookupCached').
+lookupCached :: (Text, Text) -> Map (Text, Text) LapComparison -> LapComparison
+lookupCached key = fromMaybe dummy . Map.lookup key
+
+-- | El GET al microservicio y el mapeo puro, encadenados. Vive fuera del @try@
+-- del llamador solo por legibilidad: cualquier excepción que lance —servicio
+-- apagado, timeout, JSON con otra forma, o un @400@ porque @drivers@ no son
+-- exactamente dos números de coche— la atrapa 'getComparison'.
+fetchLapComparison :: Config -> Text -> Text -> IO LapComparison
+fetchLapComparison cfg sessionKey driversKey =
+  assembleComparison <$> Manager.fetchComparison cfg sessionKey driversKey
+
+-- | Comparación dummy (respaldo cuando el microservicio nunca dio datos). Se muda
+-- aquí desde 'Handler.Comparison', como en las otras cuatro áreas. Misma forma que
+-- emite 'Handler.Comparison.Helper.assembleComparison' —acrónimos, tiempos ya
+-- formateados y un delta no vacío—, para que el widget de comparación sea
+-- ejercitable sin el servicio levantado.
+dummy :: LapComparison
+dummy =
+  MkLapComparison
+    { lcDriverA = "VER"
+    , lcDriverB = "LEC"
+    , lcLapA = "1:29.345"
+    , lcLapB = "1:29.512"
+    , lcDelta = [0.0, -0.05, 0.08, 0.12, 0.167]
+    }
