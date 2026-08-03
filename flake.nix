@@ -82,9 +82,14 @@
             python3Packages.pip
             python3Packages.virtualenv
           ];
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            pkgs.stdenv.cc.cc.lib
+            pkgs.zlib
+          ];
           shellHook = ''
             echo "telemetry-service — Python dev shell (FastF1, Fase 4)"
-            echo "  deps declaradas en telemetry-service/requirements.txt (sin lógica aún)"
+            echo "  venv:  python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt"
+            echo "  correr: cd telemetry-service && uvicorn main:app   (:8000)"
           '';
         };
       };
