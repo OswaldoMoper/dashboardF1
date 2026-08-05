@@ -85,6 +85,8 @@ Endpoints:
 número→acrónimo la conoce solo el microservicio, así que entra número y **sale acrónimo**
 (2026-08-01 y 2026-08-03). La comparación es de **exactamente dos** coches.
 
+La comparación devuelve **también el número de coche** (`lcCarA`/`lcCarB`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**. La forma completa de resolver el desajuste es exponer la parrilla como dato (`GET /fastf1/drivers/{session_key}`, pendiente).
+
 ---
 
 ### 2.4 Módulo de Analítica (Haskell)
