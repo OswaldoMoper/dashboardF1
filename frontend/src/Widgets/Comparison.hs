@@ -4,12 +4,13 @@
 -- | Widget de Comparación de Vueltas (categoría LapComparison).
 --
 -- Consume @GET \/api\/comparison@ en runtime vía 'Client.fetchJson' +
--- 'Common.Route.comparisonPath' (relativo, misma-origen), con los tres estados
--- del fetch ('Loading' \/ 'Failed' \/ 'Loaded') y sin datos dummy locales, igual
--- que 'Widgets.LiveTiming', 'Widgets.Telemetry' e 'Widgets.Historical'.
+-- 'Common.Route.comparisonPath' al arrancar y 'Common.Route.comparisonPathFor'
+-- al elegir coches (relativos, misma-origen), con los tres estados del fetch
+-- ('Loading' \/ 'Failed' \/ 'Loaded') y sin datos dummy locales, igual que
+-- 'Widgets.LiveTiming', 'Widgets.Telemetry' e 'Widgets.Historical'.
 --
 -- __Es el primer widget del repo que pinta una serie y no una tabla.__ De los
--- cinco campos de 'Common.Types.LapComparison', cuatro son etiquetas triviales
+-- siete campos de 'Common.Types.LapComparison', seis son etiquetas
 -- —@lcLapA@\/@lcLapB@ vienen __ya formateadas__ desde el microservicio
 -- (2026-07-31), así que aquí no se parsea ni se calcula
 -- nada con ellas— y todo el interés está en @lcDelta@.
@@ -23,18 +24,27 @@
 -- nodo bajo un gráfico imperativo, que es justo lo que pasa aquí al conmutar de
 -- layout.
 --
--- __Un solo 'dyn_'__, a diferencia de 'Widgets.Telemetry': allí las opciones del
--- selector salen de la respuesta y obligan a anidar; aquí no hay selector.
--- Elegir los dos coches es sesión propia y necesita resolver el desajuste de
--- vocabularios (la API habla números de coche, los widgets acrónimos,
--- 2026-08-01), así que hoy se piden los de por defecto y
--- 'Common.Route.comparisonPathFor' __sigue sin consumidor__.
+-- __Es el primer widget del repo cuyo fetch no sale solo de 'getPostBuild'.__
+-- Los tres switchers anteriores ('Widgets.Historical' ×2, 'Widgets.Telemetry')
+-- filtran __en cliente__ sobre datos ya recibidos
+-- (2026-08-01); aquí no se puede, porque la comparación de otros dos coches
+-- sencillamente no está en la respuesta actual. De ahí las dos cosas nuevas:
+-- un 'Event' de URL que nace de un clic y un estado de recarga que __no borra__
+-- lo que ya se veía.
+--
+-- __Se teclean números de coche, no acrónimos.__ Es el desajuste de vocabularios
+-- del repo (la API habla números, los widgets acrónimos,
+-- 2026-08-01) resuelto por el lado barato: 'Common.Types.LapComparison' trae
+-- desde el 2026-08-05 los números junto a los acrónimos, así que el widget puede
+-- mostrar de qué coches habla lo que está pintando. Lo que todavía no tiene es
+-- la __lista__ de la parrilla: eso necesita un endpoint propio del microservicio
+-- y es la sesión siguiente. Hasta entonces, dos entradas libres.
 module Widgets.Comparison where
 
 import           Client       (fetchJson)
 import           Common.Chart (chartHeight, chartPad, chartWidth, deltaPolyline,
                                zeroLineY)
-import           Common.Route (comparisonPath)
+import           Common.Route (comparisonPath, comparisonPathFor, driversParam)
 import           Common.Types (LapComparison (..))
 import           Data.Map     (Map)
 import qualified Data.Map     as Map
@@ -49,14 +59,21 @@ data CState
   | Failed
   | Loaded LapComparison
 
--- | Comparación de la vuelta rápida de dos coches: cabecera con los dos pilotos
--- y sus tiempos, y el delta acumulado como una línea.
+-- | Comparación de la vuelta rápida de dos coches: selector, cabecera con los
+-- dos pilotos y sus tiempos, y el delta acumulado como una línea.
+--
+-- __El selector se monta fuera de los 'dyn_', y no es una preferencia de
+-- estilo:__ 'dyn_' __re-monta__ su contenido en cada cambio del 'Dynamic', así
+-- que un @\<input\>@ dentro perdería el foco y lo tecleado en cada respuesta.
 comparisonWidget :: MonadWidget t m => m ()
 comparisonWidget = divClass "widget widget--comparison" $ do
   el "h2" $ text "Lap Comparison"
-  pb    <- getPostBuild
-  resp  <- fetchJson (comparisonPath <$ pb)
-  state <- holdDyn Loading (ffor resp (maybe Failed Loaded))
+  picked  <- carSelector
+  pb      <- getPostBuild
+  resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
+  refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
+  state   <- foldDyn step Loading resp
+  dyn_ (banner <$> zipDyn refresh state)
   dyn_ (renderState <$> state)
   where
     renderState :: MonadWidget t m => CState -> m ()
@@ -68,20 +85,140 @@ comparisonWidget = divClass "widget widget--comparison" $ do
       lapHeader c
       deltaChart (lcDelta c)
 
+-- | Cómo avanza el estado con cada respuesta. __Es la pieza que impide el
+-- parpadeo__, y por eso el widget usa 'foldDyn' y no el 'holdDyn' de los otros
+-- cuatro: el estado depende del anterior.
+--
+-- Con @holdDyn (maybe Failed Loaded)@ cada clic habría llevado el widget a
+-- 'Failed' o directamente a repintar desde cero, borrando el gráfico que se
+-- estaba mirando justo cuando se pide el siguiente. Aquí el estado __solo
+-- avanza__: una recarga fallida conserva lo mostrado, y 'Failed' queda para el
+-- único caso en que no hay nada que conservar — que no llegara nunca nada.
+--
+-- 'CState' no gana un cuarto constructor de \"recargando\": el estado de la
+-- __petición__ vive aparte, en 'Refresh', justamente para que no se mezcle con
+-- el de los __datos__. Meterlos en el mismo tipo obligaría a que cada
+-- combinación fuera un constructor.
+step :: Maybe LapComparison -> CState -> CState
+step (Just c) _          = Loaded c
+step Nothing  (Loaded c) = Loaded c
+step Nothing  _          = Failed
+
+-- | Qué le pasó a la última petición, al margen de los datos que se muestran.
+--
+-- Existe por una consecuencia directa de 'step': al conservar lo anterior ante
+-- una recarga fallida, el fallo __no se vería en ninguna parte__. 'LastFailed'
+-- es lo que impide que el widget enseñe datos viejos como si fueran los que se
+-- acaban de pedir.
+data Refresh
+  = Idle        -- ^ Nada en vuelo y lo último que llegó, llegó bien.
+  | InFlight
+  | LastFailed  -- ^ La recarga falló; se conserva lo anterior.
+
+-- | La respuesta traducida a estado de petición.
+refreshOf :: Maybe LapComparison -> Refresh
+refreshOf = maybe LastFailed (const Idle)
+
+-- | El aviso de la petición, __al lado__ del contenido y no en su lugar:
+-- sustituirlo sería volver a la pantalla en blanco que 'step' evita.
+--
+-- Solo se muestra cuando ya hay datos debajo. Sin ellos el mensaje lo da
+-- 'renderState' ('Loading' \/ 'Failed'), y dos a la vez serían ruido.
+banner :: DomBuilder t m => (Refresh, CState) -> m ()
+banner (r, Loaded _) = refreshLine r
+banner _             = blank
+
+-- | Una línea de estado por cada resultado posible de la petición.
+refreshLine :: DomBuilder t m => Refresh -> m ()
+refreshLine Idle       = blank
+refreshLine InFlight   = elClass "p" "status status--busy" $ text "Actualizando…"
+refreshLine LastFailed =
+  elClass "p" "status status--stale" $
+    text "No se pudo recargar: se muestra la comparación anterior"
+
+-- | Las dos entradas de coche y el botón, y la URL que sale de pulsarlo.
+--
+-- __Dos entradas separadas y no una sola con @\"1,16\"@:__ así la cardinalidad
+-- es estructural. El microservicio responde 400 a cualquier cantidad que no sea
+-- dos, y ese 400 lo absorbe el @try@ del backend y vuelve como 200 con el dummy
+-- (2026-08-01), así que impedir mandar uno o tres tiene que
+-- ser cosa del widget y no del degradado.
+--
+-- Los valores iniciales son los de @Handler.Comparison.Context.defaultDrivers@:
+-- lo que las entradas muestran al arrancar es lo que la primera petición —la de
+-- 'getPostBuild', sin query— va a traer.
+carSelector :: MonadWidget t m => m (Event t Text)
+carSelector = divClass "car-selector" $ do
+  carA  <- carInput "1"
+  elClass "span" "car-selector__vs" $ text "vs"
+  carB  <- carInput "16"
+  click <- compareButton
+  pure (fmapMaybe urlFor (tagPromptlyDyn (zipDyn carA carB) click))
+  where
+    -- 'fmapMaybe' es lo que hace que una entrada inválida __no dispare nada__,
+    -- en vez de disparar y confiar en el degradado. Y el 'Just' interior no es
+    -- ruido: 'comparisonPathFor' ya acepta 'Maybe', así que pasarle el 'Nothing'
+    -- de una entrada inválida daría el path __sin__ query — la comparación por
+    -- defecto presentada como la que se pidió.
+    urlFor :: (Text, Text) -> Maybe Text
+    urlFor (a, b) = comparisonPathFor Nothing . Just <$> driversParam a b
+
+-- | Una entrada de número de coche. @inputmode@ saca el teclado numérico en
+-- móvil; la validación de verdad la hace 'Common.Route.driversParam', que es
+-- pura y está probada por @backend-test@ — aquí no se valida a mano nada.
+carInput :: MonadWidget t m => Text -> m (Dynamic t Text)
+carInput initial =
+  fmap _textInput_value . textInput $
+    def
+      { _textInputConfig_initialValue = initial
+      , _textInputConfig_attributes = constDyn carInputAttrs
+      }
+
+-- | Atributos de una entrada de coche. Como en el resto del módulo, no hay hoja
+-- de estilos: la clase es el gancho para cuando la haya.
+carInputAttrs :: Map Text Text
+carInputAttrs =
+  Map.fromList
+    [ ("class", "car-selector__input")
+    , ("size", "3")
+    , ("inputmode", "numeric")
+    ]
+
+-- | Botón que dispara la comparación. Replicado aquí en lugar de importado de
+-- 'Widgets.Historical' o 'Widgets.Telemetry': mismo criterio que allí, no
+-- acoplar dos widgets entre sí por tres líneas de DOM.
+compareButton :: DomBuilder t m => m (Event t ())
+compareButton = do
+  (e, _) <- elClass' "button" "car-selector__btn" $ text "Comparar"
+  pure (domEvent Click e)
+
 -- | Los dos pilotos con su tiempo de vuelta, tal cual llegan. @lcLapA@\/@lcLapB@
 -- son 'Text' ya formateado (@M:SS.mmm@) por el microservicio: intentar
 -- reformatearlos aquí sería reintroducir en el widget un trabajo que el servicio
 -- ya hizo.
 lapHeader :: DomBuilder t m => LapComparison -> m ()
 lapHeader c = divClass "comparison__header" $ do
-  lapLabel (lcDriverA c) (lcLapA c)
+  lapLabel (lcDriverA c) (lcCarA c) (lcLapA c)
   elClass "span" "comparison__vs" $ text "vs"
-  lapLabel (lcDriverB c) (lcLapB c)
+  lapLabel (lcDriverB c) (lcCarB c) (lcLapB c)
 
--- | Un piloto y su tiempo.
-lapLabel :: DomBuilder t m => Text -> Text -> m ()
-lapLabel driver lap = divClass "comparison__lap" $ do
+-- | Un piloto, su coche y su tiempo.
+--
+-- El número de coche es __el único consumidor de @lcCarA@\/@lcCarB@__ y no es
+-- decoración: es lo que confirma el viaje de vuelta. El widget pide números y
+-- recibe acrónimos, así que sin el @#n@ no hay forma de ver que lo que volvió
+-- corresponde a lo que se pidió — y en el caso del respaldo, de ver que __no__
+-- corresponde: el dummy siempre habla de @1@ y @16@, así que pedir @44@ y leer
+-- @#1@ es exactamente la señal de que el microservicio no contestó.
+--
+-- Se omite cuando viene vacío, que es la respuesta de un servicio anterior a
+-- que la clave existiera (2026-08-05).
+lapLabel :: DomBuilder t m => Text -> Text -> Text -> m ()
+lapLabel driver car lap = divClass "comparison__lap" $ do
   elClass "span" "comparison__driver" $ text driver
+  if T.null car
+    then blank
+    else elClass "span" "comparison__car" $ text ("#" <> car)
   elClass "span" "comparison__time" $ text lap
 
 -- | El delta acumulado como @\<polyline\>@ sobre un @viewBox@ fijo, con la línea
