@@ -8,7 +8,7 @@ hablar Python ni pandas. Fase 4, dos endpoints:
   (``tpDriver``), con exactamente las claves de
   ``Common.Types.TelemetryPoint``.
 * ``GET /fastf1/comparison/{session_key}?drivers=1,16`` — **un objeto** (no una
-  lista) con las cinco claves de ``Common.Types.LapComparison``, comparando la
+  lista) con las siete claves de ``Common.Types.LapComparison``, comparando la
   vuelta rápida de exactamente **dos** coches.
 
 En los dos casos las claves son las del DTO de Haskell, para que el decode del
@@ -398,7 +398,13 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
 
     Una sesión sin vueltas comparables devuelve ``lcDelta: []`` y los tiempos en
     ``""``, **no un error**: degradar es trabajo del backend
-    (2026-07-31), y las cinco claves están siempre.
+    (2026-07-31), y las siete claves están siempre.
+
+    ``lcCarA``/``lcCarB`` son los **números de coche** tal como entraron, junto a
+    los acrónimos que salen. Es el viaje de vuelta: el consumidor habla acrónimos
+    y el query pide números, y solo este servicio conoce la traducción
+    (``_driver_label``), así que devolver el número es lo que permite al widget
+    pedir **otra** comparación (2026-08-05).
     """
     session = _resolve_session(session_key)
     numbers = _resolve_drivers(session, drivers)
@@ -417,6 +423,8 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
         return {
             "lcDriverA": _driver_label(session, numbers[0]),
             "lcDriverB": _driver_label(session, numbers[1]),
+            "lcCarA": numbers[0],
+            "lcCarB": numbers[1],
             "lcLapA": "",
             "lcLapB": "",
             "lcDelta": [],
@@ -438,6 +446,8 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
     return {
         "lcDriverA": label_a,
         "lcDriverB": label_b,
+        "lcCarA": numbers[0],
+        "lcCarB": numbers[1],
         "lcLapA": lap_a,
         "lcLapB": lap_b,
         "lcDelta": delta,

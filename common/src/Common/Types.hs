@@ -61,9 +61,19 @@ instance ToJSON TelemetryPoint
 instance FromJSON TelemetryPoint
 
 -- | Comparación de una vuelta entre dos drivers.
+--
+-- La identidad va __por partida doble__: el acrónimo (@lcDriverA@) y el número
+-- de coche (@lcCarA@). No es redundancia. La API de FastF1 habla __números de
+-- coche__ y los widgets hablan __acrónimos__ (2026-08-01 y
+-- 2026-08-03), y el acrónimo no permite reconstruir el número: solo el
+-- microservicio conoce esa traducción. Sin @lcCarA@\/@lcCarB@ el consumidor
+-- puede leer la comparación pero no puede pedir __otra__ — que es exactamente lo
+-- que le faltaba a 'Widgets.Comparison' (2026-08-05).
 data LapComparison = MkLapComparison
   { lcDriverA :: Text
   , lcDriverB :: Text
+  , lcCarA    :: Text        -- ^ Número de coche de A (p. ej. @"1"@), el que acepta el query.
+  , lcCarB    :: Text        -- ^ Número de coche de B (p. ej. @"16"@).
   , lcLapA    :: Text        -- ^ Tiempo de vuelta del driver A.
   , lcLapB    :: Text        -- ^ Tiempo de vuelta del driver B.
   , lcDelta   :: [Double]    -- ^ Delta acumulado A-B a lo largo de la vuelta.

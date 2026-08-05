@@ -22,6 +22,17 @@
 -- @Context@ quien la trate como fallo y degrade a cache\/dummy. Con @.:@ el
 -- mismo caso llegaría como excepción de parseo: acabaría en el mismo dummy, pero
 -- por el camino equivocado y sin que el criterio quedara escrito en ningún sitio.
+--
+-- __Los números de coche son la segunda excepción__, y por un motivo distinto.
+-- @lcCarA@\/@lcCarB@ van con @.:? … .!= \"\"@ pese a ser identidad, porque el
+-- microservicio __no se despliega con el backend__: es un @venv@ con @uvicorn@
+-- arrancado a mano y su empaquetado Nix sigue pendiente
+-- (2026-07-31). Con @.:@, un servicio viejo todavía en pie
+-- convertiría __toda__ comparación en dummy, en silencio y con la escalera
+-- entera funcionando "bien". A diferencia del acrónimo, el número de coche es
+-- __recuperable por el consumidor__ —es lo que acaba de pedir—, así que su
+-- ausencia degrada a "no confirmo el viaje de vuelta", no a "esto no es una
+-- comparación" (2026-08-05).
 module Handler.Comparison.Helper
   ( -- * Envoltura cruda del microservicio FastF1
     RawComparison (..)
@@ -39,6 +50,10 @@ import           Data.Text    (Text)
 data RawComparison = RawComparison
   { rcDriverA :: Text
   , rcDriverB :: Text
+  , rcCarA    :: Text
+    -- ^ Número de coche de A tal como entró en el query. Vacío si el servicio
+    -- no emite la clave (ver el encabezado del módulo).
+  , rcCarB    :: Text
   , rcLapA    :: Text
   , rcLapB    :: Text
   , rcDelta   :: [Double]
@@ -52,6 +67,8 @@ instance FromJSON RawComparison where
     RawComparison
       <$> o .:  "lcDriverA"
       <*> o .:  "lcDriverB"
+      <*> o .:? "lcCarA" .!= ""
+      <*> o .:? "lcCarB" .!= ""
       <*> o .:  "lcLapA"
       <*> o .:  "lcLapB"
       <*> o .:? "lcDelta" .!= []
@@ -66,6 +83,8 @@ assembleComparison raw =
   MkLapComparison
     { lcDriverA = rcDriverA raw
     , lcDriverB = rcDriverB raw
+    , lcCarA    = rcCarA raw
+    , lcCarB    = rcCarB raw
     , lcLapA    = rcLapA raw
     , lcLapB    = rcLapB raw
     , lcDelta   = rcDelta raw

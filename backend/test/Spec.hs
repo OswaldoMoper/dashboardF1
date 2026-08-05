@@ -3,9 +3,15 @@
 -- resolución de parámetros de 'Handler.Telemetry.Context') y Comparison
 -- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context').
 --
--- Cubre además 'Common.Chart', que no es del backend: el escalado del gráfico de
--- comparación vive en @common@ precisamente para que esta suite lo alcance, ya
--- que el paquete @frontend@ no tiene ninguna (2026-08-04).
+-- Cubre además dos módulos de @common@ que no son del backend, y por la misma
+-- razón: viven allí precisamente para que esta suite los alcance, ya que el
+-- paquete @frontend@ no tiene ninguna (2026-08-04).
+--
+-- * 'Common.Chart' — el escalado del gráfico de comparación.
+-- * 'Common.Route.driversParam' — la validación de los números de coche que el
+--   widget de comparación teclea (2026-08-05). Es lógica de
+--   __widget__ probada aquí: sin esto, lo único que impide mandar un acrónimo a
+--   un endpoint que lo absorbe en silencio estaría solo revisado a ojo.
 --
 -- Los fixtures son recortes reales de la respuesta de cada servicio en
 -- 'ByteString' y se decodifican con 'eitherDecodeStrict', así que cada caso
@@ -17,6 +23,7 @@ module Main (main) where
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, zeroLineY)
+import           Common.Route                (comparisonPathFor, driversParam)
 import           Common.Types                (HistoricalStat (..),
                                               LapComparison (..),
                                               StatEntity (..),
@@ -125,12 +132,14 @@ main = hspec $ do
       Telemetry.resolveParams Nothing (Just "1,4") `shouldBe` ("latest", "1,4")
 
   describe "assembleComparison" $ do
-    it "mapea las cinco claves del objeto conservando el orden de la serie del delta" $
+    it "mapea las siete claves del objeto conservando el orden de la serie del delta" $
       comparisonOf comparisonObject
         `shouldBe`
           MkLapComparison
             { lcDriverA = "VER"
             , lcDriverB = "LEC"
+            , lcCarA = "1"
+            , lcCarB = "16"
             , lcLapA = "1:29.345"
             , lcLapB = "1:29.512"
             , lcDelta = [0.0, -0.048, 0.081, 0.167]
@@ -145,6 +154,8 @@ main = hspec $ do
           MkLapComparison
             { lcDriverA = "VER"
             , lcDriverB = "LEC"
+            , lcCarA = "1"
+            , lcCarB = "16"
             , lcLapA = ""
             , lcLapB = ""
             , lcDelta = []
@@ -153,6 +164,15 @@ main = hspec $ do
     it "trata la clave lcDelta ausente igual que la serie vacía" $
       lcDelta (comparisonOf comparisonWithoutDeltaKey) `shouldBe` []
 
+    it "decodifica la respuesta de un servicio sin números de coche en vez de tumbar el objeto" $ do
+      -- El caso del microservicio viejo todavía en pie: con `.:` la comparación
+      -- entera caería al dummy en silencio. Se pierde el viaje de vuelta, no la
+      -- comparación.
+      let old = comparisonOf comparisonWithoutCars
+      (lcCarA old, lcCarB old) `shouldBe` ("", "")
+      lcDriverA old `shouldBe` "VER"
+      lcDelta old `shouldBe` [0.0, -0.048, 0.081, 0.167]
+
   describe "Comparison.resolveParams" $ do
     it "sin parámetros compara los dos coches del dummy, en números y no en acrónimos" $
       Comparison.resolveParams Nothing Nothing `shouldBe` ("latest", "1,16")
@@ -160,6 +180,35 @@ main = hspec $ do
     it "respeta el parámetro presente y deja el ausente en su defecto" $ do
       Comparison.resolveParams (Just "2026-13-Q") Nothing `shouldBe` ("2026-13-Q", "1,16")
       Comparison.resolveParams Nothing (Just "44,63") `shouldBe` ("latest", "44,63")
+
+  -- Lógica del __widget__, probada aquí porque `frontend` no tiene suite
+  -- (2026-08-04). Es lo único que impide que un acrónimo
+  -- tecleado salga hacia un endpoint que responde 200 con el dummy.
+  describe "driversParam" $ do
+    it "une dos números de coche en el valor que espera el query" $
+      driversParam "1" "16" `shouldBe` Just "1,16"
+
+    it "recorta los espacios, que son descuido de tecleo y no intención" $
+      driversParam "  1 " "16  " `shouldBe` Just "1,16"
+
+    it "rechaza el acrónimo, que es el fallo silencioso que esta función existe para cerrar" $ do
+      driversParam "VER" "LEC" `shouldBe` Nothing
+      driversParam "1" "LEC" `shouldBe` Nothing
+
+    it "rechaza el campo vacío o en blanco en cualquiera de los dos lados" $ do
+      driversParam "" "16" `shouldBe` Nothing
+      driversParam "1" "   " `shouldBe` Nothing
+
+    it "acepta un coche contra sí mismo: es legal en la API y da el delta plano" $
+      driversParam "1" "1" `shouldBe` Just "1,1"
+
+    -- El `Just` intermedio no es ruido: `comparisonPathFor` ya acepta `Maybe`, y
+    -- pasarle el `Nothing` de una entrada inválida daría el path __sin__ query —
+    -- es decir, la comparación por defecto presentada como la que se pidió. El
+    -- widget tiene que quedarse en el `Maybe` de fuera y no disparar nada.
+    it "compone con comparisonPathFor, que es su único uso" $
+      fmap (comparisonPathFor Nothing . Just) (driversParam "44" "63")
+        `shouldBe` Just "/api/comparison?drivers=44,63"
 
   -- El escalado del gráfico vive en `common` y no en `Widgets.Comparison`
   -- justamente para llegar hasta aquí: el paquete `frontend` no tiene suite
@@ -377,15 +426,20 @@ emptyArray = "[]"
 comparisonObject :: ByteString
 comparisonObject =
   "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
+  \\"lcCarA\":\"1\",\"lcCarB\":\"16\",\
   \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\",\
   \\"lcDelta\":[0.0,-0.048,0.081,0.167]}"
 
 -- | Sesión sin vueltas comparables: el servicio emite el objeto completo con
 -- @lcDelta@ vacío y los tiempos en @\"\"@ en vez de un error, porque degradar es
 -- trabajo del backend (2026-07-31).
+-- Los números de coche __sí__ están aquí: el servicio los conoce antes de mirar
+-- las vueltas (son la entrada del query), así que una sesión sin vueltas
+-- comparables sigue sabiendo de qué dos coches habla.
 comparisonWithoutDelta :: ByteString
 comparisonWithoutDelta =
   "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
+  \\"lcCarA\":\"1\",\"lcCarB\":\"16\",\
   \\"lcLapA\":\"\",\"lcLapB\":\"\",\"lcDelta\":[]}"
 
 -- | La clave @lcDelta@ __ausente__, no vacía. El servicio de hoy siempre la emite,
@@ -395,4 +449,18 @@ comparisonWithoutDelta =
 comparisonWithoutDeltaKey :: ByteString
 comparisonWithoutDeltaKey =
   "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
+  \\"lcCarA\":\"1\",\"lcCarB\":\"16\",\
   \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\"}"
+
+-- | La respuesta de un microservicio __anterior__ a los números de coche: sin
+-- @lcCarA@\/@lcCarB@. No es un caso hipotético — el servicio corre en un @venv@
+-- arrancado a mano y no se despliega con el backend, así que un @uvicorn@ viejo
+-- todavía en pie emite exactamente esto. Con @.:@ tumbaría el objeto completo y
+-- __toda__ comparación caería al dummy en silencio; con @.:?@ llega la
+-- comparación entera y solo falta el viaje de vuelta
+-- (2026-08-05).
+comparisonWithoutCars :: ByteString
+comparisonWithoutCars =
+  "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
+  \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\",\
+  \\"lcDelta\":[0.0,-0.048,0.081,0.167]}"

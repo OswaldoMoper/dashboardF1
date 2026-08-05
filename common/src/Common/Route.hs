@@ -11,9 +11,11 @@ module Common.Route
   , telemetryPathFor
   , comparisonPath
   , comparisonPathFor
+  , driversParam
   , historicalPath
   ) where
 
+import           Data.Char  (isDigit)
 import           Data.Maybe (catMaybes)
 import           Data.Text  (Text)
 import qualified Data.Text  as T
@@ -87,6 +89,45 @@ comparisonPath = apiPath ComparisonApi
 comparisonPathFor :: Maybe Text -> Maybe Text -> Text
 comparisonPathFor session drivers =
   pathWith comparisonPath [("session", session), ("drivers", drivers)]
+
+-- | El valor de @?drivers=@ a partir de dos entradas de usuario, o 'Nothing' si
+-- alguna no es un número de coche. Pensada para alimentar directamente el
+-- segundo argumento de 'comparisonPathFor'.
+--
+-- __Es el guardián del desajuste de vocabularios__, no una comodidad de
+-- formateo. El microservicio responde __400__ a @VER,LEC@, pero ese 400 lo
+-- absorbe el @try@ del @Handler.Comparison.Context@ y el endpoint devuelve
+-- __200 con el dummy__: un fallo silencioso, anotado como riesgo el 2026-08-01.
+-- Con esto, un acrónimo escrito en el widget __no llega a salir__ — no hay
+-- petición, en vez de una petición que degrada sin decirlo.
+--
+-- Vive aquí y no en el widget por el criterio del 2026-08-04 (lo puro y sin
+-- Reflex va a @common@): el paquete @frontend@ no tiene suite, así que esta es
+-- la única forma de que la validación esté __probada__ y no solo revisada a ojo.
+-- Y vive junto a 'comparisonPathFor' porque compone justo su argumento, con el
+-- mismo supuesto de no escapar: la salida son dígitos y una coma.
+--
+-- Lo que __no__ hace, y conviene que esté escrito: no comprueba que los coches
+-- existan en la sesión ni que sean distintos. @1,1@ es legal —una vuelta contra
+-- sí misma, delta todo ceros, que 'Common.Chart' cubre— y un número inexistente
+-- es cosa del microservicio.
+driversParam :: Text -> Text -> Maybe Text
+driversParam a b = do
+  carA <- carNumber a
+  carB <- carNumber b
+  pure (carA <> "," <> carB)
+
+-- | Una entrada de usuario como número de coche: recortada, no vacía y solo
+-- dígitos. Recorta porque el espacio sobrante es un descuido de tecleo y no una
+-- intención; rechaza todo lo demás porque el único vocabulario que la API acepta
+-- es el numérico.
+carNumber :: Text -> Maybe Text
+carNumber raw
+  | T.null trimmed          = Nothing
+  | T.all isDigit trimmed   = Just trimmed
+  | otherwise               = Nothing
+  where
+    trimmed = T.strip raw
 
 -- | Un path con los parámetros presentes en el query string, en el orden dado, y
 -- sin @?@ cuando no hay ninguno. Único sitio del módulo que compone query

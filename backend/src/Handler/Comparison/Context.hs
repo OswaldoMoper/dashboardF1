@@ -95,11 +95,17 @@ fetchLapComparison cfg sessionKey driversKey =
 -- emite 'Handler.Comparison.Helper.assembleComparison' —acrónimos, tiempos ya
 -- formateados y un delta no vacío—, para que el widget de comparación sea
 -- ejercitable sin el servicio levantado.
+--
+-- Los coches son los de 'defaultDrivers', no dos cualesquiera: así la respuesta
+-- sin parámetros y el respaldo hablan de los mismos, y el @1@\/@16@ que el widget
+-- muestra es el que mandaría de vuelta al pedir otra comparación.
 dummy :: LapComparison
 dummy =
   MkLapComparison
     { lcDriverA = "VER"
     , lcDriverB = "LEC"
+    , lcCarA = "1"
+    , lcCarB = "16"
     , lcLapA = "1:29.345"
     , lcLapB = "1:29.512"
     , lcDelta = [0.0, -0.05, 0.08, 0.12, 0.167]
