@@ -20,6 +20,7 @@ import           Common.Types       (Layout (..), LayoutId (..),
                                      WidgetParams (..), WidgetType (..))
 import qualified Data.Text          as T
 import           Reflex.Dom
+import           Widgets.Comparison (comparisonWidget)
 import           Widgets.Historical (historicalWidget)
 import           Widgets.LiveTiming (liveTimingWidget)
 import           Widgets.Telemetry  (telemetryWidget)
@@ -56,7 +57,7 @@ renderWidget :: MonadWidget t m => WidgetConfig -> m ()
 renderWidget wc = case widgetType wc of
   LiveTiming      -> liveTimingWidget
   Telemetry       -> telemetryWidget
-  LapComparison   -> placeholderWidget "Lap Comparison"
+  LapComparison   -> comparisonWidget
   TyreStrategy    -> placeholderWidget "Tyre Strategy"
   HistoricalStats -> historicalWidget
   Custom          -> placeholderWidget "Custom"
@@ -76,11 +77,13 @@ cfg wt = WidgetConfig
   , params     = WidgetParams mempty
   }
 
--- | Layout "Race Overview": live timing + telemetría.
+-- | Layout "Race Overview": live timing, telemetría, comparación de vueltas e
+-- históricos.
 raceOverview :: Layout
 raceOverview = Layout
   { layoutId = LayoutId "race-overview"
-  , widgets  = [cfg LiveTiming, cfg Telemetry, cfg HistoricalStats]
+  , widgets  =
+      [cfg LiveTiming, cfg Telemetry, cfg LapComparison, cfg HistoricalStats]
   }
 
 -- | Layout "Qualy": solo live timing (conjunto distinto → valida la conmutación).
