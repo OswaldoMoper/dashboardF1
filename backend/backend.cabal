@@ -29,6 +29,7 @@ library
         App
         Server
         Html
+        Handler.FastF1.Manager
         Handler.OpenF1.Helper
         Handler.OpenF1.Manager
         Handler.Live

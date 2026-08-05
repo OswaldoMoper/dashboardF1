@@ -2,19 +2,20 @@
 --
 -- Segundo consumidor del microservicio Python local, después de
 -- 'Handler.Telemetry.Manager'. Comparte con él el esquema (@'Http'@, no HTTPS
--- como los tres clientes públicos), el host y el puerto de la 'Config', y por eso
--- __reusa 'Handler.Telemetry.Manager.telemetryPort'__ en vez de declarar su
--- propio alias de 'port'.
+-- como los tres clientes públicos), el host y el puerto de la 'Config', y también
+-- la política de fallo — todo eso vive en 'Handler.FastF1.Manager'.
 --
--- Que un @Manager@ de negocio importe de otro es la excepción y conviene decir
--- por qué no se extrajo un @Handler.FastF1.Manager@ compartido, como sí se hizo
--- con OpenF1 en su segundo consumidor (2026-07-23): allí lo
--- compartido era un GET completo más la base de URL y la 'Option' de sesión; aquí
--- es __una línea__ (@telemetryPort = port@). Las dos bases de URL difieren en el
--- último segmento y los dos GET difieren en la forma —una lista contra un objeto,
--- el @drivers@ en query contra el @driver@ en path—, así que un módulo común
--- tendría exactamente un valor dentro. Se extrae con el tercer consumidor
--- (2026-08-03).
+-- Hasta el 2026-08-03 este módulo importaba @telemetryPort@ directamente de
+-- 'Handler.Telemetry.Manager' —un @Manager@ de negocio importando de otro, la
+-- única vez en el repo— porque lo compartido era una línea y no justificaba un
+-- módulo (2026-08-03). Lo que lo justifica ahora no es un
+-- tercer consumidor sino que lo compartido dejó de ser un alias: los dos clientes
+-- necesitan la misma 'HttpConfig' sin reintentos y el mismo techo de duración, y
+-- eso no puede divergir entre áreas.
+--
+-- Lo que sigue siendo propio de este cliente, y por eso los dos módulos existen:
+-- la base de URL (difiere en el último segmento), la forma de la respuesta (un
+-- objeto, no una lista) y que los coches viajan en el __query string__.
 module Handler.Comparison.Manager
   ( comparisonBase
   , fetchComparison
@@ -23,7 +24,7 @@ module Handler.Comparison.Manager
 import           Config                    (Config (..))
 import           Data.Text                 (Text)
 import           Handler.Comparison.Helper (RawComparison)
-import           Handler.Telemetry.Manager (telemetryPort)
+import           Handler.FastF1.Manager    (fastf1Config, fastf1Options)
 import           Network.HTTP.Req
 
 -- | Base del endpoint de comparación: @http:\/\/\<host\>\/fastf1\/comparison@.
@@ -46,12 +47,12 @@ comparisonBase host = http host /: "fastf1" /: "comparison"
 -- de coche (400 del servicio) o si la respuesta trae otra forma; es el @try@ del
 -- 'Context' quien decide qué hacer con eso.
 fetchComparison :: Config -> Text -> Text -> IO RawComparison
-fetchComparison cfg sessionKey drivers = runReq defaultHttpConfig $ do
+fetchComparison cfg sessionKey drivers = runReq fastf1Config $ do
   res <-
     req
       GET
       (comparisonBase (cfgTelemetryHost cfg) /: sessionKey)
       NoReqBody
       jsonResponse
-      (telemetryPort (cfgTelemetryPort cfg) <> "drivers" =: drivers)
+      (fastf1Options cfg <> "drivers" =: drivers)
   pure (responseBody res)
