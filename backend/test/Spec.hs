@@ -3,6 +3,10 @@
 -- resolución de parámetros de 'Handler.Telemetry.Context') y Comparison
 -- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context').
 --
+-- Cubre además 'Common.Chart', que no es del backend: el escalado del gráfico de
+-- comparación vive en @common@ precisamente para que esta suite lo alcance, ya
+-- que el paquete @frontend@ no tiene ninguna (2026-08-04).
+--
 -- Los fixtures son recortes reales de la respuesta de cada servicio en
 -- 'ByteString' y se decodifican con 'eitherDecodeStrict', así que cada caso
 -- ejercita __el 'FromJSON' y la función de ensamblado juntos__: los dos son la
@@ -10,6 +14,9 @@
 -- precisamente los campos opcionales, que viven en el decode.
 module Main (main) where
 
+import           Common.Chart                (chartHeight, chartPad, chartWidth,
+                                              deltaPoints, deltaPolyline,
+                                              deltaRange, zeroLineY)
 import           Common.Types                (HistoricalStat (..),
                                               LapComparison (..),
                                               StatEntity (..),
@@ -154,6 +161,40 @@ main = hspec $ do
       Comparison.resolveParams (Just "2026-13-Q") Nothing `shouldBe` ("2026-13-Q", "1,16")
       Comparison.resolveParams Nothing (Just "44,63") `shouldBe` ("latest", "44,63")
 
+  -- El escalado del gráfico vive en `common` y no en `Widgets.Comparison`
+  -- justamente para llegar hasta aquí: el paquete `frontend` no tiene suite
+  -- (2026-08-04). Los dos primeros casos son las dos
+  -- divisiones por cero reales del módulo.
+  describe "Common.Chart" $ do
+    it "la serie vacía no produce puntos ni atributo, en vez de dividir por cero" $ do
+      deltaPoints [] `shouldBe` []
+      deltaPolyline [] `shouldBe` ""
+
+    it "una serie constante no degenera el rango (una vuelta contra sí misma)" $ do
+      deltaRange [0, 0, 0] `shouldBe` (-1, 1)
+      map snd (deltaPoints [0, 0, 0]) `shouldBe` replicate 3 (chartHeight / 2)
+
+    it "el eje incluye el cero aunque la serie no lo cruce" $ do
+      deltaRange [0.1, 0.2, 0.3] `shouldBe` (0, 0.3)
+      deltaRange [-0.3, -0.2, -0.1] `shouldBe` (-0.3, 0)
+
+    it "la línea del cero se apoya en el borde cuando la serie no cambia de signo" $ do
+      zeroLineY [0.1, 0.2, 0.3] `shouldBe` chartHeight - chartPad
+      zeroLineY [-0.3, -0.2, -0.1] `shouldBe` chartPad
+
+    it "un solo punto va al centro horizontal y no divide por cero" $
+      map fst (deltaPoints [0.5]) `shouldBe` [chartWidth / 2]
+
+    it "la serie del dummy ocupa el ancho útil de extremo a extremo" $ do
+      let xs = map fst (deltaPoints [0.0, -0.05, 0.08, 0.12, 0.167])
+      head xs `shouldBe` chartPad
+      last xs `shouldBe` chartWidth - chartPad
+
+    it "emite `points` con coordenadas enteras, sin notación científica" $
+      deltaPolyline [0, 0, 0] `shouldBe` "10,100 300,100 590,100"
+
+    prop "ninguna coordenada se sale del viewBox" staysInsideViewBox
+
 -- * Propiedades
 
 -- | @points@\/@wins@ llegan de Ergast como enteros en cadena; es la forma que
@@ -166,6 +207,19 @@ roundTripsInt n = parseNum (T.pack (show n)) === Just (fromIntegral n)
 -- @NaN@\/@Infinity@, así que la igualdad estricta es correcta aquí.
 roundTripsDouble :: Double -> Property
 roundTripsDouble d = parseNum (T.pack (show d)) === Just d
+
+-- | El invariante que hace segura la función: sea cual sea la serie, todo punto
+-- cae dentro del lienzo. Cubre de golpe las dos divisiones por cero y los
+-- desbordamientos de escala que ningún caso concreto va a adivinar.
+--
+-- El 'Arbitrary' de 'Double' de QuickCheck no genera @NaN@\/@Infinity@ (mismo
+-- supuesto que 'roundTripsDouble'), así que la serie generada es siempre finita —
+-- que es también lo que garantiza el @_num@ del microservicio.
+staysInsideViewBox :: [Double] -> Bool
+staysInsideViewBox xs = all inside (deltaPoints xs)
+  where
+    inside (x, y) =
+      x >= 0 && x <= chartWidth && y >= chartPad && y <= chartHeight - chartPad
 
 -- * Helpers
 

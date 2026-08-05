@@ -20,6 +20,7 @@ library
         OverloadedStrings
     hs-source-dirs:   src
     exposed-modules:
+        Common.Chart
         Common.Route
         Common.Types
     build-depends:
