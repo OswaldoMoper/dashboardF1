@@ -12,6 +12,8 @@ module Common.Route
   , comparisonPath
   , comparisonPathFor
   , driversParam
+  , driversPath
+  , driversPathFor
   , historicalPath
   ) where
 
@@ -26,6 +28,7 @@ data ApiRoute
   | HistoricalApi
   | TelemetryApi
   | ComparisonApi
+  | DriversApi
   | TyreStrategyApi
   deriving stock (Eq, Show)
 
@@ -36,6 +39,7 @@ apiPath = \case
   HistoricalApi   -> "/api/historical"
   TelemetryApi    -> "/api/telemetry"
   ComparisonApi   -> "/api/comparison"
+  DriversApi      -> "/api/drivers"
   TyreStrategyApi -> "/api/tyre-strategy"
 
 -- | Atajo para el endpoint de live timing (primer consumidor).
@@ -128,6 +132,26 @@ carNumber raw
   | otherwise               = Nothing
   where
     trimmed = T.strip raw
+
+-- | Atajo para el endpoint de la parrilla.
+--
+-- __No confundir con 'driversParam'__, que pese al nombre parecido pertenece a
+-- otro endpoint: aquélla construye el valor de @?drivers=@ de __comparación__ (dos
+-- números separados por coma), y esto es el path de la lista de coches de la
+-- sesión. Los dos nombres conviven porque el vocabulario del dominio los llama
+-- igual; el sufijo es lo que los distingue.
+driversPath :: Text
+driversPath = apiPath DriversApi
+
+-- | Path de la parrilla con la sesión en el query string, u omitida.
+--
+-- Un solo parámetro, a diferencia de los otros dos @…PathFor@, y esa es
+-- exactamente la forma del endpoint: la parrilla no admite filtro por coche
+-- —pedir la lista de un coche que ya conoces no tiene sentido—, así que
+-- @?session=@ es todo lo que hay. Hereda de 'telemetryPathFor' el supuesto de no
+-- escapar el query.
+driversPathFor :: Maybe Text -> Text
+driversPathFor session = pathWith driversPath [("session", session)]
 
 -- | Un path con los parámetros presentes en el query string, en el orden dado, y
 -- sin @?@ cuando no hay ninguno. Único sitio del módulo que compone query

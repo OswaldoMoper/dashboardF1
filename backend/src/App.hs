@@ -10,9 +10,9 @@
 -- aquí conforme lleguen.
 module App where
 
-import           Common.Types           (HistoricalStat, LapComparison,
-                                         LiveTimingRow, TelemetryPoint,
-                                         TyreStint)
+import           Common.Types           (DriverEntry, HistoricalStat,
+                                         LapComparison, LiveTimingRow,
+                                         TelemetryPoint, TyreStint)
 import           Config                 (Config)
 import           Control.Concurrent.STM (TVar, newTVarIO)
 import           Data.Map.Strict        (Map)
@@ -47,6 +47,15 @@ data Env = Env
     -- cuyo valor no es una lista — 'LapComparison' es un objeto, y de ahí que el
     -- criterio de fallo del 'Handler.Comparison.Context' sea @null . lcDelta@ y no
     -- \"lista vacía\".
+  , envDriversCache    :: TVar (Map Text [DriverEntry])
+    -- ^ Última parrilla buena de @/api/drivers@ __por sesión__ (respaldo si el
+    -- microservicio FastF1 no responde).
+    --
+    -- Sexta caja, y la primera cuya clave tiene una sola componente: el endpoint
+    -- no filtra por coche, así que @session_key@ la determina entera. Que la
+    -- lleve es correctitud y no rendimiento — la parrilla es la de __esa__
+    -- sesión, y un sustituto o un tercer coche en libres la cambian, así que una
+    -- caja única serviría la de otra sesión presentada como la pedida.
   }
 
 mkEnv :: Config -> IO Env
@@ -56,6 +65,7 @@ mkEnv cfg = do
   historicalCache <- newTVarIO Nothing
   telemetryCache <- newTVarIO Map.empty
   comparisonCache <- newTVarIO Map.empty
+  driversCache <- newTVarIO Map.empty
   pure
     (Env
        cfg
@@ -63,4 +73,5 @@ mkEnv cfg = do
        tyreCache
        historicalCache
        telemetryCache
-       comparisonCache)
+       comparisonCache
+       driversCache)

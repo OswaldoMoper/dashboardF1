@@ -48,6 +48,10 @@ library
         Handler.Comparison.Context
         Handler.Comparison.Helper
         Handler.Comparison.Manager
+        Handler.Drivers
+        Handler.Drivers.Context
+        Handler.Drivers.Helper
+        Handler.Drivers.Manager
         Handler.TyreStrategy
         Handler.TyreStrategy.Context
         Handler.TyreStrategy.Helper

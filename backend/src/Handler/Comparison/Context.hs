@@ -99,10 +99,18 @@ fetchLapComparison cfg sessionKey driversKey =
 -- Los coches son los de 'defaultDrivers', no dos cualesquiera: así la respuesta
 -- sin parámetros y el respaldo hablan de los mismos, y el @1@\/@16@ que el widget
 -- muestra es el que mandaría de vuelta al pedir otra comparación.
+--
+-- __El acrónimo del coche @1@ es @NOR@ y no @VER@ desde el 2026-08-06__, que es
+-- cuando el repo vio por primera vez una parrilla real (@\/api\/drivers@): el @1@
+-- lo lleva el campeón vigente. El dummy decía @VER@ desde la Fase 1 por inercia,
+-- y con dos áreas cuyos respaldos se miran a la vez esa inercia pasó a ser una
+-- contradicción visible — el selector listando @NOR@ y esta cabecera diciendo
+-- @VER@ del mismo coche. La coherencia entre los dos dummies la fija un caso de
+-- @backend-test@, no la buena memoria.
 dummy :: LapComparison
 dummy =
   MkLapComparison
-    { lcDriverA = "VER"
+    { lcDriverA = "NOR"
     , lcDriverB = "LEC"
     , lcCarA = "1"
     , lcCarB = "16"

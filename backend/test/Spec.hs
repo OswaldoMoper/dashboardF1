@@ -1,7 +1,14 @@
 -- | Invariantes de la lógica pura de las áreas Historical
 -- ('Handler.Historical.Helper'), Telemetry ('Handler.Telemetry.Helper' y la
--- resolución de parámetros de 'Handler.Telemetry.Context') y Comparison
--- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context').
+-- resolución de parámetros de 'Handler.Telemetry.Context'), Comparison
+-- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context') y Drivers
+-- (ídem).
+--
+-- Un caso no encaja en ese reparto y es deliberado: la __coherencia entre los
+-- dummies__ de Drivers y Comparison. No prueba una función sino un acuerdo entre
+-- dos áreas —que la parrilla de respaldo contenga los coches que la comparación
+-- de respaldo pinta—, y sin él nada impide que un cambio en un dummy deje al
+-- widget de mañana enseñando una lista que no contiene lo que está dibujando.
 --
 -- Cubre además dos módulos de @common@ que no son del backend, y por la misma
 -- razón: viven allí precisamente para que esta suite los alcance, ya que el
@@ -23,8 +30,10 @@ module Main (main) where
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, zeroLineY)
-import           Common.Route                (comparisonPathFor, driversParam)
-import           Common.Types                (HistoricalStat (..),
+import           Common.Route                (comparisonPathFor, driversParam,
+                                              driversPathFor)
+import           Common.Types                (DriverEntry (..),
+                                              HistoricalStat (..),
                                               LapComparison (..),
                                               StatEntity (..),
                                               TelemetryPoint (..))
@@ -33,6 +42,8 @@ import           Data.ByteString             (ByteString)
 import qualified Data.Text                   as T
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
+import qualified Handler.Drivers.Context     as Drivers
+import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
 import qualified Handler.Telemetry.Context   as Telemetry
@@ -181,6 +192,72 @@ main = hspec $ do
       Comparison.resolveParams (Just "2026-13-Q") Nothing `shouldBe` ("2026-13-Q", "1,16")
       Comparison.resolveParams Nothing (Just "44,63") `shouldBe` ("latest", "44,63")
 
+  describe "assembleDrivers" $ do
+    it "mapea la parrilla conservando el orden que le da FastF1, no el numérico" $
+      -- El orden de una carrera cargada es el de clasificación (1, 3, 12, 16…),
+      -- y es información que solo el servicio tiene. Ordenar para presentar es
+      -- del widget; aquí reordenar la destruiría.
+      driversOf driverGrid
+        `shouldBe`
+          [ MkDriverEntry "1" "NOR" "McLaren"
+          , MkDriverEntry "3" "VER" "Red Bull Racing"
+          , MkDriverEntry "16" "LEC" "Ferrari"
+          ]
+
+    it "deja pasar el coche cuyo acrónimo no resuelve, con deCode repitiendo el número" $
+      -- El fallback de `_driver_label` en el microservicio. Filtrarlo daría una
+      -- parrilla incompleta sin decirlo: el coche está en la sesión aunque no se
+      -- sepa quién lo lleva.
+      driversOf gridWithUnresolvedCode
+        `shouldBe`
+          [ MkDriverEntry "1" "NOR" "McLaren"
+          , MkDriverEntry "44" "44" ""
+          ]
+
+    it "decodifica la parrilla de un servicio sin equipo en vez de tumbar la lista" $ do
+      -- El caso del microservicio viejo todavía en pie, igual que el de los
+      -- números de coche en Comparison: con `.:` toda la parrilla caería al
+      -- dummy en silencio. Se pierde la decoración, no la traducción.
+      let old = driversOf gridWithoutTeam
+      map deTeam old `shouldBe` ["", ""]
+      map deCode old `shouldBe` ["NOR", "LEC"]
+
+    it "devuelve [] sobre una sesión sin parrilla publicada" $
+      -- Es este [] el que hace que el criterio de fallo del Context vuelva a ser
+      -- el simple, a diferencia del `null . lcDelta` de Comparison.
+      driversOf emptyArray `shouldBe` []
+
+  describe "Drivers.resolveParams" $ do
+    it "sin parámetro consulta la última carrera, como los otros dos endpoints" $
+      Drivers.resolveParams Nothing `shouldBe` "latest"
+
+    it "respeta la sesión presente" $
+      Drivers.resolveParams (Just "2026-13-Q") `shouldBe` "2026-13-Q"
+
+  describe "driversPathFor" $ do
+    it "sin sesión da el path desnudo, que es el caso normal del widget" $
+      driversPathFor Nothing `shouldBe` "/api/drivers"
+
+    it "con sesión la pone en el query, y no hay segundo parámetro que omitir" $
+      driversPathFor (Just "2026-13-R") `shouldBe` "/api/drivers?session=2026-13-R"
+
+  -- La coherencia entre los dos respaldos de FastF1. No es cosmética: los dos
+  -- widgets se miran a la vez, así que un coche que el de comparación pinta y el
+  -- selector no lista sería una contradicción visible con el servicio apagado.
+  describe "los dummies de Drivers y Comparison" $ do
+    it "la parrilla de respaldo contiene los dos coches que la comparación de respaldo pinta" $ do
+      let numbers = map deNumber Drivers.dummy
+      lcCarA Comparison.dummy `shouldSatisfy` (`elem` numbers)
+      lcCarB Comparison.dummy `shouldSatisfy` (`elem` numbers)
+
+    it "y les da el mismo acrónimo que la parrilla, no uno distinto para el mismo coche" $ do
+      -- La mitad que faltaba, y la que se había desincronizado: el dummy de
+      -- comparación decía que el coche 1 era VER desde la Fase 1, y la primera
+      -- parrilla real (2026-08-06) mostró que es NOR. Contener el número no basta
+      -- si las dos áreas lo nombran distinto.
+      codeOfCar (lcCarA Comparison.dummy) `shouldBe` Just (lcDriverA Comparison.dummy)
+      codeOfCar (lcCarB Comparison.dummy) `shouldBe` Just (lcDriverB Comparison.dummy)
+
   -- Lógica del __widget__, probada aquí porque `frontend` no tiene suite
   -- (2026-08-04). Es lo único que impide que un acrónimo
   -- tecleado salga hacia un endpoint que responde 200 con el dummy.
@@ -307,6 +384,26 @@ comparisonOf = assembleComparison . decodeComparison
 
 decodeComparison :: ByteString -> RawComparison
 decodeComparison raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
+
+-- | Espejo de 'pointsOf' para el área Drivers. El par importa por la misma razón
+-- que en Comparison: el criterio del área vive en que la sesión sin parrilla
+-- __decodifique__ como @[]@ para que el @Context@ la trate como fallo, y en que
+-- el equipo ausente (@.:? … .!= \"\"@) no tumbe la lista entera.
+driversOf :: ByteString -> [DriverEntry]
+driversOf = assembleDrivers . decodeDrivers
+
+-- | El acrónimo que la parrilla de respaldo le da a un número de coche, o
+-- 'Nothing' si ese coche no está en ella. Une los dos dummies de FastF1 sin que
+-- ninguno de los dos módulos tenga que conocer al otro.
+codeOfCar :: T.Text -> Maybe T.Text
+codeOfCar number =
+  case filter ((== number) . deNumber) Drivers.dummy of
+    (entry : _) -> Just (deCode entry)
+    []          -> Nothing
+
+decodeDrivers :: ByteString -> [RawDriver]
+decodeDrivers raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
 
 -- * Fixtures
@@ -464,3 +561,34 @@ comparisonWithoutCars =
   "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
   \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\",\
   \\"lcDelta\":[0.0,-0.048,0.081,0.167]}"
+
+-- | Recorte de @GET \/fastf1\/drivers\/{session_key}@ — los tres primeros coches
+-- de la parrilla real de la sesión del 2026-08-06, en el orden que los da
+-- FastF1. Ese orden (1, 3, 16, …) no es el numérico ni el del campeonato: en una
+-- carrera cargada es el de clasificación, y es lo que el mapeo tiene que
+-- preservar.
+driverGrid :: ByteString
+driverGrid =
+  "[{\"deNumber\":\"1\",\"deCode\":\"NOR\",\"deTeam\":\"McLaren\"},\
+  \{\"deNumber\":\"3\",\"deCode\":\"VER\",\"deTeam\":\"Red Bull Racing\"},\
+  \{\"deNumber\":\"16\",\"deCode\":\"LEC\",\"deTeam\":\"Ferrari\"}]"
+
+-- | Un coche cuyo acrónimo FastF1 no resuelve: @_driver_label@ cae al número y
+-- el equipo sale vacío. No se dio en la parrilla del 2026-08-06 —los 22
+-- resolvieron—, pero es el caso que el fallback existe para cubrir, y el que
+-- decide si el mapeo filtra o deja pasar.
+gridWithUnresolvedCode :: ByteString
+gridWithUnresolvedCode =
+  "[{\"deNumber\":\"1\",\"deCode\":\"NOR\",\"deTeam\":\"McLaren\"},\
+  \{\"deNumber\":\"44\",\"deCode\":\"44\",\"deTeam\":\"\"}]"
+
+-- | La respuesta de un microservicio __anterior__ al equipo: sin @deTeam@.
+-- Mismo caso que 'comparisonWithoutCars' y por el mismo motivo — el servicio
+-- corre en un @venv@ arrancado a mano y no se despliega con el backend
+-- (2026-07-31), así que un @uvicorn@ viejo en pie emite
+-- exactamente esto. Con @.:@ tumbaría la lista completa y la parrilla entera
+-- caería al dummy en silencio.
+gridWithoutTeam :: ByteString
+gridWithoutTeam =
+  "[{\"deNumber\":\"1\",\"deCode\":\"NOR\"},\
+  \{\"deNumber\":\"16\",\"deCode\":\"LEC\"}]"

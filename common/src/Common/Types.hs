@@ -83,6 +83,34 @@ data LapComparison = MkLapComparison
 instance ToJSON LapComparison
 instance FromJSON LapComparison
 
+-- | Un coche de la parrilla de una sesión: el par número↔acrónimo, con el equipo.
+--
+-- Es el __estado final__ del desajuste de vocabularios que 'LapComparison'
+-- resolvió a medias (2026-08-05). Allí el número viaja
+-- __dentro de lo mostrado__, así que el consumidor sabe de qué coches habla lo
+-- que pinta pero no qué otros hay; aquí la traducción se publica entera, que es
+-- lo que permite pedir datos de un coche que todavía no se ha visto.
+--
+-- __La lista es la de una sesión concreta__, no la del campeonato: un piloto
+-- sustituto o un tercer coche en libres la cambian, y por eso el backend la
+-- cachea por @session_key@.
+--
+-- 'deCode' puede __repetir__ el número cuando FastF1 no resuelve el acrónimo
+-- (fallback de @_driver_label@ en @telemetry-service@): el coche está en la
+-- sesión aunque no se sepa quién lo lleva, y esconderlo daría una parrilla
+-- incompleta sin decirlo. 'deTeam' es lo único prescindible de los tres — es
+-- decoración (agrupar, colorear), no identidad —, y llega vacío cuando el
+-- servicio no lo publica.
+data DriverEntry = MkDriverEntry
+  { deNumber :: Text  -- ^ Número de coche (p. ej. @"1"@), el que acepta el query.
+  , deCode   :: Text  -- ^ Acrónimo (p. ej. @"NOR"@), o el número si no resuelve.
+  , deTeam   :: Text  -- ^ Equipo (p. ej. @"McLaren"@), o vacío.
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON DriverEntry
+instance FromJSON DriverEntry
+
 -- | Stint de neumáticos (periodo con un mismo compuesto).
 data TyreStint = TyreStint
   { tsDriver   :: Text

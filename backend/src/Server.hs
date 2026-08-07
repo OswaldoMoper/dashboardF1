@@ -9,14 +9,15 @@
 module Server where
 
 import           App                            (Env (..))
-import           Common.Types                   (HistoricalStat, LapComparison,
-                                                 LiveTimingRow, TelemetryPoint,
-                                                 TyreStint)
+import           Common.Types                   (DriverEntry, HistoricalStat,
+                                                 LapComparison, LiveTimingRow,
+                                                 TelemetryPoint, TyreStint)
 import           Config                         (cfgStaticDir)
 import           Data.Aeson                     (ToJSON)
 import           Data.Text                      (Text)
 import           GHC.Generics                   (Generic)
 import qualified Handler.Comparison             as Comparison
+import qualified Handler.Drivers                as Drivers
 import qualified Handler.Historical             as Historical
 import qualified Handler.Live                   as Live
 import qualified Handler.Telemetry              as Telemetry
@@ -65,6 +66,9 @@ type Api =
          :> QueryParam "session" Text
          :> QueryParam "drivers" Text
          :> Get '[JSON] LapComparison
+  :<|> "api" :> "drivers"
+         :> QueryParam "session" Text
+         :> Get '[JSON] [DriverEntry]
   :<|> "api" :> "tyre-strategy" :> Get '[JSON] [TyreStint]
   :<|> Raw
 
@@ -83,6 +87,7 @@ server env =
     :<|> Historical.historicalHandler env
     :<|> Telemetry.telemetryHandler env
     :<|> Comparison.comparisonHandler env
+    :<|> Drivers.driversHandler env
     :<|> TyreStrategy.tyreStrategyHandler env
     :<|> Tagged (spaApp env)
   where
