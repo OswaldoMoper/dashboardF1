@@ -1,7 +1,7 @@
 """telemetry-service — FastF1 detrás de una interfaz HTTP estable.
 
 Microservicio que encapsula FastF1 para que el backend Haskell no tenga que
-hablar Python ni pandas. Fase 4, dos endpoints:
+hablar Python ni pandas. Fase 4, tres endpoints:
 
 * ``GET /fastf1/telemetry/{session_key}/{driver}`` — arreglo JSON plano de
   muestras de telemetría, cada una **etiquetada con el acrónimo del piloto**
@@ -10,6 +10,12 @@ hablar Python ni pandas. Fase 4, dos endpoints:
 * ``GET /fastf1/comparison/{session_key}?drivers=1,16`` — **un objeto** (no una
   lista) con las siete claves de ``Common.Types.LapComparison``, comparando la
   vuelta rápida de exactamente **dos** coches.
+* ``GET /fastf1/drivers/{session_key}`` — la **parrilla** de la sesión como
+  lista de pares número↔acrónimo, con las claves de
+  ``Common.Types.DriverEntry``. Es el único endpoint que **publica** la
+  traducción que los otros dos aplican por dentro (``_driver_label``), y por
+  eso es lo que permite a un consumidor que habla acrónimos construir un query
+  que pide números.
 
 En los dos casos las claves son las del DTO de Haskell, para que el decode del
 backend sea directo.
@@ -26,7 +32,11 @@ Contrato con el lado Haskell (ver 2026-07-31):
   obligatorio (``tpDriver``/``tpSessionTime``/``tpDistance``/``tpSpeed``).
 * **Degradar es trabajo del backend.** Una sesión sin telemetría devuelve
   ``[]`` (no un error): el ``Handler.Telemetry.Context`` es quien decide caer a
-  su cache o al dummy.
+  su cache o al dummy. Vale igual para la parrilla vacía.
+* **El orden se preserva, no se impone.** Una vuelta es una serie y la parrilla
+  llega en el orden que FastF1 le da (en una carrera cargada, el de
+  clasificación). Ordenar para presentar es del consumidor; aquí reordenar solo
+  destruiría información que el backend no puede reconstruir.
 
 Endpoint del contrato **todavía no implementado**
 (``docs/ARCHITECTURE.md §2.3``): ``GET /fastf1/laps/{session_key}``.
@@ -452,3 +462,66 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
         "lcLapB": lap_b,
         "lcDelta": delta,
     }
+
+
+# ── Parrilla ──────────────────────────────────────────────────────────────────
+
+
+def _team_name(session: Any, number: str) -> str:
+    """Equipo del coche, o ``""`` si FastF1 no lo publica en esta sesión.
+
+    Espejo de ``_driver_label`` y con el mismo criterio de fallo blando: el
+    equipo es **decoración** de la parrilla (agrupar, colorear), no identidad,
+    así que su ausencia no puede costar la entrada entera. Lo que sí cambia
+    respecto del acrónimo es el fallback: allí devolver el número es informativo
+    ("este coche existe"), aquí no hay nada informativo que inventar.
+    """
+    try:
+        return str(session.get_driver(number)["TeamName"])
+    except Exception:
+        return ""
+
+
+@app.get("/fastf1/drivers/{session_key}")
+def drivers(session_key: str) -> List[Dict[str, Any]]:
+    """Parrilla de la sesión: un objeto por coche, con número, acrónimo y equipo.
+
+    Es la respuesta a un desajuste de vocabularios, no una comodidad: la API
+    habla **números de coche** y los widgets **acrónimos**, y la traducción la
+    conoce solo este servicio (2026-08-01 y 2026-08-05).
+    Los otros dos endpoints la aplican por dentro y devuelven el acrónimo ya
+    resuelto; éste la **publica**, que es lo que permite al consumidor pedir
+    datos de un coche que todavía no ha visto.
+
+    **La parrilla es la de la sesión, no la del campeonato.** Un piloto
+    sustituto o un tercer coche en libres la cambian, y por eso el backend
+    cachea por ``session_key``.
+
+    **Un coche cuyo acrónimo no resuelve sale igual**, con ``deCode`` repetido
+    del número (es el fallback de ``_driver_label``): produce pares como
+    ``("44", "44")``, que el consumidor presentará como un piloto llamado
+    ``44``. Se deja pasar a propósito — el coche está en la sesión aunque no
+    sepamos quién lo lleva, y esconderlo daría una parrilla incompleta sin
+    decirlo. El equipo ausente, en cambio, sale como ``""``
+    (ver ``_team_name``).
+
+    Una sesión sin parrilla devuelve ``[]``, **no un error**: degradar es
+    trabajo del backend (2026-07-31).
+    """
+    session = _resolve_session(session_key)
+    try:
+        numbers = list(session.drivers)
+    except Exception:
+        return []
+
+    # `session.drivers` ya son cadenas en FastF1 3.8, pero `requirements.txt` no
+    # está pineado y el `str()` de `_resolve_drivers` existe por lo mismo: es la
+    # clave del par que el consumidor va a mandar de vuelta en el query.
+    return [
+        {
+            "deNumber": str(number),
+            "deCode": _driver_label(session, str(number)),
+            "deTeam": _team_name(session, str(number)),
+        }
+        for number in numbers
+    ]

@@ -80,12 +80,15 @@ Endpoints:
 - `/fastf1/telemetry/{session_key}/{driver}`
 - `/fastf1/laps/{session_key}`
 - `/fastf1/comparison/{session_key}?drivers=1,16`
+- `/fastf1/drivers/{session_key}`
 
 `driver`/`drivers` son **números de coche** (o `all` en telemetría), no acrónimos: la traducción
 número→acrónimo la conoce solo el microservicio, así que entra número y **sale acrónimo**
 (2026-08-01 y 2026-08-03). La comparación es de **exactamente dos** coches.
 
-La comparación devuelve **también el número de coche** (`lcCarA`/`lcCarB`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**. La forma completa de resolver el desajuste es exponer la parrilla como dato (`GET /fastf1/drivers/{session_key}`, pendiente).
+La comparación devuelve **también el número de coche** (`lcCarA`/`lcCarB`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**.
+
+`GET /fastf1/drivers/{session_key}` cierra el desajuste por completo: es el único endpoint que **publica** la traducción en vez de aplicarla por dentro, así que un consumidor puede pedir datos de un coche que aún no ha visto. Devuelve la parrilla **de esa sesión** —sustitutos y terceros coches incluidos—, en el orden que le da FastF1 y sin reordenar. `/fastf1/laps/{session_key}` sigue documentado y sin implementar.
 
 ---
 
