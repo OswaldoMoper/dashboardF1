@@ -32,22 +32,32 @@
 -- un 'Event' de URL que nace de un clic y un estado de recarga que __no borra__
 -- lo que ya se veía.
 --
--- __Se teclean números de coche, no acrónimos.__ Es el desajuste de vocabularios
--- del repo (la API habla números, los widgets acrónimos,
--- 2026-08-01) resuelto por el lado barato: 'Common.Types.LapComparison' trae
--- desde el 2026-08-05 los números junto a los acrónimos, así que el widget puede
--- mostrar de qué coches habla lo que está pintando. Lo que todavía no tiene es
--- la __lista__ de la parrilla: eso necesita un endpoint propio del microservicio
--- y es la sesión siguiente. Hasta entonces, dos entradas libres.
+-- __Se eligen coches de la parrilla, no se teclean números.__ Es el desajuste de
+-- vocabularios del repo (la API habla números, los widgets acrónimos,
+-- 2026-08-01) cerrado por los dos extremos:
+-- 'Common.Types.LapComparison' trae desde el 2026-08-05 los números junto a los
+-- acrónimos —de qué coches habla lo que se está pintando— y @\/api\/drivers@
+-- publica desde el 2026-08-06 la parrilla entera —qué otros hay—. Este módulo es
+-- el primer consumidor de las dos cosas: el usuario ve @\"1 · NOR — McLaren\"@ y
+-- lo que sale hacia el endpoint sigue siendo el @1@.
+--
+-- __Son dos peticiones con dos degradados independientes__ (parrilla y
+-- comparación), así que con el microservicio apagado el selector muestra los seis
+-- coches del dummy de @Handler.Drivers.Context@ y el gráfico la comparación del
+-- dummy de @Handler.Comparison.Context@. Que los dos hablen de coches
+-- compatibles no es casualidad ni se comprueba aquí: lo fija un caso de
+-- @backend-test@ (2026-08-06).
 module Widgets.Comparison where
 
 import           Client       (fetchJson)
 import           Common.Chart (chartHeight, chartPad, chartWidth, deltaPolyline,
                                zeroLineY)
-import           Common.Route (comparisonPath, comparisonPathFor, driversParam)
-import           Common.Types (LapComparison (..))
+import           Common.Route (comparisonPath, comparisonPathFor, driversParam,
+                               driversPathFor)
+import           Common.Types (DriverEntry (..), LapComparison (..))
 import           Data.Map     (Map)
 import qualified Data.Map     as Map
+import           Data.Maybe   (fromMaybe)
 import           Data.Text    (Text)
 import qualified Data.Text    as T
 import           Reflex.Dom
@@ -64,12 +74,23 @@ data CState
 --
 -- __El selector se monta fuera de los 'dyn_', y no es una preferencia de
 -- estilo:__ 'dyn_' __re-monta__ su contenido en cada cambio del 'Dynamic', así
--- que un @\<input\>@ dentro perdería el foco y lo tecleado en cada respuesta.
+-- que un control dentro volvería a su valor inicial en cada respuesta. Por eso
+-- las opciones entran como 'Dynamic' —'dropdown' las actualiza sin remontar el
+-- @\<select\>@— en vez de montar el selector dentro de un 'dyn_' sobre la
+-- parrilla, que es lo que hace 'Widgets.Telemetry' con su switcher.
+--
+-- __Las dos peticiones salen del mismo 'getPostBuild' y son independientes.__ La
+-- parrilla se pide una sola vez y no se vuelve a pedir: no hay control que la
+-- cambie, porque el widget no elige sesión. Que parrilla y comparación puedan
+-- discrepar es un riesgo real —son dos llamadas— pero hoy no se materializa,
+-- porque las dos van a @latest@ (2026-08-07).
 comparisonWidget :: MonadWidget t m => m ()
 comparisonWidget = divClass "widget widget--comparison" $ do
   el "h2" $ text "Lap Comparison"
-  picked  <- carSelector
   pb      <- getPostBuild
+  gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
+  grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
+  picked  <- carSelector grid
   resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
   refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
   state   <- foldDyn step Loading resp
@@ -136,53 +157,116 @@ refreshLine LastFailed =
   elClass "p" "status status--stale" $
     text "No se pudo recargar: se muestra la comparación anterior"
 
--- | Las dos entradas de coche y el botón, y la URL que sale de pulsarlo.
+-- | Los dos selectores de coche y el botón, y la URL que sale de pulsarlo.
 --
--- __Dos entradas separadas y no una sola con @\"1,16\"@:__ así la cardinalidad
+-- __Dos controles separados y no uno solo con @\"1,16\"@:__ así la cardinalidad
 -- es estructural. El microservicio responde 400 a cualquier cantidad que no sea
 -- dos, y ese 400 lo absorbe el @try@ del backend y vuelve como 200 con el dummy
 -- (2026-08-01), así que impedir mandar uno o tres tiene que
--- ser cosa del widget y no del degradado.
+-- ser cosa del widget y no del degradado. Es lo único que sobrevive intacto del
+-- par de @\<input\>@ que había aquí hasta el 2026-08-07.
 --
--- Los valores iniciales son los de @Handler.Comparison.Context.defaultDrivers@:
--- lo que las entradas muestran al arrancar es lo que la primera petición —la de
--- 'getPostBuild', sin query— va a traer.
-carSelector :: MonadWidget t m => m (Event t Text)
-carSelector = divClass "car-selector" $ do
-  carA  <- carInput "1"
+-- __Las posiciones iniciales son 0 y 1, y no los coches @1@ y @16@__ de
+-- @Handler.Comparison.Context.defaultDrivers@, que es lo que la primera petición
+-- va a traer. Con el dummy de parrilla coinciden —está ordenado justamente así—;
+-- con la parrilla real no, porque la posición 1 es el coche @3@. Marcar el par
+-- que de verdad se está pintando exige la respuesta, y por tanto un ciclo; es el
+-- prefill, y va aparte.
+carSelector :: MonadWidget t m => Dynamic t [DriverEntry] -> m (Event t Text)
+carSelector grid = divClass "car-selector" $ do
+  let indexed = indexedGrid <$> grid
+      labels  = Map.map driverLabel <$> indexed
+  posA  <- carDropdown 0 labels
   elClass "span" "car-selector__vs" $ text "vs"
-  carB  <- carInput "16"
+  posB  <- carDropdown 1 labels
   click <- compareButton
-  pure (fmapMaybe urlFor (tagPromptlyDyn (zipDyn carA carB) click))
+  let picked = zipDyn (zipDynWith carAt indexed posA)
+                      (zipDynWith carAt indexed posB)
+  pure (fmapMaybe urlFor (tagPromptlyDyn picked click))
   where
-    -- 'fmapMaybe' es lo que hace que una entrada inválida __no dispare nada__,
-    -- en vez de disparar y confiar en el degradado. Y el 'Just' interior no es
-    -- ruido: 'comparisonPathFor' ya acepta 'Maybe', así que pasarle el 'Nothing'
-    -- de una entrada inválida daría el path __sin__ query — la comparación por
-    -- defecto presentada como la que se pidió.
-    urlFor :: (Text, Text) -> Maybe Text
-    urlFor (a, b) = comparisonPathFor Nothing . Just <$> driversParam a b
+    -- 'fmapMaybe' es lo que hace que una selección incompleta __no dispare
+    -- nada__, en vez de disparar y confiar en el degradado. Y el 'Just' interior
+    -- no es ruido: 'comparisonPathFor' ya acepta 'Maybe', así que pasarle un
+    -- 'Nothing' daría el path __sin__ query — la comparación por defecto
+    -- presentada como la que se pidió.
+    --
+    -- Los dos 'Nothing' que hay que absorber son el mismo: parrilla vacía. Pasa
+    -- entre el arranque y la respuesta de @\/api\/drivers@, y ahí un clic no
+    -- puede significar nada.
+    urlFor :: (Maybe Text, Maybe Text) -> Maybe Text
+    urlFor (mcarA, mcarB) = do
+      carA <- mcarA
+      carB <- mcarB
+      comparisonPathFor Nothing . Just <$> driversParam carA carB
 
--- | Una entrada de número de coche. @inputmode@ saca el teclado numérico en
--- móvil; la validación de verdad la hace 'Common.Route.driversParam', que es
--- pura y está probada por @backend-test@ — aquí no se valida a mano nada.
-carInput :: MonadWidget t m => Text -> m (Dynamic t Text)
-carInput initial =
-  fmap _textInput_value . textInput $
-    def
-      { _textInputConfig_initialValue = initial
-      , _textInputConfig_attributes = constDyn carInputAttrs
-      }
+-- | La parrilla indexada por __posición__, que es la clave de los dos
+-- 'dropdown'.
+--
+-- __La clave es la posición y no el número de coche, y no es un detalle:__
+-- 'dropdown' ordena las opciones por la clave del 'Map' (su propia fuente lo
+-- reconoce con un @TODO@), así que un @'Map' 'Text'@ sobre @deNumber@ daría el
+-- orden lexicográfico @1, 10, 11, 12, 14, 16, 3, 44…@ y un @'Map' 'Int'@ del
+-- número obligaría a parsear @deNumber@ y a decidir qué hacer con lo que no
+-- parsee. Con la posición, el orden del 'Map' __es__ el que dio FastF1 —medido
+-- el 2026-08-07: @1 3 12 16 44 6 63 30 27 41 5 10 18 14 43 31 23 55 87 81 11
+-- 77@, que en una carrera cargada es el de clasificación— y que
+-- 2026-08-06 registra como información del servicio:
+-- reordenar aquí la destruiría.
+--
+-- El precio es que la selección no lleva el número encima y hay que buscarlo
+-- ('carAt') contra la misma parrilla.
+indexedGrid :: [DriverEntry] -> Map Int DriverEntry
+indexedGrid = Map.fromList . zip [0 ..]
 
--- | Atributos de una entrada de coche. Como en el resto del módulo, no hay hoja
+-- | El número de coche de una posición, o 'Nothing' si la parrilla no la tiene.
+--
+-- Devuelve el __número__ y no el 'DriverEntry' entero porque es lo único que
+-- sale del widget: el acrónimo es para mirar, el número es lo que la API
+-- entiende (2026-08-01).
+carAt :: Map Int DriverEntry -> Int -> Maybe Text
+carAt indexed = fmap deNumber . flip Map.lookup indexed
+
+-- | La etiqueta de una opción: @\"1 · NOR — McLaren\"@.
+--
+-- Los tres campos de 'Common.Types.DriverEntry', y @deTeam@ entró al DTO en la
+-- 2026-08-06 precisamente para esto. El __número__ va delante porque es lo que
+-- permite cotejar de un vistazo lo elegido con el @#n@ que 'lapLabel' pinta en
+-- la cabecera del gráfico: sin él no habría forma de ver que la respuesta
+-- corresponde a lo pedido.
+--
+-- Con @deTeam@ vacío se omite el guion largo en vez de dejarlo colgando. Vacío
+-- es lo que devuelve un microservicio que no resolvió el equipo, y también lo
+-- que da @.:? … .!= \"\"@ ante uno anterior a que el campo existiera
+-- (2026-08-06).
+driverLabel :: DriverEntry -> Text
+driverLabel d
+  | T.null (deTeam d) = core
+  | otherwise         = core <> " — " <> deTeam d
+  where
+    core = deNumber d <> " · " <> deCode d
+
+-- | Un selector de coche: la posición inicial y las opciones, que __cambian__
+-- cuando llega la parrilla.
+--
+-- Se usa 'dropdown' y no 'selectElement' crudo, y la razón es que este commit
+-- no se typecheckea en sesión (@frontend@ solo compila con GHCJS): 'dropdown'
+-- resuelve por dentro la carrera del @\<select\>@ —reinyecta la selección en el
+-- @postBuild@ y une la clave de @setValue@ a las opciones, de modo que un
+-- prefill que llegue __antes__ que la parrilla no se pierde—, mientras que con
+-- 'selectElement' habría que escribir a ciegas el @\<option selected\>@.
+--
+-- Las opciones entran como 'Dynamic' y no como lista: es lo que permite que el
+-- @\<select\>@ se pueble al llegar @\/api\/drivers@ __sin__ remontarse, y por
+-- tanto sin perder lo que el usuario ya hubiera elegido.
+carDropdown :: MonadWidget t m => Int -> Dynamic t (Map Int Text) -> m (Dynamic t Int)
+carDropdown initial options =
+  fmap _dropdown_value . dropdown initial options $
+    def { _dropdownConfig_attributes = constDyn carSelectAttrs }
+
+-- | Atributos de un selector de coche. Como en el resto del módulo, no hay hoja
 -- de estilos: la clase es el gancho para cuando la haya.
-carInputAttrs :: Map Text Text
-carInputAttrs =
-  Map.fromList
-    [ ("class", "car-selector__input")
-    , ("size", "3")
-    , ("inputmode", "numeric")
-    ]
+carSelectAttrs :: Map Text Text
+carSelectAttrs = Map.fromList [("class", "car-selector__select")]
 
 -- | Botón que dispara la comparación. Replicado aquí en lugar de importado de
 -- 'Widgets.Historical' o 'Widgets.Telemetry': mismo criterio que allí, no
