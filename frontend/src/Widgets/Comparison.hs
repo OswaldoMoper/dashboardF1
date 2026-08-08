@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecursiveDo       #-}
 
 -- | Widget de Comparación de Vueltas (categoría LapComparison).
 --
@@ -55,6 +56,7 @@ import           Common.Chart (chartHeight, chartPad, chartWidth, deltaPolyline,
 import           Common.Route (comparisonPath, comparisonPathFor, driversParam,
                                driversPathFor)
 import           Common.Types (DriverEntry (..), LapComparison (..))
+import           Data.List    (find)
 import           Data.Map     (Map)
 import qualified Data.Map     as Map
 import           Data.Maybe   (fromMaybe)
@@ -84,13 +86,27 @@ data CState
 -- cambie, porque el widget no elige sesión. Que parrilla y comparación puedan
 -- discrepar es un riesgo real —son dos llamadas— pero hoy no se materializa,
 -- porque las dos van a @latest@ (2026-08-07).
+--
+-- __El @mdo@ es el primer 'RecursiveDo' del repo, y el ciclo es real:__ la
+-- selección compone la URL, la URL trae la respuesta y la respuesta __marca__ la
+-- selección, que es lo que hace que los dos @\<select\>@ digan siempre de qué
+-- par habla el gráfico. Lo que impide que el nudo se cierre en el mismo instante
+-- es que 'Client.fetchJson' va por @performRequestAsync@: entre @picked@ y
+-- @resp@ hay una petición de red, nunca un mismo frame.
+--
+-- Lo que alimenta el prefill es @state@ y no @resp@, y es deliberado: @state@ es
+-- __lo que se está pintando__ (ver 'step'), así que los selectores quedan
+-- pinchados a eso por construcción. Con @resp@ habría un segundo acumulador en
+-- paralelo, y dos acumuladores del mismo hecho acaban discrepando — justo en el
+-- caso que 'step' existe para cubrir, el de la recarga fallida que conserva el
+-- gráfico anterior.
 comparisonWidget :: MonadWidget t m => m ()
-comparisonWidget = divClass "widget widget--comparison" $ do
+comparisonWidget = divClass "widget widget--comparison" $ mdo
   el "h2" $ text "Lap Comparison"
   pb      <- getPostBuild
   gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
   grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
-  picked  <- carSelector grid
+  picked  <- carSelector grid (shownComparison <$> state)
   resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
   refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
   state   <- foldDyn step Loading resp
@@ -124,6 +140,15 @@ step :: Maybe LapComparison -> CState -> CState
 step (Just c) _          = Loaded c
 step Nothing  (Loaded c) = Loaded c
 step Nothing  _          = Failed
+
+-- | La comparación que el gráfico está pintando, si hay alguna. Es lo que
+-- 'carSelector' necesita para marcar el par activo, y sale del __estado__ y no
+-- de la respuesta a propósito ('comparisonWidget'): tras una recarga fallida
+-- 'step' conserva el gráfico anterior, y los selectores tienen que seguir
+-- señalando ése y no quedarse en blanco.
+shownComparison :: CState -> Maybe LapComparison
+shownComparison (Loaded c) = Just c
+shownComparison _          = Nothing
 
 -- | Qué le pasó a la última petición, al margen de los datos que se muestran.
 --
@@ -166,19 +191,30 @@ refreshLine LastFailed =
 -- ser cosa del widget y no del degradado. Es lo único que sobrevive intacto del
 -- par de @\<input\>@ que había aquí hasta el 2026-08-07.
 --
--- __Las posiciones iniciales son 0 y 1, y no los coches @1@ y @16@__ de
--- @Handler.Comparison.Context.defaultDrivers@, que es lo que la primera petición
--- va a traer. Con el dummy de parrilla coinciden —está ordenado justamente así—;
--- con la parrilla real no, porque la posición 1 es el coche @3@. Marcar el par
--- que de verdad se está pintando exige la respuesta, y por tanto un ciclo; es el
--- prefill, y va aparte.
-carSelector :: MonadWidget t m => Dynamic t [DriverEntry] -> m (Event t Text)
-carSelector grid = divClass "car-selector" $ do
+-- __Las posiciones iniciales, 0 y 1, no son la selección de verdad:__ son lo que
+-- se ve durante el instante que va del arranque a la primera respuesta. El par
+-- que el gráfico pinta lo marca el prefill, y tiene que ser así porque
+-- @Handler.Comparison.Context.defaultDrivers@ son los coches @1@ y @16@ y sus
+-- posiciones dependen de la parrilla: en el dummy son la 0 y la 1 —está ordenado
+-- justamente así— y en la parrilla real son la 0 y la __3__.
+carSelector
+  :: MonadWidget t m
+  => Dynamic t [DriverEntry]
+  -> Dynamic t (Maybe LapComparison)
+  -> m (Event t Text)
+carSelector grid shown = divClass "car-selector" $ do
   let indexed = indexedGrid <$> grid
       labels  = Map.map driverLabel <$> indexed
-  posA  <- carDropdown 0 labels
+      -- El prefill de un lado: la posición que ocupa hoy el coche del que habla
+      -- el gráfico. 'updated' sobre las __dos__ fuentes y no un 'Event' de la
+      -- respuesta, porque parrilla y comparación son dos peticiones y llegan en
+      -- cualquier orden: con solo la respuesta, la que se adelante a la parrilla
+      -- buscaría el coche en una lista vacía y el prefill se perdería para
+      -- siempre.
+      setPos car = fmapMaybe id (updated (zipDynWith (positionFor car) indexed shown))
+  posA  <- carDropdown 0 labels (setPos lcCarA)
   elClass "span" "car-selector__vs" $ text "vs"
-  posB  <- carDropdown 1 labels
+  posB  <- carDropdown 1 labels (setPos lcCarB)
   click <- compareButton
   let picked = zipDyn (zipDynWith carAt indexed posA)
                       (zipDynWith carAt indexed posB)
@@ -226,6 +262,32 @@ indexedGrid = Map.fromList . zip [0 ..]
 carAt :: Map Int DriverEntry -> Int -> Maybe Text
 carAt indexed = fmap deNumber . flip Map.lookup indexed
 
+-- | La posición que ocupa un número de coche en la parrilla, o 'Nothing' si no
+-- está. Es 'carAt' al revés, y hace falta porque el widget habla dos idiomas: el
+-- 'dropdown' se maneja por posición ('indexedGrid') y la respuesta trae números.
+--
+-- Recorre la lista en vez de mantener un índice inverso: son 22 entradas y se
+-- consulta dos veces por respuesta.
+positionOf :: Map Int DriverEntry -> Text -> Maybe Int
+positionOf indexed car =
+  fst <$> find ((== car) . deNumber . snd) (Map.toAscList indexed)
+
+-- | La posición a la que hay que llevar un selector, dada la parrilla vigente y
+-- lo que el gráfico está pintando. 'Nothing' —y por tanto ningún @setValue@— en
+-- los dos casos en que mover el selector sería mentir: todavía no hay
+-- comparación, o el coche del que habla __no está en la parrilla__.
+--
+-- El segundo caso no es hipotético: con el microservicio apagado la comparación
+-- es el dummy (@1@ vs @16@) y la parrilla puede ser la real de otra sesión
+-- cacheada. Que el selector se quede donde estaba y el @#n@ de 'lapLabel'
+-- discrepe es justo la señal de que lo pintado no es lo pedido.
+positionFor
+  :: (LapComparison -> Text)
+  -> Map Int DriverEntry
+  -> Maybe LapComparison
+  -> Maybe Int
+positionFor car indexed = (positionOf indexed . car =<<)
+
 -- | La etiqueta de una opción: @\"1 · NOR — McLaren\"@.
 --
 -- Los tres campos de 'Common.Types.DriverEntry', y @deTeam@ entró al DTO en la
@@ -258,10 +320,22 @@ driverLabel d
 -- Las opciones entran como 'Dynamic' y no como lista: es lo que permite que el
 -- @\<select\>@ se pueble al llegar @\/api\/drivers@ __sin__ remontarse, y por
 -- tanto sin perder lo que el usuario ya hubiera elegido.
-carDropdown :: MonadWidget t m => Int -> Dynamic t (Map Int Text) -> m (Dynamic t Int)
-carDropdown initial options =
+--
+-- El tercer argumento es el prefill. Sale de 'carSelector' y cierra el ciclo del
+-- @mdo@ de 'comparisonWidget'; que 'dropdown' una la clave de @setValue@ a las
+-- opciones es lo que hace que no importe si llega antes que la parrilla.
+carDropdown
+  :: MonadWidget t m
+  => Int
+  -> Dynamic t (Map Int Text)
+  -> Event t Int
+  -> m (Dynamic t Int)
+carDropdown initial options setPos =
   fmap _dropdown_value . dropdown initial options $
-    def { _dropdownConfig_attributes = constDyn carSelectAttrs }
+    def
+      { _dropdownConfig_attributes = constDyn carSelectAttrs
+      , _dropdownConfig_setValue = setPos
+      }
 
 -- | Atributos de un selector de coche. Como en el resto del módulo, no hay hoja
 -- de estilos: la clase es el gancho para cuando la haya.
