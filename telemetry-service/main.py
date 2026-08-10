@@ -221,9 +221,13 @@ def _lap_time(value: Any) -> Optional[str]:
 def _interp(x: float, xs: List[float], ys: List[float]) -> Optional[float]:
     """``y`` en ``x`` por interpolación lineal sobre ``xs``, que debe crecer.
 
-    Fuera del rango **satura** en el extremo en vez de extrapolar: las dos
-    vueltas no cubren exactamente la misma distancia, y extrapolar inventaría
-    tiempo donde no hay traza.
+    Fuera del rango devuelve ``None`` — **no satura y no extrapola**. Saturar
+    era peor que no contestar: devolvía el valor del extremo como si fuera una
+    medida, así que un delta mal alineado salía **correcto justo en los dos
+    puntos que se miran primero** y el fallo quedaba plausible en vez de
+    visible. Quien recibe ``None`` (el bucle de ``comparison``) deja el punto
+    fuera del delta, que es lo honesto: de ese tramo de pista no hay traza del
+    otro coche.
 
     A mano y no con ``numpy.interp`` a propósito: este módulo evita las
     dependencias científicas en la superficie (ver ``_latest_race``, que detecta
@@ -231,11 +235,11 @@ def _interp(x: float, xs: List[float], ys: List[float]) -> Optional[float]:
     bisección es gratis. Además ``requirements.txt`` no está pineado, así que
     cada API de librería que se usa es superficie que puede cambiar sola.
     """
-    if not xs:
+    if not xs or x < xs[0] or x > xs[-1]:
         return None
-    if x <= xs[0]:
+    if x == xs[0]:
         return ys[0]
-    if x >= xs[-1]:
+    if x == xs[-1]:
         return ys[-1]
     lo, hi = 0, len(xs) - 1
     while hi - lo > 1:
@@ -346,11 +350,32 @@ def telemetry(session_key: str, driver: str) -> List[Dict[str, Any]]:
 def _lap_trace(
     session: Any, number: str
 ) -> Optional[Tuple[str, str, List[float], List[float]]]:
-    """``(acrónimo, tiempo de vuelta, distancias, tiempos)`` de la vuelta rápida.
+    """``(acrónimo, tiempo de vuelta, fracciones de vuelta, tiempos)`` de la rápida.
 
     Espejo estructural de ``_driver_points``, pero devuelve la vuelta como **dos
     series paralelas** en vez de muestras: es la forma que necesita ``_interp``
-    para leer el tiempo de un coche a la distancia del otro.
+    para leer el tiempo de un coche al mismo punto de pista que el otro.
+
+    **El eje es la fracción de vuelta en ``[0, 1]``, no el metro**, y eso es
+    correctitud y no comodidad (2026-08-10). ``Distance``
+    no lo mide FastF1: lo **integra** ``add_distance()`` a partir de ``Speed``
+    muestreada de forma irregular, así que el metro que sale es una estimación
+    con error acumulado. Medido en Hungría 2026 con ``fastf1`` 3.8.3, la misma
+    vuelta del mismo circuito (~4381 m reales) da **4721 m** para un coche y
+    **4089 m** para el otro: los dos ejes están mal en absoluto y, lo que
+    arruina la comparación, están mal **en distinta escala**. Dividir cada serie
+    por su propio total no normaliza a ciegas — descarta la única parte del
+    número que es falsa y conserva la que no lo es, la posición relativa a lo
+    largo de la vuelta.
+
+    **``interpolate_edges=True`` es lo que hace exactos los dos bordes.** Sin
+    él, la primera muestra cae ya pasada la línea y ``Distance[0]`` arranca en el
+    rectángulo ``Speed[0]/3.6 · Time[0]`` que FastF1 usa para estimar el tramo
+    que no midió (3.7 m y 7.8 m en la medición de arriba, despreciable aquí pero
+    no si hay un hueco de telemetría). Con él, ``Distance[0]`` es ``0.0``,
+    ``Time`` recorre la vuelta entera y ``times[-1]`` coincide con el ``LapTime``
+    publicado — que es lo que convierte el último punto del delta en una
+    comprobación y no en una casualidad.
 
     ``None`` si el coche no tiene vuelta comparable (no salió, sin telemetría,
     ``LapTime`` ausente, o menos de dos puntos útiles). Quien decide qué hacer
@@ -368,7 +393,7 @@ def _lap_trace(
         return None
 
     try:
-        telemetry = lap.get_car_data().add_distance()
+        telemetry = lap.get_car_data(interpolate_edges=True).add_distance()
     except Exception:
         return None
 
@@ -381,7 +406,9 @@ def _lap_trace(
             continue
         # `Distance` tiene que ser estrictamente creciente: `_interp` busca por
         # bisección y un retroceso (ruido de GPS, muestra repetida) rompería el
-        # invariante en silencio.
+        # invariante en silencio. En la medición del 2026-08-10 no descartó
+        # ninguna muestra en ninguno de los dos coches, así que es un seguro, no
+        # el filtro que estaba deformando el delta.
         if distances and distance <= distances[-1]:
             continue
         distances.append(distance)
@@ -389,7 +416,16 @@ def _lap_trace(
 
     if len(distances) < 2:
         return None
-    return _driver_label(session, number), lap_time, distances, times
+
+    # A fracción de vuelta. El total es positivo: la serie es estrictamente
+    # creciente y arranca en 0.0 (`interpolate_edges=True`), así que el último
+    # elemento es mayor que el primero.
+    total = distances[-1]
+    if total <= 0:
+        return None
+    fractions = [distance / total for distance in distances]
+
+    return _driver_label(session, number), lap_time, fractions, times
 
 
 @app.get("/fastf1/comparison/{session_key}")
@@ -400,11 +436,39 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
     ``?drivers=1`` o ``?drivers=1,4,16`` (y ``all``) son un **400**, no una
     respuesta parcial.
 
-    ``lcDelta`` es el delta acumulado **A−B** sobre la rejilla de distancias de
-    A: en cada punto, el tiempo que A llevaba menos el que B llevaba a esa misma
-    distancia. Positivo = A va por detrás. Submuestreado con el mismo
+    ``lcDelta`` es el delta acumulado **A−B** sobre la rejilla de A: en cada
+    punto, el tiempo que A llevaba menos el que B llevaba **en el mismo punto de
+    la pista**. Positivo = A va por detrás. Submuestreado con el mismo
     ``TELEMETRY_MAX_POINTS`` que la telemetría, y saneado con ``_num``, porque un
     solo ``NaN`` tumba el decode del objeto **completo** en aeson.
+
+    **"El mismo punto de la pista" es la fracción de vuelta, no el metro**
+    (``_lap_trace``, y 2026-08-10). Comparar por metro
+    integrado era el error que hacía el gráfico incomparable: dos vueltas del
+    mismo circuito con totales integrados que se llevan un 15 % producen un delta
+    de doce segundos a mitad de vuelta entre coches separados por medio.
+
+    Dos invariantes que sí se cumplen exactamente: el **primer** valor del delta
+    es ``0.0`` (los dos coches en la línea, con ``interpolate_edges``) y el
+    **último** es ``lcLapA - lcLapB`` (los dos al final de su vuelta).
+
+    **Lo intermedio todavía no es creíble, y conviene decirlo aquí antes de que
+    alguien lo lea como una medida.** Un delta cuyo máximo en valor absoluto no
+    quepa en ``lcLapA - lcLapB`` no es físico, y hoy no cabe: medido el
+    2026-08-10 en Hungría, dos vueltas separadas por 0.491 s dan un máximo de
+    **9.1 s** a un 18 % de vuelta (era 12.9 s antes de normalizar el eje). La
+    causa está medida y no es la interpolación: el canal ``Speed`` de FastF1,
+    integrado, da **+8.05 %** de longitud de vuelta para un coche y **-6.55 %**
+    para el otro, y ni el trapecio, ni duplicar la tasa de muestreo, ni la
+    longitud de camino sobre ``get_pos_data()`` lo corrigen
+    (2026-08-10). La referencia buena son los **tiempos de
+    sector**, que para ese par dan el acumulado exacto
+    ``+0.051 / +0.484 / +0.491``; anclar el eje a ellos es el paso siguiente.
+
+    ``lcDelta`` puede ser **más corto** que la rejilla de A: ``_interp`` devuelve
+    ``None`` fuera del rango en vez de saturar, y esos puntos se dejan fuera. En
+    el camino normal no ocurre —las dos fracciones recorren ``[0, 1]``— y por eso
+    el recorte es un detector y no una pérdida.
 
     Una sesión sin vueltas comparables devuelve ``lcDelta: []`` y los tiempos en
     ``""``, **no un error**: degradar es trabajo del backend
@@ -440,13 +504,21 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
             "lcDelta": [],
         }
 
-    label_a, lap_a, distances_a, times_a = trace_a
-    label_b, lap_b, distances_b, times_b = trace_b
+    label_a, lap_a, laps_a, times_a = trace_a
+    label_b, lap_b, laps_b, times_b = trace_b
 
-    step = max(1, len(distances_a) // MAX_POINTS)
+    step = max(1, len(laps_a) // MAX_POINTS)
+    # El **último** punto de la vuelta entra siempre, aunque el paso del
+    # submuestreo no caiga en él: es lo que hace que el final del delta sea
+    # `lcLapA - lcLapB` y no un valor cercano a esa diferencia. Sin esto el
+    # invariante del docstring sería una casualidad del paso.
+    indices = list(range(0, len(laps_a), step))
+    if indices[-1] != len(laps_a) - 1:
+        indices.append(len(laps_a) - 1)
+
     delta: List[float] = []
-    for index in range(0, len(distances_a), step):
-        reference = _interp(distances_a[index], distances_b, times_b)
+    for index in indices:
+        reference = _interp(laps_a[index], laps_b, times_b)
         if reference is None:
             continue
         value = _num(times_a[index] - reference)
