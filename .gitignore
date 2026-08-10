@@ -14,6 +14,9 @@ __pycache__/
 .venv/
 venv/
 
+# Cache de FastF1.
+.fastf1-cache/
+
 # Editor / OS
 .DS_Store
 *.swp
