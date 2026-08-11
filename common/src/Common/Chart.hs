@@ -75,9 +75,18 @@ deltaRange xs
 
 -- | La serie como coordenadas del @viewBox@, en el mismo orden.
 --
--- El índice da la X: @lcDelta@ es una serie a lo largo de la vuelta y el
--- microservicio ya la entrega submuestreada a paso regular, así que la posición
--- en la lista __es__ la distancia recorrida. No hay eje X que calcular.
+-- El índice da la X, y no hay eje X que calcular: la posición en la lista es el
+-- __orden a lo largo de la vuelta__, que es lo único que @lcDelta@ garantiza.
+--
+-- __Cuidado con leer la X como distancia.__ Desde el 2026-08-11
+-- @lcDelta@ son las cuatro __fronteras de sector__ —meta, fin de S1, fin de S2,
+-- fin de vuelta—, y los sectores de un circuito no miden lo mismo, así que
+-- repartirlas a espacio igual estira unos tramos y encoge otros. Es deliberado:
+-- el eje X real exigiría que viajara en el DTO, y lo que el gráfico afirma —el
+-- orden de las fronteras y el valor exacto en cada una— sigue siendo cierto.
+-- Antes la afirmación era más fuerte y más falsa: que la posición __era__ la
+-- distancia recorrida, sobre una serie submuestreada de un eje que resultó no
+-- ser medible (ver 2026-08-10).
 deltaPoints :: [Double] -> [(Double, Double)]
 deltaPoints xs =
   [ (scaleX (length xs) i, scaleY (deltaRange xs) v) | (i, v) <- zip [0 ..] xs ]

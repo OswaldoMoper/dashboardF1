@@ -312,7 +312,7 @@ main = hspec $ do
       map fst (deltaPoints [0.5]) `shouldBe` [chartWidth / 2]
 
     it "la serie del dummy ocupa el ancho útil de extremo a extremo" $ do
-      let xs = map fst (deltaPoints [0.0, -0.05, 0.08, 0.12, 0.167])
+      let xs = map fst (deltaPoints [0.0, -0.048, 0.081, 0.167])
       head xs `shouldBe` chartPad
       last xs `shouldBe` chartWidth - chartPad
 

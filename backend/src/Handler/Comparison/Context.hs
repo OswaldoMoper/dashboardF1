@@ -96,6 +96,13 @@ fetchLapComparison cfg sessionKey driversKey =
 -- formateados y un delta no vacío—, para que el widget de comparación sea
 -- ejercitable sin el servicio levantado.
 --
+-- __El delta son cuatro valores desde el 2026-08-11__,
+-- no los cinco de paso libre que tenía desde la Fase 1: las cuatro
+-- fronteras de sector. Y suman: arranca en @0.0@ y acaba en @0.167@, que es la
+-- diferencia entre los dos tiempos de aquí arriba. Un respaldo que no cumpla los
+-- invariantes del endpoint entrena el ojo a aceptar gráficos que el dato real no
+-- puede producir.
+--
 -- Los coches son los de 'defaultDrivers', no dos cualesquiera: así la respuesta
 -- sin parámetros y el respaldo hablan de los mismos, y el @1@\/@16@ que el widget
 -- muestra es el que mandaría de vuelta al pedir otra comparación.
@@ -116,5 +123,5 @@ dummy =
     , lcCarB = "16"
     , lcLapA = "1:29.345"
     , lcLapB = "1:29.512"
-    , lcDelta = [0.0, -0.05, 0.08, 0.12, 0.167]
+    , lcDelta = [0.0, -0.048, 0.081, 0.167]
     }
