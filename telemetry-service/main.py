@@ -42,8 +42,9 @@ Endpoint del contrato **todavía no implementado**
 (``docs/ARCHITECTURE.md §2.3``): ``GET /fastf1/laps/{session_key}``.
 
 Variables de entorno: ``FASTF1_CACHE`` (default ``.fastf1-cache``) y
-``TELEMETRY_MAX_POINTS`` (default ``60``, muestras por piloto y puntos del
-delta de comparación).
+``TELEMETRY_MAX_POINTS`` (default ``60``, muestras por piloto). Desde el
+2026-08-11 **no** afecta al delta de comparación: son cuatro fronteras de
+sector y no una serie submuestreada (2026-08-11).
 """
 
 from __future__ import annotations
@@ -221,6 +222,11 @@ def _lap_time(value: Any) -> Optional[str]:
 def _interp(x: float, xs: List[float], ys: List[float]) -> Optional[float]:
     """``y`` en ``x`` por interpolación lineal sobre ``xs``, que debe crecer.
 
+    **Sin uso desde el 2026-08-11**: el delta lo construye ``_lap_sectors`` y no
+    hay eje que interpolar. Se conserva —con ``_lap_trace``, su único llamador—
+    para la rama que publique los sectores en el DTO
+    (2026-08-11). Lo que sigue describe el mecanismo tal como quedó.
+
     Fuera del rango devuelve ``None`` — **no satura y no extrapola**. Saturar
     era peor que no contestar: devolvía el valor del extremo como si fuera una
     medida, así que un delta mal alineado salía **correcto justo en los dos
@@ -352,6 +358,12 @@ def _lap_trace(
 ) -> Optional[Tuple[str, str, List[float], List[float]]]:
     """``(acrónimo, tiempo de vuelta, fracciones de vuelta, tiempos)`` de la rápida.
 
+    **Sin uso desde el 2026-08-11**: ``comparison`` construye el delta con
+    ``_lap_sectors``, que no necesita telemetría. Se conserva para la rama que
+    publique los sectores en el DTO (2026-08-11); lo que
+    sigue describe el eje por fracción de vuelta tal como quedó medido, que es la
+    razón por la que se guarda y no se borra.
+
     Espejo estructural de ``_driver_points``, pero devuelve la vuelta como **dos
     series paralelas** en vez de muestras: es la forma que necesita ``_interp``
     para leer el tiempo de un coche al mismo punto de pista que el otro.
@@ -428,6 +440,47 @@ def _lap_trace(
     return _driver_label(session, number), lap_time, fractions, times
 
 
+def _lap_sectors(
+    session: Any, number: str
+) -> Optional[Tuple[str, str, List[float]]]:
+    """``(acrónimo, tiempo de vuelta, [s1, s2, s3])`` de la vuelta rápida.
+
+    Es lo que sustituye a ``_lap_trace`` como fuente del delta desde el
+    2026-08-11, y la diferencia que importa es que **no
+    toca telemetría**: los tres sectores los **publica** FastF1 con el resto de
+    la vuelta, mientras que el eje de distancia había que integrarlo a partir de
+    ``Speed`` — que es de donde salía todo el error. De paso, la comparación deja
+    de descargar y recorrer dos vueltas de canales de coche.
+
+    ``None`` si el coche no tiene vuelta comparable (no salió, ``LapTime``
+    ausente) **o si le falta cualquiera de los tres sectores**: un delta con dos
+    de tres no es un delta acumulado más corto, es uno mal sumado. Quien decide
+    qué hacer con ese ``None`` es el endpoint, no esta función.
+    """
+    try:
+        lap = session.laps.pick_drivers([number]).pick_fastest()
+    except Exception:
+        return None
+    if lap is None or getattr(lap, "empty", False):
+        return None
+
+    lap_time = _lap_time(lap["LapTime"])
+    if lap_time is None:
+        return None
+
+    sectors: List[float] = []
+    for column in ("Sector1Time", "Sector2Time", "Sector3Time"):
+        try:
+            value = _seconds(lap[column])
+        except (KeyError, IndexError, TypeError):
+            return None
+        if value is None:
+            return None
+        sectors.append(value)
+
+    return _driver_label(session, number), lap_time, sectors
+
+
 @app.get("/fastf1/comparison/{session_key}")
 def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
     """Comparación de la vuelta rápida de **exactamente dos** coches.
@@ -436,39 +489,31 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
     ``?drivers=1`` o ``?drivers=1,4,16`` (y ``all``) son un **400**, no una
     respuesta parcial.
 
-    ``lcDelta`` es el delta acumulado **A−B** sobre la rejilla de A: en cada
-    punto, el tiempo que A llevaba menos el que B llevaba **en el mismo punto de
-    la pista**. Positivo = A va por detrás. Submuestreado con el mismo
-    ``TELEMETRY_MAX_POINTS`` que la telemetría, y saneado con ``_num``, porque un
-    solo ``NaN`` tumba el decode del objeto **completo** en aeson.
+    ``lcDelta`` son **cuatro valores en las cuatro fronteras de sector** —línea
+    de meta, fin de S1, fin de S2, fin de vuelta—: el tiempo acumulado de A menos
+    el de B en cada una. Positivo = A va por detrás. Saneado con ``_num``, porque
+    un solo ``NaN`` tumba el decode del objeto **completo** en aeson.
 
-    **"El mismo punto de la pista" es la fracción de vuelta, no el metro**
-    (``_lap_trace``, y 2026-08-10). Comparar por metro
-    integrado era el error que hacía el gráfico incomparable: dos vueltas del
-    mismo circuito con totales integrados que se llevan un 15 % producen un delta
-    de doce segundos a mitad de vuelta entre coches separados por medio.
+    **Son sectores y no una curva de vuelta a propósito**
+    (2026-08-11). Un delta por distancia exige un eje que diga "el mismo punto de
+    la pista" en los dos coches, y FastF1 no publica ninguno: se midieron cinco
+    —el metro integrado, la fracción de vuelta, el trapecio, la telemetría
+    fusionada y el camino GPS— y **ninguno** deja el delta dentro de lo
+    físicamente posible, porque el canal ``Speed`` del que todos derivan trae un
+    sesgo de +8 % en un coche y −6.5 % en el otro (ver 2026-08-10). Los tiempos
+    de sector, en cambio, FastF1 los **publica** en vez de integrarlos.
 
-    Dos invariantes que sí se cumplen exactamente: el **primer** valor del delta
-    es ``0.0`` (los dos coches en la línea, con ``interpolate_edges``) y el
-    **último** es ``lcLapA - lcLapB`` (los dos al final de su vuelta).
+    Los cuatro valores son **exactos**, y con ellos los dos invariantes que antes
+    solo se cumplían en las puntas: el primero es ``0.0`` (los dos coches en la
+    línea) y el último es ``lcLapA - lcLapB`` — ya no "del orden de", sino la
+    misma diferencia al milisegundo, porque los tres sectores suman el
+    ``LapTime``. Para el par medido el 2026-08-10 en Hungría:
+    ``[0.0, +0.051, +0.484, +0.491]``.
 
-    **Lo intermedio todavía no es creíble, y conviene decirlo aquí antes de que
-    alguien lo lea como una medida.** Un delta cuyo máximo en valor absoluto no
-    quepa en ``lcLapA - lcLapB`` no es físico, y hoy no cabe: medido el
-    2026-08-10 en Hungría, dos vueltas separadas por 0.491 s dan un máximo de
-    **9.1 s** a un 18 % de vuelta (era 12.9 s antes de normalizar el eje). La
-    causa está medida y no es la interpolación: el canal ``Speed`` de FastF1,
-    integrado, da **+8.05 %** de longitud de vuelta para un coche y **-6.55 %**
-    para el otro, y ni el trapecio, ni duplicar la tasa de muestreo, ni la
-    longitud de camino sobre ``get_pos_data()`` lo corrigen
-    (2026-08-10). La referencia buena son los **tiempos de
-    sector**, que para ese par dan el acumulado exacto
-    ``+0.051 / +0.484 / +0.491``; anclar el eje a ellos es el paso siguiente.
-
-    ``lcDelta`` puede ser **más corto** que la rejilla de A: ``_interp`` devuelve
-    ``None`` fuera del rango en vez de saturar, y esos puntos se dejan fuera. En
-    el camino normal no ocurre —las dos fracciones recorren ``[0, 1]``— y por eso
-    el recorte es un detector y no una pérdida.
+    El precio, dicho aquí porque el consumidor lo va a ver: **son cuatro puntos y
+    no sesenta**, así que el gráfico es una línea quebrada de tres tramos y no
+    una curva. Dentro de un sector no se dice nada, que es exactamente lo que se
+    sabe.
 
     Una sesión sin vueltas comparables devuelve ``lcDelta: []`` y los tiempos en
     ``""``, **no un error**: degradar es trabajo del backend
@@ -491,9 +536,9 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
             ),
         )
 
-    trace_a = _lap_trace(session, numbers[0])
-    trace_b = _lap_trace(session, numbers[1])
-    if trace_a is None or trace_b is None:
+    lap_a_data = _lap_sectors(session, numbers[0])
+    lap_b_data = _lap_sectors(session, numbers[1])
+    if lap_a_data is None or lap_b_data is None:
         return {
             "lcDriverA": _driver_label(session, numbers[0]),
             "lcDriverB": _driver_label(session, numbers[1]),
@@ -504,26 +549,28 @@ def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
             "lcDelta": [],
         }
 
-    label_a, lap_a, laps_a, times_a = trace_a
-    label_b, lap_b, laps_b, times_b = trace_b
+    label_a, lap_a, sectors_a = lap_a_data
+    label_b, lap_b, sectors_b = lap_b_data
 
-    step = max(1, len(laps_a) // MAX_POINTS)
-    # El **último** punto de la vuelta entra siempre, aunque el paso del
-    # submuestreo no caiga en él: es lo que hace que el final del delta sea
-    # `lcLapA - lcLapB` y no un valor cercano a esa diferencia. Sin esto el
-    # invariante del docstring sería una casualidad del paso.
-    indices = list(range(0, len(laps_a), step))
-    if indices[-1] != len(laps_a) - 1:
-        indices.append(len(laps_a) - 1)
-
-    delta: List[float] = []
-    for index in indices:
-        reference = _interp(laps_a[index], laps_b, times_b)
-        if reference is None:
-            continue
-        value = _num(times_a[index] - reference)
-        if value is not None:
-            delta.append(value)
+    # El `0.0` de la línea de meta no sale de ningún sector: es la frontera
+    # cero, donde los dos coches están empatados por definición. Va delante para
+    # que el delta tenga las **cuatro** fronteras y no solo los tres finales, y
+    # es lo que hace que el gráfico arranque en la línea del cero en vez de en el
+    # primer parcial.
+    delta: List[float] = [0.0]
+    accumulated_a, accumulated_b = 0.0, 0.0
+    for sector_a, sector_b in zip(sectors_a, sectors_b):
+        accumulated_a += sector_a
+        accumulated_b += sector_b
+        value = _num(accumulated_a - accumulated_b)
+        # Un `None` aquí no puede recortar la serie como hacía `_interp`: los
+        # cuatro valores son fronteras y saltarse una desplazaría las de detrás.
+        # `_lap_sectors` ya garantiza tres sectores finitos, así que esto es un
+        # seguro contra el desbordamiento de la suma, no un camino esperado.
+        if value is None:
+            delta = []
+            break
+        delta.append(value)
 
     return {
         "lcDriverA": label_a,
