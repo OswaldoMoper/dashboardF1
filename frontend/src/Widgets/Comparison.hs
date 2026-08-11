@@ -324,6 +324,14 @@ driverLabel d
 -- El tercer argumento es el prefill. Sale de 'carSelector' y cierra el ciclo del
 -- @mdo@ de 'comparisonWidget'; que 'dropdown' una la clave de @setValue@ a las
 -- opciones es lo que hace que no importe si llega antes que la parrilla.
+--
+-- La config se arma con lentes y no con @def { ... }@. No es estilo: la
+-- actualización de registro sobre 'def' __no compila__. Los dos campos mencionan
+-- la @t@, así que GHC la trata como variable libre del registro de partida, se
+-- queda con una @t0@ fresca y no puede resolver el @Reflex t0@ que pide la
+-- instancia @Default (DropdownConfig t k)@ — error @GHC-39999@ en el @def@. Con
+-- @&@ y @.~@ el tipo del resultado fija la @t@ y la instancia se deduce sola. Por
+-- eso 'Reflex.Dom.Widget.Input' reexporta esos dos operadores junto a 'def'.
 carDropdown
   :: MonadWidget t m
   => Int
@@ -333,9 +341,8 @@ carDropdown
 carDropdown initial options setPos =
   fmap _dropdown_value . dropdown initial options $
     def
-      { _dropdownConfig_attributes = constDyn carSelectAttrs
-      , _dropdownConfig_setValue = setPos
-      }
+      &  dropdownConfig_attributes .~ constDyn carSelectAttrs
+      &  dropdownConfig_setValue   .~ setPos
 
 -- | Atributos de un selector de coche. Como en el resto del módulo, no hay hoja
 -- de estilos: la clase es el gancho para cuando la haya.
