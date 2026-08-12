@@ -109,24 +109,33 @@
 
 - Telemetría avanzada en widgets.
 - Comparación de vueltas funcional.
+- Contrato de degradado: la escalera `try` → cache → dummy distingue un **400** del cliente de un
+  **503** del servicio, en las seis áreas. Cierra la fase.
 
-## Fase 5 – Analítica con `Mathematical_Data_Analysis`
+## Fase 5 – Diseño y estilos
 
-**Objetivo:** reutilizar tu código de análisis:
+**Objetivo:** que el dashboard deje de ser HTML crudo:
 
-- Importar módulos relevantes a `/analysis`.
-- Exponer funciones como:
-  - normalización de datos.
-  - detección de outliers.
-  - métricas avanzadas (ej. consistencia de vueltas, degradación, etc.).
-- Integrar estas funciones en widgets:
-  - KPIs personalizados.
-  - dashboards de performance.
+- Hoja de estilos propia, servida junto al `.jsexe` por `packages.frontend`.
+- Sistema de tokens: paleta, escala tipográfica, espaciado, radios.
+  - Tipografía monoespaciada para tiempos y deltas, que es donde el alineado comunica.
+- Rejilla de layout para los widgets, en vez del apilado por defecto del navegador.
+- Estados visibles y no solo textuales: carga, degradado (dato de cache o dummy), vacío y error.
+- Comportamiento responsive básico.
+
+**Nota:** no es un refactor del frontend. Los widgets ya emiten un vocabulario de clases coherente
+—bloque, elemento y modificador: `comparison__delta`, `historical__row--driver`,
+`car-selector__btn`— y `frontend/index.html` no tiene hoy ni una línea de CSS. La fase consiste en
+**escribir la hoja de estilos que esas clases ya implican**, y en corregir los nombres que se hayan
+desviado (`labelButton` → `switcherButton`, deuda desde el 2026-08-01).
+
+Va **antes** de las dos fases siguientes a propósito: las dos añaden widgets, y con el sistema de
+estilos puesto cada widget nuevo nace vestido en vez de generar deuda visual.
 
 **Entregables:**
 
-- Al menos un widget que use directamente funciones del repositorio de análisis.
-- Documentación en `/docs/ANALYSIS.md` explicando qué se reutiliza.
+- Dashboard con estilos propios y layout en rejilla.
+- Los cinco estados de un widget distinguibles de un vistazo.
 
 ## Fase 6 – Widgets personalizables + sincronización conceptual con F1TV
 
@@ -150,3 +159,21 @@
 
 - Layouts guardables/cargables.
 - Modo “sync” básico (input manual de tiempo).
+
+## Fase 7 – Analítica con `Mathematical_Data_Analysis`
+
+**Objetivo:** reutilizar tu código de análisis:
+
+- Importar módulos relevantes a `/analysis`.
+- Exponer funciones como:
+  - normalización de datos.
+  - detección de outliers.
+  - métricas avanzadas (ej. consistencia de vueltas, degradación, etc.).
+- Integrar estas funciones en widgets:
+  - KPIs personalizados.
+  - dashboards de performance.
+
+**Entregables:**
+
+- Al menos un widget que use directamente funciones del repositorio de análisis.
+- Documentación en `/docs/ANALYSIS.md` explicando qué se reutiliza.
