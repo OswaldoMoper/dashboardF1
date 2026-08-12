@@ -1,5 +1,0 @@
-# telemetry-service — dependencias del microservicio FastF1.
-# Declaradas para Fase 0; la lógica se implementa en Fase 4.
-fastf1
-fastapi
-uvicorn

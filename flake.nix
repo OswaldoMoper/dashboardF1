@@ -156,22 +156,14 @@
           '';
         };
 
-        # ── Python dev shell del microservicio FastF1 (Fase 4) ──
+        # ── Python dev shell del microservicio FastF1 ──
         devShells.telemetry = pkgs.mkShell {
           name = "dashboardF1-telemetry";
-          packages = with pkgs; [
-            python3
-            python3Packages.pip
-            python3Packages.virtualenv
-          ];
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-            pkgs.stdenv.cc.cc.lib
-            pkgs.zlib
-          ];
+          packages = [ pythonEnv ];
           shellHook = ''
             echo "telemetry-service — Python dev shell (FastF1, Fase 4)"
-            echo "  venv:  python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt"
-            echo "  correr: cd telemetry-service && uvicorn main:app   (:8000)"
+            echo "  correr:  cd telemetry-service && uvicorn main:app   (:8000)"
+            echo "  o sin shell:  nix run .#telemetry -- --port 8000"
           '';
         };
       };

@@ -2,18 +2,25 @@
 
 Microservicio Python que encapsula FastF1 para exponer telemetría avanzada y comparación de vueltas mediante una interfaz HTTP estable consumida por el backend Haskell. Ver [`docs/ARCHITECTURE.md §2.3`](../docs/ARCHITECTURE.md#23-microservicio-fastf1-python).
 
-> **Estado (Fase 4):** los endpoints de telemetría y comparación están implementados en [`main.py`](main.py). El de vueltas sigue pendiente. El empaquetado como derivación Nix también está pendiente: `fastf1` arrastra pandas/numpy/matplotlib y no bloquea nada hoy (2026-07-31).
+> **Estado (Fase 4):** los endpoints de telemetría, comparación y parrilla están implementados en [`main.py`](main.py). El de vueltas sigue pendiente. El empaquetado Nix está hecho desde el 2026-08-12.
 
 ## Cómo levantarlo
 
-Las dependencias se declaran en `requirements.txt` y se instalan **fuera de Nix**, en un venv:
+Las dependencias las declara y las pinea `flake.nix`, que es la **única** fuente de verdad: no hay `requirements.txt` ni venv que reconstruir.
 
 ```sh
-nix develop .#telemetry          # python3 + pip + virtualenv
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app                 # http://127.0.0.1:8000
+nix run .#telemetry              # http://127.0.0.1:8000
+nix run .#telemetry -- --port 8010    # los argumentos pasan a uvicorn
 ```
+
+Para iterar sobre `main.py` sin un rebuild por edición, el dev shell trae el mismo intérprete con las mismas dependencias:
+
+```sh
+nix develop .#telemetry
+cd telemetry-service && uvicorn main:app
+```
+
+En los dos casos conviene arrancar con `telemetry-service/` como directorio de trabajo: la cache de FastF1 es **relativa** a él (ver `FASTF1_CACHE` abajo), así que desde otro sitio se descarga entera de nuevo.
 
 El backend Haskell lo localiza con `TELEMETRY_HOST` (default `127.0.0.1`) y `TELEMETRY_PORT` (default `8000`).
 
@@ -22,7 +29,7 @@ El backend Haskell lo localiza con `TELEMETRY_HOST` (default `127.0.0.1`) y `TEL
 | Variable | Default | Qué hace |
 | --- | --- | --- |
 | `FASTF1_CACHE` | `.fastf1-cache` | Directorio de cache de FastF1 (se crea si no existe). **La primera llamada a una sesión nueva descarga datos y tarda minutos**; con la cache caliente responde al instante. |
-| `TELEMETRY_MAX_POINTS` | `60` | Muestras por piloto tras el submuestreo, y puntos del delta de `/fastf1/comparison`. Una vuelta a 10 Hz son miles de muestras y el widget pinta una tabla. |
+| `TELEMETRY_MAX_POINTS` | `60` | Muestras por piloto tras el submuestreo de `/fastf1/telemetry`. Una vuelta a 10 Hz son miles de muestras y el widget pinta una tabla. **No afecta a `/fastf1/comparison`** desde el 2026-08-11: su delta son cuatro fronteras de sector, no una serie submuestreada. |
 
 ## Endpoints
 
@@ -58,21 +65,37 @@ Nota operativa: las sesiones cargadas se memorizan en proceso, así que **`lates
 - **`drivers`**: **exactamente dos** números de coche. Obligatorio. `all`, uno solo o tres son **`400`**: `LapComparison` tiene A y B, no una lista, así que no hay respuesta parcial que dar.
 - **Vuelta**: la **más rápida** de cada coche, igual que en telemetría.
 
-Devuelve **un objeto** (no un arreglo) con las cinco claves de `Common.Types.LapComparison`:
+Devuelve **un objeto** (no un arreglo) con las siete claves de `Common.Types.LapComparison`:
 
 ```sh
 curl 'localhost:8000/fastf1/comparison/latest?drivers=1,16'
 ```
 
 ```json
-{"lcDriverA":"VER","lcDriverB":"LEC","lcLapA":"1:29.345","lcLapB":"1:29.512",
- "lcDelta":[0.0,-0.048,0.081,0.124,0.167]}
+{"lcDriverA":"NOR","lcDriverB":"LEC","lcCarA":"1","lcCarB":"16",
+ "lcLapA":"1:22.491","lcLapB":"1:22.000","lcDelta":[0.0,0.051,0.484,0.491]}
 ```
 
-- **`lcDelta` es el delta acumulado A−B** sobre la rejilla de distancias de A: en cada punto, el tiempo que A llevaba menos el que B llevaba **a esa misma distancia**, interpolado linealmente. Positivo = A va por detrás. Submuestreado con `TELEMETRY_MAX_POINTS` y saneado con el mismo criterio de `NaN` (un solo `NaN` tumbaría el decode del objeto **completo**).
+- **`lcDelta` son cuatro valores en las cuatro fronteras de sector** —línea de meta, fin de S1, fin de S2, fin de vuelta—: el tiempo acumulado de A menos el de B en cada una. Positivo = A va por detrás. **Son sectores y no una curva de vuelta a propósito** (2026-08-11): un delta por distancia exige un eje que diga «el mismo punto de la pista» en los dos coches, y FastF1 no publica ninguno — los tiempos de sector, en cambio, los publica en vez de integrarlos.
+- **Los cuatro valores son exactos**, y con ellos los dos invariantes: `lcDelta[0] == 0.0` (los dos coches en la línea) y `lcDelta[-1] == lcLapA - lcLapB` al milisegundo. El precio es que **son cuatro puntos y no sesenta**, así que el gráfico es una quebrada de tres tramos: dentro de un sector no se dice nada, que es exactamente lo que se sabe. `TELEMETRY_MAX_POINTS` **no** afecta a este endpoint desde el 2026-08-11.
+- Saneado con el mismo criterio de `NaN` que la telemetría (un solo `NaN` tumbaría el decode del objeto **completo**).
 - **El servicio formatea los tiempos** (`M:SS.mmm`): `lcLapA`/`lcLapB` son `Text` en el DTO, y un `Timedelta` por `str()` daría `0 days 00:01:29.345000`.
-- **Entra número de coche, sale acrónimo**: la traducción la sabe hacer solo este servicio (`session.get_driver`). Mismo vocabulario que `/fastf1/telemetry`.
-- **Degradar es del backend.** Una sesión sin vueltas comparables devuelve `lcDelta: []` y los tiempos en `""`, no un error: `Handler.Comparison.Context` es quien cae a su cache o al dummy. Las cinco claves están siempre.
+- **Entra número de coche, sale acrónimo**: la traducción la sabe hacer solo este servicio (`session.get_driver`). Mismo vocabulario que `/fastf1/telemetry`. `lcCarA`/`lcCarB` devuelven los números tal como entraron, que es lo que permite al widget pedir **otra** comparación (2026-08-05).
+- **Degradar es del backend.** Una sesión sin vueltas comparables devuelve `lcDelta: []` y los tiempos en `""`, no un error: `Handler.Comparison.Context` es quien cae a su cache o al dummy. Las siete claves están siempre.
+
+### `GET /fastf1/drivers/{session_key}` — implementado
+
+- **`session_key`**: igual que en telemetría.
+
+Devuelve la **parrilla de la sesión** como lista de objetos con las claves de `Common.Types.DriverEntry`:
+
+```json
+[{"deNumber":"1","deCode":"NOR","deTeam":"McLaren"}]
+```
+
+- Es el único endpoint que **publica** la traducción número↔acrónimo que los otros dos aplican por dentro, y por eso es lo que permite a un consumidor que habla acrónimos construir un query que pide números (2026-08-01 y 2026-08-06).
+- **La parrilla es la de la sesión, no la del campeonato**: un sustituto o un tercer coche en libres la cambian, y por eso el backend cachea por `session_key`. El orden es el que da FastF1 y no se reordena.
+- Un coche cuyo acrónimo no resuelve sale igual, con `deCode` repetido del número; un equipo ausente sale como `""`. Una sesión sin parrilla devuelve `[]`, **no** un error.
 
 ### Pendientes
 
