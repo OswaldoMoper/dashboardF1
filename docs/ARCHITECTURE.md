@@ -88,6 +88,11 @@ número→acrónimo la conoce solo el microservicio, así que entra número y **
 
 La comparación devuelve **también el número de coche** (`lcCarA`/`lcCarB`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**.
 
+**Se arranca desde el flake** (`nix run .#telemetry`, o `nix develop .#telemetry` para iterar), con las
+dependencias de Python pineadas por él y sin venv que reconstruir (2026-08-12). La
+cache de FastF1 sigue siendo **relativa al directorio de ejecución**, así que se arranca desde
+`telemetry-service/`.
+
 `GET /fastf1/drivers/{session_key}` cierra el desajuste por completo: es el único endpoint que **publica** la traducción en vez de aplicarla por dentro, así que un consumidor puede pedir datos de un coche que aún no ha visto. Devuelve la parrilla **de esa sesión** —sustitutos y terceros coches incluidos—, en el orden que le da FastF1 y sin reordenar. `/fastf1/laps/{session_key}` sigue documentado y sin implementar.
 
 ---
