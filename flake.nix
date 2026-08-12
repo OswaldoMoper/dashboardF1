@@ -32,6 +32,74 @@
           common = hf.callCabal2nix "common" ./common { };
           backend = hf.callCabal2nix "backend" ./backend { };
         });
+
+        # ── Microservicio FastF1 ──
+        python = reflexPkgs.python3;
+
+        pypiWheel = { pname, version, hash, deps, extra ? { } }:
+          python.pkgs.buildPythonPackage ({
+            inherit pname version;
+            format = "wheel";
+            src = pkgs.fetchPypi {
+              inherit pname version hash;
+              format = "wheel";
+              dist = "py3";
+              python = "py3";
+            };
+            propagatedBuildInputs = deps;
+
+            doCheck = false;
+            pythonImportsCheck = [ pname ];
+          } // extra);
+
+        timple = pypiWheel {
+          pname = "timple";
+          version = "0.1.8";
+          hash = "sha256-GVpJ52+KQ14LwHk0C2xXJyzDr/kEH2H4hYeQ1gek5J0=";
+          deps = with python.pkgs; [ numpy matplotlib ];
+        };
+
+        signalrcore = pypiWheel {
+          pname = "signalrcore";
+          version = "1.0.2";
+          hash = "sha256-SG47GBMRkfX1KEGE9D8tUUJHn40itCv/mC1S73+BAlw=";
+          deps = with python.pkgs; [ msgpack requests websocket-client ];
+
+          extra.pythonRelaxDeps = [ "msgpack" ];
+        };
+
+        fastf1 = pypiWheel {
+          pname = "fastf1";
+          version = "3.8.3";
+          hash = "sha256-4ycPbWCDhmLdPhXPYjZRkiin/PzACfXtsZV5h2nIRa0=";
+
+          deps = (with python.pkgs; [
+            cryptography
+            matplotlib
+            numpy
+            pandas
+            platformdirs
+            pydantic
+            pyjwt
+            python-dateutil
+            rapidfuzz
+            requests
+            requests-cache
+            scipy
+            websockets
+          ]) ++ [ signalrcore timple ];
+        };
+
+        pythonEnv = python.withPackages (ps: [
+          fastf1
+          ps.fastapi
+          ps.uvicorn
+        ]);
+
+        telemetrySrc = pkgs.runCommand "telemetry-service-src" { } ''
+          mkdir -p $out
+          install -m644 ${./telemetry-service/main.py} $out/main.py
+        '';
       in
       {
         # ── Backend Servant (Fase 1: /home + /api/* en :8080, override con PORT) ──
@@ -45,6 +113,20 @@
           cp -r ${frontendJs}/bin/frontend.jsexe/. $out/
           install -m644 ${./frontend/index.html} $out/index.html
         '';
+
+        # ── Microservicio FastF1 ──
+        packages.telemetry = pkgs.writeShellApplication {
+          name = "telemetry-service";
+          runtimeInputs = [ pythonEnv ];
+          text = ''
+            exec uvicorn --app-dir ${telemetrySrc} main:app "$@"
+          '';
+        };
+
+        apps.telemetry = {
+          type = "app";
+          program = "${self'.packages.telemetry}/bin/telemetry-service";
+        };
 
         # `nix run .#backend` (o `nix run`) — levanta el backend.
         apps.backend = {
