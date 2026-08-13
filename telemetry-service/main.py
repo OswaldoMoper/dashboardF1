@@ -1,7 +1,7 @@
 """telemetry-service — FastF1 detrás de una interfaz HTTP estable.
 
 Microservicio que encapsula FastF1 para que el backend Haskell no tenga que
-hablar Python ni pandas. Fase 4, tres endpoints:
+hablar Python ni pandas. Fase 4, cuatro endpoints:
 
 * ``GET /fastf1/telemetry/{session_key}/{driver}`` — arreglo JSON plano de
   muestras de telemetría, cada una **etiquetada con el acrónimo del piloto**
@@ -16,9 +16,13 @@ hablar Python ni pandas. Fase 4, tres endpoints:
   traducción que los otros dos aplican por dentro (``_driver_label``), y por
   eso es lo que permite a un consumidor que habla acrónimos construir un query
   que pide números.
+* ``GET /fastf1/laps/{session_key}?driver=all`` — **todas las vueltas** de la
+  sesión, una por objeto, con las claves prefijadas ``le``. Es el único de los
+  cuatro **sin DTO en** ``common``: nada en Haskell lo decodifica todavía (ver
+  el Haddock de ``laps``).
 
-En los dos casos las claves son las del DTO de Haskell, para que el decode del
-backend sea directo.
+En los tres primeros las claves son las del DTO de Haskell, para que el decode
+del backend sea directo; el cuarto usa el prefijo que su DTO usaría.
 
 Contrato con el lado Haskell (ver 2026-07-31):
 
@@ -32,14 +36,12 @@ Contrato con el lado Haskell (ver 2026-07-31):
   obligatorio (``tpDriver``/``tpSessionTime``/``tpDistance``/``tpSpeed``).
 * **Degradar es trabajo del backend.** Una sesión sin telemetría devuelve
   ``[]`` (no un error): el ``Handler.Telemetry.Context`` es quien decide caer a
-  su cache o al dummy. Vale igual para la parrilla vacía.
-* **El orden se preserva, no se impone.** Una vuelta es una serie y la parrilla
-  llega en el orden que FastF1 le da (en una carrera cargada, el de
-  clasificación). Ordenar para presentar es del consumidor; aquí reordenar solo
-  destruiría información que el backend no puede reconstruir.
-
-Endpoint del contrato **todavía no implementado**
-(``docs/ARCHITECTURE.md §2.3``): ``GET /fastf1/laps/{session_key}``.
+  su cache o al dummy. Vale igual para la parrilla vacía y para las vueltas —y
+  por lo mismo, una vuelta sin tiempo **se emite** en vez de filtrarse.
+* **El orden se preserva, no se impone.** Una vuelta es una serie, y la parrilla
+  y las vueltas llegan en el orden que FastF1 les da (en una carrera cargada, el
+  de clasificación). Ordenar para presentar es del consumidor; aquí reordenar
+  solo destruiría información que el backend no puede reconstruir.
 
 Variables de entorno: ``FASTF1_CACHE`` (default ``.fastf1-cache``) y
 ``TELEMETRY_MAX_POINTS`` (default ``60``, muestras por piloto). Desde el
@@ -644,3 +646,111 @@ def drivers(session_key: str) -> List[Dict[str, Any]]:
         }
         for number in numbers
     ]
+
+
+# ── Vueltas ───────────────────────────────────────────────────────────────────
+
+
+def _text(value: Any) -> str:
+    """Un campo de texto de FastF1 como ``str``, o ``""`` si no hay dato.
+
+    Tres formas del hueco, y las tres tienen que salir vacías porque las tres
+    salvo la última **parecen un dato** una vez pasadas por ``str()``:
+
+    * ``None`` y ``NaN`` — una columna de objetos de pandas usa el segundo donde
+      falta el valor, y ``str()`` daría ``"nan"``.
+    * la **cadena** ``"None"``, que es la que de verdad aparece: FastF1 rellena
+      así ``Compound`` cuando no conoce el neumático (25 de 1431 vueltas en
+      Hungría 2026, exactamente las mismas que traen ``TyreLife`` ausente — dos
+      señales independientes del mismo hueco). Es ``str(None)`` escrito en la
+      columna, no un compuesto llamado *None*.
+
+    Mismo criterio blando que ``_team_name``: el compuesto es información sobre
+    la vuelta, no su identidad, así que su ausencia no cuesta la entrada entera.
+    """
+    if value is None or value != value:
+        return ""
+    text = str(value)
+    return "" if text == "None" else text
+
+
+def _lap_entry(label: str, number: str, row: Any) -> Dict[str, Any]:
+    """Una fila de ``session.laps`` como objeto JSON.
+
+    Composición de lo que ya está —``_lap_time``, ``_seconds``, ``_num``— y por
+    eso no repite el saneado: ningún valor sale ``NaN`` (aeson lo rechazaría),
+    los tiempos van formateados por el servicio y no por el consumidor, y los
+    sectores van en segundos como ``lcDelta``.
+
+    **Siempre devuelve un objeto**, nunca ``None``: a diferencia de ``_sample``,
+    aquí no hay campo cuya ausencia impida situar la fila. Una vuelta sin
+    ``LapTime`` sale con ``leTime`` en ``""`` (ver ``laps``).
+    """
+    lap_number = _num(row.get("LapNumber"))
+    tyre_life = _num(row.get("TyreLife"))
+
+    return {
+        "leDriver": label,
+        # El número tal como entró, junto al acrónimo que sale: es el mismo
+        # viaje de vuelta que `lcCarA`/`lcCarB`
+        # (2026-08-05), lo que permite pedir otra vuelta de este coche.
+        "leNumber": number,
+        "leLap": None if lap_number is None else int(lap_number),
+        "leTime": _lap_time(row.get("LapTime")) or "",
+        "leSector1": _seconds(row.get("Sector1Time")),
+        "leSector2": _seconds(row.get("Sector2Time")),
+        "leSector3": _seconds(row.get("Sector3Time")),
+        "leCompound": _text(row.get("Compound")),
+        "leTyreLife": None if tyre_life is None else int(tyre_life),
+    }
+
+
+@app.get("/fastf1/laps/{session_key}")
+def laps(session_key: str, driver: str = "all") -> List[Dict[str, Any]]:
+    """Todas las vueltas de la sesión, una por objeto.
+
+    Es el primer endpoint que devuelve la **sesión entera** y no una vuelta: ~20
+    coches por ~60 vueltas son ~1200 objetos. De ahí que ``driver`` exista —``all``
+    (default) o una lista de números de coche, el mismo vocabulario que
+    ``/fastf1/telemetry``—: filtrar en el servicio es barato y hacerlo después
+    obligaría a mover la sesión entera por la red para tirar el 95 %. Lo que **no**
+    hay es submuestreo: una vuelta es una fila, no una serie, así que
+    ``TELEMETRY_MAX_POINTS`` no aplica.
+
+    **Las claves llevan el prefijo ``le`` y no hay DTO en** ``common``.
+    ``leDriver``/``leNumber`` (acrónimo y número de coche), ``leLap`` (número de
+    vuelta), ``leTime`` (``M:SS.mmm``), ``leSector1``/``2``/``3`` (segundos) y
+    ``leCompound``/``leTyreLife`` (compuesto y vueltas hechas con él). El prefijo
+    es el que usaría un ``LapEntry``, para que escribirlo el día que haga falta no
+    obligue a renombrar nada. Que no exista todavía es deliberado: el DTO fija un
+    contrato para **quien decodifica**, y hoy ningún ``/api/*`` consume esto — el
+    precedente es ``/fastf1/drivers``, que esperó a que el widget tuviera que
+    elegir (2026-08-05 y 2026-08-13).
+
+    **Una vuelta sin ``LapTime`` se emite, con ``leTime`` en ``""``.** Las vueltas
+    de entrada a boxes, de salida y las cortadas por bandera roja existen y están
+    en ``session.laps``; filtrarlas aquí sería decidir por el consumidor qué
+    vueltas cuentan, y **degradar es trabajo del backend**
+    (2026-07-31). Lo mismo con los sectores ausentes (``null``) y el compuesto que
+    FastF1 no publica en esa sesión (``""``). El criterio de fallo lo elige quien
+    lee: ``leTime == ""`` es «esta vuelta no tiene tiempo», no «esta respuesta
+    falló».
+
+    **El orden es el de FastF1, agrupado por coche**: las vueltas de cada coche van
+    contiguas y en orden de vuelta, y los coches en el orden en que llegan en
+    ``driver`` (o el de la parrilla con ``all``). No se reordena.
+
+    Una sesión sin vueltas devuelve ``[]``, **no un error**, igual que los otros
+    tres.
+    """
+    session = _resolve_session(session_key)
+    entries: List[Dict[str, Any]] = []
+    for number in _resolve_drivers(session, driver):
+        try:
+            picked = session.laps.pick_drivers([number])
+        except Exception:
+            continue
+        label = _driver_label(session, number)
+        for _, row in picked.iterrows():
+            entries.append(_lap_entry(label, number, row))
+    return entries
