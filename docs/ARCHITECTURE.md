@@ -75,10 +75,10 @@ Responsabilidades:
 - Cachear resultados.
 - Mantener interfaz estable.
 
-Endpoints:
+Endpoints (los **cuatro** implementados desde el 2026-08-13):
 
 - `/fastf1/telemetry/{session_key}/{driver}`
-- `/fastf1/laps/{session_key}`
+- `/fastf1/laps/{session_key}?driver=all`
 - `/fastf1/comparison/{session_key}?drivers=1,16`
 - `/fastf1/drivers/{session_key}`
 
@@ -93,7 +93,9 @@ dependencias de Python pineadas por él y sin venv que reconstruir (2026-08-12).
 cache de FastF1 sigue siendo **relativa al directorio de ejecución**, así que se arranca desde
 `telemetry-service/`.
 
-`GET /fastf1/drivers/{session_key}` cierra el desajuste por completo: es el único endpoint que **publica** la traducción en vez de aplicarla por dentro, así que un consumidor puede pedir datos de un coche que aún no ha visto. Devuelve la parrilla **de esa sesión** —sustitutos y terceros coches incluidos—, en el orden que le da FastF1 y sin reordenar. `/fastf1/laps/{session_key}` sigue documentado y sin implementar.
+`GET /fastf1/drivers/{session_key}` cierra el desajuste por completo: es el único endpoint que **publica** la traducción en vez de aplicarla por dentro, así que un consumidor puede pedir datos de un coche que aún no ha visto. Devuelve la parrilla **de esa sesión** —sustitutos y terceros coches incluidos—, en el orden que le da FastF1 y sin reordenar.
+
+`GET /fastf1/laps/{session_key}` completa el contrato desde el 2026-08-13, y es el único de los cuatro **sin DTO** en `common`: publica las claves con el prefijo `le` que un futuro `LapEntry` usaría, y el tipo llegará con el consumidor (2026-08-13). Es también el único que devuelve la **sesión entera** —todas las vueltas de todos los coches, ~1400 objetos en una carrera—, y por eso acepta `?driver=` para filtrar en el servicio en vez de en el consumidor.
 
 ---
 

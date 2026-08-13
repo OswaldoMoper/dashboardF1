@@ -2,7 +2,7 @@
 
 Microservicio Python que encapsula FastF1 para exponer telemetría avanzada y comparación de vueltas mediante una interfaz HTTP estable consumida por el backend Haskell. Ver [`docs/ARCHITECTURE.md §2.3`](../docs/ARCHITECTURE.md#23-microservicio-fastf1-python).
 
-> **Estado (Fase 4):** los endpoints de telemetría, comparación y parrilla están implementados en [`main.py`](main.py). El de vueltas sigue pendiente. El empaquetado Nix está hecho desde el 2026-08-12.
+> **Estado (Fase 4):** los **cuatro** endpoints del contrato están implementados en [`main.py`](main.py) desde el 2026-08-13. El empaquetado Nix está hecho desde el 2026-08-12.
 
 ## Cómo levantarlo
 
@@ -97,6 +97,25 @@ Devuelve la **parrilla de la sesión** como lista de objetos con las claves de `
 - **La parrilla es la de la sesión, no la del campeonato**: un sustituto o un tercer coche en libres la cambian, y por eso el backend cachea por `session_key`. El orden es el que da FastF1 y no se reordena.
 - Un coche cuyo acrónimo no resuelve sale igual, con `deCode` repetido del número; un equipo ausente sale como `""`. Una sesión sin parrilla devuelve `[]`, **no** un error.
 
-### Pendientes
+### `GET /fastf1/laps/{session_key}?driver=all` — implementado
 
-- `GET /fastf1/laps/{session_key}`
+- **`session_key`**: igual que en telemetría.
+- **`driver`**: **opcional** (default `all`). `all` o una lista de números de coche: `1,16`. Mismo vocabulario que `/fastf1/telemetry`.
+- **Vueltas**: **todas** las de la sesión, no la rápida. Es el único endpoint que devuelve la sesión entera (~1400 objetos en una carrera), y por eso `driver` filtra en el servicio: hacerlo después obligaría a mover la sesión completa para tirar el 95 %.
+
+Devuelve una lista de objetos, uno por vuelta:
+
+```sh
+curl 'localhost:8000/fastf1/laps/latest?driver=1' | head -c 220
+```
+
+```json
+[{"leDriver":"NOR","leNumber":"1","leLap":1,"leTime":"1:31.211","leSector1":null,
+  "leSector2":32.05,"leSector3":24.383,"leCompound":"MEDIUM","leTyreLife":1}]
+```
+
+- **Es el único de los cuatro sin DTO en `common`**, y el prefijo `le` es el que un futuro `LapEntry` usaría (2026-08-13). Hoy ningún `/api/*` lo consume: el DTO fija el contrato para quien decodifica, y el precedente es `/fastf1/drivers`, que esperó al widget.
+- **Una vuelta sin tiempo se emite**, con `leTime` en `""`: las de entrada a boxes, de salida y las cortadas por bandera roja son vueltas reales, y filtrarlas sería decidir por el consumidor cuáles cuentan. Igual con los sectores ausentes (`null`) y el compuesto que FastF1 no publica (`""`, incluida la cadena `'None'` que escribe en esa columna). **Degradar es del backend.**
+- **`leTime` y los sectores son coherentes**: sobre `latest`, `leTime == leSector1 + leSector2 + leSector3` en las 1407 vueltas que traen los tres, al milisegundo — y el `leTime` de la vuelta rápida de un coche coincide con el `lcLapA`/`lcLapB` que publica `/fastf1/comparison`.
+- **El orden es el de FastF1**: vueltas de cada coche contiguas y en orden de vuelta, coches en el orden de `driver` (o de la parrilla con `all`). No se reordena.
+- `TELEMETRY_MAX_POINTS` **no** aplica: una vuelta es una fila, no una serie. Un coche que no está en la sesión devuelve `[]` con **200**; una sesión sin vueltas, `[]`. `driver` vacío → `400`.
