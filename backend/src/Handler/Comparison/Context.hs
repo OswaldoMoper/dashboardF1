@@ -25,6 +25,7 @@ import           Data.Maybe                 (fromMaybe)
 import           Data.Text                  (Text)
 import           Handler.Comparison.Helper  (assembleComparison)
 import qualified Handler.Comparison.Manager as Manager
+import           Outcome                    (Outcome (..), classify)
 
 -- | Sesión que se consulta cuando @\/api\/comparison@ no recibe @?session=@.
 -- @latest@ es la última carrera disputada, resuelta por el microservicio.
@@ -57,12 +58,28 @@ resolveParams session drivers =
 -- delta vacío sirve la última respuesta buena __de esa misma clave__; sin
 -- ninguna, el dummy.
 --
+-- __Primera área con la escalera de tres ramas__
+-- (2026-08-14). La rama nueva es la del medio y solo ella es nueva: si la excepción
+-- se reconoce como culpa del cliente ('Outcome.classify'), la petición se rechaza
+-- y __no se toca la cache__ —una petición mala no invalida ni refresca nada—. Las
+-- otras dos son las de siempre, y el degradado del servicio caído sale byte a byte
+-- como salía: sigue siendo el escenario normal y sigue tardando ~5 s
+-- (2026-08-04).
+--
+-- El orden de las ramas importa: el @Right@ bueno va primero, así que una
+-- respuesta válida nunca pasa por el clasificador. Y el @_@ final sigue
+-- absorbiendo lo que 'Outcome.classify' no reconoce —servicio apagado, timeout,
+-- @5xx@, JSON con otra forma— más el @Right@ con delta vacío, que es el criterio
+-- de fallo propio de esta área (@null . 'lcDelta'@,
+-- 2026-08-03): un objeto sin serie no es un rechazo, es una sesión sin vueltas
+-- comparables, y eso se degrada.
+--
 -- La cache nace con clave, sin fase intermedia de caja única: es aplicación
 -- directa del 2026-08-01 —no una re-discusión— y nacer sin ella sería
 -- reintroducir a sabiendas el bug que esa decisión arregló, con el mismo agravante
 -- de silencio (una petición de dos coches recibiría la comparación de otros dos
 -- presentada como suya).
-getComparison :: Env -> Maybe Text -> Maybe Text -> IO LapComparison
+getComparison :: Env -> Maybe Text -> Maybe Text -> IO (Outcome LapComparison)
 getComparison env session drivers = do
   let key@(sessionKey, driversKey) = resolveParams session drivers
   result <-
@@ -71,10 +88,11 @@ getComparison env session drivers = do
   case result of
     Right comparison | not (null (lcDelta comparison)) -> do
       atomically (modifyTVar' (envComparisonCache env) (Map.insert key comparison))
-      pure comparison
+      pure (Served comparison)
+    Left e | Just rejection <- classify e -> pure (Refused rejection)
     _ -> do
       cached <- readTVarIO (envComparisonCache env)
-      pure (lookupCached key cached)
+      pure (Served (lookupCached key cached))
 
 -- | Respaldo para una clave: la última respuesta buena de __esa__ combinación, o
 -- el dummy. Nunca la de otra clave (espejo de

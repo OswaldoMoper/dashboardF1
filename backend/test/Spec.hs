@@ -48,6 +48,7 @@ import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
+import           Outcome                     (Rejection (..), rejectionFor)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck     (prop)
 import           Test.QuickCheck           (Property, (===))
@@ -191,6 +192,37 @@ main = hspec $ do
     it "respeta el parámetro presente y deja el ausente en su defecto" $ do
       Comparison.resolveParams (Just "2026-13-Q") Nothing `shouldBe` ("2026-13-Q", "1,16")
       Comparison.resolveParams Nothing (Just "44,63") `shouldBe` ("latest", "44,63")
+
+  describe "Outcome.rejectionFor" $ do
+    -- La parte pura del discriminador 400/503. Los cuerpos son los que el
+    -- microservicio emite de verdad, copiados de la medición del 2026-08-14: el
+    -- `detail` de FastAPI viaja en UTF-8 y con acentos, que es justo lo que un
+    -- `show` del ByteString destrozaría.
+    it "un 400 es culpa del cliente y conserva el detail del servicio" $
+      rejectionFor 400 "{\"detail\":\"drivers debe ser exactamente dos n\195\186meros de coche\"}"
+        `shouldBe` Just (BadRequest "drivers debe ser exactamente dos números de coche")
+
+    it "un 404 es su propio caso y no un 400 con otro texto" $
+      rejectionFor 404 "{\"detail\":\"sesi\195\179n no resoluble (2026, 99, R)\"}"
+        `shouldBe` Just (NotFound "sesión no resoluble (2026, 99, R)")
+
+    it "un 5xx no es culpa del cliente: vuelve a la escalera de degradado" $ do
+      -- La invariante que protege el arreglo de cometer la confusión al revés.
+      rejectionFor 500 "{\"detail\":\"boom\"}" `shouldBe` Nothing
+      rejectionFor 503 "" `shouldBe` Nothing
+
+    it "un 2xx tampoco se clasifica, aunque traiga detail" $
+      rejectionFor 200 "{\"detail\":\"no\"}" `shouldBe` Nothing
+
+    it "un cuerpo sin detail o que no es JSON se sirve entero, sin explotar" $ do
+      -- Un mensaje feo del servicio informa más que uno bonito inventado aquí.
+      rejectionFor 400 "Bad Request" `shouldBe` Just (BadRequest "Bad Request")
+      rejectionFor 400 "{\"error\":\"otra forma\"}"
+        `shouldBe` Just (BadRequest "{\"error\":\"otra forma\"}")
+
+    it "un cuerpo vacío cae al respaldo en vez de a un texto en blanco" $ do
+      rejectionFor 400 "" `shouldBe` Just (BadRequest "petición mal formada")
+      rejectionFor 404 "   " `shouldBe` Just (NotFound "el recurso no existe")
 
   describe "assembleDrivers" $ do
     it "mapea la parrilla conservando el orden que le da FastF1, no el numérico" $

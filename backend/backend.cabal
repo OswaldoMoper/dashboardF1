@@ -29,6 +29,7 @@ library
         App
         Server
         Html
+        Outcome
         Handler.FastF1.Manager
         Handler.OpenF1.Helper
         Handler.OpenF1.Manager
@@ -59,11 +60,14 @@ library
     build-depends:
         base            >= 4.14 && < 5
       , aeson
+      , bytestring
       , common
       , containers
       , filepath
+      , http-client
       , http-types
       , lucid
+      , mtl
       , req
       , servant
       , servant-lucid
