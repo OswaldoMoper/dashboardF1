@@ -110,7 +110,10 @@
 - Telemetría avanzada en widgets.
 - Comparación de vueltas funcional.
 - Contrato de degradado: la escalera `try` → cache → dummy distingue un **400** del cliente de un
-  **503** del servicio, en las seis áreas. Cierra la fase.
+  **503** del servicio. Cierra la fase.
+  - **En las tres áreas que hablan con el microservicio** (`telemetry`, `comparison`, `drivers`), y no
+    en las seis: `live`, `historical` y `tyre-strategy` no tienen parámetros, así que no admiten query
+    malo. Corregido con la medición del 2026-08-14, que es cuando se comprobó por primera vez.
 
 ## Fase 5 – Diseño y estilos
 
