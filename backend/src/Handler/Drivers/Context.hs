@@ -31,6 +31,7 @@ import           Data.Maybe              (fromMaybe)
 import           Data.Text               (Text)
 import           Handler.Drivers.Helper  (assembleDrivers)
 import qualified Handler.Drivers.Manager as Manager
+import           Outcome                 (Outcome (..), classify)
 
 -- | Sesión que se consulta cuando @\/api\/drivers@ no recibe @?session=@.
 -- @latest@ es la última carrera disputada, resuelta por el microservicio.
@@ -51,7 +52,25 @@ resolveParams = fromMaybe defaultSession
 -- | Devuelve la parrilla de una sesión: intenta el fetch real; si funciona __y
 -- trae coches__, refresca la cache y devuelve; ante fallo o lista vacía sirve la
 -- última respuesta buena __de esa misma sesión__; sin ninguna, el dummy.
-getDrivers :: Env -> Maybe Text -> IO [DriverEntry]
+--
+-- __Segunda área con la escalera de tres ramas__, replicando el molde que
+-- 'Handler.Comparison.Context.getComparison' estrenó
+-- (2026-08-14). La rama del medio es la única nueva: si la excepción se reconoce
+-- como culpa del cliente ('Outcome.classify'), la petición se rechaza y __no se
+-- toca la cache__ —una petición mala no invalida ni refresca nada—. Las otras dos
+-- son las de siempre y el degradado sale byte a byte como salía.
+--
+-- El orden importa: el @Right@ bueno va primero, así que una parrilla válida nunca
+-- pasa por el clasificador; y el @_@ final sigue absorbiendo lo que
+-- 'Outcome.classify' no reconoce —servicio apagado, timeout, @5xx@, JSON con otra
+-- forma— más el @Right@ con la lista vacía, que es el criterio de fallo de esta
+-- área: una sesión sin parrilla publicada no es un rechazo, se degrada.
+--
+-- Los dos rechazos de aquí están medidos y son distintos entre sí: @?session=nope@
+-- da @400@ (la @session_key@ tiene otra forma) y @?session=2026-99-R@ da @404@ (se
+-- escribió bien y esa sesión no se disputó). Ésa es exactamente la separación que
+-- 'Outcome.Rejection' mantiene en dos constructores.
+getDrivers :: Env -> Maybe Text -> IO (Outcome [DriverEntry])
 getDrivers env session = do
   let key = resolveParams session
   result <-
@@ -60,10 +79,11 @@ getDrivers env session = do
   case result of
     Right grid | not (null grid) -> do
       atomically (modifyTVar' (envDriversCache env) (Map.insert key grid))
-      pure grid
+      pure (Served grid)
+    Left e | Just rejection <- classify e -> pure (Refused rejection)
     _ -> do
       cached <- readTVarIO (envDriversCache env)
-      pure (lookupCached key cached)
+      pure (Served (lookupCached key cached))
 
 -- | Respaldo para una clave: la última parrilla buena de __esa__ sesión, o el
 -- dummy. Nunca la de otra sesión (espejo de
