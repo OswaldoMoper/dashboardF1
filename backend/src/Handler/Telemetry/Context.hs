@@ -24,6 +24,7 @@ import           Data.Maybe                (fromMaybe)
 import           Data.Text                 (Text)
 import           Handler.Telemetry.Helper  (assemblePoints)
 import qualified Handler.Telemetry.Manager as Manager
+import           Outcome                   (Outcome (..), classify)
 
 -- | Sesión que se consulta cuando @\/api\/telemetry@ no recibe @?session=@.
 -- @latest@ es la última carrera disputada, resuelta por el microservicio.
@@ -66,7 +67,29 @@ resolveParams session driver =
 -- piloto concreto recibiría la última respuesta buena de @all@, es decir la
 -- telemetría de otros coches presentada como suya
 -- (2026-08-01).
-getTelemetry :: Env -> Maybe Text -> Maybe Text -> IO [TelemetryPoint]
+--
+-- __Tercera y última área con la escalera de tres ramas__, y con ella se cierra el
+-- contrato de degradado de la Fase 4: las tres que hablan con el microservicio
+-- discriminan un @400@\/@404@ del cliente de un servicio caído
+-- (2026-08-14). Las otras tres áreas del backend se quedan en
+-- @IO a@ __por decisión y no por deuda__: no tienen @QueryParam@, así que no
+-- admiten query malo y no hay nada que discriminar en ellas.
+--
+-- La rama del medio es la única nueva, no toca la cache —una petición mala no
+-- invalida ni refresca nada— y el orden importa: una respuesta válida nunca pasa
+-- por el clasificador, y el @_@ final sigue absorbiendo lo que
+-- 'Outcome.classify' no reconoce —servicio apagado, timeout, @5xx@, JSON con otra
+-- forma— más el @Right@ con la lista vacía, que aquí es una sesión sin telemetría
+-- publicada y se degrada.
+--
+-- __El límite de lo que esta rama alcanza está medido__ (2026-08-17): @?session=@ o
+-- @?driver=@ __vacíos__ no llegan a ser el @400@ del negocio, porque
+-- 'resolveParams' recibe @Just ""@ y no 'Nothing', y la URL resultante no existe
+-- como ruta en FastAPI. Sale un @404@ con el @detail@ genérico de Starlette
+-- (@\"Not Found\"@) en vez del @\"sesión no resoluble …\"@ del servicio. No es de
+-- esta área —las tres se comportan igual— y por eso no se arregla aquí
+-- (2026-08-17).
+getTelemetry :: Env -> Maybe Text -> Maybe Text -> IO (Outcome [TelemetryPoint])
 getTelemetry env session driver = do
   let key@(sessionKey, driverKey) = resolveParams session driver
   result <-
@@ -75,10 +98,11 @@ getTelemetry env session driver = do
   case result of
     Right points | not (null points) -> do
       atomically (modifyTVar' (envTelemetryCache env) (Map.insert key points))
-      pure points
+      pure (Served points)
+    Left e | Just rejection <- classify e -> pure (Refused rejection)
     _ -> do
       cached <- readTVarIO (envTelemetryCache env)
-      pure (lookupCached key cached)
+      pure (Served (lookupCached key cached))
 
 -- | Respaldo para una clave: la última respuesta buena de __esa__ combinación, o
 -- el dummy. Nunca la de otra clave.
