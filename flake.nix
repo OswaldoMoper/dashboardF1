@@ -149,21 +149,23 @@
               ${self'.packages.telemetry}/bin/telemetry-service --port "$tport" &
             tpid=$!
 
-            # Ctrl-C llega al grupo entero, pero uvicorn en background sobrevive
-            # a un backend que muere de otra forma: de ahí el trap.
-            cleanup() {
-              kill "$tpid" 2>/dev/null || true
-              wait "$tpid" 2>/dev/null || true
-            }
-            trap cleanup EXIT INT TERM
-
             echo "backend Servant   → :$port      (STATIC_DIR: ${self'.packages.frontend})"
             echo "                     web en http://127.0.0.1:$port/"
 
             PORT="$port" \
             TELEMETRY_PORT="$tport" \
             STATIC_DIR="${self'.packages.frontend}" \
-              ${self'.packages.backend}/bin/backend
+              ${self'.packages.backend}/bin/backend &
+            bpid=$!
+
+            cleanup() {
+              trap - EXIT INT TERM
+              kill "$tpid" "$bpid" 2>/dev/null || true
+              wait "$tpid" "$bpid" 2>/dev/null || true
+            }
+            trap cleanup EXIT INT TERM
+
+            wait "$bpid" || true
           '';
         };
 
