@@ -24,6 +24,16 @@ El toolchain se provee vía Nix flakes (GHC/cabal/python no están en el PATH gl
 
 ```sh
 nix develop            # shell Haskell (backend + frontend)
-nix run .#backend      # levanta el backend Servant en :8080
+nix run .#dev          # microservicio + backend; la web en http://127.0.0.1:8080/
+nix run .#backend      # solo el backend Servant en :8080
 nix develop .#telemetry -c python3 --version   # entorno del microservicio
 ```
+
+`nix run .#dev` sirve el bundle del frontend **desde el store** (`STATIC_DIR`), así que no hace falta
+`./result` y `nix build .#backend` no puede pisarlo. Sí hace falta el bundle construido
+(`nix build .#frontend`), y al iterar sobre `frontend/` hay que **rearrancar** tras cada build. Puertos
+overrideables con `PORT` y `TELEMETRY_PORT`; la cache de FastF1 con `FASTF1_CACHE`. El comando imprime
+los tres al arrancar.
+
+`nix run` a secas levanta **solo el backend**, a propósito: es el único artefacto desplegable, y con el
+microservicio caído el backend degrada a cache o dummy — el escenario que conviene ejercitar por defecto.
