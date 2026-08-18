@@ -135,6 +135,43 @@
         };
         apps.default = self'.apps.backend;
 
+        # ── Entorno de desarrollo completo: microservicio + backend ──
+        packages.dev = pkgs.writeShellApplication {
+          name = "dashboardF1-dev";
+          text = ''
+            port="''${PORT:-8080}"
+            tport="''${TELEMETRY_PORT:-8000}"
+            # `FASTF1_CACHE` en vez de un `cd`
+            cache="''${FASTF1_CACHE:-$PWD/telemetry-service/.fastf1-cache}"
+
+            echo "microservicio FastF1 → :$tport   (cache: $cache)"
+            FASTF1_CACHE="$cache" \
+              ${self'.packages.telemetry}/bin/telemetry-service --port "$tport" &
+            tpid=$!
+
+            # Ctrl-C llega al grupo entero, pero uvicorn en background sobrevive
+            # a un backend que muere de otra forma: de ahí el trap.
+            cleanup() {
+              kill "$tpid" 2>/dev/null || true
+              wait "$tpid" 2>/dev/null || true
+            }
+            trap cleanup EXIT INT TERM
+
+            echo "backend Servant   → :$port      (STATIC_DIR: ${self'.packages.frontend})"
+            echo "                     web en http://127.0.0.1:$port/"
+
+            PORT="$port" \
+            TELEMETRY_PORT="$tport" \
+            STATIC_DIR="${self'.packages.frontend}" \
+              ${self'.packages.backend}/bin/backend
+          '';
+        };
+
+        apps.dev = {
+          type = "app";
+          program = "${self'.packages.dev}/bin/dashboardF1-dev";
+        };
+
         # ── Haskell dev shell (backend + frontend source-level tooling) ──
         devShells.default = pkgs.mkShell {
           name = "dashboardF1-dev";
@@ -153,6 +190,7 @@
           shellHook = ''
             echo "F1 Functional Dashboard — dev shell (Haskell)"
             echo "  backend : cabal run backend   # Servant en :8080 (Fase 0, sesión 3)"
+            echo "  todo    : nix run .#dev       # microservicio + backend, STATIC_DIR desde el store"
           '';
         };
 
