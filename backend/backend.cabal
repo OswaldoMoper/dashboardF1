@@ -31,6 +31,7 @@ library
         Html
         Outcome
         Handler.FastF1.Manager
+        Handler.PublicApi.Manager
         Handler.OpenF1.Helper
         Handler.OpenF1.Manager
         Handler.Live
@@ -69,6 +70,7 @@ library
       , lucid
       , mtl
       , req
+      , retry
       , servant
       , servant-lucid
       , servant-server

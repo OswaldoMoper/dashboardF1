@@ -8,14 +8,17 @@
 -- puro en 'Handler.Live.Helper'.
 module Handler.Live.Manager where
 
+import           Config                 (Config)
 import           Handler.Live.Helper    (Of1Interval, Of1Lap, Of1Position)
 import           Handler.OpenF1.Manager (fetchList)
 
-fetchPositions :: IO [Of1Position]
-fetchPositions = fetchList "position"
+-- Los tres reciben la 'Config' por lo mismo que 'fetchList': de ella sale el techo
+-- de duración del intento.
+fetchPositions :: Config -> IO [Of1Position]
+fetchPositions cfg = fetchList cfg "position"
 
-fetchIntervals :: IO [Of1Interval]
-fetchIntervals = fetchList "intervals"
+fetchIntervals :: Config -> IO [Of1Interval]
+fetchIntervals cfg = fetchList cfg "intervals"
 
-fetchLaps :: IO [Of1Lap]
-fetchLaps = fetchList "laps"
+fetchLaps :: Config -> IO [Of1Lap]
+fetchLaps cfg = fetchList cfg "laps"

@@ -45,8 +45,9 @@ import           Network.HTTP.Req
 -- Reintentar no aporta nada aquí y por una razón concreta: el servicio es
 -- __local__ y nuestro. Si no está, no va a estar en el intento siguiente. Los
 -- reintentos de @req@ están pensados para redes públicas con fallos
--- transitorios, que es el caso de los otros tres clientes (OpenF1, Jolpica) —
--- por eso ellos siguen con 'defaultHttpConfig' tal cual.
+-- transitorios, que es el caso de OpenF1 y Jolpica — por eso ellos __sí__ los
+-- conservan, aunque acotados a 2 en vez de a 5
+-- ('Handler.PublicApi.Manager.publicApiRetries', 2026-08-19).
 --
 -- No cambia la semántica del degradado: el @try@ de cada @Context@ atrapa
 -- exactamente las mismas excepciones, solo que antes.

@@ -9,6 +9,7 @@ module Handler.Live.Context where
 
 import           App                    (Env (..))
 import           Common.Types           (LiveTimingRow (..))
+import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, readTVarIO, writeTVar)
 import           Control.Exception      (SomeException, try)
 import           Data.Maybe             (fromMaybe)
@@ -19,7 +20,8 @@ import qualified Handler.OpenF1.Manager as OpenF1
 -- | Devuelve la tabla de live timing (real de OpenF1, cache o dummy).
 getLiveTiming :: Env -> IO [LiveTimingRow]
 getLiveTiming env = do
-  result <- try fetchRows :: IO (Either SomeException [LiveTimingRow])
+  result <-
+    try (fetchRows (envConfig env)) :: IO (Either SomeException [LiveTimingRow])
   case result of
     Right rows | not (null rows) -> do
       atomically (writeTVar (envLiveCache env) (Just rows))
@@ -29,12 +31,16 @@ getLiveTiming env = do
       pure (fromMaybe dummy cached)
 
 -- | Fetch de los 4 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
-fetchRows :: IO [LiveTimingRow]
-fetchRows = do
-  drivers   <- OpenF1.fetchDrivers
-  positions <- Manager.fetchPositions
-  intervals <- Manager.fetchIntervals
-  laps      <- Manager.fetchLaps
+--
+-- Recibe la 'Config' —y no el 'Env'— porque lo único que necesita de ella es el
+-- techo de duración de los GET ('Handler.PublicApi.Manager'); la cache la maneja el
+-- llamador. La firma de 'getLiveTiming' no cambia por esto.
+fetchRows :: Config -> IO [LiveTimingRow]
+fetchRows cfg = do
+  drivers   <- OpenF1.fetchDrivers cfg
+  positions <- Manager.fetchPositions cfg
+  intervals <- Manager.fetchIntervals cfg
+  laps      <- Manager.fetchLaps cfg
   pure (assembleRows drivers positions intervals laps)
 
 -- | Top 3 estático (respaldo cuando aún no hay respuesta real de OpenF1).

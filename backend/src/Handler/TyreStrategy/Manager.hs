@@ -6,8 +6,11 @@
 -- mismo cliente (no se redefine aquí). Sin lógica de negocio.
 module Handler.TyreStrategy.Manager where
 
+import           Config                      (Config)
 import           Handler.OpenF1.Manager      (fetchList)
 import           Handler.TyreStrategy.Helper (Of1Stint)
 
-fetchStints :: IO [Of1Stint]
-fetchStints = fetchList "stints"
+-- Recibe la 'Config' por lo mismo que 'fetchList': de ella sale el techo de
+-- duración del intento.
+fetchStints :: Config -> IO [Of1Stint]
+fetchStints cfg = fetchList cfg "stints"

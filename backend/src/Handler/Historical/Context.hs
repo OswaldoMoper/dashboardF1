@@ -9,6 +9,7 @@ module Handler.Historical.Context where
 
 import           App                        (Env (..))
 import           Common.Types               (HistoricalStat (..), StatEntity (..))
+import           Config                     (Config)
 import           Control.Concurrent.STM     (atomically, readTVarIO, writeTVar)
 import           Control.Exception          (SomeException, try)
 import           Data.Maybe                 (fromMaybe)
@@ -17,7 +18,8 @@ import qualified Handler.Historical.Manager as Manager
 
 getHistorical :: Env -> IO [HistoricalStat]
 getHistorical env = do
-  result <- try fetchStats :: IO (Either SomeException [HistoricalStat])
+  result <-
+    try (fetchStats (envConfig env)) :: IO (Either SomeException [HistoricalStat])
   case result of
     Right rows | not (null rows) -> do
       atomically (writeTVar (envHistoricalCache env) (Just rows))
@@ -30,10 +32,14 @@ getHistorical env = do
 -- luego constructores). Vive dentro del mismo 'try' del llamador a propósito: si
 -- cualquiera de los dos fetch falla, se degrada a la última respuesta buena
 -- __completa__ en vez de servir media lista.
-fetchStats :: IO [HistoricalStat]
-fetchStats = do
-  drivers      <- assembleStats <$> Manager.fetchStandings
-  constructors <- assembleConstructorStats <$> Manager.fetchConstructorStandings
+--
+-- Que sean 2 GET en serie hace que su techo de duración sea el __doble__ que el de
+-- las otras dos áreas; el techo por GET lo pone la
+-- 'Config' vía 'Handler.PublicApi.Manager'.
+fetchStats :: Config -> IO [HistoricalStat]
+fetchStats cfg = do
+  drivers      <- assembleStats <$> Manager.fetchStandings cfg
+  constructors <- assembleConstructorStats <$> Manager.fetchConstructorStandings cfg
   pure (drivers <> constructors)
 
 -- | Estadísticas dummy (respaldo cuando Jolpica nunca dio datos). Misma forma que

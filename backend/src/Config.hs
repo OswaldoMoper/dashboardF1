@@ -15,6 +15,15 @@
 -- valores opuestos —caído, fallar en segundos; arriba con la cache fría, esperar
 -- minutos— y el operador es quien sabe en cuál está
 -- ('Handler.FastF1.Manager.fastf1Timeout').
+--
+-- @PUBLIC_API_TIMEOUT@ es el segundo techo de duración, y son dos y no uno porque
+-- los servicios son de naturaleza distinta: el microservicio es __local y
+-- nuestro__, y OpenF1 y Jolpica son __redes públicas__ que no controlamos
+-- ('Handler.PublicApi.Manager.publicApiTimeout'). El motivo de que esté aquí sí
+-- es el mismo: poder aflojarlo sin recompilar el día que una de las dos APIs
+-- vaya lenta. Lo que __no__ está en la 'Config' es el número de reintentos de esos
+-- clientes — es una decisión de diseño y no una perilla de operación, así que vive
+-- en el módulo ('Handler.PublicApi.Manager.publicApiRetries').
 module Config where
 
 import           Data.Maybe         (fromMaybe)
@@ -29,6 +38,7 @@ data Config = Config
   , cfgTelemetryHost :: Text     -- ^ TELEMETRY_HOST: host del microservicio FastF1 (default @127.0.0.1@)
   , cfgTelemetryPort :: Int      -- ^ TELEMETRY_PORT: puerto del microservicio FastF1 (default 8000)
   , cfgTelemetryTimeout :: Int   -- ^ TELEMETRY_TIMEOUT: segundos de espera por intento (default 5)
+  , cfgPublicApiTimeout :: Int   -- ^ PUBLIC_API_TIMEOUT: segundos de espera por intento en OpenF1/Jolpica (default 5)
   }
   deriving (Show)
 
@@ -39,6 +49,7 @@ loadConfig = do
   mhost  <- lookupEnv "TELEMETRY_HOST"
   mtport <- lookupEnv "TELEMETRY_PORT"
   mtout  <- lookupEnv "TELEMETRY_TIMEOUT"
+  mptout <- lookupEnv "PUBLIC_API_TIMEOUT"
   pure
     Config
       { cfgPort          = fromMaybe 8080 (mport >>= readMaybe)
@@ -50,4 +61,9 @@ loadConfig = do
         -- 5 s sirve al escenario de todos los días (servicio caído → degradado
         -- rápido). El camino feliz con la cache de FastF1 fría necesita subirlo.
       , cfgTelemetryTimeout = fromMaybe 5 (mtout >>= readMaybe)
+        -- 5 s deja el techo total en 15 s con los 3 intentos de
+        -- 'Handler.PublicApi.Manager', y sobra sobre el camino feliz medido
+        -- (0.15–3.4 s). Subirlo si una de las dos APIs va lenta; bajarlo
+        -- convierte una red viva pero lenta en un dummy.
+      , cfgPublicApiTimeout = fromMaybe 5 (mptout >>= readMaybe)
       }
