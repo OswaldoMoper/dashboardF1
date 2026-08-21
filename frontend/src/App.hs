@@ -24,9 +24,16 @@ data Route = Dashboard
 -- fallo se ve como «el CSS no se aplica», sin error ninguno
 -- (2026-08-21). La hoja viaja al store junto al @.jsexe@
 -- desde @packages.frontend@, de ahí que la ruta sea relativa.
+--
+-- El @\<meta name=\"viewport\"\>@ está aquí por la __misma__ razón, y es lo que
+-- hace probable el responsive: el del @index.html@ también se borra al montar, y
+-- sin él el navegador móvil renderiza a 980 px y ninguna @\@media@ de anchura se
+-- dispara donde se espera.
 headW :: DomBuilder t m => m ()
 headW = do
   el "title" $ text "F1 Functional Dashboard"
+  elAttr "meta" ("name" =: "viewport"
+                 <> "content" =: "width=device-width, initial-scale=1") blank
   elAttr "link" ("rel" =: "stylesheet" <> "href" =: "dashboard.css") blank
 
 -- | Contenido del @\<body\>@: contenedor raíz + 'dispatch' de la ruta activa.

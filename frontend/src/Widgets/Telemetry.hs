@@ -114,14 +114,16 @@ matchesDriver (Just driver) p = tpDriver p == driver
 -- no en un refetch.
 driverSwitcher :: MonadWidget t m => [Text] -> m (Dynamic t (Maybe Text))
 driverSwitcher drivers = divClass "driver-switcher" $ do
-  allClick <- driverButton "All"
-  picks    <- mapM (\d -> fmap (Just d <$) (driverButton d)) drivers
+  allClick <- switcherButton "All"
+  picks    <- mapM (\d -> fmap (Just d <$) (switcherButton d)) drivers
   holdDyn Nothing $ leftmost ((Nothing <$ allClick) : picks)
 
 -- | Botón que emite un 'Event' al hacer click. Replicado aquí en lugar de
 -- importado de 'Widgets.Historical': mismo criterio que allí, no acoplar dos
--- widgets entre sí por tres líneas de DOM.
-driverButton :: DomBuilder t m => Text -> m (Event t ())
-driverButton label = do
-  (e, _) <- elClass' "button" "driver-switcher__btn" $ text label
+-- widgets entre sí por tres líneas de DOM. Lo que sí se comparte es la
+-- __clase__ @switcher__btn@: los cuatro switchers del dashboard se
+-- ven igual, así que la hoja los estila con una regla y no con cuatro.
+switcherButton :: DomBuilder t m => Text -> m (Event t ())
+switcherButton label = do
+  (e, _) <- elClass' "button" "switcher__btn" $ text label
   pure (domEvent Click e)

@@ -124,9 +124,9 @@ matchesFilter OnlyConstructors s = hsEntity s == ConstructorStat
 -- lugar de importarlo para no acoplar un widget a una página.
 labelSwitcher :: MonadWidget t m => m (Dynamic t LabelMode)
 labelSwitcher = divClass "label-switcher" $ do
-  codeClick   <- labelButton "Código"
-  familyClick <- labelButton "Apellido"
-  fullClick   <- labelButton "Nombre completo"
+  codeClick   <- switcherButton "Código"
+  familyClick <- switcherButton "Apellido"
+  fullClick   <- switcherButton "Nombre completo"
   holdDyn Code $ leftmost
     [ Code   <$ codeClick
     , Family <$ familyClick
@@ -138,9 +138,9 @@ labelSwitcher = divClass "label-switcher" $ do
 -- fetch, así que filtrar no vuelve a consultar @\/api\/historical@.
 entitySwitcher :: MonadWidget t m => m (Dynamic t EntityFilter)
 entitySwitcher = divClass "entity-switcher" $ do
-  allClick          <- labelButton "Todos"
-  driversClick      <- labelButton "Pilotos"
-  constructorsClick <- labelButton "Constructores"
+  allClick          <- switcherButton "Todos"
+  driversClick      <- switcherButton "Pilotos"
+  constructorsClick <- switcherButton "Constructores"
   holdDyn AllEntities $ leftmost
     [ AllEntities      <$ allClick
     , OnlyDrivers      <$ driversClick
@@ -148,9 +148,16 @@ entitySwitcher = divClass "entity-switcher" $ do
     ]
 
 -- | Botón que emite un 'Event' al hacer click. Compartido por los dos switchers
--- del widget (etiqueta y entidad); conserva la clase @label-switcher__btn@ hasta que
--- exista una hoja de estilos que justifique separarlas.
-labelButton :: DomBuilder t m => Text -> m (Event t ())
-labelButton label = do
-  (e, _) <- elClass' "button" "label-switcher__btn" $ text label
+-- del widget (etiqueta y entidad).
+--
+-- La clase es @switcher__btn@ y no @label-switcher__btn@ desde el 2026-08-21: el
+-- 'entitySwitcher' no tiene botón propio, así que sus botones salían al DOM con
+-- el nombre del otro switcher y @frontend\/dashboard.css@ los estilaba por un
+-- nombre que mentía. La hoja de estilos es la que lo hizo visible, que es el
+-- orden que 2026-08-21 (b) buscaba. El __bloque__
+-- (@label-switcher@ \/ @entity-switcher@) sí se conserva: son contenedores
+-- distintos de verdad.
+switcherButton :: DomBuilder t m => Text -> m (Event t ())
+switcherButton label = do
+  (e, _) <- elClass' "button" "switcher__btn" $ text label
   pure (domEvent Click e)

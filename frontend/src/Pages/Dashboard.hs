@@ -37,17 +37,19 @@ dashboardPage = divClass "page page--dashboard" $ do
 -- activo en un @Dynamic t Layout@ (arranca en 'raceOverview').
 layoutSwitcher :: MonadWidget t m => m (Dynamic t Layout)
 layoutSwitcher = divClass "layout-switcher" $ do
-  overviewClick <- layoutButton "Race Overview"
-  qualyClick    <- layoutButton "Qualy"
+  overviewClick <- switcherButton "Race Overview"
+  qualyClick    <- switcherButton "Qualy"
   holdDyn raceOverview $ leftmost
     [ raceOverview <$ overviewClick
     , qualy        <$ qualyClick
     ]
 
--- | Botón que emite un 'Event' al hacer click.
-layoutButton :: DomBuilder t m => T.Text -> m (Event t ())
-layoutButton label = do
-  (e, _) <- elClass' "button" "layout-switcher__btn" $ text label
+-- | Botón que emite un 'Event' al hacer click. Clase @switcher__btn@, la misma
+-- que los tres switchers de los widgets; el bloque
+-- @layout-switcher@ sí es propio.
+switcherButton :: DomBuilder t m => T.Text -> m (Event t ())
+switcherButton label = do
+  (e, _) <- elClass' "button" "switcher__btn" $ text label
   pure (domEvent Click e)
 
 -- | Despacha una 'WidgetConfig' a su widget según 'widgetType'. Total sobre los

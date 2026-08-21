@@ -236,9 +236,9 @@ body {
   margin-bottom: var(--sp-2);
 }
 
-.layout-switcher__btn,
-.label-switcher__btn,
-.driver-switcher__btn,
+/* Los cuatro switchers comparten botón (`switcher__btn`), porque comparten
+   aspecto: una regla y no cuatro. Los bloques siguen siendo distintos. */
+.switcher__btn,
 .car-selector__btn {
   padding: var(--sp-1) var(--sp-3);
   font: inherit;
@@ -250,16 +250,12 @@ body {
   cursor: pointer;
 }
 
-.layout-switcher__btn:hover,
-.label-switcher__btn:hover,
-.driver-switcher__btn:hover,
+.switcher__btn:hover,
 .car-selector__btn:hover {
   border-color: var(--c-muted);
 }
 
-.layout-switcher__btn:focus-visible,
-.label-switcher__btn:focus-visible,
-.driver-switcher__btn:focus-visible,
+.switcher__btn:focus-visible,
 .car-selector__btn:focus-visible,
 .car-selector__select:focus-visible {
   outline: 2px solid var(--c-accent);
