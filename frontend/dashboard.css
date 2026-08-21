@@ -1,4 +1,4 @@
-/* F1 Functional Dashboard — hoja de estilos.
+/* F1 Functional Dashboard — hoja de estilos. */
 
 /* ── Tokens ─────────────────────────────────────────────────────────────── */
 
@@ -95,8 +95,15 @@ body {
   grid-column: 1 / -1;
 }
 
+/* `min-width: 0` impide que la tabla ancha __estire la columna__ de la rejilla;
+   `overflow-x: auto` impide que la tabla se salga __pintando fuera de la
+   tarjeta__. Son dos cosas distintas y hacen falta las dos: sin la segunda, la
+   tabla de telemetría (8 columnas con `nowrap`) se desbordaba por la derecha y
+   la tarjeta vecina —con fondo opaco— la tapaba. Se veía como «Lap Comparison
+   se come Telemetry», y no era de la rejilla sino de la tabla. */
 .widget {
-  min-width: 0;             /* sin esto una tabla ancha desborda la celda */
+  min-width: 0;
+  overflow-x: auto;
   padding: var(--sp-4);
   background: var(--c-surface);
   border: 1px solid var(--c-border);
@@ -379,4 +386,30 @@ body {
   color: var(--c-muted);
   border-left-color: var(--c-surface-2);
   font-style: italic;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+
+/* Un solo breakpoint, y el número no se elige: se deriva de la rejilla. Con
+   `auto-fit` sobre `minmax(24rem, 1fr)` y `gap: 1rem`, dos columnas piden
+   2×24 + 1 = 49rem de contenido, más los 2×1.5rem de padding de `.app` → 52rem.
+   Por debajo de ahí la rejilla __ya__ está en una columna sola, así que el corte
+   no introduce un segundo criterio: solo dice qué más cambia en ese mismo punto.
+
+   Requiere el `<meta name="viewport">` que `App.headW` emite;
+   sin él el navegador móvil renderiza a 980 px y esta regla no se dispara. */
+@media (max-width: 52rem) {
+  /* Pedir dos columnas donde solo hay una crea una columna implícita y saca la
+     tarjeta fuera de la página. */
+  .widget--comparison {
+    grid-column: auto;
+  }
+
+  .app {
+    padding: var(--sp-3);
+  }
+
+  .page--dashboard > h1 {
+    font-size: var(--fs-lg);
+  }
 }
