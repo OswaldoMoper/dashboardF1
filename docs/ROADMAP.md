@@ -115,7 +115,7 @@
     en las seis: `live`, `historical` y `tyre-strategy` no tienen parámetros, así que no admiten query
     malo. Corregido con la medición del 2026-08-14, que es cuando se comprobó por primera vez.
 
-## Fase 5 – Diseño y estilos
+## Fase 5 – Diseño y estilos — COMPLETADA (2026-08-21)
 
 **Objetivo:** que el dashboard deje de ser HTML crudo:
 
@@ -137,8 +137,25 @@ estilos puesto cada widget nuevo nace vestido en vez de generar deuda visual.
 
 **Entregables:**
 
-- Dashboard con estilos propios y layout en rejilla.
-- Los cinco estados de un widget distinguibles de un vistazo.
+- [x] Dashboard con estilos propios y layout en rejilla — `frontend/dashboard.css`, servida junto al
+      `.jsexe` por `packages.frontend`. El `<link>` lo emite `App.headW` y no `index.html`
+      (2026-08-21).
+- [x] Sistema de tokens: paleta, escala tipográfica, espaciado y radios en `:root`.
+- [x] Monoespaciada con `tabular-nums` en tiempos, deltas y columnas numéricas, elegidas por
+      `nth-child` porque las celdas no llevan clase.
+- [x] Los cinco estados distinguibles de un vistazo — sobre `p.status` con seis modificadores
+      (`--loading`, `--busy`, `--stale`, `--error`, `--empty`, `--placeholder`), que los widgets ya
+      emitían desde antes de que la hoja existiera.
+- [x] Responsive básico — **un** breakpoint (`52rem`) derivado de la propia rejilla, con el
+      `<meta viewport>` que `headW` emite (2026-08-21 (c)).
+- [x] **Extra no previsto:** el renombrado `labelButton` → `switcherButton` / `switcher__btn` en los
+      tres switchers, que la hoja convirtió de deuda cosmética en deuda visible, y `overflow-x` en
+      `.widget` — la tabla de telemetría se pintaba fuera de su tarjeta y la vecina la tapaba.
+
+**Lo que la fase deja señalado y no arregla** (son de contenido, no de estilo): `HistoricalStats`
+publica una fila **por métrica** y no por piloto, así que un piloto sale en dos renglones y los
+constructores comparten tabla con ellos; y no hay forma de **elegir la sesión** que se está viendo.
+Los dos salieron de mirar la página ya estilada, que es lo que la fase existía para permitir.
 
 ## Fase 6 – Widgets personalizables + sincronización conceptual con F1TV
 
