@@ -16,8 +16,18 @@ data Route = Dashboard
   deriving (Eq, Show)
 
 -- | Contenido del @\<head\>@.
+--
+-- El @\<link\>@ de la hoja de estilos se emite __aquí y no en
+-- @frontend\/index.html@__: 'Reflex.Dom.mainWidgetWithHead' reemplaza el
+-- contenido del @\<head\>@ al arrancar (@setInnerHTML \"\"@ antes de montar),
+-- así que un enlace escrito en el HTML se carga y acto seguido se borra — y el
+-- fallo se ve como «el CSS no se aplica», sin error ninguno
+-- (2026-08-21). La hoja viaja al store junto al @.jsexe@
+-- desde @packages.frontend@, de ahí que la ruta sea relativa.
 headW :: DomBuilder t m => m ()
-headW = el "title" $ text "F1 Functional Dashboard"
+headW = do
+  el "title" $ text "F1 Functional Dashboard"
+  elAttr "link" ("rel" =: "stylesheet" <> "href" =: "dashboard.css") blank
 
 -- | Contenido del @\<body\>@: contenedor raíz + 'dispatch' de la ruta activa.
 bodyW :: MonadWidget t m => m ()

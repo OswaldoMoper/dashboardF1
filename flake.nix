@@ -106,12 +106,12 @@
         packages.backend = hp.backend;
         packages.default = self'.packages.backend;
 
-        # ── Frontend Reflex (GHCJS) — Fase 0 skeleton ──
-        # Copia el .jsexe compilado + el index.html propio, listo para servir.
+        # ── Frontend Reflex (GHCJS) ──
         packages.frontend = pkgs.runCommand "dashboardF1-frontend" { } ''
           mkdir -p $out
           cp -r ${frontendJs}/bin/frontend.jsexe/. $out/
-          install -m644 ${./frontend/index.html} $out/index.html
+          install -m644 ${./frontend/index.html}   $out/index.html
+          install -m644 ${./frontend/dashboard.css} $out/dashboard.css
         '';
 
         # ── Microservicio FastF1 ──

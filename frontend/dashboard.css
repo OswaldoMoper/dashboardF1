@@ -1,0 +1,386 @@
+/* F1 Functional Dashboard — hoja de estilos.
+
+/* ── Tokens ─────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Paleta. Fondo oscuro: el dashboard se mira de reojo y en pantalla grande,
+     y el contraste alto sobre oscuro es lo que hace legibles los tiempos. */
+  --c-bg:        #12141a;
+  --c-surface:   #1b1e26;
+  --c-surface-2: #232733;
+  --c-border:    #2f3441;
+  --c-text:      #e7e9ee;
+  --c-muted:     #9aa1b1;
+  --c-accent:    #e10600;  /* el mismo rojo que la serie del gráfico */
+  --c-ok:        #35c46b;
+  --c-warn:      #e0a90b;
+  --c-error:     #ff5a52;
+
+  /* Escala tipográfica. */
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-md: 0.9375rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.5rem;
+
+  /* Espaciado. */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+
+  /* Radios. */
+  --r-sm: 4px;
+  --r-md: 8px;
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+             Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+}
+
+/* ── Raíz ───────────────────────────────────────────────────────────────── */
+
+html {
+  background: var(--c-bg);
+}
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+}
+
+.app {
+  padding: var(--sp-5);
+}
+
+.page--dashboard > h1 {
+  margin: 0 0 var(--sp-4);
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.page--dashboard > h1::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 0.9em;
+  margin-right: var(--sp-3);
+  vertical-align: -0.06em;
+  background: var(--c-accent);
+  border-radius: var(--r-sm);
+}
+
+/* ── Rejilla de widgets ─────────────────────────────────────────────────── */
+
+/* `dyn_` monta los widgets como hermanos directos de la página, así que la
+   rejilla vive en la página y no en un contenedor propio. El switcher de
+   layouts ocupa la fila entera. */
+.page--dashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.page--dashboard > h1,
+.layout-switcher {
+  grid-column: 1 / -1;
+}
+
+.widget {
+  min-width: 0;             /* sin esto una tabla ancha desborda la celda */
+  padding: var(--sp-4);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+}
+
+.widget > h2 {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+/* La comparación lleva gráfico: ocupa dos columnas cuando las hay. */
+.widget--comparison {
+  grid-column: span 2;
+}
+
+.widget--placeholder {
+  border-style: dashed;
+  color: var(--c-muted);
+}
+
+/* ── Tablas ─────────────────────────────────────────────────────────────── */
+
+.live-timing,
+.telemetry,
+.historical {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.live-timing th,
+.telemetry th,
+.historical th {
+  padding: var(--sp-2) var(--sp-3);
+  text-align: left;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-muted);
+  border-bottom: 1px solid var(--c-border);
+  white-space: nowrap;
+}
+
+.live-timing td,
+.telemetry td,
+.historical td {
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--c-surface-2);
+  white-space: nowrap;
+}
+
+.live-timing tbody tr:hover,
+.telemetry tbody tr:hover,
+.historical tbody tr:hover {
+  background: var(--c-surface-2);
+}
+
+/* ── Monoespaciada donde el alineado comunica ───────────────────────────── */
+
+/* Tiempos y deltas. `tabular-nums` para que las cifras no bailen entre filas.
+   Las columnas se eligen por posición porque las celdas no llevan clase: son
+   `mapM_ (el "td" . text)` sobre una lista fija de cada widget. */
+
+/* Live timing: Pos | Driver | Team | Gap | Interval | Last Lap */
+.live-timing td:nth-child(1),
+.live-timing td:nth-child(4),
+.live-timing td:nth-child(5),
+.live-timing td:nth-child(6),
+.live-timing th:nth-child(1),
+.live-timing th:nth-child(4),
+.live-timing th:nth-child(5),
+.live-timing th:nth-child(6) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.live-timing th:nth-child(1),
+.live-timing th:nth-child(4),
+.live-timing th:nth-child(5),
+.live-timing th:nth-child(6) {
+  font-family: var(--font-ui);
+}
+
+/* Telemetría: Driver y las siete magnitudes. */
+.telemetry td:not(:first-child),
+.telemetry th:not(:first-child) {
+  text-align: right;
+}
+
+.telemetry td:not(:first-child) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Históricos: Driver | Entity | Value | Unit */
+.historical td:nth-child(3),
+.historical th:nth-child(3) {
+  text-align: right;
+}
+
+.historical td:nth-child(3) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* La lista es heterogénea (pilotos y constructores) y el modificador de fila es
+   la única distinción semántica que el vocabulario ya expresa: se marca con una
+   guía de color en el borde inicial, no con fondo, para no competir con el
+   `:hover`. */
+.historical__row--driver td:first-child {
+  box-shadow: inset 2px 0 0 var(--c-accent);
+}
+
+.historical__row--constructor td:first-child {
+  box-shadow: inset 2px 0 0 var(--c-muted);
+}
+
+/* ── Controles: switchers y selector de coche ───────────────────────────── */
+
+.layout-switcher,
+.label-switcher,
+.entity-switcher,
+.driver-switcher,
+.car-selector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.layout-switcher {
+  margin-bottom: var(--sp-2);
+}
+
+.layout-switcher__btn,
+.label-switcher__btn,
+.driver-switcher__btn,
+.car-selector__btn {
+  padding: var(--sp-1) var(--sp-3);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.layout-switcher__btn:hover,
+.label-switcher__btn:hover,
+.driver-switcher__btn:hover,
+.car-selector__btn:hover {
+  border-color: var(--c-muted);
+}
+
+.layout-switcher__btn:focus-visible,
+.label-switcher__btn:focus-visible,
+.driver-switcher__btn:focus-visible,
+.car-selector__btn:focus-visible,
+.car-selector__select:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+/* El de comparar dispara la petición: es la acción primaria de su widget. */
+.car-selector__btn {
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.car-selector__select {
+  padding: var(--sp-1) var(--sp-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+
+.car-selector__vs,
+.comparison__vs {
+  color: var(--c-muted);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ── Comparación de vueltas ─────────────────────────────────────────────── */
+
+.comparison__header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+
+.comparison__lap {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.comparison__driver {
+  font-family: var(--font-ui);
+  font-weight: 600;
+}
+
+.comparison__car {
+  color: var(--c-muted);
+  font-size: var(--fs-sm);
+}
+
+.comparison__time {
+  font-size: var(--fs-lg);
+}
+
+/* Solo la caja del lienzo. `stroke`/`fill` de la serie y de la línea del cero
+   los pone `Widgets.Comparison` como atributos de presentación, y una regla CSS
+   aquí los sobrescribiría en silencio (el CSS gana a los atributos). */
+.comparison__chart {
+  display: block;
+  width: 100%;
+  background: var(--c-surface-2);
+  border-radius: var(--r-sm);
+}
+
+/* ── Estados ────────────────────────────────────────────────────────────── */
+
+/* Los cinco estados del ROADMAP más el placeholder. Van sobre `p.status`, que
+   es lo que los widgets emiten; el color es el discriminante y el punto de la
+   izquierda lo hace visible sin leer el texto. */
+.status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  background: var(--c-surface-2);
+  border-radius: var(--r-sm);
+  border-left: 3px solid var(--c-border);
+  color: var(--c-muted);
+}
+
+.status::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status--loading,
+.status--busy {
+  color: var(--c-muted);
+  border-left-color: var(--c-muted);
+}
+
+/* Dato de cache o dummy: el estado que hay que poder distinguir de un vistazo,
+   porque el degradado es el escenario normal del repo. */
+.status--stale {
+  color: var(--c-warn);
+  border-left-color: var(--c-warn);
+}
+
+.status--error {
+  color: var(--c-error);
+  border-left-color: var(--c-error);
+}
+
+.status--empty,
+.status--placeholder {
+  color: var(--c-muted);
+  border-left-color: var(--c-surface-2);
+  font-style: italic;
+}
