@@ -474,8 +474,10 @@ polylineAttrs series =
 -- las coordenadas de 'Common.Chart.deltaPolyline': 'show' sobre 'Double' emite
 -- notación científica para los valores pequeños.
 --
--- __No hay hoja de estilos en el repo__, así que @stroke@, @fill@ y compañía van
--- como atributos de presentación. Las clases se mantienen como gancho para
--- cuando exista, igual que hace 'Widgets.Historical.rowClass'.
+-- __@stroke@, @fill@ y compañía se quedan aquí a propósito__ y no pasaron a
+-- @frontend\/dashboard.css@ cuando la hoja llegó el 2026-08-21: el CSS gana a
+-- los atributos de presentación, así que sobrescribirlos allí dejaría este
+-- Haddock diciendo una mentira. La hoja estila solo la caja del gráfico
+-- (@comparison__chart@). Ver 2026-08-21 (c).
 num :: Double -> Text
 num = T.pack . show . (round :: Double -> Int)

@@ -3,7 +3,7 @@
 
 -- | Widget de Estadísticas Históricas (categoría HistoricalStats).
 --
--- Renderiza una tabla con los 'HistoricalStat' del dominio compartido
+-- Renderiza __dos tablas__ con los 'HistoricalStat' del dominio compartido
 -- ('Common.Types'). Consume @GET \/api\/historical@ en runtime
 -- vía 'Client.fetchJson' + 'Common.Route.historicalPath' (relativo, misma-origen:
 -- el backend sirve el bundle y la API en el mismo puerto, con datos reales de
@@ -16,15 +16,18 @@
 -- así que conmutar __no re-dispara el fetch__: el @getPostBuild@ vive fuera del
 -- 'dyn_' y solo se re-renderiza la tabla.
 --
--- La lista es __heterogénea__ (pilotos y constructores), así que hay un segundo
--- estado local, el 'EntityFilter', y la etiqueta se proyecta según la marca
--- 'StatEntity' de cada fila (2026-07-29). Ambos selectores
--- viven fuera del 'dyn_': filtrar tampoco re-dispara el fetch.
+-- La lista que llega es __heterogénea__ (pilotos y constructores) y se parte aquí
+-- por 'StatEntity', que es para lo que esa marca viaja
+-- (2026-07-29). __Dos tablas y no un filtro__ desde 2026-08-24: aquella decisión
+-- eligió «lista heterogénea con filtro» sin hoja de estilos, y con ella dos tablas
+-- se distinguen de un vistazo mientras un control que esconde una de las dos no
+-- informa de nada.
 module Widgets.Historical where
 
 import           Client        (fetchJson)
 import           Common.Route  (historicalPath)
 import           Common.Types  (HistoricalStat (..), StatEntity (..))
+import           Data.List     (partition)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           Reflex.Dom
@@ -43,41 +46,45 @@ data LabelMode
   | Full    -- ^ Nombre completo (@"Max Verstappen"@).
   deriving (Eq, Show)
 
--- | Qué entidades de la clasificación se listan.
-data EntityFilter
-  = AllEntities       -- ^ Pilotos y constructores (por defecto).
-  | OnlyDrivers
-  | OnlyConstructors
-  deriving (Eq, Show)
-
--- | Tabla de estadísticas históricas alimentada por @\/api\/historical@, con
--- selector de etiqueta y filtro de entidad.
+-- | Las dos tablas de estadísticas históricas alimentadas por @\/api\/historical@,
+-- con selector de etiqueta.
 historicalWidget :: MonadWidget t m => m ()
 historicalWidget = divClass "widget widget--historical" $ do
   el "h2" $ text "Historical Stats"
-  modeDyn   <- labelSwitcher
-  filterDyn <- entitySwitcher
-  pb        <- getPostBuild
-  resp      <- fetchJson (historicalPath <$ pb)
-  state     <- holdDyn Loading (ffor resp (maybe Failed Loaded))
-  dyn_ $ ffor (zipDyn (zipDyn modeDyn filterDyn) state) $
-    \((mode, filt), st) -> renderState mode filt st
+  modeDyn <- labelSwitcher
+  pb      <- getPostBuild
+  resp    <- fetchJson (historicalPath <$ pb)
+  state   <- holdDyn Loading (ffor resp (maybe Failed Loaded))
+  dyn_ $ ffor (zipDyn modeDyn state) $ \(mode, st) -> renderState mode st
   where
-    renderState :: DomBuilder t m => LabelMode -> EntityFilter -> HState -> m ()
-    renderState _ _ Loading =
+    renderState :: DomBuilder t m => LabelMode -> HState -> m ()
+    renderState _ Loading =
       elClass "p" "status status--loading" $ text "Cargando…"
-    renderState _ _ Failed =
+    renderState _ Failed =
       elClass "p" "status status--error" $ text "Error al cargar /api/historical"
-    renderState mode filt (Loaded stats) =
-      elClass "table" "historical" $ do
-        el "thead" $ el "tr" $ mapM_ (el "th" . text) headers
-        el "tbody" $ mapM_ (row mode) (filter (matchesFilter filt) stats)
+    renderState mode (Loaded stats) = do
+      let (drivers, constructors) = partition isDriver stats
+      table mode "Pilotos" "Piloto" drivers
+      table mode "Constructores" "Constructor" constructors
 
-    headers :: [Text]
-    headers = ["Driver", "Puntos", "Victorias"]
+    isDriver :: HistoricalStat -> Bool
+    isDriver s = hsEntity s == DriverStat
+
+    -- | Una de las dos tablas, con su encabezado propio. La cabecera de la primera
+    -- columna es lo único que cambia entre ellas: @Piloto@ o @Constructor@, que es
+    -- lo que la columna @Entity@ decía fila a fila antes de que hubiera dos tablas.
+    table
+      :: DomBuilder t m
+      => LabelMode -> Text -> Text -> [HistoricalStat] -> m ()
+    table mode title firstHeader rows = do
+      el "h3" $ text title
+      elClass "table" "historical" $ do
+        el "thead" $ el "tr" $
+          mapM_ (el "th" . text) [firstHeader, "Puntos", "Victorias"]
+        el "tbody" $ mapM_ (row mode) rows
 
     row :: DomBuilder t m => LabelMode -> HistoricalStat -> m ()
-    row mode s = elClass "tr" (rowClass s) $ mapM_ (el "td" . text)
+    row mode s = el "tr" $ mapM_ (el "td" . text)
       [ statLabel mode s
       , T.pack (show (hsPoints s))
       , winsLabel s
@@ -108,19 +115,6 @@ statLabel mode s = case hsEntity s of
 winsLabel :: HistoricalStat -> Text
 winsLabel = maybe "—" (T.pack . show) . hsWins
 
--- | Clase del @\<tr\>@ por entidad. Hoy no hay hoja de estilos; queda como gancho
--- para cuando llegue.
-rowClass :: HistoricalStat -> Text
-rowClass s = case hsEntity s of
-  DriverStat      -> "historical__row--driver"
-  ConstructorStat -> "historical__row--constructor"
-
--- | Si la fila pasa el filtro activo.
-matchesFilter :: EntityFilter -> HistoricalStat -> Bool
-matchesFilter AllEntities      _ = True
-matchesFilter OnlyDrivers      s = hsEntity s == DriverStat
-matchesFilter OnlyConstructors s = hsEntity s == ConstructorStat
-
 -- | Barra de botones que conmutan el modo de etiqueta. Sostiene el modo activo en
 -- un @Dynamic t LabelMode@ (arranca en 'Code', la etiqueta previa al toggle).
 -- Mismo patrón que 'Pages.Dashboard.layoutSwitcher'; el botón se replica aquí en
@@ -136,30 +130,16 @@ labelSwitcher = divClass "label-switcher" $ do
     , Full   <$ fullClick
     ]
 
--- | Barra de botones que conmutan el filtro de entidad. Mismo patrón que
--- 'labelSwitcher' (arranca en 'AllEntities'); se monta __fuera__ del 'dyn_' del
--- fetch, así que filtrar no vuelve a consultar @\/api\/historical@.
-entitySwitcher :: MonadWidget t m => m (Dynamic t EntityFilter)
-entitySwitcher = divClass "entity-switcher" $ do
-  allClick          <- switcherButton "Todos"
-  driversClick      <- switcherButton "Pilotos"
-  constructorsClick <- switcherButton "Constructores"
-  holdDyn AllEntities $ leftmost
-    [ AllEntities      <$ allClick
-    , OnlyDrivers      <$ driversClick
-    , OnlyConstructors <$ constructorsClick
-    ]
-
--- | Botón que emite un 'Event' al hacer click. Compartido por los dos switchers
--- del widget (etiqueta y entidad).
+-- | Botón que emite un 'Event' al hacer click.
 --
--- La clase es @switcher__btn@ y no @label-switcher__btn@ desde el 2026-08-21: el
--- 'entitySwitcher' no tiene botón propio, así que sus botones salían al DOM con
--- el nombre del otro switcher y @frontend\/dashboard.css@ los estilaba por un
--- nombre que mentía. La hoja de estilos es la que lo hizo visible, que es el
--- orden que 2026-08-21 (b) buscaba. El __bloque__
--- (@label-switcher@ \/ @entity-switcher@) sí se conserva: son contenedores
--- distintos de verdad.
+-- La clase es @switcher__btn@ y no @label-switcher__btn@ desde el 2026-08-21,
+-- cuando el widget tenía __dos__ switchers y el de entidad reusaba este botón:
+-- sus botones salían al DOM con el nombre del otro switcher y
+-- @frontend\/dashboard.css@ los estilaba por un nombre que mentía
+-- (2026-08-21 (c)). El nombre genérico __se conserva__
+-- aunque hoy solo quede el 'labelSwitcher': la regla de la hoja es la misma que
+-- estila los otros tres switchers de la página, y volver a un nombre por bloque
+-- sería deshacer aquella unificación.
 switcherButton :: DomBuilder t m => Text -> m (Event t ())
 switcherButton label = do
   (e, _) <- elClass' "button" "switcher__btn" $ text label

@@ -116,6 +116,18 @@ body {
   font-weight: 600;
 }
 
+/* Encabezado de sección dentro de un widget: hoy solo el de las dos tablas de
+   históricos. Lleva `margin-top` porque nunca es el primer hijo —siempre sigue a
+   una tabla o al switcher— y sin él las dos tablas se pegan. */
+.widget > h3 {
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-muted);
+}
+
 /* La comparación lleva gráfico: ocupa dos columnas cuando las hay. */
 .widget--comparison {
   grid-column: span 2;
@@ -219,23 +231,10 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* La lista es heterogénea (pilotos y constructores) y el modificador de fila es
-   la única distinción semántica que el vocabulario ya expresa: se marca con una
-   guía de color en el borde inicial, no con fondo, para no competir con el
-   `:hover`. */
-.historical__row--driver td:first-child {
-  box-shadow: inset 2px 0 0 var(--c-accent);
-}
-
-.historical__row--constructor td:first-child {
-  box-shadow: inset 2px 0 0 var(--c-muted);
-}
-
 /* ── Controles: switchers y selector de coche ───────────────────────────── */
 
 .layout-switcher,
 .label-switcher,
-.entity-switcher,
 .driver-switcher,
 .car-selector {
   display: flex;
