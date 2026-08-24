@@ -2,7 +2,8 @@
 --
 -- Modela solo la envoltura de Jolpica (Ergast) que se consume —
 -- @\/current\/driverStandings@ y @\/current\/constructorStandings@ — y la traduce a
--- 'HistoricalStat'. Cada entrada produce dos KPIs (puntos y victorias); los campos
+-- 'HistoricalStat'. Cada entrada produce __una fila__ con sus dos métricas en
+-- columnas (puntos y victorias); los campos
 -- numéricos de Ergast vienen como cadena, así que se parsean a 'Double' aquí. La
 -- identidad se propaga __estructurada__ (código, nombre, apellido) tal como llega de
 -- Jolpica; es el consumidor quien elige la etiqueta
@@ -78,8 +79,8 @@ instance FromJSON StandingsList where
 -- | Fila de clasificación: puntos y victorias (cadenas Ergast) + piloto.
 --
 -- @wins@ es __opcional con defecto no numérico__ (@\"\"@) a propósito: si Jolpica lo
--- omite, 'parseNum' falla y el 'mapMaybe' de 'assembleStats' descarta __solo__ ese
--- KPI, dejando la fila de puntos intacta. Con @.:@ el decode entero fallaba y, como
+-- omite, 'parseNum' falla y 'assembleStats' deja 'hsWins' en 'Nothing' con el
+-- piloto y sus puntos intactos. Con @.:@ el decode entero fallaba y, como
 -- 'Handler.Historical.Context.fetchStats' hace los dos GET dentro de un solo @try@,
 -- un campo ausente en cualquiera de las dos respuestas arrastraba el refresco
 -- completo a cache\/dummy. El defecto es @\"\"@ y no @\"0\"@ porque declarar cero
@@ -157,58 +158,56 @@ instance FromJSON Constructor where
       <$> o .: "constructorId"
       <*> o .: "name"
 
--- | Aplana la clasificación de pilotos a KPIs: por cada piloto, en el orden de la
--- clasificación, emite @<piloto> puntos "points"@ y @<piloto> victorias "wins"@.
--- Cada fila lleva la identidad estructurada del piloto (código, nombre, apellido) y
--- la marca 'DriverStat', de modo que el consumidor elige qué etiqueta mostrar.
--- Descarta la métrica cuyo valor no parsee a 'Double' ('mapMaybe').
+-- | Traduce la clasificación de pilotos a 'HistoricalStat': __una fila por
+-- piloto__, en el orden de la clasificación, con la identidad estructurada
+-- (código, nombre, apellido) y la marca 'DriverStat', de modo que el consumidor
+-- elige qué etiqueta mostrar.
+--
+-- Los dos campos numéricos __no se descartan igual__, y es la asimetría que
+-- 2026-08-24 introdujo al pasar de una fila por métrica a una por entidad:
+-- @points@ que no parsea descarta __al piloto__ ('mapMaybe'), porque una fila sin
+-- la métrica obligatoria no tiene valor; @wins@ que no parsea o falta deja
+-- 'hsWins' en 'Nothing' y el piloto se conserva. Antes las dos métricas caían por
+-- el mismo 'mapMaybe' y descartarse a sí misma era gratis; hoy la única forma de
+-- que salga barato es que el tipo admita la ausencia.
 assembleStats :: Root -> [HistoricalStat]
 assembleStats root =
-  concatMap driverStats standings
+  mapMaybe driverStat standings
   where
     standings =
       concatMap slStandings (stLists (mrTable (rootMRData root)))
-    driverStats ds =
-      mapMaybe
-        (\(unit, raw) -> mkStat (dsDriver ds) unit raw)
-        [ ("points", dsPoints ds)
-        , ("wins", dsWins ds)
-        ]
-    mkStat drv unit raw =
-      (\v -> HistoricalStat
-               DriverStat
-               (jdCode drv)
-               (jdGivenName drv)
-               (jdFamilyName drv)
-               v
-               unit)
-        <$> parseNum raw
+    driverStat ds =
+      let drv = dsDriver ds
+       in (\pts -> HistoricalStat
+                     DriverStat
+                     (jdCode drv)
+                     (jdGivenName drv)
+                     (jdFamilyName drv)
+                     pts
+                     (parseNum (dsWins ds)))
+            <$> parseNum (dsPoints ds)
 
--- | Espejo de 'assembleStats' para la clasificación de constructores: mismos dos
--- KPIs (@points@\/@wins@), mismo descarte de valores no parseables y marca
--- 'ConstructorStat'. El identificador de Jolpica ocupa @hsCode@ y el nombre legible
--- @hsFamilyName@; @hsGivenName@ queda vacío (un equipo no tiene nombre de pila).
+-- | Espejo de 'assembleStats' para la clasificación de constructores: una fila por
+-- equipo, mismas dos métricas (@points@\/@wins@), mismo reparto de descartes entre
+-- ellas y marca 'ConstructorStat'. El identificador de Jolpica ocupa @hsCode@ y el
+-- nombre legible @hsFamilyName@; @hsGivenName@ queda vacío (un equipo no tiene
+-- nombre de pila).
 assembleConstructorStats :: Root -> [HistoricalStat]
 assembleConstructorStats root =
-  concatMap constructorStats standings
+  mapMaybe constructorStat standings
   where
     standings =
       concatMap slConstructorStandings (stLists (mrTable (rootMRData root)))
-    constructorStats cs =
-      mapMaybe
-        (\(unit, raw) -> mkStat (csConstructor cs) unit raw)
-        [ ("points", csPoints cs)
-        , ("wins", csWins cs)
-        ]
-    mkStat con unit raw =
-      (\v -> HistoricalStat
-               ConstructorStat
-               (cnId con)
-               ""
-               (cnName con)
-               v
-               unit)
-        <$> parseNum raw
+    constructorStat cs =
+      let con = csConstructor cs
+       in (\pts -> HistoricalStat
+                     ConstructorStat
+                     (cnId con)
+                     ""
+                     (cnName con)
+                     pts
+                     (parseNum (csWins cs)))
+            <$> parseNum (csPoints cs)
 
 -- | Parsea un campo numérico de Ergast (cadena) a 'Double'.
 parseNum :: Text -> Maybe Double

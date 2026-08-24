@@ -44,13 +44,18 @@ fetchStats cfg = do
 
 -- | Estadísticas dummy (respaldo cuando Jolpica nunca dio datos). Misma forma que
 -- emiten 'assembleStats' y 'assembleConstructorStats' — identidad estructurada,
--- marca de entidad y unidades @points@\/@wins@ — y con __las dos entidades__, para
--- que el filtro del widget sea ejercitable sin red.
+-- marca de entidad y una fila por entidad — y con __las dos entidades__, para que
+-- las dos tablas del widget sean ejercitables sin red.
+--
+-- __Norris lleva 'hsWins' en 'Nothing' a propósito__, y es lo único del dummy que
+-- no imita a Jolpica: medido el 2026-08-24, Jolpica publica @wins@ para las 34
+-- entidades, así que la rama de ausencia __no se alcanza con dato real__. Si el
+-- dummy tampoco la trajera, la única forma de ver lo que el widget pinta cuando
+-- faltan las victorias sería editar código.
 dummy :: [HistoricalStat]
 dummy =
-  [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 "points"
-  , HistoricalStat DriverStat "VER" "Max" "Verstappen" 9 "wins"
-  , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 "points"
-  , HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 "points"
-  , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 "points"
+  [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 (Just 9)
+  , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 Nothing
+  , HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 (Just 12)
+  , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 (Just 9)
   ]

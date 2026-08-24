@@ -202,12 +202,18 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Históricos: Driver | Entity | Value | Unit */
+/* Históricos: Driver | Puntos | Victorias. Las dos numéricas son la 2 y la 3
+   desde 2026-08-24: antes la tabla era Driver | Entity | Value | Unit y la única
+   columna de cifras caía en la 3. Es el riesgo que 2026-08-21 (b) anotó —el
+   `nth-child` no sabe qué columna es— cobrándose. */
+.historical td:nth-child(2),
 .historical td:nth-child(3),
+.historical th:nth-child(2),
 .historical th:nth-child(3) {
   text-align: right;
 }
 
+.historical td:nth-child(2),
 .historical td:nth-child(3) {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;

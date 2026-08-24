@@ -74,14 +74,13 @@ historicalWidget = divClass "widget widget--historical" $ do
         el "tbody" $ mapM_ (row mode) (filter (matchesFilter filt) stats)
 
     headers :: [Text]
-    headers = ["Driver", "Entity", "Value", "Unit"]
+    headers = ["Driver", "Puntos", "Victorias"]
 
     row :: DomBuilder t m => LabelMode -> HistoricalStat -> m ()
     row mode s = elClass "tr" (rowClass s) $ mapM_ (el "td" . text)
       [ statLabel mode s
-      , entityLabel s
-      , T.pack (show (hsValue s))
-      , hsUnit s
+      , T.pack (show (hsPoints s))
+      , winsLabel s
       ]
 
 -- | Etiqueta de la fila según el modo activo. Derivada de los campos ya cargados;
@@ -99,11 +98,15 @@ statLabel mode s = case hsEntity s of
     Family -> hsFamilyName s
     Full   -> hsGivenName s <> " " <> hsFamilyName s
 
--- | Entidad de la fila, en la columna @Entity@.
-entityLabel :: HistoricalStat -> Text
-entityLabel s = case hsEntity s of
-  DriverStat      -> "Piloto"
-  ConstructorStat -> "Constructor"
+-- | Victorias de la fila, o una raya cuando Jolpica no las publica.
+--
+-- La raya __no es un cero__ y la distinción es la que 'Common.Types.hsWins' existe
+-- para conservar: pintar @0@ afirmaría que la entidad no ganó ninguna carrera,
+-- que es un dato que nadie dio. Con dato real no se ve —Jolpica publica @wins@
+-- siempre, medido el 2026-08-24—; el dummy de 'Handler.Historical.Context' trae un
+-- caso a propósito para que la rama sea visible sin editar código.
+winsLabel :: HistoricalStat -> Text
+winsLabel = maybe "—" (T.pack . show) . hsWins
 
 -- | Clase del @\<tr\>@ por entidad. Hoy no hay hoja de estilos; queda como gancho
 -- para cuando llegue.

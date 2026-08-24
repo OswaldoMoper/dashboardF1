@@ -56,29 +56,29 @@ import           Test.QuickCheck           (Property, (===))
 main :: IO ()
 main = hspec $ do
   describe "assembleStats" $ do
-    it "emite dos KPIs por piloto, en el orden de la clasificación y con la identidad completa" $
+    it "emite una fila por piloto, en el orden de la clasificación y con la identidad completa" $
       driverStatsOf driverStandings
         `shouldBe`
-          [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 "points"
-          , HistoricalStat DriverStat "VER" "Max" "Verstappen" 9 "wins"
-          , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 "points"
-          , HistoricalStat DriverStat "NOR" "Lando" "Norris" 3 "wins"
+          [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 (Just 9)
+          , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 (Just 3)
           ]
 
-    it "descarta solo la métrica no parseable, no la entrada entera" $
-      driverStatsOf unparseablePoints
-        `shouldBe` [HistoricalStat DriverStat "HAM" "Lewis" "Hamilton" 4 "wins"]
+    -- Las dos métricas dejaron de descartarse igual el 2026-08-24: con una fila
+    -- por entidad, `points` ilegible no tiene dónde caerse solo.
+    it "descarta al piloto entero cuando `points` no parsea, aunque `wins` sí" $
+      driverStatsOf unparseablePoints `shouldBe` []
+
+    it "conserva al piloto con hsWins en Nothing cuando `wins` no parsea" $
+      driverStatsOf unparseableWins
+        `shouldBe` [HistoricalStat DriverStat "HAM" "Lewis" "Hamilton" 183 Nothing]
 
     it "usa el apellido como código cuando Jolpica omite `code`" $
       driverStatsOf driverWithoutCode
-        `shouldBe`
-          [ HistoricalStat DriverStat "Bortoleto" "Gabriel" "Bortoleto" 12 "points"
-          , HistoricalStat DriverStat "Bortoleto" "Gabriel" "Bortoleto" 0 "wins"
-          ]
+        `shouldBe` [HistoricalStat DriverStat "Bortoleto" "Gabriel" "Bortoleto" 12 (Just 0)]
 
-    it "omite el KPI de victorias cuando Jolpica no publica `wins`" $
+    it "deja hsWins en Nothing cuando Jolpica no publica `wins`" $
       driverStatsOf driverWithoutWins
-        `shouldBe` [HistoricalStat DriverStat "ALO" "Fernando" "Alonso" 24 "points"]
+        `shouldBe` [HistoricalStat DriverStat "ALO" "Fernando" "Alonso" 24 Nothing]
 
     it "devuelve [] cuando la respuesta no trae la clave DriverStandings" $
       driverStatsOf standingsListWithoutKeys `shouldBe` []
@@ -87,13 +87,11 @@ main = hspec $ do
       driverStatsOf constructorStandings `shouldBe` []
 
   describe "assembleConstructorStats" $ do
-    it "emite dos KPIs por constructor, con `constructorId` en hsCode y `name` en hsFamilyName" $
+    it "emite una fila por constructor, con `constructorId` en hsCode y `name` en hsFamilyName" $
       constructorStatsOf constructorStandings
         `shouldBe`
-          [ HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 "points"
-          , HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 12 "wins"
-          , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 "points"
-          , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 9 "wins"
+          [ HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 (Just 12)
+          , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 (Just 9)
           ]
 
     it "devuelve [] cuando la respuesta no trae la clave ConstructorStandings" $
@@ -472,11 +470,22 @@ constructorStandings =
          \{\"constructorId\":\"mclaren\",\"name\":\"McLaren\"}}"
       <> "]"
 
--- | @points@ no parseable: debe sobrevivir el KPI de victorias y solo ese.
+-- | @points@ no parseable con @wins@ bueno: desde 2026-08-24 cae la entrada
+-- entera. La métrica obligatoria no tiene dónde degradar cuando la fila es la
+-- entidad y no el KPI.
 unparseablePoints :: ByteString
 unparseablePoints =
   envelope $
     ",\"DriverStandings\":[{\"position\":\"5\",\"points\":\"n/a\",\"wins\":\"4\",\
+    \\"Driver\":{\"driverId\":\"hamilton\",\"code\":\"HAM\",\
+    \\"givenName\":\"Lewis\",\"familyName\":\"Hamilton\"}}]"
+
+-- | El caso simétrico del anterior y el que justifica el 'Maybe' de @hsWins@:
+-- @wins@ no parseable no se lleva por delante los puntos del piloto.
+unparseableWins :: ByteString
+unparseableWins =
+  envelope $
+    ",\"DriverStandings\":[{\"position\":\"5\",\"points\":\"183\",\"wins\":\"n/a\",\
     \\"Driver\":{\"driverId\":\"hamilton\",\"code\":\"HAM\",\
     \\"givenName\":\"Lewis\",\"familyName\":\"Hamilton\"}}]"
 
@@ -489,7 +498,8 @@ driverWithoutCode =
     \\"Driver\":{\"driverId\":\"bortoleto\",\
     \\"givenName\":\"Gabriel\",\"familyName\":\"Bortoleto\"}}]"
 
--- | Entrada sin @wins@: el campo opcional degrada a un KPI menos, no a cero filas.
+-- | Entrada sin @wins@: el campo opcional degrada a 'Nothing' en su columna, no a
+-- cero filas.
 driverWithoutWins :: ByteString
 driverWithoutWins =
   envelope $
