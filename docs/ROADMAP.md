@@ -157,6 +157,11 @@ publica una fila **por métrica** y no por piloto, así que un piloto sale en do
 constructores comparten tabla con ellos; y no hay forma de **elegir la sesión** que se está viendo.
 Los dos salieron de mirar la página ya estilada, que es lo que la fase existía para permitir.
 
+**El primero quedó cerrado el 2026-08-24**, entre fases: una fila por entidad y dos
+tablas (2026-08-24). **El segundo sigue abierto** y no cabe entre fases — pide un
+`Dynamic t SessionKey` compartido por la página, que es estado de la **Fase 6**: «elegir qué se está
+viendo» y «persistir el layout» son el mismo problema.
+
 ## Fase 6 – Widgets personalizables + sincronización conceptual con F1TV
 
 **Objetivo:** hacer el sistema “tipo F1TV Premium”:
