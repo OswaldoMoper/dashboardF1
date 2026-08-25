@@ -1,8 +1,13 @@
 -- | Invariantes de la lógica pura de las áreas Historical
 -- ('Handler.Historical.Helper'), Telemetry ('Handler.Telemetry.Helper' y la
 -- resolución de parámetros de 'Handler.Telemetry.Context'), Comparison
--- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context') y Drivers
--- (ídem).
+-- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context'), Drivers
+-- (ídem) y TyreStrategy ('Handler.TyreStrategy.Helper').
+--
+-- TyreStrategy es la primera de las tres áreas que quedaban sin suite (siguen sin
+-- ella 'Handler.Live.Helper' y 'Handler.OpenF1.Helper'), y entra
+-- por la puerta de al lado: es también la primera que se prueba __contra dos
+-- respuestas a la vez__, porque su función pura cruza @/stints@ con @/drivers@.
 --
 -- Un caso no encaja en ese reparto y es deliberado: la __coherencia entre los
 -- dummies__ de Drivers y Comparison. No prueba una función sino un acuerdo entre
@@ -36,9 +41,11 @@ import           Common.Types                (DriverEntry (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
                                               StatEntity (..),
-                                              TelemetryPoint (..))
+                                              TelemetryPoint (..),
+                                              TyreStint (..))
 import           Data.Aeson                  (eitherDecodeStrict)
 import           Data.ByteString             (ByteString)
+import qualified Data.ByteString.Char8       as BC
 import qualified Data.Text                   as T
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
@@ -46,8 +53,10 @@ import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
+import           Handler.OpenF1.Helper       (Of1Driver)
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
+import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
 import           Outcome                     (Rejection (..), rejectionFor)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck     (prop)
@@ -271,6 +280,62 @@ main = hspec $ do
     it "con sesión la pone en el query, y no hay segundo parámetro que omitir" $
       driversPathFor (Just "2026-13-R") `shouldBe` "/api/drivers?session=2026-13-R"
 
+  -- Primera cobertura del área TyreStrategy, y la única función del repo que
+  -- cruza __dos__ respuestas: los stints traen
+  -- `driver_number` y el acrónimo que el widget pinta solo está en `/drivers`.
+  --
+  -- El caso del `compound: null` __no reproduce dato de hoy__: medido el
+  -- 2026-08-25 sobre 2268 stints de 44 sesiones, OpenF1 no emite un solo nulo en
+  -- los cuatro campos consumidos. El nulo vive en la sesión __en curso__ (un stint
+  -- empezado antes de que se publique su compuesto), que es donde se observó el
+  -- 2026-08-19 —1 de 67— y donde no se puede volver a capturar a voluntad. Este
+  -- fixture es, por tanto, la única forma de ejercitar la rama
+  -- (2026-08-25).
+  describe "assembleStints" $ do
+    it "cruza los stints con la parrilla y ordena por acrónimo y vuelta de inicio" $
+      -- El orden que llega es por piloto y luego por `stint_number`; el que sale
+      -- es alfabético por acrónimo. LEC antes que NOR aunque el coche 1 venga
+      -- primero en las dos respuestas.
+      stintsOf openF1Grid stintArray
+        `shouldBe`
+          [ TyreStint "LEC" "SOFT" 1 2
+          , TyreStint "LEC" "MEDIUM" 22 43
+          , TyreStint "NOR" "MEDIUM" 1 2
+          , TyreStint "NOR" "SOFT" 3 21
+          ]
+
+    it "omite el stint sin compuesto y conserva los demás del mismo piloto" $
+      -- La invariante del 2026-08-25, y la diferencia entre omitir un stint y
+      -- tumbar el arreglo: con `o .: \"compound\"` sobre Text este fixture no
+      -- decodificaba, `stintsOf` moría en el `error` y en producción el área
+      -- entera degradaba al dummy con la red viva.
+      stintsOf openF1Grid stintWithNullCompound
+        `shouldBe`
+          [ TyreStint "NOR" "MEDIUM" 1 2
+          , TyreStint "NOR" "HARD" 22 47
+          ]
+
+    it "trata la clave `compound` ausente igual que el nulo" $
+      -- OpenF1 la emite siempre (2268 de 2268), así que esto protege el decode
+      -- ante un cambio de contrato, no ante un dato visto. Con `.:?` las dos
+      -- formas del no-dato entran por la misma rama.
+      stintsOf openF1Grid stintWithoutCompoundKey `shouldBe` []
+
+    it "omite el stint cuyo piloto no aparece en la parrilla" $
+      -- Comportamiento vivo desde el 2026-08-11 y hasta ahora sin prueba. Es el otro
+      -- descarte que comparte el `Maybe` del bloque `do`.
+      stintsOf openF1Grid stintOfUnknownDriver
+        `shouldBe` [TyreStint "NOR" "MEDIUM" 1 2]
+
+    it "devuelve [] cuando la parrilla llega vacía, aunque haya stints" $
+      -- No es simétrico del anterior por casualidad: sin parrilla no hay acrónimo
+      -- que poner en `tsDriver`, así que ningún stint resuelve. Es este [] el que
+      -- hace que el Context caiga a cache/dummy en vez de servir una tabla vacía.
+      stintsOf emptyArray stintArray `shouldBe` []
+
+    it "devuelve [] sobre una sesión sin stints publicados" $
+      stintsOf openF1Grid emptyArray `shouldBe` []
+
   -- La coherencia entre los dos respaldos de FastF1. No es cosmética: los dos
   -- widgets se miran a la vez, así que un coche que el de comparación pinta y el
   -- selector no lista sería una contradicción visible con el servicio apagado.
@@ -422,6 +487,24 @@ decodeComparison raw =
 -- el equipo ausente (@.:? … .!= \"\"@) no tumbe la lista entera.
 driversOf :: ByteString -> [DriverEntry]
 driversOf = assembleDrivers . decodeDrivers
+
+-- | Espejo de 'driversOf' para el área TyreStrategy, con __dos__ fixtures en vez
+-- de uno: 'assembleStints' es la única función pura del repo que cruza dos
+-- respuestas, así que el par decode + ensamblado hay que cerrarlo por los dos
+-- lados. Que el fallo de un fixture aborte (mismo criterio que 'decodeRoot') es lo
+-- que hace visible la regresión que esta suite existe para impedir: con
+-- @o .: \"compound\"@ el fixture del nulo __no decodifica__, y degradarlo a @[]@
+-- pondría verde el caso por la razón contraria a la que se está probando.
+stintsOf :: ByteString -> ByteString -> [TyreStint]
+stintsOf grid stints = assembleStints (decodeOf1Drivers grid) (decodeStints stints)
+
+decodeOf1Drivers :: ByteString -> [Of1Driver]
+decodeOf1Drivers raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
+
+decodeStints :: ByteString -> [Of1Stint]
+decodeStints raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
 
 -- | El acrónimo que la parrilla de respaldo le da a un número de coche, o
 -- 'Nothing' si ese coche no está en ella. Une los dos dummies de FastF1 sin que
@@ -634,3 +717,72 @@ gridWithoutTeam :: ByteString
 gridWithoutTeam =
   "[{\"deNumber\":\"1\",\"deCode\":\"NOR\"},\
   \{\"deNumber\":\"16\",\"deCode\":\"LEC\"}]"
+
+-- | Recorte de @GET \/drivers@ de __OpenF1__ (no de FastF1: es el otro
+-- @\/drivers@, y de ahí el nombre) para la sesión 11353, con los dos coches que
+-- los fixtures de stints usan. Lleva @broadcast_name@ y @team_colour@ a propósito,
+-- que 'Of1Driver' no modela: la respuesta real trae once claves y el decode tiene
+-- que ignorar las ocho que no consume.
+openF1Grid :: ByteString
+openF1Grid =
+  "[{\"driver_number\":1,\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\",\
+  \\"broadcast_name\":\"L NORRIS\",\"team_colour\":\"F47600\"},\
+  \{\"driver_number\":16,\"name_acronym\":\"LEC\",\"team_name\":\"Ferrari\",\
+  \\"broadcast_name\":\"C LECLERC\",\"team_colour\":\"ED1131\"}]"
+
+-- | Recorte de @GET \/stints@ de OpenF1 (sesión 11353, 2026-08-25): dos stints de
+-- cada coche, __intercalados__ para que el orden de salida no pueda venir de
+-- conservar el de entrada. Las ocho claves son las que OpenF1 emite; el tipo
+-- consume cuatro.
+stintArray :: ByteString
+stintArray =
+  "[" <> stint 1 1 1 2 "\"MEDIUM\""
+    <> "," <> stint 16 1 1 2 "\"SOFT\""
+    <> "," <> stint 1 2 3 21 "\"SOFT\""
+    <> "," <> stint 16 3 22 43 "\"MEDIUM\""
+    <> "]"
+
+-- | Los tres stints reales del coche 1 con el compuesto del __segundo__ en
+-- @null@. Es el fixture del 2026-08-25: el del medio se omite y los otros dos
+-- sobreviven. Con @o .: \"compound\"@ sobre 'Text' no decodifica, que es
+-- exactamente lo que hacía degradar @\/api\/tyre-strategy@ entera.
+stintWithNullCompound :: ByteString
+stintWithNullCompound =
+  "[" <> stint 1 1 1 2 "\"MEDIUM\""
+    <> "," <> stint 1 2 3 21 "null"
+    <> "," <> stint 1 3 22 47 "\"HARD\""
+    <> "]"
+
+-- | La clave @compound@ __ausente__, no nula. OpenF1 la emite siempre (2268 de
+-- 2268 medidos), así que esto protege el decode ante un cambio de contrato: con
+-- @.:?@ las dos formas del no-dato entran por la misma rama y ninguna de las dos
+-- tumba el arreglo.
+stintWithoutCompoundKey :: ByteString
+stintWithoutCompoundKey =
+  "[{\"meeting_key\":1292,\"session_key\":11353,\"stint_number\":1,\
+  \\"driver_number\":1,\"lap_start\":1,\"lap_end\":2,\"tyre_age_at_start\":0}]"
+
+-- | Un stint del coche 1 y otro de un coche que no está en 'openF1Grid'. El 99 no
+-- es arbitrario en su forma: un sustituto o un tercer coche en libres produce
+-- exactamente esto cuando las dos respuestas no se piden en el mismo instante.
+stintOfUnknownDriver :: ByteString
+stintOfUnknownDriver =
+  "[" <> stint 1 1 1 2 "\"MEDIUM\""
+    <> "," <> stint 99 1 1 30 "\"HARD\""
+    <> "]"
+
+-- | Un objeto de @\/stints@ con las ocho claves de OpenF1. El compuesto entra
+-- __ya serializado__ (@\"\\\"SOFT\\\"\"@ o @\"null\"@) porque es el campo cuya
+-- forma se está probando: pasarlo como 'Text' impediría escribir el caso del nulo,
+-- que es el motivo de este bloque.
+stint :: Int -> Int -> Int -> Int -> ByteString -> ByteString
+stint number stintNumber lapStart lapEnd compound =
+  "{\"meeting_key\":1292,\"session_key\":11353"
+    <> ",\"stint_number\":" <> num stintNumber
+    <> ",\"driver_number\":" <> num number
+    <> ",\"lap_start\":" <> num lapStart
+    <> ",\"lap_end\":" <> num lapEnd
+    <> ",\"compound\":" <> compound
+    <> ",\"tyre_age_at_start\":0}"
+  where
+    num = BC.pack . show
