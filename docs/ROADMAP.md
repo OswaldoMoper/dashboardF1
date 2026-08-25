@@ -162,6 +162,18 @@ tablas (2026-08-24). **El segundo sigue abierto** y no cabe entre fases — pide
 `Dynamic t SessionKey` compartido por la página, que es estado de la **Fase 6**: «elegir qué se está
 viendo» y «persistir el layout» son el mismo problema.
 
+**Y la cuenta de lo que la fase destapó no se cerró en dos: llegan cuatro reportes más**, tres de ellos
+del mismo tipo — salen de **mirar** la página, no de leer el código. Uno es continuación del primero (las dos tablas pasan a dos widgets independientes, con
+nombre completo y clave siempre); uno es de dato que falta (Live Timing no marca los DNF); y **el más
+grande, el rediseño de Telemetry a un renglón por piloto con los microsectores como columnas, es un
+cambio de contrato del DTO disfrazado de widget mal puesto** — `TelemetryPoint` publica una muestra y lo
+que se pide es un agregado por piloto y sector. Ese **roza la Fase 6** por lo mismo que el punto 13:
+«qué vuelta se está viendo» es estado de página, no de widget.
+
+Es el argumento de esta fase cobrando por tercera vez, y conviene dejarlo escrito para las que vienen:
+la hoja de estilos no arregló el contenido, lo hizo **visible**. Los widgets que la Fase 6 añada nacen
+vestidos, pero eso no los hace correctos — nacen **auditables**, que es distinto y más útil.
+
 ## Fase 6 – Widgets personalizables + sincronización conceptual con F1TV
 
 **Objetivo:** hacer el sistema “tipo F1TV Premium”:
