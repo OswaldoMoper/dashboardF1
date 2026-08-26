@@ -170,6 +170,14 @@ cambio de contrato del DTO disfrazado de widget mal puesto** — `TelemetryPoint
 que se pide es un agregado por piloto y sector. Ese **roza la Fase 6** por lo mismo que el punto 13:
 «qué vuelta se está viendo» es estado de página, no de widget.
 
+**El primero de los cuatro quedó cerrado el 2026-08-26**: `WidgetType` gana
+`ConstructorStats` y cada clasificación es su propio widget (2026-08-26). **Y deja a la
+Fase 6 una pieza montada y una decisión ya tomada.** La pieza: la rejilla recibe por primera vez dos
+widgets que son **el mismo tipo de contenido colocado por separado**, que es el caso que «agregar/quitar
+widgets» tiene que soportar. La decisión: se descartó a propósito usar `WidgetParams` como discriminador
+—habría sido su primer consumidor— para **no fijar su forma antes de que esta fase decida cuál es**. Sigue
+en `mempty` en todas las `WidgetConfig`, y eso es deliberado, no un olvido.
+
 Es el argumento de esta fase cobrando por tercera vez, y conviene dejarlo escrito para las que vienen:
 la hoja de estilos no arregló el contenido, lo hizo **visible**. Los widgets que la Fase 6 añada nacen
 vestidos, pero eso no los hace correctos — nacen **auditables**, que es distinto y más útil.
