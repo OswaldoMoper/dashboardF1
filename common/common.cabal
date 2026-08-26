@@ -21,6 +21,7 @@ library
     hs-source-dirs:   src
     exposed-modules:
         Common.Chart
+        Common.Format
         Common.Route
         Common.Types
     build-depends:

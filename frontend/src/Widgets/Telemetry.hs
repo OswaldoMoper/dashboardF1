@@ -27,12 +27,13 @@
 -- el 'dyn_' interior solo re-pinta el @\<tbody\>@ al cambiar la selección.
 module Widgets.Telemetry where
 
-import           Client       (fetchJson)
-import           Common.Route (telemetryPath)
-import           Common.Types (TelemetryPoint (..))
-import           Data.List    (nub)
-import           Data.Text    (Text)
-import qualified Data.Text    as T
+import           Client        (fetchJson)
+import           Common.Format (formatFixed)
+import           Common.Route  (telemetryPath)
+import           Common.Types  (TelemetryPoint (..))
+import           Data.List     (nub)
+import           Data.Text     (Text)
+import qualified Data.Text     as T
 import           Reflex.Dom
 
 -- | Estado del fetch de @\/api\/telemetry@. 'Failed' (no 'Error') para no chocar
@@ -78,14 +79,22 @@ telemetryWidget = divClass "widget widget--telemetry" $ do
       , "RPM"
       ]
 
+    -- Los decimales de cada magnitud salen de medir la respuesta real el
+    -- 2026-08-26 (71 muestras de NOR), no de suponerlos: @sessionTime@ llega con 3
+    -- decimales de resolución; @distance@ con los 17 dígitos de un @Double@ pero es
+    -- una distancia en metros, así que uno basta; @speed@ es entera (98–324);
+    -- @throttle@ es una __fracción__ 0–1 con 2 decimales de resolución (0.01, 0.48);
+    -- y @brake@ trae __solo 0 o 1__, o sea un booleano metido en un 'Double' —lo que
+    -- ya quedó anotado de él el 2026-08-19—.
+    -- 'tpGear' y 'tpRpm' son 'Int' y no pasan por el formateador.
     row :: DomBuilder t m => TelemetryPoint -> m ()
     row p = el "tr" $ mapM_ (el "td" . text)
       [ tpDriver p
-      , T.pack (show (tpSessionTime p))
-      , T.pack (show (tpDistance p))
-      , T.pack (show (tpSpeed p))
-      , T.pack (show (tpThrottle p))
-      , T.pack (show (tpBrake p))
+      , formatFixed 3 (tpSessionTime p)
+      , formatFixed 1 (tpDistance p)
+      , formatFixed 0 (tpSpeed p)
+      , formatFixed 2 (tpThrottle p)
+      , formatFixed 0 (tpBrake p)
       , T.pack (show (tpGear p))
       , T.pack (show (tpRpm p))
       ]

@@ -15,11 +15,15 @@
 -- de respaldo pinta—, y sin él nada impide que un cambio en un dummy deje al
 -- widget de mañana enseñando una lista que no contiene lo que está dibujando.
 --
--- Cubre además dos módulos de @common@ que no son del backend, y por la misma
+-- Cubre además __tres__ módulos de @common@ que no son del backend, y por la misma
 -- razón: viven allí precisamente para que esta suite los alcance, ya que el
 -- paquete @frontend@ no tiene ninguna (2026-08-04).
 --
 -- * 'Common.Chart' — el escalado del gráfico de comparación.
+-- * 'Common.Format' — el formateo de cifras de las tablas de Historical y Telemetry
+--   (2026-08-26). Tercero por la misma puerta, y el que más
+--   claramente es presentación: sin esta suite, que una celda no muestre
+--   @\"1.0e-2\"@ estaría solo revisado a ojo.
 -- * 'Common.Route.driversParam' — la validación de los números de coche que el
 --   widget de comparación teclea (2026-08-05). Es lógica de
 --   __widget__ probada aquí: sin esto, lo único que impide mandar un acrónimo a
@@ -35,6 +39,7 @@ module Main (main) where
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, zeroLineY)
+import           Common.Format               (formatFixed, formatTrimmed, noData)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Types                (DriverEntry (..),
@@ -60,7 +65,7 @@ import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
 import           Outcome                     (Rejection (..), rejectionFor)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck     (prop)
-import           Test.QuickCheck           (Property, (===))
+import           Test.QuickCheck           (Property, (.&&.), (===))
 
 main :: IO ()
 main = hspec $ do
@@ -415,6 +420,70 @@ main = hspec $ do
       deltaPolyline [0, 0, 0] `shouldBe` "10,100 300,100 590,100"
 
     prop "ninguna coordenada se sale del viewBox" staysInsideViewBox
+
+  -- El formateo de cifras vive en `common` por la misma razón que el escalado del
+  -- gráfico: es lógica de presentación de dos widgets y el paquete `frontend` no
+  -- tiene suite (2026-08-04 y 2026-08-26). Los casos son los
+  -- que motivaron el módulo, medidos contra los endpoints el 2026-08-26, más los
+  -- límites del recorte.
+  describe "Common.Format" $ do
+    it "quita el `.0` que sobra en los puntos de la clasificación" $ do
+      formatTrimmed 1 393.0 `shouldBe` "393"
+      formatTrimmed 1 712.0 `shouldBe` "712"
+
+    it "conserva el medio punto, que es el motivo de que los puntos sean Double" $
+      formatTrimmed 1 393.5 `shouldBe` "393.5"
+
+    it "no emite notación científica, que es lo que `show` hacía con `throttle`" $ do
+      -- `show (1.0e-2 :: Double)` == "1.0e-2", y la respuesta real de
+      -- /api/telemetry trae ese valor: la celda mostraba la cadena literal.
+      formatFixed 2 1.0e-2 `shouldBe` "0.01"
+      formatFixed 2 3.0e-2 `shouldBe` "0.03"
+
+    it "acorta la distancia de 17 dígitos que ensanchaba la tabla de telemetría" $
+      -- El `overflow-x` de la tabla de telemetría, en su causa medida.
+      formatFixed 1 5.936944444444445 `shouldBe` "5.9"
+
+    it "redondea half-to-even, que es lo que `showFFloat` de base hace" $ do
+      -- Medido, no supuesto: 1.5 sube pero 2.5 NO. Un test escrito de memoria
+      -- contra el redondeo "de colegio" fallaría aquí, y es la razón de fijarlo.
+      formatFixed 0 1.5 `shouldBe` "2"
+      formatFixed 0 2.5 `shouldBe` "2"
+      formatFixed 0 0.5 `shouldBe` "0"
+      formatFixed 0 (-1.5) `shouldBe` "-2"
+
+    it "con 0 decimales no deja el punto colgando" $ do
+      formatFixed 0 393.0 `shouldBe` "393"
+      formatTrimmed 0 393.0 `shouldBe` "393"
+
+    it "protege los ceros de la parte entera del recorte" $ do
+      -- El fallo obvio de implementar el recorte con un solo `dropWhileEnd '0'`.
+      formatTrimmed 2 100.0 `shouldBe` "100"
+      formatTrimmed 2 1000.0 `shouldBe` "1000"
+      formatTrimmed 2 10.5 `shouldBe` "10.5"
+
+    it "el cero es `0` y el cero negativo también" $ do
+      formatFixed 2 0.0 `shouldBe` "0.00"
+      formatTrimmed 2 0.0 `shouldBe` "0"
+      formatTrimmed 2 (-0.0) `shouldBe` "0"
+
+    it "los decimales negativos se tratan como cero, no como error" $
+      formatFixed (-3) 393.4 `shouldBe` "393"
+
+    it "el no-dato da la raya y no una palabra inglesa en una celda de cifras" $ do
+      -- Quinto no-dato por esta clase de puerta; el NaN de 2026-07-31 venía de
+      -- FastF1, que es la fuente de TelemetryPoint.
+      formatFixed 1 (0 / 0) `shouldBe` noData
+      formatFixed 1 (1 / 0) `shouldBe` noData
+      formatTrimmed 1 (-1 / 0) `shouldBe` noData
+
+    it "`brake` es un booleano metido en un Double y se lee como 0 o 1" $ do
+      -- Medido: los 71 puntos reales traen solo esos dos valores.
+      formatFixed 0 0.0 `shouldBe` "0"
+      formatFixed 0 1.0 `shouldBe` "1"
+
+    prop "formatFixed nunca emite notación científica" neverScientific
+    prop "formatTrimmed no deja cola de ceros ni punto suelto" trimLeavesNoTail
 
 -- * Propiedades
 
@@ -786,3 +855,25 @@ stint number stintNumber lapStart lapEnd compound =
     <> ",\"tyre_age_at_start\":0}"
   where
     num = BC.pack . show
+
+-- | La propiedad que 'show' __no__ cumple y que motiva el módulo: una cifra
+-- formateada no lleva nunca @e@, porque una celda que dice @1.0e-2@ no comunica una
+-- magnitud. El 'Arbitrary' de 'Double' de QuickCheck no genera
+-- @NaN@\/@Infinity@ (ver 'roundTripsDouble'), así que todos los casos generados
+-- caen en la rama finita, que es justo la que tiene que cumplirla.
+neverScientific :: Int -> Double -> Property
+neverScientific decimals x =
+  T.all (/= 'e') formatted .&&. T.all (/= 'E') formatted
+  where
+    formatted = formatFixed (decimals `mod` 7) x
+
+-- | El recorte deja una cifra en forma canónica: si queda punto, no puede haber un
+-- cero justo antes del final, y el punto no puede ser el último carácter. Cubre de
+-- una vez los dos fallos posibles del @dropWhileEnd@ —quedarse corto y pasarse—
+-- sobre cualquier magnitud, incluidas las que ningún caso de arriba enumera.
+trimLeavesNoTail :: Int -> Double -> Property
+trimLeavesNoTail decimals x =
+  not (T.isSuffixOf "." trimmed) .&&. not (hasDot && T.isSuffixOf "0" trimmed)
+  where
+    trimmed = formatTrimmed (decimals `mod` 7) x
+    hasDot  = T.any (== '.') trimmed

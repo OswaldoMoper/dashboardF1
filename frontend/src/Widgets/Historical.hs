@@ -47,10 +47,10 @@
 module Widgets.Historical where
 
 import           Client        (fetchJson)
+import           Common.Format (formatFixed, formatTrimmed, noData)
 import           Common.Route  (historicalPath)
 import           Common.Types  (HistoricalStat (..), StatEntity (..))
 import           Data.Text     (Text)
-import qualified Data.Text     as T
 import           Reflex.Dom
 
 -- | Estado del fetch de @\/api\/historical@. 'Failed' (no 'Error') para no chocar
@@ -89,7 +89,7 @@ driverStatsWidget = divClass "widget widget--driver-stats" $ do
     row s = el "tr" $ mapM_ (el "td" . text)
       [ hsCode s
       , hsGivenName s <> " " <> hsFamilyName s
-      , T.pack (show (hsPoints s))
+      , pointsLabel s
       , winsLabel s
       ]
 
@@ -119,7 +119,7 @@ constructorStatsWidget = divClass "widget widget--constructor-stats" $ do
     row :: DomBuilder t m => HistoricalStat -> m ()
     row s = el "tr" $ mapM_ (el "td" . text)
       [ hsFamilyName s
-      , T.pack (show (hsPoints s))
+      , pointsLabel s
       , winsLabel s
       ]
 
@@ -139,6 +139,15 @@ errorStatus :: DomBuilder t m => m ()
 errorStatus =
   elClass "p" "status status--error" $ text "Error al cargar /api/historical"
 
+-- | Puntos de la fila, sin el @.0@ que sobra.
+--
+-- 'Common.Format.formatTrimmed' y no 'Common.Format.formatFixed' porque el decimal
+-- es la excepción: Jolpica publica los puntos como 'Double' —la F1 reparte medios
+-- puntos— pero casi siempre son enteros, y hasta el 2026-08-26 la columna mostraba
+-- @393.0@. Un decimal es todo lo que el reglamento permite.
+pointsLabel :: HistoricalStat -> Text
+pointsLabel = formatTrimmed 1 . hsPoints
+
 -- | Victorias de la fila, o una raya cuando Jolpica no las publica.
 --
 -- La raya __no es un cero__ y la distinción es la que 'Common.Types.hsWins' existe
@@ -147,5 +156,10 @@ errorStatus =
 -- siempre, medido el 2026-08-24 y de nuevo el 2026-08-26—; el dummy de
 -- @Handler.Historical.Context@ trae un caso a propósito para que la rama sea visible
 -- sin editar código.
+--
+-- La raya viene de 'Common.Format.noData' y no de un literal local: es la misma que
+-- emite la rama de no-finito del formateador, así que una victoria ausente y una
+-- cifra imposible se ven igual —que es lo correcto, porque las dos son «nadie dio
+-- esta cifra»— y el carácter se define una sola vez en el repo.
 winsLabel :: HistoricalStat -> Text
-winsLabel = maybe "—" (T.pack . show) . hsWins
+winsLabel = maybe noData (formatFixed 0) . hsWins
