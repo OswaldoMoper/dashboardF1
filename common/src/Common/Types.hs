@@ -176,12 +176,24 @@ instance ToJSON HistoricalStat
 instance FromJSON HistoricalStat
 
 -- | Tipo de widget del dashboard (ver ROADMAP §Fase 2).
+--
+-- 'HistoricalStats' es __solo la clasificación de pilotos__ desde 2026-08-26, y
+-- 'ConstructorStats' es la de constructores. Antes un único 'HistoricalStats'
+-- pintaba las dos tablas dentro de la misma tarjeta, así que compartían encabezado
+-- y __sitio en la rejilla__: se distinguían pero no se podían colocar por separado.
+--
+-- __Son dos constructores y no un 'WidgetParams'__: el parámetro le daría a
+-- 'WidgetParams' su primer consumidor, pero fijaría su forma antes de que la Fase 6
+-- —que es la que va de layouts y de configurar widgets— haya decidido cuál es. Un
+-- constructor por widget mantiene la invariante que esa fase necesita intacta: una
+-- 'WidgetConfig' es __un__ widget. Ver (2026-08-26).
 data WidgetType
   = LiveTiming
   | Telemetry
   | LapComparison
   | TyreStrategy
-  | HistoricalStats
+  | HistoricalStats   -- ^ Clasificación de __pilotos__ (puntos y victorias).
+  | ConstructorStats  -- ^ Clasificación de __constructores__ (puntos y victorias).
   | Custom
   deriving stock (Eq, Show, Generic)
 

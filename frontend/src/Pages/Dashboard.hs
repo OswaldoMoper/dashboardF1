@@ -21,7 +21,7 @@ import           Common.Types       (Layout (..), LayoutId (..),
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
-import           Widgets.Historical (historicalWidget)
+import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
 import           Widgets.LiveTiming (liveTimingWidget)
 import           Widgets.Telemetry  (telemetryWidget)
 
@@ -53,16 +53,22 @@ switcherButton label = do
   pure (domEvent Click e)
 
 -- | Despacha una 'WidgetConfig' a su widget según 'widgetType'. Total sobre los
--- seis constructores de 'WidgetType'; los aún no implementados caen en un
+-- __siete__ constructores de 'WidgetType'; los aún no implementados caen en un
 -- placeholder (no @error@ parcial). 'params' no se consume todavía.
+--
+-- 'HistoricalStats' y 'ConstructorStats' son dos ramas desde 2026-08-26, una por
+-- clasificación: antes 'HistoricalStats' montaba un widget que pintaba las dos
+-- tablas. La totalidad de este @case@ es la que cobra el constructor nuevo, y
+-- __solo bajo GHCJS__ (@-Wall@ del paquete @frontend@).
 renderWidget :: MonadWidget t m => WidgetConfig -> m ()
 renderWidget wc = case widgetType wc of
-  LiveTiming      -> liveTimingWidget
-  Telemetry       -> telemetryWidget
-  LapComparison   -> comparisonWidget
-  TyreStrategy    -> placeholderWidget "Tyre Strategy"
-  HistoricalStats -> historicalWidget
-  Custom          -> placeholderWidget "Custom"
+  LiveTiming       -> liveTimingWidget
+  Telemetry        -> telemetryWidget
+  LapComparison    -> comparisonWidget
+  TyreStrategy     -> placeholderWidget "Tyre Strategy"
+  HistoricalStats  -> driverStatsWidget
+  ConstructorStats -> constructorStatsWidget
+  Custom           -> placeholderWidget "Custom"
 
 -- | Widget aún no disponible: recuadro con etiqueta del tipo.
 placeholderWidget :: DomBuilder t m => T.Text -> m ()
@@ -79,13 +85,19 @@ cfg wt = WidgetConfig
   , params     = WidgetParams mempty
   }
 
--- | Layout "Race Overview": live timing, telemetría, comparación de vueltas e
--- históricos.
+-- | Layout "Race Overview": live timing, telemetría, comparación de vueltas y las
+-- __dos__ clasificaciones históricas, que desde 2026-08-26 son dos widgets y ocupan
+-- dos sitios de la rejilla en vez de compartir tarjeta.
 raceOverview :: Layout
 raceOverview = Layout
   { layoutId = LayoutId "race-overview"
   , widgets  =
-      [cfg LiveTiming, cfg Telemetry, cfg LapComparison, cfg HistoricalStats]
+      [ cfg LiveTiming
+      , cfg Telemetry
+      , cfg LapComparison
+      , cfg HistoricalStats
+      , cfg ConstructorStats
+      ]
   }
 
 -- | Layout "Qualy": solo live timing (conjunto distinto → valida la conmutación).

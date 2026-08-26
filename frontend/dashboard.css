@@ -116,17 +116,10 @@ body {
   font-weight: 600;
 }
 
-/* Encabezado de sección dentro de un widget: hoy solo el de las dos tablas de
-   históricos. Lleva `margin-top` porque nunca es el primer hijo —siempre sigue a
-   una tabla o al switcher— y sin él las dos tablas se pegan. */
-.widget > h3 {
-  margin: var(--sp-4) 0 var(--sp-2);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--c-muted);
-}
+/* `.widget > h3` retirada el 2026-08-26. Era el encabezado de sección de las dos
+   tablas de históricos, y con cada clasificación en su propia tarjeta cada una tiene
+   su `h2`: ya no hay secciones dentro de un widget. Comprobado antes de retirarla
+   que no quedaba ningún `h3` en `frontend/src` ni en `index.html`. */
 
 /* La comparación lleva gráfico: ocupa dos columnas cuando las hay. */
 .widget--comparison {
@@ -214,27 +207,48 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Históricos: Driver | Puntos | Victorias. Las dos numéricas son la 2 y la 3
-   desde 2026-08-24: antes la tabla era Driver | Entity | Value | Unit y la única
-   columna de cifras caía en la 3. Es el riesgo que 2026-08-21 (b) anotó —el
-   `nth-child` no sabe qué columna es— cobrándose. */
-.historical td:nth-child(2),
-.historical td:nth-child(3),
-.historical th:nth-child(2),
-.historical th:nth-child(3) {
+/* Históricos: las dos tablas ya NO comparten posiciones, y por eso cada una lleva su
+   modificador desde 2026-08-26.
+
+     .historical--drivers        Clave | Piloto | Puntos | Victorias   → numéricas 3 y 4
+     .historical--constructors   Constructor | Puntos | Victorias      → numéricas 2 y 3
+
+   Es la tercera vez que el riesgo de 2026-08-21 (b) —el `nth-child` no sabe qué
+   columna es— se cobra: en 2026-08-24 la tabla pasó de 4 columnas a 3 y hubo que
+   mover el selector compartido. Esta vez se cierra dando **clase a la tabla** en vez
+   de contar columnas, que es lo que aquella nota pedía: el día que una de las dos
+   gane o pierda una columna, la otra no se entera. */
+.historical--drivers td:nth-child(3),
+.historical--drivers td:nth-child(4),
+.historical--drivers th:nth-child(3),
+.historical--drivers th:nth-child(4),
+.historical--constructors td:nth-child(2),
+.historical--constructors td:nth-child(3),
+.historical--constructors th:nth-child(2),
+.historical--constructors th:nth-child(3) {
   text-align: right;
 }
 
-.historical td:nth-child(2),
-.historical td:nth-child(3) {
+.historical--drivers td:nth-child(3),
+.historical--drivers td:nth-child(4),
+.historical--constructors td:nth-child(2),
+.historical--constructors td:nth-child(3) {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
+/* La clave del piloto es un acrónimo de tres letras y se lee como un identificador,
+   no como texto: monoespaciada, pero alineada a la izquierda como el nombre. */
+.historical--drivers td:nth-child(1) {
+  font-family: var(--font-mono);
+}
+
 /* ── Controles: switchers y selector de coche ───────────────────────────── */
 
+/* `.label-switcher` salió el 2026-08-26 con el toggle de etiqueta de Historical: la
+   tabla de pilotos pinta clave y nombre completo siempre, así que no hay nada que
+   conmutar. Quedan tres bloques de control. */
 .layout-switcher,
-.label-switcher,
 .driver-switcher,
 .car-selector {
   display: flex;
@@ -248,8 +262,11 @@ body {
   margin-bottom: var(--sp-2);
 }
 
-/* Los cuatro switchers comparten botón (`switcher__btn`), porque comparten
-   aspecto: una regla y no cuatro. Los bloques siguen siendo distintos. */
+/* Los switchers comparten botón (`switcher__btn`), porque comparten aspecto: una
+   regla y no una por bloque. Eran cuatro hasta el 2026-08-26 y hoy son tres —el de
+   etiqueta se fue con el toggle de Historical—; el nombre genérico del botón se
+   conserva, que es lo que 2026-08-21 (c) unificó. Los bloques siguen siendo
+   distintos. */
 .switcher__btn,
 .car-selector__btn {
   padding: var(--sp-1) var(--sp-3);

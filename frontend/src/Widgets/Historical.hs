@@ -1,146 +1,151 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Widget de Estadísticas Históricas (categoría HistoricalStats).
+-- | Widgets de Estadísticas Históricas — __dos__ widgets independientes
+-- ('driverStatsWidget' y 'constructorStatsWidget'), uno por clasificación.
 --
--- Renderiza __dos tablas__ con los 'HistoricalStat' del dominio compartido
--- ('Common.Types'). Consume @GET \/api\/historical@ en runtime
--- vía 'Client.fetchJson' + 'Common.Route.historicalPath' (relativo, misma-origen:
--- el backend sirve el bundle y la API en el mismo puerto, con datos reales de
--- Jolpica). Modela los tres estados del fetch ('Loading' \/ 'Failed' \/ 'Loaded');
--- sin datos dummy locales.
+-- Los dos renderizan 'HistoricalStat' del dominio compartido ('Common.Types') y
+-- los dos consumen @GET \/api\/historical@ en runtime vía 'Client.fetchJson' +
+-- 'Common.Route.historicalPath' (relativo, misma-origen: el backend sirve el bundle
+-- y la API en el mismo puerto, con datos reales de Jolpica). Cada uno modela los
+-- tres estados del fetch ('Loading' \/ 'Failed' \/ 'Loaded'); sin datos dummy
+-- locales.
 --
--- La columna de etiqueta es conmutable ('LabelMode'): código \/ apellido \/ nombre
--- completo. El modo es __estado local del widget__ y se deriva de la identidad
--- estructurada que ya trae cada 'HistoricalStat' (2026-07-28),
--- así que conmutar __no re-dispara el fetch__: el @getPostBuild@ vive fuera del
--- 'dyn_' y solo se re-renderiza la tabla.
+-- __Dos widgets y no dos tablas en uno__ desde 2026-08-26. Hasta entonces una sola
+-- función pintaba las dos tablas dentro del mismo @div.widget@: se distinguían
+-- —eso lo arregló 2026-08-24— pero compartían encabezado y sitio en la rejilla, así
+-- que no se podían colocar por separado. Ahora cada clasificación es un
+-- 'Common.Types.WidgetType' propio y el 'Common.Types.Layout' las coloca aparte.
 --
--- La lista que llega es __heterogénea__ (pilotos y constructores) y se parte aquí
--- por 'StatEntity', que es para lo que esa marca viaja
--- (2026-07-29). __Dos tablas y no un filtro__ desde 2026-08-24: aquella decisión
--- eligió «lista heterogénea con filtro» sin hoja de estilos, y con ella dos tablas
--- se distinguen de un vistazo mientras un control que esconde una de las dos no
+-- __El coste es que hay dos fetch del mismo endpoint__, con los 2 GET en serie a
+-- Jolpica de @Handler.Historical.Context.fetchStats@ cada uno: 4 GET por carga de
+-- página donde antes había 2. Aceptado a sabiendas y medido: 0.42–0.43 s por
+-- respuesta, __plano__ entre llamadas consecutivas (el @Context@ siempre intenta el
+-- fetch real y su cache es solo respaldo ante fallo). Los dos widgets montan a la
+-- vez, así que el reloj de pared no se dobla; la carga sobre Jolpica sí. Lo cierra
+-- el @Dynamic t SessionKey@ que la página debe compartir, y que implica un fetch
+-- compartido. Ver (2026-08-26).
+--
+-- La lista que llega es __heterogénea__ (pilotos y constructores), así que cada
+-- widget la filtra por 'StatEntity' y se queda con la suya: la marca sigue siendo lo
+-- único que permite el reparto, porque @fetchStats@ concatena las dos clasificaciones
+-- en una respuesta (2026-07-29). Tener dos widgets __no__ retira
+-- esa necesidad.
+--
+-- __Sin toggle de etiqueta__ desde 2026-08-26: la tabla de pilotos pinta la clave y
+-- el nombre completo __siempre__, en dos columnas. El @LabelMode@ de 2026-07-28
+-- conmutaba entre tres proyecciones de la identidad estructurada cuando lo que se
+-- quiere ver son dos de ellas a la vez, y un control que esconde una de las dos no
 -- informa de nada.
+--
+-- __Los dos widgets no comparten esqueleto a propósito.__ Factorizar la tarjeta y la
+-- tabla pediría pasar la función de fila como parámetro, y eso es un tipo de rango
+-- superior porque la fila se pinta dentro del 'dyn_', bajo un @DomBuilder@ distinto
+-- del de la tarjeta. Este módulo se escribe __ciego__ y no se compila hasta su
+-- @nix build .#frontend@, y el precio de equivocarse en la generalización
+-- es un fallo que solo aparece bajo GHCJS. Diez líneas repetidas salen más baratas.
 module Widgets.Historical where
 
 import           Client        (fetchJson)
 import           Common.Route  (historicalPath)
 import           Common.Types  (HistoricalStat (..), StatEntity (..))
-import           Data.List     (partition)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           Reflex.Dom
 
 -- | Estado del fetch de @\/api\/historical@. 'Failed' (no 'Error') para no chocar
 -- con nombres de @base@\/@Prelude@ (mismo criterio que 'Widgets.Telemetry').
+-- Compartido por los dos widgets del módulo.
 data HState
   = Loading
   | Failed
   | Loaded [HistoricalStat]
 
--- | Qué identidad del piloto se muestra en la columna de etiqueta.
-data LabelMode
-  = Code    -- ^ Acrónimo (@"VER"@).
-  | Family  -- ^ Apellido (@"Verstappen"@).
-  | Full    -- ^ Nombre completo (@"Max Verstappen"@).
-  deriving (Eq, Show)
-
--- | Las dos tablas de estadísticas históricas alimentadas por @\/api\/historical@,
--- con selector de etiqueta.
-historicalWidget :: MonadWidget t m => m ()
-historicalWidget = divClass "widget widget--historical" $ do
-  el "h2" $ text "Historical Stats"
-  modeDyn <- labelSwitcher
-  pb      <- getPostBuild
-  resp    <- fetchJson (historicalPath <$ pb)
-  state   <- holdDyn Loading (ffor resp (maybe Failed Loaded))
-  dyn_ $ ffor (zipDyn modeDyn state) $ \(mode, st) -> renderState mode st
+-- | Clasificación de __pilotos__: @Clave | Piloto | Puntos | Victorias@.
+--
+-- Las dos proyecciones de la identidad —el acrónimo y el nombre completo— van en
+-- __columnas distintas__ y no en una sola conmutable: es lo que la identidad
+-- estructurada del 2026-07-28 permite, y el motivo de que
+-- 'hsCode' y 'hsGivenName'\/'hsFamilyName' viajen por separado en vez de una
+-- etiqueta ya compuesta.
+driverStatsWidget :: MonadWidget t m => m ()
+driverStatsWidget = divClass "widget widget--driver-stats" $ do
+  el "h2" $ text "Pilotos"
+  pb    <- getPostBuild
+  resp  <- fetchJson (historicalPath <$ pb)
+  state <- holdDyn Loading (ffor resp (maybe Failed Loaded))
+  dyn_ $ ffor state renderState
   where
-    renderState :: DomBuilder t m => LabelMode -> HState -> m ()
-    renderState _ Loading =
-      elClass "p" "status status--loading" $ text "Cargando…"
-    renderState _ Failed =
-      elClass "p" "status status--error" $ text "Error al cargar /api/historical"
-    renderState mode (Loaded stats) = do
-      let (drivers, constructors) = partition isDriver stats
-      table mode "Pilotos" "Piloto" drivers
-      table mode "Constructores" "Constructor" constructors
-
-    isDriver :: HistoricalStat -> Bool
-    isDriver s = hsEntity s == DriverStat
-
-    -- | Una de las dos tablas, con su encabezado propio. La cabecera de la primera
-    -- columna es lo único que cambia entre ellas: @Piloto@ o @Constructor@, que es
-    -- lo que la columna @Entity@ decía fila a fila antes de que hubiera dos tablas.
-    table
-      :: DomBuilder t m
-      => LabelMode -> Text -> Text -> [HistoricalStat] -> m ()
-    table mode title firstHeader rows = do
-      el "h3" $ text title
-      elClass "table" "historical" $ do
+    renderState :: DomBuilder t m => HState -> m ()
+    renderState Loading = loadingStatus
+    renderState Failed  = errorStatus
+    renderState (Loaded stats) =
+      elClass "table" "historical historical--drivers" $ do
         el "thead" $ el "tr" $
-          mapM_ (el "th" . text) [firstHeader, "Puntos", "Victorias"]
-        el "tbody" $ mapM_ (row mode) rows
+          mapM_ (el "th" . text) ["Clave", "Piloto", "Puntos", "Victorias"]
+        el "tbody" $ mapM_ row (onlyEntity DriverStat stats)
 
-    row :: DomBuilder t m => LabelMode -> HistoricalStat -> m ()
-    row mode s = el "tr" $ mapM_ (el "td" . text)
-      [ statLabel mode s
+    row :: DomBuilder t m => HistoricalStat -> m ()
+    row s = el "tr" $ mapM_ (el "td" . text)
+      [ hsCode s
+      , hsGivenName s <> " " <> hsFamilyName s
       , T.pack (show (hsPoints s))
       , winsLabel s
       ]
 
--- | Etiqueta de la fila según el modo activo. Derivada de los campos ya cargados;
--- ningún modo requiere volver a consultar la API.
+-- | Clasificación de __constructores__: @Constructor | Puntos | Victorias@.
 --
--- Un constructor lleva __etiqueta fija__ (su nombre legible): Jolpica no publica
--- acrónimo ni nombre\/apellido para un equipo, y mostrar el @constructorId@
--- (@"red_bull"@) sería exponer un identificador interno. El 'LabelMode' solo
--- proyecta sobre las filas de piloto.
-statLabel :: LabelMode -> HistoricalStat -> Text
-statLabel mode s = case hsEntity s of
-  ConstructorStat -> hsFamilyName s
-  DriverStat      -> case mode of
-    Code   -> hsCode s
-    Family -> hsFamilyName s
-    Full   -> hsGivenName s <> " " <> hsFamilyName s
+-- Tres columnas y no cuatro: Jolpica no publica acrónimo ni nombre\/apellido para un
+-- equipo, y la convención del DTO deja 'hsCode' con el @constructorId@
+-- (@"red_bull"@), que es un identificador interno y no se muestra. La etiqueta es
+-- 'hsFamilyName', el nombre legible.
+constructorStatsWidget :: MonadWidget t m => m ()
+constructorStatsWidget = divClass "widget widget--constructor-stats" $ do
+  el "h2" $ text "Constructores"
+  pb    <- getPostBuild
+  resp  <- fetchJson (historicalPath <$ pb)
+  state <- holdDyn Loading (ffor resp (maybe Failed Loaded))
+  dyn_ $ ffor state renderState
+  where
+    renderState :: DomBuilder t m => HState -> m ()
+    renderState Loading = loadingStatus
+    renderState Failed  = errorStatus
+    renderState (Loaded stats) =
+      elClass "table" "historical historical--constructors" $ do
+        el "thead" $ el "tr" $
+          mapM_ (el "th" . text) ["Constructor", "Puntos", "Victorias"]
+        el "tbody" $ mapM_ row (onlyEntity ConstructorStat stats)
+
+    row :: DomBuilder t m => HistoricalStat -> m ()
+    row s = el "tr" $ mapM_ (el "td" . text)
+      [ hsFamilyName s
+      , T.pack (show (hsPoints s))
+      , winsLabel s
+      ]
+
+-- | Las filas de una sola clasificación, sacadas de la lista heterogénea que sirve
+-- @\/api\/historical@. Puro, y el único punto del módulo donde se lee 'hsEntity'.
+onlyEntity :: StatEntity -> [HistoricalStat] -> [HistoricalStat]
+onlyEntity entity = filter ((== entity) . hsEntity)
+
+-- | Los dos estados de no-dato del fetch, idénticos en los dos widgets. Son las
+-- únicas piezas de DOM que se comparten: no toman fila, así que no arrastran el
+-- problema de rango que el Haddock del módulo explica.
+loadingStatus :: DomBuilder t m => m ()
+loadingStatus = elClass "p" "status status--loading" $ text "Cargando…"
+
+-- | Ver 'loadingStatus'.
+errorStatus :: DomBuilder t m => m ()
+errorStatus =
+  elClass "p" "status status--error" $ text "Error al cargar /api/historical"
 
 -- | Victorias de la fila, o una raya cuando Jolpica no las publica.
 --
 -- La raya __no es un cero__ y la distinción es la que 'Common.Types.hsWins' existe
 -- para conservar: pintar @0@ afirmaría que la entidad no ganó ninguna carrera,
 -- que es un dato que nadie dio. Con dato real no se ve —Jolpica publica @wins@
--- siempre, medido el 2026-08-24—; el dummy de 'Handler.Historical.Context' trae un
--- caso a propósito para que la rama sea visible sin editar código.
+-- siempre, medido el 2026-08-24 y de nuevo el 2026-08-26—; el dummy de
+-- @Handler.Historical.Context@ trae un caso a propósito para que la rama sea visible
+-- sin editar código.
 winsLabel :: HistoricalStat -> Text
 winsLabel = maybe "—" (T.pack . show) . hsWins
-
--- | Barra de botones que conmutan el modo de etiqueta. Sostiene el modo activo en
--- un @Dynamic t LabelMode@ (arranca en 'Code', la etiqueta previa al toggle).
--- Mismo patrón que 'Pages.Dashboard.layoutSwitcher'; el botón se replica aquí en
--- lugar de importarlo para no acoplar un widget a una página.
-labelSwitcher :: MonadWidget t m => m (Dynamic t LabelMode)
-labelSwitcher = divClass "label-switcher" $ do
-  codeClick   <- switcherButton "Código"
-  familyClick <- switcherButton "Apellido"
-  fullClick   <- switcherButton "Nombre completo"
-  holdDyn Code $ leftmost
-    [ Code   <$ codeClick
-    , Family <$ familyClick
-    , Full   <$ fullClick
-    ]
-
--- | Botón que emite un 'Event' al hacer click.
---
--- La clase es @switcher__btn@ y no @label-switcher__btn@ desde el 2026-08-21,
--- cuando el widget tenía __dos__ switchers y el de entidad reusaba este botón:
--- sus botones salían al DOM con el nombre del otro switcher y
--- @frontend\/dashboard.css@ los estilaba por un nombre que mentía
--- (2026-08-21 (c)). El nombre genérico __se conserva__
--- aunque hoy solo quede el 'labelSwitcher': la regla de la hoja es la misma que
--- estila los otros tres switchers de la página, y volver a un nombre por bloque
--- sería deshacer aquella unificación.
-switcherButton :: DomBuilder t m => Text -> m (Event t ())
-switcherButton label = do
-  (e, _) <- elClass' "button" "switcher__btn" $ text label
-  pure (domEvent Click e)
