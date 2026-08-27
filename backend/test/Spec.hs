@@ -43,14 +43,17 @@ import           Common.Format               (formatFixed, formatTrimmed, noData
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Types                (DriverEntry (..),
+                                              DriverStatus (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
+                                              LiveTimingRow (..),
                                               StatEntity (..),
                                               TelemetryPoint (..),
-                                              TyreStint (..))
+                                              TyreStint (..), statusLabel)
 import           Data.Aeson                  (eitherDecodeStrict)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
+import           Data.List                   (nub)
 import qualified Data.Text                   as T
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
@@ -58,6 +61,8 @@ import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
+import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
+                                              Of1Result, assembleRows)
 import           Handler.OpenF1.Helper       (Of1Driver)
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
@@ -341,6 +346,140 @@ main = hspec $ do
     it "devuelve [] sobre una sesión sin stints publicados" $
       stintsOf openF1Grid emptyArray `shouldBe` []
 
+  -- Segunda de las tres áreas que quedaban sin suite (queda
+  -- 'Handler.OpenF1.Helper'), y la que más cruza del repo: __cinco__
+  -- respuestas donde `assembleStints` cruzaba dos. De ahí que `rowsOf` tome cinco
+  -- fixtures.
+  --
+  -- El motivo son los DNF, y la medición previa corrigió la premisa de partida
+  -- antes de escribir esto. Medido sobre la sesión 11353:
+  --
+  --   * @\/session_result@ trae 6 DNF sobre 22 filas, y __uno de ellos (coche 23)
+  --     tiene @position@__ — por eso el estado es campo propio y no la ausencia de
+  --     posición.
+  --   * @\/position@ publica los __22__ coches, abandonos incluidos, así que la
+  --     rama de omisión de `assembleRows` __no se alcanza con dato real__ y solo la
+  --     ejercita el fixture de aquí. Es la segunda vez que pasa (la del @compound@
+  --     nulo, arriba, es la primera).
+  --   * De los 26 nulos de la respuesta (@duration@ ×15, @gap_to_leader@ ×6,
+  --     @position@ ×5) __ninguno__ toca el decode, porque 'Of1Result' modela solo
+  --     los cuatro campos que se consumen.
+  describe "assembleRows" $ do
+    it "cruza las cinco respuestas y ordena por posición" $
+      -- El orden que llega es el de `/drivers` (coche 1 primero); el que sale es
+      -- por posición, así que LEC (P1) va antes que NOR (P2). Y de las dos
+      -- muestras por coche de `/position` e `/intervals` se toma la última por
+      -- `date`, no la primera.
+      rowsOf openF1Grid positionArray intervalArray lapArray resultArray
+        `shouldBe`
+          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running
+          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Running
+          ]
+
+    it "marca el DNF que sí trae posición, y la fila sigue en la tabla" $
+      -- El caso medido del coche 23, y el que justifica que 'ltStatus' exista: la
+      -- fila __no__ desaparece ni cambia de sitio, solo gana la marca. Sus gap e
+      -- intervalo siguen siendo los de su última muestra, que es exactamente el
+      -- dato engañoso que la marca contextualiza.
+      rowsOf openF1Grid positionArray intervalArray lapArray resultWithDnf
+        `shouldBe`
+          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running
+          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Dnf
+          ]
+
+    it "sirve la tabla entera como Running si `/session_result` llega vacía" $
+      -- Degradado __parcial__, y es la única de las cinco respuestas cuya ausencia
+      -- no pierde filas: sin clasificación no hay marcas, pero la tabla sin marcas
+      -- sigue siendo la tabla. No lo decide `assembleRows` sino el `maybe Running`
+      -- del cruce.
+      map ltStatus (rowsOf openF1Grid positionArray intervalArray lapArray emptyArray)
+        `shouldBe` [Running, Running]
+
+    it "trata las tres banderas ausentes como Running en vez de tumbar el decode" $
+      -- OpenF1 las emite siempre (22 de 22 en la 11353), así que esto protege el
+      -- decode ante un cambio de contrato, no ante un dato visto. Con `.:` este
+      -- fixture no decodificaría, `rowsOf` moriría en el `error` y en producción
+      -- `/api/live` entera degradaría al dummy con la red viva.
+      map ltStatus (rowsOf openF1Grid positionArray intervalArray lapArray resultWithoutFlagKeys)
+        `shouldBe` [Running, Running]
+
+    it "da DSQ cuando la descalificación y el abandono llegan juntos" $
+      -- La prioridad de 'statusOf', que es una decisión y no un detalle: las tres
+      -- banderas son independientes en el contrato y nada impide que lleguen dos.
+      -- No se ha observado el caso; se fija para que no lo decida el orden de los
+      -- guardas por accidente.
+      map ltStatus (rowsOf openF1Grid positionArray intervalArray lapArray resultDsqAndDnf)
+        `shouldBe` [Running, Dsq]
+
+    it "da DNS al piloto que no tomó la salida" $
+      -- La tercera bandera. Cero casos en las cuatro sesiones medidas, así que el
+      -- fixture es la única forma de ejercitarla.
+      map ltStatus (rowsOf openF1Grid positionArray intervalArray lapArray resultWithDns)
+        `shouldBe` [Running, Dns]
+
+    it "omite al piloto sin posición aunque tenga intervalo, vuelta y estado" $
+      -- La rama que se creía culpable de hacer desaparecer a los abandonos, y que
+      -- la medición del 2026-08-27 desmintió: `/position` publica los 22 coches. Se
+      -- prueba aquí porque el dato de hoy no la alcanza y vive para la sesión __en
+      -- curso__, donde un coche puede no tener posición publicada todavía.
+      rowsOf openF1Grid positionOfLecOnly intervalArray lapArray resultWithDnf
+        `shouldBe` [LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running]
+
+    it "devuelve [] cuando la parrilla llega vacía, aunque haya posiciones" $
+      -- Simétrico del caso de 'assembleStints': la unidad de la fila es el piloto
+      -- de `/drivers`, así que sin parrilla no hay nada que ensamblar. Es este []
+      -- el que hace que el Context caiga a cache/dummy.
+      rowsOf emptyArray positionArray intervalArray lapArray resultArray `shouldBe` []
+
+    it "pone `-` en el gap nulo del piloto que no es líder" $
+      -- La rama `gapText Null`, viva desde el 2026-08-04 y hasta ahora sin prueba. Los
+      -- 6 nulos de `gap_to_leader` medidos en la 11353 son de abandonos, así que
+      -- este caso y el del DNF describen la misma fila desde dos lados.
+      map (\r -> (ltGap r, ltInterval r))
+          (rowsOf openF1Grid positionArray intervalWithNullGap lapArray resultArray)
+        `shouldBe` [("LEADER", "-"), ("-", "-")]
+
+    it "trata el gap ausente igual que el nulo en vez de tumbar el arreglo" $
+      -- El endurecimiento del 2026-08-27, y el sexto no-dato por esta puerta.
+      -- Con `o .: \"gap_to_leader\"` este fixture __no decodifica__ y se pierde la
+      -- tabla entera, no solo la celda: OpenF1 la emite hoy siempre, así que la
+      -- prueba es del contrato y no de un dato visto.
+      map (\r -> (ltGap r, ltInterval r))
+          (rowsOf openF1Grid positionArray intervalWithoutGapKeys lapArray resultArray)
+        `shouldBe` [("LEADER", "-"), ("-", "-")]
+
+    it "ignora las vueltas sin cronometrar al elegir la última" $
+      -- `/laps` publica `lap_duration: null` en las out/in laps, y la última vuelta
+      -- del piloto no es la última fila sino la última __cronometrada__. Sin el
+      -- filtro, NOR mostraría la raya de una in-lap teniendo tiempo de la anterior.
+      map ltLastLap (rowsOf openF1Grid positionArray intervalArray lapWithNullDuration resultArray)
+        `shouldBe` ["1:15.265", "1:16.001"]
+
+    it "pone `-` en la última vuelta del piloto sin ninguna cronometrada" $
+      -- El coche que abandonó en la vuelta 0 (el 3 de la 11353): está en la
+      -- parrilla y en `/position`, pero no tiene una sola vuelta buena.
+      map ltLastLap (rowsOf openF1Grid positionArray intervalArray emptyArray resultArray)
+        `shouldBe` ["-", "-"]
+
+  -- Vive en `common` y no en el widget justamente para poder probarse aquí: el
+  -- paquete `frontend` no tiene suite, así que sin esta mudanza la única cobertura
+  -- de las etiquetas sería mirar la página.
+  describe "statusLabel" $ do
+    it "da la sigla de las tres marcas" $
+      map statusLabel [Dnf, Dns, Dsq] `shouldBe` ["DNF", "DNS", "DSQ"]
+
+    it "deja en blanco al piloto sin incidencia, y no la raya de `noData`" $
+      -- La raya significa «nadie dio esta cifra»; aquí el estado __se sabe__ y es
+      -- que no hay nada que señalar. En blanco, para que las tres marcas destaquen
+      -- en una columna de 22 filas.
+      statusLabel Running `shouldBe` ""
+
+    it "no repite etiqueta entre estados distintos" $
+      -- Dos estados con la misma sigla serían indistinguibles en la tabla, que es
+      -- el defecto que este módulo existe para cerrar.
+      let labels = map statusLabel [Running, Dnf, Dns, Dsq]
+       in length (nub labels) `shouldBe` length labels
+
   -- La coherencia entre los dos respaldos de FastF1. No es cosmética: los dos
   -- widgets se miran a la vez, así que un coche que el de comparación pinta y el
   -- selector no lista sería una contradicción visible con el servicio apagado.
@@ -573,6 +712,44 @@ decodeOf1Drivers raw =
 
 decodeStints :: ByteString -> [Of1Stint]
 decodeStints raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
+
+-- | Espejo de 'stintsOf' para el área Live, con __cinco__ fixtures: 'assembleRows'
+-- es la función del repo que más respuestas cruza. El criterio de abortar ante un
+-- fixture no decodificable es el mismo de 'stintsOf' y por la misma razón, que aquí
+-- se cobra dos veces: con @o .: \"gap_to_leader\"@ el fixture de la clave ausente
+-- __no decodifica__, y con @o .: \"dnf\"@ tampoco el de las banderas ausentes.
+-- Degradar cualquiera de los dos a @[]@ pondría verde el caso por la razón
+-- contraria a la que se prueba.
+rowsOf
+  :: ByteString  -- ^ @\/drivers@
+  -> ByteString  -- ^ @\/position@
+  -> ByteString  -- ^ @\/intervals@
+  -> ByteString  -- ^ @\/laps@
+  -> ByteString  -- ^ @\/session_result@
+  -> [LiveTimingRow]
+rowsOf grid positions intervals laps results =
+  assembleRows
+    (decodeOf1Drivers grid)
+    (decodePositions positions)
+    (decodeIntervals intervals)
+    (decodeLaps laps)
+    (decodeResults results)
+
+decodePositions :: ByteString -> [Of1Position]
+decodePositions raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
+
+decodeIntervals :: ByteString -> [Of1Interval]
+decodeIntervals raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
+
+decodeLaps :: ByteString -> [Of1Lap]
+decodeLaps raw =
+  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
+
+decodeResults :: ByteString -> [Of1Result]
+decodeResults raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
 
 -- | El acrónimo que la parrilla de respaldo le da a un número de coche, o
@@ -855,6 +1032,184 @@ stint number stintNumber lapStart lapEnd compound =
     <> ",\"tyre_age_at_start\":0}"
   where
     num = BC.pack . show
+
+-- ** Fixtures del área Live
+--
+-- Los cinco endpoints de 'assembleRows', con la forma real de la sesión 11353
+-- medida el 2026-08-27. Los tres primeros son series temporales: llevan __dos__
+-- muestras por coche a propósito, para que los casos ejerciten 'latestByDriver' y
+-- no solo el cruce. Y la parrilla es 'openF1Grid' (coches 1\/NOR y 16\/LEC), que ya
+-- existía para los stints: el coche 16 va en P1 y el 1 en P2 justamente para que
+-- el orden de salida no coincida con el de llegada.
+
+-- | Un objeto de @\/position@ con las cinco claves de OpenF1.
+position :: Int -> Int -> ByteString -> ByteString
+position number pos date =
+  "{\"date\":\"" <> date <> "\",\"session_key\":11353"
+    <> ",\"driver_number\":" <> BC.pack (show number)
+    <> ",\"position\":" <> BC.pack (show pos)
+    <> ",\"meeting_key\":1292}"
+
+-- | Un objeto de @\/intervals@ con las seis claves. Gap e intervalo entran __ya
+-- serializados__ por el mismo motivo que el compuesto en 'stint': su forma es lo
+-- que se prueba, y OpenF1 los emite como número, cadena (@\"+1 LAP\"@) o @null@.
+interval :: Int -> ByteString -> ByteString -> ByteString -> ByteString
+interval number gap intv date =
+  "{\"date\":\"" <> date <> "\",\"session_key\":11353"
+    <> ",\"gap_to_leader\":" <> gap
+    <> ",\"interval\":" <> intv
+    <> ",\"driver_number\":" <> BC.pack (show number)
+    <> ",\"meeting_key\":1292}"
+
+-- | Igual que 'interval' pero __sin las dos claves de gap__, que es el fixture del
+-- endurecimiento: OpenF1 las emite siempre, así que esta forma no se ha observado y
+-- solo se puede construir a mano.
+intervalNoGap :: Int -> ByteString -> ByteString
+intervalNoGap number date =
+  "{\"date\":\"" <> date <> "\",\"session_key\":11353"
+    <> ",\"driver_number\":" <> BC.pack (show number)
+    <> ",\"meeting_key\":1292}"
+
+-- | Un objeto de @\/laps@ recortado a las claves que 'Of1Lap' consume más
+-- @date_start@. La duración entra serializada para poder escribir el @null@ de las
+-- out\/in laps, que es la rama del filtro de 'assembleRows'.
+lap :: Int -> Int -> ByteString -> ByteString
+lap number lapNum duration =
+  "{\"meeting_key\":1292,\"session_key\":11353"
+    <> ",\"driver_number\":" <> BC.pack (show number)
+    <> ",\"lap_number\":" <> BC.pack (show lapNum)
+    <> ",\"date_start\":\"2026-08-23T13:03:28.567000+00:00\""
+    <> ",\"i1_speed\":290,\"is_pit_out_lap\":false"
+    <> ",\"lap_duration\":" <> duration
+    <> ",\"st_speed\":208}"
+
+-- | Un objeto de @\/session_result@ con las __diez__ claves reales, de las que
+-- 'Of1Result' consume cuatro. Lleva los seis campos que no modela —@position@,
+-- @duration@ y @gap_to_leader@ entre ellos, los tres que la respuesta trae nulos—
+-- porque el decode tiene que ignorarlos: es la misma razón por la que 'openF1Grid'
+-- lleva @broadcast_name@.
+result :: Int -> ByteString -> ByteString -> ByteString -> ByteString -> ByteString
+result number pos dnf dns dsq =
+  "{\"position\":" <> pos
+    <> ",\"driver_number\":" <> BC.pack (show number)
+    <> ",\"number_of_laps\":72,\"points\":25.0"
+    <> ",\"dnf\":" <> dnf
+    <> ",\"dns\":" <> dns
+    <> ",\"dsq\":" <> dsq
+    <> ",\"duration\":7484.859,\"gap_to_leader\":0"
+    <> ",\"meeting_key\":1292,\"session_key\":11353}"
+
+-- | Igual que 'result' pero __sin las tres banderas__. Protege el decode ante un
+-- cambio de contrato: OpenF1 las emite en las 22 filas medidas.
+resultNoFlags :: Int -> ByteString -> ByteString
+resultNoFlags number pos =
+  "{\"position\":" <> pos
+    <> ",\"driver_number\":" <> BC.pack (show number)
+    <> ",\"number_of_laps\":72,\"points\":25.0"
+    <> ",\"duration\":7484.859,\"gap_to_leader\":0"
+    <> ",\"meeting_key\":1292,\"session_key\":11353}"
+
+-- | Dos coches con dos muestras cada uno. La segunda muestra de cada uno es la que
+-- gana por @date@, y le da al 16 la P1 y al 1 la P2 — invertidas respecto a la
+-- primera, para que un caso que ignore 'latestByDriver' falle en vez de coincidir.
+positionArray :: ByteString
+positionArray =
+  "[" <> position 1 1 "2026-08-23T12:06:50.962000+00:00"
+    <> "," <> position 16 2 "2026-08-23T12:06:51.100000+00:00"
+    <> "," <> position 1 2 "2026-08-23T13:20:10.000000+00:00"
+    <> "," <> position 16 1 "2026-08-23T13:20:11.000000+00:00"
+    <> "]"
+
+-- | Solo el coche 16 tiene posición. El 1 está en la parrilla, en @\/intervals@, en
+-- @\/laps@ y en la clasificación, así que es la rama de omisión aislada.
+positionOfLecOnly :: ByteString
+positionOfLecOnly =
+  "[" <> position 16 1 "2026-08-23T13:20:11.000000+00:00" <> "]"
+
+-- | Gaps del coche 1 (P2): la última muestra da @+2.310@. El 16 es líder, así que
+-- 'assembleRows' le pone @"LEADER"@ y @"-"@ ignorando sus valores — de ahí que sus
+-- números sean deliberadamente absurdos.
+intervalArray :: ByteString
+intervalArray =
+  "[" <> interval 1 "0.0" "0.0" "2026-08-23T12:06:46.696000+00:00"
+    <> "," <> interval 16 "9.999" "9.999" "2026-08-23T12:06:47.000000+00:00"
+    <> "," <> interval 1 "2.31" "2.31" "2026-08-23T13:20:09.000000+00:00"
+    <> "," <> interval 16 "0.0" "0.0" "2026-08-23T13:20:10.000000+00:00"
+    <> "]"
+
+-- | Los dos campos de gap a @null@ en la última muestra del coche 1. Es la forma
+-- que las 6 filas nulas de la 11353 traen, y todas son de abandonos.
+intervalWithNullGap :: ByteString
+intervalWithNullGap =
+  "[" <> interval 1 "2.31" "2.31" "2026-08-23T12:06:46.696000+00:00"
+    <> "," <> interval 1 "null" "null" "2026-08-23T13:20:09.000000+00:00"
+    <> "," <> interval 16 "0.0" "0.0" "2026-08-23T13:20:10.000000+00:00"
+    <> "]"
+
+-- | Las dos claves de gap __ausentes__ en el objeto del coche 1.
+intervalWithoutGapKeys :: ByteString
+intervalWithoutGapKeys =
+  "[" <> intervalNoGap 1 "2026-08-23T13:20:09.000000+00:00"
+    <> "," <> interval 16 "0.0" "0.0" "2026-08-23T13:20:10.000000+00:00"
+    <> "]"
+
+-- | Dos vueltas cronometradas por coche; gana la de número mayor.
+lapArray :: ByteString
+lapArray =
+  "[" <> lap 1 1 "84.57"
+    <> "," <> lap 16 1 "84.9"
+    <> "," <> lap 1 2 "76.001"
+    <> "," <> lap 16 2 "75.265"
+    <> "]"
+
+-- | La última vuelta de cada coche llega con @lap_duration: null@ (una in-lap), así
+-- que la buena es la anterior. Sin el filtro de 'assembleRows' los dos mostrarían
+-- la raya teniendo tiempo.
+lapWithNullDuration :: ByteString
+lapWithNullDuration =
+  "[" <> lap 1 2 "76.001"
+    <> "," <> lap 16 2 "75.265"
+    <> "," <> lap 1 3 "null"
+    <> "," <> lap 16 3 "null"
+    <> "]"
+
+-- | Clasificación sin incidencias: los dos coches con las tres banderas en @false@.
+resultArray :: ByteString
+resultArray =
+  "[" <> result 16 "1" "false" "false" "false"
+    <> "," <> result 1 "2" "false" "false" "false"
+    <> "]"
+
+-- | El caso medido del coche 23 de la 11353, trasplantado al coche 1: @dnf: true@
+-- __con__ @position@. Es el que hace que 'ltStatus' tenga que ser campo propio.
+resultWithDnf :: ByteString
+resultWithDnf =
+  "[" <> result 16 "1" "false" "false" "false"
+    <> "," <> result 1 "2" "true" "false" "false"
+    <> "]"
+
+-- | El coche 1 con abandono __y__ descalificación. No se ha observado; fija la
+-- prioridad de 'statusOf' para que no la decida el orden de los guardas.
+resultDsqAndDnf :: ByteString
+resultDsqAndDnf =
+  "[" <> result 16 "1" "false" "false" "false"
+    <> "," <> result 1 "2" "true" "false" "true"
+    <> "]"
+
+-- | El coche 1 sin tomar la salida. Cero casos en las cuatro sesiones medidas.
+resultWithDns :: ByteString
+resultWithDns =
+  "[" <> result 16 "1" "false" "false" "false"
+    <> "," <> result 1 "null" "false" "true" "false"
+    <> "]"
+
+-- | Las tres banderas ausentes en los dos objetos. Con @.:@ este fixture no
+-- decodifica y se pierde la tabla entera.
+resultWithoutFlagKeys :: ByteString
+resultWithoutFlagKeys =
+  "[" <> resultNoFlags 16 "1"
+    <> "," <> resultNoFlags 1 "2"
+    <> "]"
 
 -- | La propiedad que 'show' __no__ cumple y que motiva el módulo: una cifra
 -- formateada no lleva nunca @e@, porque una celda que dice @1.0e-2@ no comunica una

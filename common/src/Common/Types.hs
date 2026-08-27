@@ -17,6 +17,48 @@ newtype LayoutId = LayoutId Text
   deriving stock (Eq, Show, Generic)
   deriving newtype (ToJSON, FromJSON)
 
+-- | Estado de un piloto en la clasificación de una sesión.
+--
+-- Es __campo propio y no la ausencia de otro dato__, y eso lo decidió una
+-- medición: en la sesión 11353, de los 6 pilotos con @dnf: true@ hay __uno__
+-- (coche 23) que sí trae @position@. Estado y posición son hechos
+-- independientes, así que un @'Maybe' Int@ en 'ltPosition' no podría
+-- expresarlos —y además obligaría a decidir dónde ordenar los 'Nothing'—.
+-- Ver (2026-08-27).
+--
+-- 'Running' es el estado por defecto: significa «no consta que abandonara», no
+-- «se comprobó que sigue en pista». Es lo que se sirve cuando
+-- @\/session_result@ no contesta o no menciona al piloto.
+data DriverStatus
+  = Running        -- ^ En carrera o clasificado sin incidencia.
+  | Dnf            -- ^ Abandonó (/did not finish/).
+  | Dns            -- ^ No tomó la salida (/did not start/).
+  | Dsq            -- ^ Descalificado.
+  deriving stock (Eq, Show, Generic)
+
+-- Los cuatro constructores son nularios, así que el @allNullaryToStringTag@ de
+-- aeson serializa esto como cadena (@\"Dnf\"@) y no como objeto etiquetado.
+instance ToJSON DriverStatus
+instance FromJSON DriverStatus
+
+-- | Etiqueta de presentación de un 'DriverStatus'.
+--
+-- Vive aquí y no en el widget por el criterio de 'Common.Format'
+-- (2026-08-26): la lógica pura del cliente se muda a
+-- @common@ para ser __testeable__, porque el paquete @frontend@ no tiene suite.
+-- No va en 'Common.Format', que es formateo
+-- de cifras y aquella decisión se negó a convertirlo en cajón de sastre.
+--
+-- 'Running' da cadena vacía y no la raya de 'Common.Format.noData': la raya
+-- significa «nadie dio esta cifra», y aquí sí se sabe el estado — es que no hay
+-- nada que señalar. La celda queda en blanco a propósito, para que las tres
+-- marcas destaquen.
+statusLabel :: DriverStatus -> Text
+statusLabel Running = ""
+statusLabel Dnf     = "DNF"
+statusLabel Dns     = "DNS"
+statusLabel Dsq     = "DSQ"
+
 -- | Fila del widget de live timing.
 data LiveTimingRow = LiveTimingRow
   { ltPosition :: Int
@@ -25,6 +67,11 @@ data LiveTimingRow = LiveTimingRow
   , ltGap      :: Text  -- ^ Gap al líder (p. ej. @"+1.234"@ o @"LEADER"@).
   , ltInterval :: Text  -- ^ Intervalo al coche de delante.
   , ltLastLap  :: Text  -- ^ Última vuelta (p. ej. @"1:23.456"@).
+  , ltStatus   :: DriverStatus
+    -- ^ Abandono, no-salida o descalificación; 'Running' si no consta ninguna.
+    -- Sin él una fila de abandono es indistinguible de una normal, y sus
+    -- 'ltGap' e 'ltInterval' son los de su última muestra: el coche 3 de la
+    -- 11353 sale en P22 con @"+5.672"@ habiendo hecho 0 vueltas.
   }
   deriving stock (Eq, Show, Generic)
 

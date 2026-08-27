@@ -1,7 +1,8 @@
 -- | Área Live timing — capa de efectos.
 --
 -- GET específicos de Live a los endpoints de series temporales de OpenF1
--- (@/position@, @/intervals@, @/laps@), decodificados a los tipos crudos de
+-- (@/position@, @/intervals@, @/laps@) y a la clasificación (@/session_result@),
+-- decodificados a los tipos crudos de
 -- 'Handler.Live.Helper'. El plumbing HTTP compartido ('fetchList', base de URL,
 -- sesión @latest@) y el común @/drivers@ viven en 'Handler.OpenF1.Manager'. Sin
 -- lógica de negocio: la orquestación vive en 'Handler.Live.Context' y el mapeo
@@ -9,11 +10,12 @@
 module Handler.Live.Manager where
 
 import           Config                 (Config)
-import           Handler.Live.Helper    (Of1Interval, Of1Lap, Of1Position)
+import           Handler.Live.Helper    (Of1Interval, Of1Lap, Of1Position,
+                                         Of1Result)
 import           Handler.OpenF1.Manager (fetchList)
 
--- Los tres reciben la 'Config' por lo mismo que 'fetchList': de ella sale el techo
--- de duración del intento.
+-- Los cuatro reciben la 'Config' por lo mismo que 'fetchList': de ella sale el
+-- techo de duración del intento.
 fetchPositions :: Config -> IO [Of1Position]
 fetchPositions cfg = fetchList cfg "position"
 
@@ -22,3 +24,8 @@ fetchIntervals cfg = fetchList cfg "intervals"
 
 fetchLaps :: Config -> IO [Of1Lap]
 fetchLaps cfg = fetchList cfg "laps"
+
+-- | @/session_result@ es el único de los cuatro que no es serie temporal: una
+-- fila por piloto, sin @date@ que reducir.
+fetchResults :: Config -> IO [Of1Result]
+fetchResults cfg = fetchList cfg "session_result"
