@@ -8,11 +8,20 @@
 -- 'Client.fetchJson' + 'Common.Route.livePath' (relativo, misma-origen: el
 -- backend sirve el bundle y la API en el mismo puerto). Modela los tres estados
 -- del fetch ('Loading' \/ 'Failed' \/ 'Loaded'); ya no hay datos dummy locales.
+--
+-- __La columna de estado se añade al final a propósito__ (2026-08-27). La hoja
+-- alinea las columnas numéricas de esta tabla por @nth-child(1,4,5,6)@ —las
+-- celdas de las seis primeras no llevan clase, son un @mapM_@ sobre una lista
+-- fija—, así que meterla en cualquier otro sitio movería esos índices. La
+-- séptima celda sí lleva clase, y la fila también: el @nth-child@ compartido es
+-- deuda que el 2026-08-26 acabó de pagar en Historical
+-- y lo nuevo no la reabre.
 module Widgets.LiveTiming where
 
 import           Client       (fetchJson)
 import           Common.Route (livePath)
-import           Common.Types (LiveTimingRow (..))
+import           Common.Types (DriverStatus (..), LiveTimingRow (..),
+                               statusLabel)
 import           Data.Text    (Text)
 import qualified Data.Text    as T
 import           Reflex.Dom
@@ -44,14 +53,31 @@ liveTimingWidget = divClass "widget widget--live-timing" $ do
         el "tbody" $ mapM_ row rows
 
     headers :: [Text]
-    headers = ["Pos", "Driver", "Team", "Gap", "Interval", "Last Lap"]
+    headers =
+      ["Pos", "Driver", "Team", "Gap", "Interval", "Last Lap", "Estado"]
 
     row :: DomBuilder t m => LiveTimingRow -> m ()
-    row r = el "tr" $ mapM_ (el "td" . text)
-      [ T.pack (show (ltPosition r))
-      , ltDriver r
-      , ltTeam r
-      , ltGap r
-      , ltInterval r
-      , ltLastLap r
-      ]
+    row r = elClass "tr" (rowClass (ltStatus r)) $ do
+      mapM_ (el "td" . text)
+        [ T.pack (show (ltPosition r))
+        , ltDriver r
+        , ltTeam r
+        , ltGap r
+        , ltInterval r
+        , ltLastLap r
+        ]
+      elClass "td" "live-timing__state" $ text (statusLabel (ltStatus r))
+
+    -- Modificador solo cuando hay algo que señalar: 16 de las 22 filas de una
+    -- carrera son 'Running', y emitir un modificador que no modifica nada
+    -- convierte la clase en ruido.
+    --
+    -- __Las tres marcas comparten modificador y no llevan uno cada una.__ La
+    -- distinción la hace la sigla de la celda, que es texto y se lee; el
+    -- modificador solo dice «esta fila no cuenta para la carrera», que es lo
+    -- mismo en los tres casos. Tres reglas de color para tres estados que el
+    -- usuario ya distingue leyendo serían tres cosas que mantener sincronizadas
+    -- con el tipo de 'common'.
+    rowClass :: DriverStatus -> Text
+    rowClass Running = "live-timing__row"
+    rowClass _       = "live-timing__row live-timing__row--out"

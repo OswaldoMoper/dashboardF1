@@ -196,6 +196,40 @@ body {
   font-family: var(--font-ui);
 }
 
+/* La séptima columna (Estado) va **por clase** y no por `nth-child`: es lo que
+   2026-08-26 acabó de pagar en Historical y no conviene reabrir con la primera
+   columna que se añade después. La celda lleva clase propia; la fila, un
+   modificador único para las tres marcas —la sigla ya las distingue—. */
+.live-timing__state {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  color: var(--c-warn);
+}
+
+/* El abandono se apaga en vez de encenderse: son ~6 de 22 filas, así que
+   destacarlas en rojo dejaría un cuarto de la tabla gritando. El borde marca la
+   fila y el color rebajado la saca del primer plano, que es lo que un coche que
+   ya no corre debería ocupar. `box-shadow` y no `border-left` porque un borde en
+   un `td` de tabla colapsada desplaza la columna. */
+.live-timing__row--out td {
+  color: var(--c-muted);
+}
+
+.live-timing__row--out td:first-child {
+  box-shadow: inset 2px 0 0 var(--c-warn);
+}
+
+/* Los gap e intervalo de un coche retirado son los de su última muestra y no
+   describen la carrera de ahora: el coche 22 de la 11353 sale con `+5.672`
+   habiendo hecho 0 vueltas. Se atenúan más que el resto de la fila para que no se
+   lean como un dato vivo — la sigla de Estado es la que explica por qué. */
+.live-timing__row--out td:nth-child(4),
+.live-timing__row--out td:nth-child(5) {
+  opacity: 0.55;
+}
+
 /* Telemetría: Driver y las siete magnitudes. */
 .telemetry td:not(:first-child),
 .telemetry th:not(:first-child) {
