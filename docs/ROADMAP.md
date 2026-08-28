@@ -200,10 +200,66 @@ vestidos, pero eso no los hace correctos — nacen **auditables**, que es distin
     - el usuario indica el tiempo de la transmisión (ej. minuto 23:45).
     - el dashboard muestra datos correspondientes a ese `SessionTime`.
 
+**Ampliación del 2026-08-27.** Los cuatro puntos de arriba son de 2026-07 y no cubren la manipulación del
+layout, que es la mitad de lo que «tipo F1TV Premium» significa. Se añaden como entregables propios:
+
+- Widgets **movibles** por el layout: colocar la tabla de constructores encima de Lap Comparison, o Lap
+  Comparison encima de Live Timing y Telemetry — arriba en el layout, no encimados.
+- Widgets **redimensionables**.
+- **Ocultar y volver a mostrar** widgets, con un menú desplegable que liste todas las opciones.
+- **Varias instancias del mismo widget** —varios Telemetry, varios Lap Comparison en paralelo—, porque un
+  análisis puede ser de varias peleas a la vez.
+- **Agrupar** los Telemetry y los Lap Comparison.
+- **Elegir la sesión** que se está viendo: un `Dynamic t SessionKey` compartido por la página, pendiente
+  desde el 2026-08-21.
+
+**La fase arranca con diseño y no con código, y el motivo es una sola línea de `Pages.Dashboard`.** `cfg`
+fabrica `WidgetId (T.pack (show wt))`, o sea que **la identidad de un widget es su tipo**: dos Telemetry
+colisionan de id, y sin id no hay nada que mover, ocultar, colocar ni agrupar por separado. Los otros cinco
+entregables son **imposibles** hasta que eso cambie, así que el orden lo fija la dependencia y no la
+visibilidad.
+
+Encaja con una decisión ya tomada: **`WidgetParams` sigue en `mempty` en todas las `WidgetConfig` a
+propósito** desde el 2026-08-26, que descartó usarlo como discriminador para no fijar su forma antes de que
+esta fase decida cuál es. El entregable de las varias instancias es el consumidor que aquella decisión
+estaba esperando.
+
+**Dos cosas medidas el 2026-08-27 que acotan el coste, para que la fase no las descubra en marcha:**
+
+- **Redimensionar y mover no cuestan lo mismo.** `resize: both` sobre `.widget` es CSS y cero Haskell;
+  arrastrar pide `wrapDomEvent` y seguimiento de puntero, porque no hay `jsaddle`, ni `ghcjs-dom`, ni un
+  solo `foreign import javascript` en el repo —todo el DOM va por `reflex-dom`— y `Pages.Dashboard` solo
+  compila bajo GHCJS, donde el error no aparece hasta el build completo.
+- **La rejilla no guarda posiciones.** Es `repeat(auto-fit, minmax(24rem, 1fr))` con los widgets como
+  hermanos directos de `.page--dashboard`: la posición la decide el navegador y `Layout` solo tiene orden de
+  lista. Mover implica que la colocación pase a ser **dato**, y eso es lo que el diseño decide.
+
 **Entregables:**
 
-- Layouts guardables/cargables.
-- Modo “sync” básico (input manual de tiempo).
+- [ ] Layouts guardables/cargables.
+- [ ] Modo “sync” básico (input manual de tiempo).
+- [ ] `WidgetId` como identidad real, no derivada del tipo, y `WidgetParams` con forma decidida.
+- [ ] Widgets movibles y redimensionables.
+- [ ] Ocultar/mostrar con menú desplegable.
+- [ ] Varias instancias del mismo tipo de widget.
+- [ ] Agrupación de widgets.
+- [ ] Selector de sesión compartido por la página.
+
+**Lo que NO es de esta fase**, aunque se pida junto con lo de arriba y se le parezca:
+
+- **Comparar N pilotos en Lap Comparison.** El microservicio compara **exactamente dos** coches por
+  contrato (ver 2026-08-03 y 2026-08-05) y `LapComparison` tiene `lcCarA`/`lcCarB` fijos, así que toca
+  Python, DTO, `Handler.Comparison.Helper` y `Common.Chart` —de una serie a N—. **Fase propia**, y con
+  diseño previo: con tres coches «el delta contra el otro» no existe, y hay que elegir contra qué se mide.
+- **Evolución de los dos campeonatos.** El dato no existe hoy: Jolpica publica los standings de **una**
+  ronda y `/api/historical` sirve la clasificación actual. La evolución pide las 24 rondas, o sea agregado
+  o endpoint nuevo, más **cache por ronda** — sería el primer dato del proyecto que **no cambia nunca**, lo
+  que altera el argumento con que hoy se justifica no podar las caches.
+- **Evolución de la carrera seleccionada.** El dato sí existe —`/position` da 608 muestras con los 22
+  coches, medido el 2026-08-27— pero depende del selector de sesión de esta fase. Va después.
+- **El resto de KPI's.** Fase 7, y pide **catálogo antes que sesión**: por cada KPI, de qué endpoint sale y
+  quién agrega. El rediseño pendiente de Telemetry es la advertencia escrita de lo que pasa sin él — un KPI
+  pedido como widget que resulta ser un cambio de contrato del DTO.
 
 ## Fase 7 – Analítica con `Mathematical_Data_Analysis`
 
