@@ -224,26 +224,43 @@ propósito** desde el 2026-08-26, que descartó usarlo como discriminador para n
 esta fase decida cuál es. El entregable de las varias instancias es el consumidor que aquella decisión
 estaba esperando.
 
+**El diseño se cerró el 2026-09-01, y son tres decisiones de ese día.** Fija la identidad
+del widget, la forma de `WidgetParams` y qué guarda `Layout` —que resulta ser lo mismo que guardaba—, así
+que el código de la fase arranca sobre tipos ya decididos y los siete entregables de abajo tienen cada uno
+respondido qué tipo tocan.
+
 **Dos cosas medidas el 2026-08-27 que acotan el coste, para que la fase no las descubra en marcha:**
 
-- **Redimensionar y mover no cuestan lo mismo.** `resize: both` sobre `.widget` es CSS y cero Haskell;
-  arrastrar pide `wrapDomEvent` y seguimiento de puntero, porque no hay `jsaddle`, ni `ghcjs-dom`, ni un
-  solo `foreign import javascript` en el repo —todo el DOM va por `reflex-dom`— y `Pages.Dashboard` solo
-  compila bajo GHCJS, donde el error no aparece hasta el build completo.
+- **Redimensionar y mover no cuestan lo mismo.** `resize: both` sobre `.widget` es CSS y cero Haskell —la
+  tarjeta ya lleva `overflow-x: auto`, así que la propiedad le aplica—; mover pide Haskell. **Lo que sí
+  cuesta menos de lo que decía este punto es arrastrar**, y lo corrige el 2026-09-01 (c): el `EventName` de
+  la `reflex-dom` del pin trae `Dragstart`, `Dragover`, `Drop` y `Dragend` con `EventResultType` `()`, y
+  `Reflex.Dom.Builder.Class` expone `preventDefault` y `addEventSpecFlags`, así que el *drag and drop*
+  nativo reordena **sin coordenadas, sin `wrapDomEvent` y sin dependencia nueva**. Que no haya `jsaddle`,
+  ni `ghcjs-dom`, ni un solo `foreign import javascript` —todo el DOM va por `reflex-dom`— sigue siendo
+  cierto y deja de ser un obstáculo. Lo que no cambia: `Pages.Dashboard` solo compila bajo GHCJS, donde el
+  error no aparece hasta el build completo.
 - **La rejilla no guarda posiciones.** Es `repeat(auto-fit, minmax(24rem, 1fr))` con los widgets como
   hermanos directos de `.page--dashboard`: la posición la decide el navegador y `Layout` solo tiene orden de
-  lista. Mover implica que la colocación pase a ser **dato**, y eso es lo que el diseño decide.
+  lista. **El diseño del 2026-09-01 (c) lo deja así**: el orden **es** la colocación, mover es reordenar la
+  lista y el tamaño no se persiste, así que la colocación no pasa a ser dato y el breakpoint de 2026-08-21
+  (c) sigue mandando sobre el número de columnas.
 
 **Entregables:**
 
 - [ ] Layouts guardables/cargables.
 - [ ] Modo “sync” básico (input manual de tiempo).
 - [ ] `WidgetId` como identidad real, no derivada del tipo, y `WidgetParams` con forma decidida.
-- [ ] Widgets movibles y redimensionables.
-- [ ] Ocultar/mostrar con menú desplegable.
-- [ ] Varias instancias del mismo tipo de widget.
-- [ ] Agrupación de widgets.
-- [ ] Selector de sesión compartido por la página.
+      **Forma cerrada el 2026-09-01:** id explícito que pone quien construye el `Layout` (entrada del día),
+      y `WidgetParams` como récord de `wpSession`/`wpDriver`/`wpDrivers` —los tres parámetros que
+      `Common.Route` ya acepta— con `noParams` (entrada (b)).
+- [ ] Widgets movibles y redimensionables. Mover = reordenar `[WidgetConfig]` por *drag and drop* nativo;
+      redimensionar = `resize: both`, solo CSS y sin persistir (2026-09-01 (c)).
+- [ ] Ocultar/mostrar con menú desplegable, sobre `widgetVisible :: Bool` en `WidgetConfig` (2026-09-01 (c)).
+- [ ] Varias instancias del mismo tipo de widget. **No pide tipo propio**: sale del id explícito.
+- [ ] Agrupación de widgets: adyacencia en el orden más `widgetGroup :: Maybe Text`, que emite clase y
+      encabezado. Sin anidamiento en `Layout` (2026-09-01 (c)).
+- [ ] Selector de sesión compartido por la página. Estado de **página**, no de `Layout`.
 
 **Lo que NO es de esta fase**, aunque se pida junto con lo de arriba y se le parezca:
 
