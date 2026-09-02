@@ -101,9 +101,17 @@ body {
    tabla de telemetría (8 columnas con `nowrap`) se desbordaba por la derecha y
    la tarjeta vecina —con fondo opaco— la tapaba. Se veía como «Lap Comparison
    se come Telemetry», y no era de la rejilla sino de la tabla. */
+/* `resize` es __todo__ lo que hay de redimensionar widgets, y por eso está aquí y
+   no en un tipo: el tamaño no se persiste, así que la Fase 6 lo entrega sin tocar
+   `Layout` (2026-09-01 c). La propiedad le aplica a la tarjeta
+   porque su `overflow` no es `visible` —lo pone la línea de arriba, que estaba por
+   otro motivo—.
+   Contrapartida aceptada: el tamaño elegido a mano se pierde al conmutar de layout,
+   porque `dyn_` remonta los widgets. */
 .widget {
   min-width: 0;
   overflow-x: auto;
+  resize: both;
   padding: var(--sp-4);
   background: var(--c-surface);
   border: 1px solid var(--c-border);
