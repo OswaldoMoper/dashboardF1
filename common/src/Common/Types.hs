@@ -3,7 +3,6 @@
 module Common.Types where
 
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Map.Strict (Map)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 
@@ -231,9 +230,13 @@ instance FromJSON HistoricalStat
 --
 -- __Son dos constructores y no un 'WidgetParams'__: el parámetro le daría a
 -- 'WidgetParams' su primer consumidor, pero fijaría su forma antes de que la Fase 6
--- —que es la que va de layouts y de configurar widgets— haya decidido cuál es. Un
+-- —que es la que va de layouts y de configurar widgets— hubiera decidido cuál es. Un
 -- constructor por widget mantiene la invariante que esa fase necesita intacta: una
 -- 'WidgetConfig' es __un__ widget. Ver (2026-08-26).
+--
+-- La forma de 'WidgetParams' quedó decidida el 2026-09-01 —sesión, piloto y
+-- pilotos— y __no__ discrimina clasificaciones, así que la distinción sigue
+-- siendo de constructor y no de parámetro.
 data WidgetType
   = LiveTiming
   | Telemetry
@@ -247,16 +250,75 @@ data WidgetType
 instance ToJSON WidgetType
 instance FromJSON WidgetType
 
--- | Parámetros configurables de un widget (clave → valor).
-newtype WidgetParams = WidgetParams (Map Text Text)
+-- | Con qué elección de sesión y de piloto(s) arranca un widget. 'Nothing' en un
+-- campo significa __omitir el parámetro__, o sea el default del endpoint.
+--
+-- __Es espejo de 'Common.Route' y no una forma nueva__: @telemetryPathFor@ y
+-- @comparisonPathFor@ son @'Maybe' 'Text' -> 'Maybe' 'Text' -> 'Text'@, con el
+-- mismo tipo y el mismo significado del 'Nothing' desde el 2026-08-01. Ver
+-- (2026-09-01 b), que es donde está el por qué.
+--
+-- __Es la semilla del estado del widget, no su sustituto.__ El @driverSwitcher@
+-- de 'Widgets.Telemetry' y los dos @\<select\>@ de 'Widgets.Comparison' siguen
+-- sosteniendo la elección viva en un @Dynamic@; esto es con qué se monta. Con
+-- 'noParams' el render es el de siempre.
+--
+-- __La forma es abierta a propósito, y eso es lo que hay que saber al leer un
+-- campo:__ nada ata 'wpDriver' a 'Telemetry' ni 'wpDrivers' a 'LapComparison',
+-- así que un widget puede leer un campo que no le corresponde. El tipo no lo
+-- impide.
+data WidgetParams = WidgetParams
+  { wpSession :: Maybe Text
+    -- ^ Valor de @?session=@: una clave de sesión (p. ej. @"2026-05-R"@).
+  , wpDriver  :: Maybe Text
+    -- ^ Valor de @?driver=@ de telemetría: __un número de coche__ (p. ej.
+    -- @"1"@), no un acrónimo — el desajuste de vocabularios es el de
+    -- 'LapComparison'.
+  , wpDrivers :: Maybe Text
+    -- ^ Valor de @?drivers=@ de comparación, __ya compuesto__: dos números de
+    -- coche separados por coma (@"1,16"@). Que sean exactamente dos no lo
+    -- impide el tipo; lo garantiza @Common.Route.driversParam@, que es quien
+    -- compone este valor.
+  }
   deriving stock (Eq, Show, Generic)
-  deriving newtype (ToJSON, FromJSON)
+
+-- El récord tiene instancias genéricas, y con el pin de aeson (2.3.1.0) el
+-- @omittedField@ de un campo 'Maybe' admite la clave ausente como 'Nothing': un
+-- parámetro nuevo no costará migración del layout guardado.
+instance ToJSON WidgetParams
+instance FromJSON WidgetParams
+
+-- | 'WidgetParams' sin ninguna elección: los tres campos en 'Nothing', o sea
+-- «cada endpoint con su default». Es lo que monta una 'WidgetConfig' que no
+-- configura nada, y el motivo de que añadir el récord no cambie el render.
+noParams :: WidgetParams
+noParams = WidgetParams
+  { wpSession = Nothing
+  , wpDriver  = Nothing
+  , wpDrivers = Nothing
+  }
 
 -- | Configuración de un widget dentro de un 'Layout'.
+--
+-- 'widgetId' lo pone __quien construye el 'Layout'__ y es opaco: único dentro del
+-- 'Layout' y estable frente a reordenar, ocultar y editar parámetros. Que sea
+-- explícito es lo que hace referenciable a un widget — sin él la identidad era el
+-- tipo y dos 'Telemetry' colisionaban. La unicidad es __convención y no tipo__:
+-- @['WidgetConfig']@ admite ids repetidos. Ver (2026-09-01).
 data WidgetConfig = WidgetConfig
-  { widgetId   :: WidgetId
-  , widgetType :: WidgetType
-  , params     :: WidgetParams
+  { widgetId      :: WidgetId
+  , widgetType    :: WidgetType
+  , params        :: WidgetParams
+  , widgetVisible :: Bool
+    -- ^ Si el widget se monta. El oculto __conserva su sitio en el orden y sus
+    -- parámetros__, que es la razón de que sea un campo y no una lista aparte en
+    -- 'Layout': el desplegable puede listar todas las opciones recorriendo una
+    -- sola lista.
+  , widgetGroup   :: Maybe Text
+    -- ^ Etiqueta del grupo al que pertenece, o 'Nothing' si va suelto. Un grupo
+    -- es __adyacencia en el orden más una etiqueta__ —clase y encabezado—, sin
+    -- anidamiento en el tipo; dos widgets del mismo grupo no adyacentes se
+    -- pintan como dos grupos.
   }
   deriving stock (Eq, Show, Generic)
 

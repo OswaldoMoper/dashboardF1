@@ -8,8 +8,13 @@
 -- 'widgetType' a los widgets existentes ('liveTimingWidget' \/ 'telemetryWidget') y
 -- da un placeholder para los tipos aún no implementados. Dos botones conmutan entre
 -- dos 'Layout' fijos ('raceOverview' \/ 'qualy') sosteniendo un @Dynamic t Layout@;
--- 'dyn_' re-monta la lista de widgets en cada cambio. Primer uso real de
--- 'Layout'\/'WidgetConfig'\/'WidgetType'\/'WidgetParams'\/'WidgetId' en el frontend.
+-- 'dyn_' re-monta la lista de widgets en cada cambio. Único consumidor de
+-- 'Layout'\/'WidgetConfig'\/'WidgetType'\/'WidgetParams'\/'WidgetId'.
+--
+-- __Los 'WidgetId' se escriben aquí__, uno por widget y a mano: desde el
+-- 2026-09-01 la identidad no se deriva del tipo, así que los layouts de este
+-- módulo son quienes la ponen. Un typo no lo caza el compilador; se nota al usar
+-- lo que referencia por id, no al compilar.
 --
 -- Observación: al conmutar, 'dyn_' re-monta los widgets, así que 'liveTimingWidget'
 -- re-dispara su fetch (@getPostBuild@ corre al montar). Aceptable en esta fase.
@@ -17,7 +22,7 @@ module Pages.Dashboard where
 
 import           Common.Types       (Layout (..), LayoutId (..),
                                      WidgetConfig (..), WidgetId (..),
-                                     WidgetParams (..), WidgetType (..))
+                                     WidgetType (..), noParams)
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
@@ -76,13 +81,21 @@ placeholderWidget name = divClass "widget widget--placeholder" $ do
   el "h2" $ text name
   elClass "p" "status status--placeholder" $ text "Widget no disponible"
 
--- | 'WidgetConfig' mínima para un 'WidgetType': 'WidgetId' derivado del tipo y
--- 'params' vacíos (mapa vacío; los widgets no toman parámetros aún).
-cfg :: WidgetType -> WidgetConfig
-cfg wt = WidgetConfig
-  { widgetId   = WidgetId (T.pack (show wt))
-  , widgetType = wt
-  , params     = WidgetParams mempty
+-- | 'WidgetConfig' mínima: el 'WidgetId' __lo pone quien llama__ y el resto va
+-- en su valor neutro — 'noParams' (cada endpoint con su default), visible y sin
+-- grupo—, de modo que el render es el mismo que antes de que los tres campos
+-- existieran.
+--
+-- El id es argumento y no derivado del tipo desde el 2026-09-01: derivarlo de
+-- @show wt@ hacía que la identidad __fuera__ el tipo, y entonces dos widgets del
+-- mismo tipo compartían id. Ver (2026-09-01).
+cfg :: WidgetId -> WidgetType -> WidgetConfig
+cfg wid wt = WidgetConfig
+  { widgetId      = wid
+  , widgetType    = wt
+  , params        = noParams
+  , widgetVisible = True
+  , widgetGroup   = Nothing
   }
 
 -- | Layout "Race Overview": live timing, telemetría, comparación de vueltas y las
@@ -92,17 +105,21 @@ raceOverview :: Layout
 raceOverview = Layout
   { layoutId = LayoutId "race-overview"
   , widgets  =
-      [ cfg LiveTiming
-      , cfg Telemetry
-      , cfg LapComparison
-      , cfg HistoricalStats
-      , cfg ConstructorStats
+      [ cfg (WidgetId "live-timing")       LiveTiming
+      , cfg (WidgetId "telemetry")         Telemetry
+      , cfg (WidgetId "lap-comparison")    LapComparison
+      , cfg (WidgetId "driver-stats")      HistoricalStats
+      , cfg (WidgetId "constructor-stats") ConstructorStats
       ]
   }
 
 -- | Layout "Qualy": solo live timing (conjunto distinto → valida la conmutación).
+--
+-- Su live timing lleva id __propio__ y no el de 'raceOverview': la unicidad solo
+-- se pide dentro de un 'Layout', pero un id por layout es lo que permite que los
+-- dos guarden estado distinto del mismo tipo de widget.
 qualy :: Layout
 qualy = Layout
   { layoutId = LayoutId "qualy"
-  , widgets  = [cfg LiveTiming]
+  , widgets  = [cfg (WidgetId "qualy-live-timing") LiveTiming]
   }
