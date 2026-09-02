@@ -98,15 +98,30 @@ cfg wid wt = WidgetConfig
   , widgetGroup   = Nothing
   }
 
--- | Layout "Race Overview": live timing, telemetría, comparación de vueltas y las
--- __dos__ clasificaciones históricas, que desde 2026-08-26 son dos widgets y ocupan
--- dos sitios de la rejilla en vez de compartir tarjeta.
+-- | Layout "Race Overview": live timing, __dos__ telemetrías, comparación de vueltas
+-- y las __dos__ clasificaciones históricas, que desde 2026-08-26 son dos widgets y
+-- ocupan dos sitios de la rejilla en vez de compartir tarjeta.
+--
+-- __Los dos 'Telemetry' son el entregable de varias instancias__, y solo son
+-- posibles desde que el id es explícito: derivado de @show wt@ los dos tenían el
+-- mismo. Cada uno hace su propio fetch de @\/api\/telemetry@ y sostiene su propio
+-- selector de piloto, así que pueden mostrar pilotos distintos a la vez — que es
+-- para lo que sirven: comparar dos peleas.
+--
+-- Van __adyacentes__ a propósito: el grupo es adyacencia más etiqueta
+-- (2026-09-01 c), así que este es el par que 'widgetGroup'
+-- va a agrupar.
+--
+-- Observación, no defecto a arreglar aquí: __el segundo fetch se paga__. Son dos
+-- peticiones de la misma lista multi-piloto, igual que las dos clasificaciones
+-- desde el 2026-08-26; el filtrado por piloto ya era en cliente.
 raceOverview :: Layout
 raceOverview = Layout
   { layoutId = LayoutId "race-overview"
   , widgets  =
       [ cfg (WidgetId "live-timing")       LiveTiming
       , cfg (WidgetId "telemetry")         Telemetry
+      , cfg (WidgetId "telemetry-2")       Telemetry
       , cfg (WidgetId "lap-comparison")    LapComparison
       , cfg (WidgetId "driver-stats")      HistoricalStats
       , cfg (WidgetId "constructor-stats") ConstructorStats
