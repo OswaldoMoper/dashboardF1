@@ -54,6 +54,13 @@
   - `data WidgetType = LiveTiming | Telemetry | LapComparison | TyreStrategy | HistoricalStats | Custom`
   - `data WidgetConfig = WidgetConfig { widgetId :: WidgetId, widgetType :: WidgetType, params :: WidgetParams }`
   - `data Layout = Layout { layoutId :: LayoutId, widgets :: [WidgetConfig] }`
+    - **Esta línea estaba incompleta desde que se escribió, y no se descubrió hasta el 2026-09-03.**
+      Es lo que la Fase 2 construyó de verdad y por eso se conserva, pero una **lista plana** no tiene
+      dónde guardar la colocación, y el requisito real —cada widget con su posición y su tamaño
+      propios— nunca llegó a ningún documento. De esta línea salieron encadenadas la rejilla
+      `auto-fit`, el «el orden es la colocación» del 2026-09-01 (c) y el `resize` de la
+      sesión 33. La forma correcta se decide el 2026-09-03 y los requisitos que
+      faltaban quedan escritos en la **Fase 6**.
 - Reflex:
   - `Dynamic t Layout` para la pantalla actual.
   - `renderWidget :: WidgetConfig -> m ()` para cada tipo.
@@ -224,10 +231,35 @@ propósito** desde el 2026-08-26, que descartó usarlo como discriminador para n
 esta fase decida cuál es. El entregable de las varias instancias es el consumidor que aquella decisión
 estaba esperando.
 
-**El diseño se cerró el 2026-09-01, y son tres decisiones de ese día.** Fija la identidad
-del widget, la forma de `WidgetParams` y qué guarda `Layout` —que resulta ser lo mismo que guardaba—, así
-que el código de la fase arranca sobre tipos ya decididos y los siete entregables de abajo tienen cada uno
-respondido qué tipo tocan.
+**El diseño del 2026-09-01 son tres decisiones, y solo dos siguen en pie.** La identidad
+del widget y la forma de `WidgetParams` quedan **firmes** y el código de la sesión 33 las ejercita. La
+tercera —qué guarda `Layout`, que concluía que no cambiaba— **queda superada el 2026-09-03**: se apoyaba
+en la lista plana de la L56, y la lista plana era la premisa incompleta. Ver la ampliación de abajo.
+
+**Ampliación del 2026-09-03 — tres requisitos que nunca estuvieron escritos, y de ahí el fallo.** No son
+nuevos: se dijeron al principio del proyecto y **no llegaron a ningún documento**, así que las decisiones
+de las sesiones 32 y 33 se tomaron sobre una premisa incompleta. Se escriben aquí para que no se pierdan
+por tercera vez, y su forma se decide el 2026-09-03 y en sus tres decisiones hermanas:
+
+- **El layout es un lienzo libre.** Cada widget tiene **posición y tamaño propios, independientes de los
+  demás**: uno a medio layout, dos apilados junto a uno alto, uno a un tercio de alto y a la mitad de
+  ancho. Se permiten **huecos vacíos**. El criterio que lo distingue de todo lo que se había escrito es
+  que **la proporción de cada widget es suya y no depende de una proporción general** — que es lo que
+  descarta tanto la lista plana como el árbol de particiones. En centésimas enteras, con imán a 24×24.
+- **Los grupos los declara el autor, y acoplan el tamaño.** Membresía **arbitraria** —por piloto, por
+  tipo, o por juntar una clasificación con una telemetría—, no derivada del tipo de widget ni de la
+  adyacencia. Dentro del grupo el borde entre dos miembros es un separador arrastrable y el grupo se
+  mueve y escala como un bloque.
+- **Una caja conmuta de contenido.** El mismo sitio del layout alberga varias vistas —la clasificación
+  con gap al líder, con gap al inmediato anterior o con los puntos que sumaría esa posición; o la
+  telemetría de un piloto y la comparación de otros dos— con una **lista de favoritos por caja** más un
+  «otro…» al catálogo completo. **Al conmutar la caja no cambia de tamaño**: un contenido más chaparro
+  deja el hueco de abajo reservado.
+
+**Dos preguntas abiertas a propósito**, anotadas como tales y no como deuda: **si dos widgets pueden
+encimarse** como las ventanas de un escritorio, y **qué hace el lienzo en pantalla estrecha** —la rejilla
+`auto-fit` daba el responsive gratis y un lienzo de posiciones libres no—. Las dos se deciden al ver el
+lienzo funcionando, no antes.
 
 **Dos cosas medidas el 2026-08-27 que acotan el coste, para que la fase no las descubra en marcha:**
 
@@ -240,11 +272,25 @@ respondido qué tipo tocan.
   ni `ghcjs-dom`, ni un solo `foreign import javascript` —todo el DOM va por `reflex-dom`— sigue siendo
   cierto y deja de ser un obstáculo. Lo que no cambia: `Pages.Dashboard` solo compila bajo GHCJS, donde el
   error no aparece hasta el build completo.
-- **La rejilla no guarda posiciones.** Es `repeat(auto-fit, minmax(24rem, 1fr))` con los widgets como
-  hermanos directos de `.page--dashboard`: la posición la decide el navegador y `Layout` solo tiene orden de
-  lista. **El diseño del 2026-09-01 (c) lo deja así**: el orden **es** la colocación, mover es reordenar la
-  lista y el tamaño no se persiste, así que la colocación no pasa a ser dato y el breakpoint de 2026-08-21
-  (c) sigue mandando sobre el número de columnas.
+- **~~La rejilla no guarda posiciones~~ — SUPERADO el 2026-09-03.** El hecho medido sigue siendo cierto:
+  `repeat(auto-fit, minmax(24rem, 1fr))` con los widgets como hermanos directos de `.page--dashboard`, la
+  posición la decide el navegador y `Layout` solo tiene orden de lista. Lo que ya no vale es la conclusión
+  que el 2026-09-01 (c) sacó de ahí —«el orden **es** la colocación», mover es reordenar y el tamaño no se
+  persiste—: con el lienzo libre la **colocación sí pasa a ser dato**, en centésimas por widget. El
+  descarte de guardar **coordenadas en píxeles** sobrevive intacto; lo que se descartaba con él y no debía
+  era guardar la colocación en absoluto. Y el breakpoint de 2026-08-21 (c) deja de mandar sobre el número
+  de columnas, porque deja de haber columnas: ver la pregunta abierta del responsive, arriba.
+
+- **Y la medición del arrastre se completa el 2026-09-03, sobre `reflex-dom-core 0.8.1.3`** —el pin real,
+  verificado sobre el cierre de `.#frontend`—. `Mousedown`, `Mousemove` y `Mouseup` **sí** están en el
+  `EventName`, y su `EventResultType` es **`(Int, Int)`**, que es `(clientX, clientY)`: mover por
+  coordenadas **no** pide `wrapDomEvent` ni `ghcjs-dom`, al contrario de lo que este punto daba por hecho
+  desde el 2026-08-27. Lo que sí cuesta: `clientX` es de viewport, así que convertirlo en centésimas
+  necesita el ancho del contenedor —lo da `resizeDetector`, re-exportado hasta `Reflex.Dom` y por tanto
+  **sin import nuevo**—; y `domEvent Mousemove` solo dispara mientras el puntero está **encima** del
+  elemento, así que el seguimiento a nivel de documento sigue pidiendo `wrapDomEvent`, o sea `ghcjs-dom`
+  declarado. **El lienzo no depende de esto**: con posiciones escritas a mano funciona igual, y arrastrar
+  es una capa encima.
 
 **Entregables:**
 
@@ -254,12 +300,26 @@ respondido qué tipo tocan.
       **Forma cerrada el 2026-09-01:** id explícito que pone quien construye el `Layout` (entrada del día),
       y `WidgetParams` como récord de `wpSession`/`wpDriver`/`wpDrivers` —los tres parámetros que
       `Common.Route` ya acepta— con `noParams` (entrada (b)).
-- [ ] Widgets movibles y redimensionables. Mover = reordenar `[WidgetConfig]` por *drag and drop* nativo;
-      redimensionar = `resize: both`, solo CSS y sin persistir (2026-09-01 (c)).
+- [ ] **Lienzo libre**: posición y tamaño propios por widget, en centésimas enteras, con huecos vacíos
+      permitidos (2026-09-03). Sustituye a la rejilla `auto-fit` como mecanismo de colocación.
+- [ ] Widgets movibles y redimensionables. **Reescrito el 2026-09-03**: mover y redimensionar son los dos
+      lo mismo —cambiar las centésimas de ese widget— y no dos entregables de coste distinto. Ni reordenar
+      la lista ni `resize: both`, que quedan superados.
+- [ ] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
+      que lo invierte mientras dura el arrastre (2026-09-03).
+- [ ] **Ancho mínimo por widget**, escrito en el código de cada uno, por debajo del cual el lienzo no deja
+      encoger; el alto solo con mínimo de título y control (2026-09-03 (d)).
+- [ ] **Recomposición por zonas** en los seis widgets: identidad envuelve, cifras mantienen línea, y se
+      escala donde no cabe. **A lo ancho no debe existir barra nunca** (2026-09-03 (d)).
 - [ ] Ocultar/mostrar con menú desplegable, sobre `widgetVisible :: Bool` en `WidgetConfig` (2026-09-01 (c)).
+      **Va detrás del lienzo**: escrito contra la lista plana se tiraba.
 - [ ] Varias instancias del mismo tipo de widget. **No pide tipo propio**: sale del id explícito.
-- [ ] Agrupación de widgets: adyacencia en el orden más `widgetGroup :: Maybe Text`, que emite clase y
-      encabezado. Sin anidamiento en `Layout` (2026-09-01 (c)).
+- [ ] Agrupación de widgets. **Reescrita el 2026-09-03 (b)**: el grupo lo **declara el autor** con
+      membresía arbitraria sobre `widgetGroup :: Maybe Text`, y **acopla el tamaño** —separador compartido
+      entre miembros, y el grupo se mueve y escala como bloque—. Ni adyacencia ni derivación por tipo.
+- [ ] **Conmutación de contenido por caja**: lista de favoritos configurada más «otro…» al catálogo
+      completo, con control híbrido —pestañas, desplegable al estrecharse, ciclado por el título—, y la
+      caja conservando su rectángulo al conmutar (2026-09-03 (c)).
 - [ ] Selector de sesión compartido por la página. Estado de **página**, no de `Layout`.
 
 **Lo que NO es de esta fase**, aunque se pida junto con lo de arriba y se le parezca:
