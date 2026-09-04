@@ -245,7 +245,8 @@ por tercera vez, y su forma se decide el 2026-09-03 y en sus tres decisiones her
   demás**: uno a medio layout, dos apilados junto a uno alto, uno a un tercio de alto y a la mitad de
   ancho. Se permiten **huecos vacíos**. El criterio que lo distingue de todo lo que se había escrito es
   que **la proporción de cada widget es suya y no depende de una proporción general** — que es lo que
-  descarta tanto la lista plana como el árbol de particiones. En centésimas enteras, con imán a 24×24.
+  descarta tanto la lista plana como el árbol de particiones. En enteros de **1/120 del contenedor**,
+  con imán a 24×24 — la unidad la fija el 2026-09-04, porque 120/24 = 5 es exacto y 100/24 no.
 - **Los grupos los declara el autor, y acoplan el tamaño.** Membresía **arbitraria** —por piloto, por
   tipo, o por juntar una clasificación con una telemetría—, no derivada del tipo de widget ni de la
   adyacencia. Dentro del grupo el borde entre dos miembros es un separador arrastrable y el grupo se
@@ -276,7 +277,7 @@ lienzo funcionando, no antes.
   `repeat(auto-fit, minmax(24rem, 1fr))` con los widgets como hermanos directos de `.page--dashboard`, la
   posición la decide el navegador y `Layout` solo tiene orden de lista. Lo que ya no vale es la conclusión
   que el 2026-09-01 (c) sacó de ahí —«el orden **es** la colocación», mover es reordenar y el tamaño no se
-  persiste—: con el lienzo libre la **colocación sí pasa a ser dato**, en centésimas por widget. El
+  persiste—: con el lienzo libre la **colocación sí pasa a ser dato**, en 1/120 por widget. El
   descarte de guardar **coordenadas en píxeles** sobrevive intacto; lo que se descartaba con él y no debía
   era guardar la colocación en absoluto. Y el breakpoint de 2026-08-21 (c) deja de mandar sobre el número
   de columnas, porque deja de haber columnas: ver la pregunta abierta del responsive, arriba.
@@ -285,7 +286,7 @@ lienzo funcionando, no antes.
   verificado sobre el cierre de `.#frontend`—. `Mousedown`, `Mousemove` y `Mouseup` **sí** están en el
   `EventName`, y su `EventResultType` es **`(Int, Int)`**, que es `(clientX, clientY)`: mover por
   coordenadas **no** pide `wrapDomEvent` ni `ghcjs-dom`, al contrario de lo que este punto daba por hecho
-  desde el 2026-08-27. Lo que sí cuesta: `clientX` es de viewport, así que convertirlo en centésimas
+  desde el 2026-08-27. Lo que sí cuesta: `clientX` es de viewport, así que convertirlo a 1/120
   necesita el ancho del contenedor —lo da `resizeDetector`, re-exportado hasta `Reflex.Dom` y por tanto
   **sin import nuevo**—; y `domEvent Mousemove` solo dispara mientras el puntero está **encima** del
   elemento, así que el seguimiento a nivel de documento sigue pidiendo `wrapDomEvent`, o sea `ghcjs-dom`
@@ -300,17 +301,25 @@ lienzo funcionando, no antes.
       **Forma cerrada el 2026-09-01:** id explícito que pone quien construye el `Layout` (entrada del día),
       y `WidgetParams` como récord de `wpSession`/`wpDriver`/`wpDrivers` —los tres parámetros que
       `Common.Route` ya acepta— con `noParams` (entrada (b)).
-- [ ] **Lienzo libre**: posición y tamaño propios por widget, en centésimas enteras, con huecos vacíos
+- [ ] **Lienzo libre**: posición y tamaño propios por widget, en enteros de 1/120, con huecos vacíos
       permitidos (2026-09-03). Sustituye a la rejilla `auto-fit` como mecanismo de colocación.
+      **Los cuatro campos están puestos desde la sesión 35**, y los dos layouts fijos llevan ya sus
+      coordenadas; falta el render, que es quien las lee.
 - [ ] Widgets movibles y redimensionables. **Reescrito el 2026-09-03**: mover y redimensionar son los dos
-      lo mismo —cambiar las centésimas de ese widget— y no dos entregables de coste distinto. Ni reordenar
+      lo mismo —cambiar las coordenadas de ese widget— y no dos entregables de coste distinto. Ni reordenar
       la lista ni `resize: both`, que quedan superados.
 - [ ] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
-      que lo invierte mientras dura el arrastre (2026-09-03).
-- [ ] **Ancho mínimo por widget**, escrito en el código de cada uno, por debajo del cual el lienzo no deja
-      encoger; el alto solo con mínimo de título y control (2026-09-03 (d)).
+      que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
+      desde la sesión 35**, con el imán apagado como caso normal y no como error; falta el arrastre.
+- [ ] **Ancho mínimo por widget**, en `Common.Layout.minWidthFor` y no en el código de cada uno
+      (2026-09-04 (b)), por debajo del cual el lienzo no deja encoger; el alto solo con mínimo de título y
+      control (2026-09-03 (d)). **Los siete números están escritos desde la sesión 35, y siguen siendo a
+      ojo** hasta medirlos en navegador.
+- [ ] **La marca de «aquí no cabe»**, sobre `Common.Layout.fitsAt`: nada se recoloca solo, y lo que no cabe
+      se avisa (2026-09-04 (c)). El predicado existe desde la sesión 35; falta pintarla.
 - [ ] **Recomposición por zonas** en los seis widgets: identidad envuelve, cifras mantienen línea, y se
-      escala donde no cabe. **A lo ancho no debe existir barra nunca** (2026-09-03 (d)).
+      escala donde no cabe. **A lo ancho no debe existir barra**, salvo el último recurso de la barra de
+      **página** cuando ni el mínimo del widget más ancho quepa (2026-09-03 (d), ampliado el 2026-09-04 (c)).
 - [ ] Ocultar/mostrar con menú desplegable, sobre `widgetVisible :: Bool` en `WidgetConfig` (2026-09-01 (c)).
       **Va detrás del lienzo**: escrito contra la lista plana se tiraba.
 - [ ] Varias instancias del mismo tipo de widget. **No pide tipo propio**: sale del id explícito.
