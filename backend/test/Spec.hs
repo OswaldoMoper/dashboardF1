@@ -40,6 +40,9 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, zeroLineY)
 import           Common.Format               (formatFixed, formatTrimmed, noData)
+import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
+                                              gridDivisions, minWidthFor,
+                                              overlaps, snapTo)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Types                (DriverEntry (..),
@@ -49,7 +52,10 @@ import           Common.Types                (DriverEntry (..),
                                               LiveTimingRow (..),
                                               StatEntity (..),
                                               TelemetryPoint (..),
-                                              TyreStint (..), statusLabel)
+                                              TyreStint (..),
+                                              WidgetConfig (..), WidgetId (..),
+                                              WidgetType (..), noParams,
+                                              statusLabel)
 import           Data.Aeson                  (eitherDecodeStrict)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
@@ -624,6 +630,145 @@ main = hspec $ do
     prop "formatFixed nunca emite notación científica" neverScientific
     prop "formatTrimmed no deja cola de ceros ni punto suelto" trimLeavesNoTail
 
+  -- La aritmética del lienzo libre (2026-09-03), cuarto
+  -- módulo de `common` que llega aquí por la puerta del 2026-08-04: el paquete
+  -- `frontend` no tiene suite. Aprieta más que los tres anteriores, porque su
+  -- consumidor —`Pages.Dashboard`— solo compila bajo GHCJS, así que un error suyo
+  -- no aparecería hasta el build completo.
+  describe "snapTo" $ do
+    it "pega a la celda más cercana, y con 24 divisiones el paso es 5 exacto" $ do
+      snapTo gridDivisions 0 `shouldBe` 0
+      snapTo gridDivisions 2 `shouldBe` 0
+      snapTo gridDivisions 3 `shouldBe` 5
+      snapTo gridDivisions 63 `shouldBe` 65
+      snapTo gridDivisions canvasSpan `shouldBe` canvasSpan
+
+    it "recorta al lienzo la coordenada que se sale por cualquiera de los dos lados" $ do
+      snapTo gridDivisions (-40) `shouldBe` 0
+      snapTo gridDivisions 500 `shouldBe` canvasSpan
+
+    -- El imán apagado no es un error ni pide un camino aparte en el consumidor:
+    -- es el estado que el interruptor del 2026-09-03 tiene que poder producir.
+    it "con divisiones <= 0 el imán está apagado y solo recorta" $ do
+      snapTo 0 63 `shouldBe` 63
+      snapTo (-1) 63 `shouldBe` 63
+      snapTo 0 500 `shouldBe` canvasSpan
+
+    it "las proporciones que el 2026-09-04 promete caen en celda" $ do
+      -- Mitad, tercio, cuarto y sexto. El quinto (24) es exacto como número pero
+      -- NO cae en celda, que es el resto vivo del riesgo «24 no divide entre 5».
+      map (snapTo gridDivisions) [60, 40, 30, 20] `shouldBe` [60, 40, 30, 20]
+      snapTo gridDivisions 24 `shouldBe` 25
+
+    prop "es idempotente: pegar algo ya pegado no lo mueve" snapIsIdempotent
+    prop "el resultado nunca sale del lienzo" snapStaysInCanvas
+
+  describe "clampToMin" $ do
+    it "sube al mínimo el widget demasiado estrecho para su contenido" $
+      wcW (clampToMin (rect LiveTiming (0, 0, 12, 40))) `shouldBe` minWidthFor LiveTiming
+
+    it "deja intacto al que ya cumple, sin redondear ni pegar a la rejilla" $
+      clampToMin (rect Telemetry (7, 3, 63, 41)) `shouldBe` rect Telemetry (7, 3, 63, 41)
+
+    -- El caso que fija el reparto del 2026-09-04 (c). Si esta función moviera el
+    -- widget, `fitsAt` no tendría nunca nada que decir sobre un layout saneado y
+    -- la marca visible no aparecería jamás.
+    it "no mueve nada nunca, ni cuando el widget se sale por la derecha" $ do
+      let w = clampToMin (rect LiveTiming (100, 10, 45, 40))
+      wcX w `shouldBe` 100
+      wcY w `shouldBe` 10
+      wcH w `shouldBe` 40
+
+    it "tampoco recorta al que se sale: ensanchar es todo lo que hace" $
+      wcW (clampToMin (rect Custom (0, 0, 200, 10))) `shouldBe` 200
+
+    prop "sube siempre al mínimo del tipo, sea cual sea la entrada" clampReachesMin
+
+  describe "fitsAt" $ do
+    it "acepta al widget que cabe donde dice estar" $
+      fitsAt (rect LiveTiming (0, 0, 60, 90)) `shouldBe` True
+
+    it "rechaza al que se sale por la derecha, que es lo que enciende la marca" $
+      fitsAt (rect LiveTiming (100, 0, 55, 40)) `shouldBe` False
+
+    it "rechaza al que baja de su ancho mínimo" $
+      fitsAt (rect LiveTiming (0, 0, 20, 40)) `shouldBe` False
+
+    it "rechaza la coordenada negativa" $
+      fitsAt (rect LiveTiming (-5, 0, 60, 40)) `shouldBe` False
+
+    -- Deliberado, no descuido: por el 2026-09-03 (d) encoger el alto se resuelve
+    -- con el scroll vertical que la tarjeta tiene desde el 2026-08-21, así que a
+    -- lo alto no hay nada que avisar.
+    it "no mira el eje vertical: un widget que se sale por abajo sí cabe" $
+      fitsAt (rect LiveTiming (0, 100, 60, 90)) `shouldBe` True
+
+  describe "overlaps" $ do
+    it "dos widgets separados no se enciman" $
+      overlaps (rect LiveTiming (0, 0, 50, 50)) (rect Telemetry (60, 60, 50, 50))
+        `shouldBe` False
+
+    -- El caso que el grupo acoplado del 2026-09-03 (b) produce constantemente:
+    -- dentro de un grupo el borde entre dos miembros ES un separador compartido.
+    it "el borde compartido no es solape" $ do
+      overlaps (rect LiveTiming (0, 0, 60, 90)) (rect Telemetry (60, 0, 60, 35))
+        `shouldBe` False
+      overlaps (rect Telemetry (60, 0, 60, 35)) (rect Telemetry (60, 35, 60, 35))
+        `shouldBe` False
+
+    it "un solo píxel de invasión ya es solape" $
+      overlaps (rect LiveTiming (0, 0, 61, 90)) (rect Telemetry (60, 0, 60, 35))
+        `shouldBe` True
+
+    it "un widget contenido en otro sí solapa, y no es un caso límite que esconder" $
+      overlaps (rect LiveTiming (0, 0, 120, 120)) (rect Custom (10, 10, 20, 20))
+        `shouldBe` True
+
+    it "un widget solapa consigo mismo" $
+      overlaps (rect LiveTiming (0, 0, 60, 90)) (rect LiveTiming (0, 0, 60, 90))
+        `shouldBe` True
+
+    prop "es simétrica" overlapIsSymmetric
+
+  -- __El caso que más vale de todo el bloque.__ Los siete rectángulos de
+  -- `Pages.Dashboard` están escritos a mano y un typo NO lo caza el compilador —
+  -- mismo riesgo que los `WidgetId` literales del 2026-09-01, con la misma
+  -- consecuencia: se nota al mirar la página, no al compilar.
+  --
+  -- __Los layouts son una COPIA__ y esa es su debilidad: `frontend` no está en
+  -- `cabal.project`, así que la suite no puede importar los de verdad. Si alguien
+  -- toca las coordenadas de `Pages.Dashboard` y no toca estas, el test seguirá
+  -- verde midiendo un layout que ya no existe. Mientras sea copia, hay que
+  -- cambiar los dos sitios.
+  describe "los layouts fijos de Pages.Dashboard" $ do
+    it "los siete widgets caben donde dicen estar" $
+      filter (not . fitsAt) (raceOverviewFixture <> qualyFixture) `shouldBe` []
+
+    it "clampToMin no cambia ninguno: los siete respetan ya su ancho mínimo" $
+      map clampToMin (raceOverviewFixture <> qualyFixture)
+        `shouldBe` (raceOverviewFixture <> qualyFixture)
+
+    it "ningún par de Race Overview se encima" $
+      [ (widgetId a, widgetId b)
+      | (i, a) <- zip [0 :: Int ..] raceOverviewFixture
+      , (j, b) <- zip [0 :: Int ..] raceOverviewFixture
+      , i < j
+      , overlaps a b
+      ] `shouldBe` []
+
+    -- El hueco de 60,85 a 120,90 es deliberado (los huecos son legales desde el
+    -- 2026-09-03) y existe para comprobar al encender el render que el lienzo NO
+    -- lo rellena solo. Si desaparece de `Pages.Dashboard`, esa comprobación se
+    -- pierde en silencio.
+    it "Race Overview deja libre el hueco de debajo de lap-comparison" $
+      filter (overlaps (rect Custom (60, 85, 60, 5))) raceOverviewFixture
+        `shouldBe` []
+
+    it "las coordenadas caen todas en celda del imán" $
+      let coords w = [wcX w, wcY w, wcW w, wcH w]
+       in filter ((/= 0) . (`mod` 5)) (concatMap coords (raceOverviewFixture <> qualyFixture))
+            `shouldBe` []
+
 -- * Propiedades
 
 -- | @points@\/@wins@ llegan de Ergast como enteros en cadena; es la forma que
@@ -650,7 +795,86 @@ staysInsideViewBox xs = all inside (deltaPoints xs)
     inside (x, y) =
       x >= 0 && x <= chartWidth && y >= chartPad && y <= chartHeight - chartPad
 
+-- | El invariante que hace usable al imán, y el que no se ve mirando: pegar algo
+-- ya pegado no lo mueve. Sin él, arrastrar dos veces desplazaría el widget sin
+-- que el usuario lo pida.
+--
+-- Va sobre __cualquier__ número de divisiones y no solo sobre las que dividen a
+-- 120, porque el doble redondeo —a celda, y de vuelta a unidades— es justamente
+-- donde podría perderse: 24 no divide entre 5 ni entre 7 (riesgo escrito el
+-- 2026-09-03), así que esas rejillas tienen paso no entero.
+snapIsIdempotent :: Int -> Int -> Property
+snapIsIdempotent d v = snapTo d (snapTo d v) === snapTo d v
+
+-- | El imán nunca escupe una coordenada fuera del lienzo, ni siquiera partiendo
+-- de una que ya lo estaba.
+snapStaysInCanvas :: Int -> Int -> Property
+snapStaysInCanvas d v = r >= 0 .&&. r <= canvasSpan
+  where r = snapTo d v
+
+-- | Tras 'clampToMin' el ancho cumple el mínimo del tipo, venga como venga la
+-- entrada. Es la garantía entera de la función; lo que NO garantiza —que el
+-- widget quepa— es de 'fitsAt' (2026-09-04 c).
+clampReachesMin :: Int -> Int -> Int -> Int -> Bool
+clampReachesMin x y w h =
+  wcW (clampToMin r) >= minWidthFor (widgetType r)
+  where r = rect LiveTiming (x, y, w, h)
+
+-- | Que A se encime con B y que B se encime con A son la misma pregunta. Si no lo
+-- fueran, el resultado dependería del orden de la lista de widgets — que es
+-- exactamente lo que el lienzo libre dejó de significar.
+overlapIsSymmetric :: Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Property
+overlapIsSymmetric ax ay aw ah bx by bw bh = overlaps a b === overlaps b a
+  where
+    a = rect LiveTiming (ax, ay, aw, ah)
+    b = rect Telemetry (bx, by, bw, bh)
+
 -- * Helpers
+
+-- | 'WidgetConfig' de usar y tirar con un rectángulo dado. El 'WidgetId' se
+-- deriva del tipo y de la posición porque aquí no se prueba la identidad; para
+-- los layouts fijos, 'rectNamed' pone el id de verdad.
+rect :: WidgetType -> (Int, Int, Int, Int) -> WidgetConfig
+rect = rectNamed "w"
+
+-- | Espejo de 'rect' con el 'WidgetId' explícito, para que los fallos del bloque
+-- de los layouts fijos digan __qué widget__ y no «el tercero».
+rectNamed :: T.Text -> WidgetType -> (Int, Int, Int, Int) -> WidgetConfig
+rectNamed wid wt (x, y, w, h) = WidgetConfig
+  { widgetId      = WidgetId wid
+  , widgetType    = wt
+  , params        = noParams
+  , widgetVisible = True
+  , widgetGroup   = Nothing
+  , wcX           = x
+  , wcY           = y
+  , wcW           = w
+  , wcH           = h
+  }
+
+-- | __Copia__ de @Pages.Dashboard.raceOverview@, y no el valor de verdad: el
+-- paquete @frontend@ no está en @cabal.project@ y solo se construye con GHCJS, así
+-- que esta suite no puede importarlo.
+--
+-- __Es deuda, y conviene decirlo aquí donde se ve:__ si las coordenadas cambian
+-- allí y no aquí, estos casos siguen verdes midiendo un layout que ya no existe.
+-- Se acepta porque la alternativa —no probarlos— deja los siete rectángulos
+-- escritos a mano sin nada que cace un typo, que es el riesgo que este bloque
+-- existe para cubrir.
+raceOverviewFixture :: [WidgetConfig]
+raceOverviewFixture =
+  [ rectNamed "live-timing"       LiveTiming       (  0,  0, 60, 90)
+  , rectNamed "telemetry"         Telemetry        ( 60,  0, 60, 35)
+  , rectNamed "telemetry-2"       Telemetry        ( 60, 35, 60, 35)
+  , rectNamed "lap-comparison"    LapComparison    ( 60, 70, 60, 15)
+  , rectNamed "driver-stats"      HistoricalStats  (  0, 90, 60, 30)
+  , rectNamed "constructor-stats" ConstructorStats ( 60, 90, 60, 30)
+  ]
+
+-- | Copia de @Pages.Dashboard.qualy@, con la misma advertencia que
+-- 'raceOverviewFixture'. Es el caso límite del rectángulo: el lienzo entero.
+qualyFixture :: [WidgetConfig]
+qualyFixture = [rectNamed "qualy-live-timing" LiveTiming (0, 0, 120, 120)]
 
 -- | Decodifica un fixture y aplana la clasificación de pilotos. Un fixture que no
 -- decodifica es un error del test, no un fallo del código bajo prueba: por eso
