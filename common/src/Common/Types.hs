@@ -305,20 +305,48 @@ noParams = WidgetParams
 -- explícito es lo que hace referenciable a un widget — sin él la identidad era el
 -- tipo y dos 'Telemetry' colisionaban. La unicidad es __convención y no tipo__:
 -- @['WidgetConfig']@ admite ids repetidos. Ver (2026-09-01).
+--
+-- __Los cuatro últimos campos son el lienzo libre__
+-- (2026-09-03): cada widget lleva posición y tamaño __propios, independientes de
+-- los demás__, que es lo que descarta la lista plana y el árbol de particiones.
+-- Los huecos vacíos son legales y el orden de la lista __ya no coloca nada__.
+--
+-- __La unidad es 1\/120 del contenedor, y no la centésima__
+-- (2026-09-04). La rejilla del imán es de 24×24, y 120\/24 = 5 __exacto__ mientras
+-- 100\/24 = 4.166… obligaba a pasos alternos de 4 y de 5. Con 120 caen en celda
+-- la mitad (60), el tercio (40), el cuarto (30) y el sexto (20); el quinto es 24,
+-- exacto como número aunque el imán no lo alcance.
+--
+-- La aritmética que gobierna estos cuatro campos —pegar a la rejilla, el ancho
+-- mínimo, y si un widget cabe donde dice estar— vive en "Common.Layout", que es
+-- pura y sí tiene suite. __Nada aquí la impone:__ el récord admite un
+-- @wcX + wcW > 120@, igual que admite ids repetidos.
 data WidgetConfig = WidgetConfig
   { widgetId      :: WidgetId
   , widgetType    :: WidgetType
   , params        :: WidgetParams
   , widgetVisible :: Bool
-    -- ^ Si el widget se monta. El oculto __conserva su sitio en el orden y sus
-    -- parámetros__, que es la razón de que sea un campo y no una lista aparte en
+    -- ^ Si el widget se monta. El oculto __conserva sus parámetros y su sitio en
+    -- el lienzo__, que es la razón de que sea un campo y no una lista aparte en
     -- 'Layout': el desplegable puede listar todas las opciones recorriendo una
     -- sola lista.
   , widgetGroup   :: Maybe Text
-    -- ^ Etiqueta del grupo al que pertenece, o 'Nothing' si va suelto. Un grupo
-    -- es __adyacencia en el orden más una etiqueta__ —clase y encabezado—, sin
-    -- anidamiento en el tipo; dos widgets del mismo grupo no adyacentes se
-    -- pintan como dos grupos.
+    -- ^ Etiqueta del grupo al que pertenece, o 'Nothing' si va suelto. La
+    -- membresía es __arbitraria y la declara el autor__ —por piloto, por tipo, o
+    -- por juntar una clasificación con una telemetría porque se miran a la vez—:
+    -- ni se deriva del tipo de widget ni de la adyacencia. Dentro del grupo el
+    -- tamaño de los miembros queda __acoplado__ (el borde entre dos es un
+    -- separador arrastrable, y el grupo se mueve y escala como un bloque), que es
+    -- justo lo que el lienzo niega fuera del grupo. Ver
+    -- (2026-09-03 b).
+  , wcX           :: Int
+    -- ^ Borde izquierdo, en 1\/120 del __ancho__ del contenedor.
+  , wcY           :: Int
+    -- ^ Borde superior, en 1\/120 del __alto__.
+  , wcW           :: Int
+    -- ^ Ancho, en 1\/120 del ancho del contenedor.
+  , wcH           :: Int
+    -- ^ Alto, en 1\/120 del alto del contenedor.
   }
   deriving stock (Eq, Show, Generic)
 

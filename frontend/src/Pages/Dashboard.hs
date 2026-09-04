@@ -81,26 +81,35 @@ placeholderWidget name = divClass "widget widget--placeholder" $ do
   el "h2" $ text name
   elClass "p" "status status--placeholder" $ text "Widget no disponible"
 
--- | 'WidgetConfig' mínima: el 'WidgetId' __lo pone quien llama__ y el resto va
--- en su valor neutro — 'noParams' (cada endpoint con su default), visible y sin
--- grupo—, de modo que el render es el mismo que antes de que los tres campos
--- existieran.
+-- | 'WidgetConfig' con su sitio en el lienzo: el 'WidgetId' y el rectángulo
+-- __los pone quien llama__, y el resto va en su valor neutro — 'noParams' (cada
+-- endpoint con su default), visible y sin grupo—.
 --
 -- El id es argumento y no derivado del tipo desde el 2026-09-01: derivarlo de
 -- @show wt@ hacía que la identidad __fuera__ el tipo, y entonces dos widgets del
 -- mismo tipo compartían id. Ver (2026-09-01).
-cfg :: WidgetId -> WidgetType -> WidgetConfig
-cfg wid wt = WidgetConfig
+--
+-- __El rectángulo también es argumento, y no puede no serlo__: con el lienzo
+-- libre (2026-09-03) la colocación es dato del widget, así
+-- que un valor neutro sería apilar los siete en @0,0@. La tupla es
+-- @(x, y, ancho, alto)@ en __1\/120 del contenedor__ (2026-09-04), no en
+-- píxeles ni en centésimas.
+cfg :: WidgetId -> WidgetType -> (Int, Int, Int, Int) -> WidgetConfig
+cfg wid wt (x, y, w, h) = WidgetConfig
   { widgetId      = wid
   , widgetType    = wt
   , params        = noParams
   , widgetVisible = True
   , widgetGroup   = Nothing
+  , wcX           = x
+  , wcY           = y
+  , wcW           = w
+  , wcH           = h
   }
 
 -- | Layout "Race Overview": live timing, __dos__ telemetrías, comparación de vueltas
 -- y las __dos__ clasificaciones históricas, que desde 2026-08-26 son dos widgets y
--- ocupan dos sitios de la rejilla en vez de compartir tarjeta.
+-- ocupan dos sitios propios en vez de compartir tarjeta.
 --
 -- __Los dos 'Telemetry' son el entregable de varias instancias__, y solo son
 -- posibles desde que el id es explícito: derivado de @show wt@ los dos tenían el
@@ -108,9 +117,36 @@ cfg wid wt = WidgetConfig
 -- selector de piloto, así que pueden mostrar pilotos distintos a la vez — que es
 -- para lo que sirven: comparar dos peleas.
 --
--- Van __adyacentes__ a propósito: el grupo es adyacencia más etiqueta
--- (2026-09-01 c), así que este es el par que 'widgetGroup'
--- va a agrupar.
+-- Es el par que 'widgetGroup' va a agrupar, y __no por estar juntos__: desde el
+-- 2026-09-03 (b) la membresía del grupo la declara el autor y no la adyacencia
+-- (que además ya no significa nada, porque el orden de la lista dejó de colocar).
+--
+-- __La colocación es la del requisito__ que descartó la lista y el árbol —«uno a
+-- medio layout, dos apilados junto a uno alto»—, en unidades de 120
+-- (2026-09-03 y 2026-09-04):
+--
+-- > 0            60           120
+-- > ┌────────────┬────────────┐  0
+-- > │            │  telemetry │
+-- > │            ├────────────┤ 35
+-- > │ live-timing│ telemetry-2│
+-- > │            ├────────────┤ 70
+-- > │            │ lap-compar │
+-- > │            ├╌╌╌╌╌╌╌╌╌╌╌╌┤ 85
+-- > ├────────────┼────────────┤ 90
+-- > │ driver-st  │ constr-st  │
+-- > └────────────┴────────────┘ 120
+--
+-- Las cinco unidades bajo @lap-comparison@ quedan __vacías a propósito__. Los
+-- huecos son legales desde el 2026-09-03, y este existe para comprobar al
+-- encender el render que el lienzo __no lo rellena solo__: es la propiedad que lo
+-- distingue de la rejilla @auto-fit@ que sustituye.
+--
+-- Todos los números son múltiplos de 5, o sea celda del imán de 24×24.
+--
+-- Un typo aquí __no lo caza el compilador__ —mismo riesgo que los 'WidgetId'
+-- literales del 2026-09-01—, y por eso los siete rectángulos de este módulo los
+-- ejercita @backend-test@ contra "Common.Layout".
 --
 -- Observación, no defecto a arreglar aquí: __el segundo fetch se paga__. Son dos
 -- peticiones de la misma lista multi-piloto, igual que las dos clasificaciones
@@ -119,12 +155,12 @@ raceOverview :: Layout
 raceOverview = Layout
   { layoutId = LayoutId "race-overview"
   , widgets  =
-      [ cfg (WidgetId "live-timing")       LiveTiming
-      , cfg (WidgetId "telemetry")         Telemetry
-      , cfg (WidgetId "telemetry-2")       Telemetry
-      , cfg (WidgetId "lap-comparison")    LapComparison
-      , cfg (WidgetId "driver-stats")      HistoricalStats
-      , cfg (WidgetId "constructor-stats") ConstructorStats
+      [ cfg (WidgetId "live-timing")       LiveTiming       (  0,  0, 60, 90)
+      , cfg (WidgetId "telemetry")         Telemetry        ( 60,  0, 60, 35)
+      , cfg (WidgetId "telemetry-2")       Telemetry        ( 60, 35, 60, 35)
+      , cfg (WidgetId "lap-comparison")    LapComparison    ( 60, 70, 60, 15)
+      , cfg (WidgetId "driver-stats")      HistoricalStats  (  0, 90, 60, 30)
+      , cfg (WidgetId "constructor-stats") ConstructorStats ( 60, 90, 60, 30)
       ]
   }
 
@@ -133,8 +169,10 @@ raceOverview = Layout
 -- Su live timing lleva id __propio__ y no el de 'raceOverview': la unicidad solo
 -- se pide dentro de un 'Layout', pero un id por layout es lo que permite que los
 -- dos guarden estado distinto del mismo tipo de widget.
+--
+-- Ocupa el lienzo entero, que es el caso límite del rectángulo: @0,0@ y 120×120.
 qualy :: Layout
 qualy = Layout
   { layoutId = LayoutId "qualy"
-  , widgets  = [cfg (WidgetId "qualy-live-timing") LiveTiming]
+  , widgets  = [cfg (WidgetId "qualy-live-timing") LiveTiming (0, 0, 120, 120)]
   }
