@@ -23,6 +23,7 @@ library
         Common.Chart
         Common.Format
         Common.Layout
+        Common.Origin
         Common.Route
         Common.Types
     build-depends:

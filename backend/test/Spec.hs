@@ -15,7 +15,7 @@
 -- de respaldo pinta—, y sin él nada impide que un cambio en un dummy deje al
 -- widget de mañana enseñando una lista que no contiene lo que está dibujando.
 --
--- Cubre además __tres__ módulos de @common@ que no son del backend, y por la misma
+-- Cubre además __cinco__ módulos de @common@ que no son del backend, y por la misma
 -- razón: viven allí precisamente para que esta suite los alcance, ya que el
 -- paquete @frontend@ no tiene ninguna (2026-08-04).
 --
@@ -28,6 +28,14 @@
 --   widget de comparación teclea (2026-08-05). Es lógica de
 --   __widget__ probada aquí: sin esto, lo único que impide mandar un acrónimo a
 --   un endpoint que lo absorbe en silencio estaría solo revisado a ojo.
+-- * 'Common.Layout' — la aritmética del lienzo, más los siete rectángulos de los
+--   layouts fijos, que son una __copia__ de @Pages.Dashboard@ porque @frontend@ no
+--   está en @cabal.project@ y la suite no puede importarlo.
+-- * 'Common.Origin' — la procedencia del dato que viaja en cabecera
+--   (2026-09-06). Quinto por la misma puerta, y el más
+--   claramente repartido entre los dos extremos: el backend escribe la etiqueta y
+--   el widget la lee, así que el ida y vuelta solo se puede probar donde los dos
+--   lados están a la vez, que es aquí.
 --
 -- Los fixtures son recortes reales de la respuesta de cada servicio en
 -- 'ByteString' y se decodifican con 'eitherDecodeStrict', así que cada caso
@@ -43,6 +51,8 @@ import           Common.Format               (formatFixed, formatTrimmed, noData
 import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
                                               gridDivisions, minWidthFor,
                                               overlaps, snapTo)
+import           Common.Origin               (Origin (..), originFrom,
+                                              originLabel, originNotice)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Types                (DriverEntry (..),
@@ -769,6 +779,45 @@ main = hspec $ do
        in filter ((/= 0) . (`mod` 5)) (concatMap coords (raceOverviewFixture <> qualyFixture))
             `shouldBe` []
 
+  describe "Common.Origin" $ do
+    it "cada procedencia tiene su valor de cabecera, y son distintos entre sí" $
+      map originLabel [minBound .. maxBound] `shouldBe` ["fresh", "cached", "sample"]
+
+    it "lee el valor tal cual lo emite el backend" $
+      map originFrom ["fresh", "cached", "sample"]
+        `shouldBe` [Just Fresh, Just Cached, Just Sample]
+
+    it "tolera espacios y mayúsculas de por medio" $
+      map originFrom ["  CACHED ", "Sample", "FrEsH"]
+        `shouldBe` [Just Cached, Just Sample, Just Fresh]
+
+    it "no adivina: lo que no reconoce es Nothing" $
+      map originFrom ["", "   ", "live", "cache", "dummy"]
+        `shouldBe` [Nothing, Nothing, Nothing, Nothing, Nothing]
+
+    it "el dato fresco no genera aviso, con hora o sin ella" $
+      [originNotice Fresh Nothing, originNotice Fresh (Just "14:32")]
+        `shouldBe` [Nothing, Nothing]
+
+    it "el dato guardado avisa y lleva la hora dentro" $
+      originNotice Cached (Just "14:32")
+        `shouldBe` Just "Dato guardado: la fuente no responde ahora mismo (14:32)"
+
+    it "el dato guardado sin hora sigue avisando, y sin paréntesis vacío" $
+      [originNotice Cached Nothing, originNotice Cached (Just "  ")]
+        `shouldBe` [ Just "Dato guardado: la fuente no responde ahora mismo"
+                   , Just "Dato guardado: la fuente no responde ahora mismo"
+                   ]
+
+    it "el dato de ejemplo avisa siempre, y la hora no le añade nada" $
+      [originNotice Sample Nothing, originNotice Sample (Just "14:32")]
+        `shouldBe` [ Just "Datos de ejemplo: la fuente nunca ha respondido"
+                   , Just "Datos de ejemplo: la fuente nunca ha respondido"
+                   ]
+
+    prop "originFrom es inversa de originLabel para las tres" originRoundTrips
+    prop "solo Fresh calla; los otros dos avisan siempre" onlyFreshIsSilent
+
 -- * Propiedades
 
 -- | @points@\/@wins@ llegan de Ergast como enteros en cadena; es la forma que
@@ -1456,3 +1505,31 @@ trimLeavesNoTail decimals x =
   where
     trimmed = formatTrimmed (decimals `mod` 7) x
     hasDot  = T.any (== '.') trimmed
+
+-- | Lo que hace utilizable la cabecera: lo que el backend escribe es exactamente lo
+-- que el widget recupera. Los casos de arriba lo comprueban sobre las tres
+-- etiquetas de hoy; esto lo ata al __tipo__, así que un constructor nuevo cuya
+-- etiqueta se olvide en 'originFrom' rompe aquí y no en producción.
+--
+-- El 'Origin' se genera desde un 'Int' con @mod@ en vez de declarar un 'Arbitrary',
+-- que es el patrón que ya usan 'neverScientific' y 'snapIsIdempotent'. El @3@ es el
+-- número de constructores; si crecen, el módulo tiene 'Bounded' y este @3@ se queda
+-- corto en silencio — de ahí que el primer caso del @describe@ recorra
+-- @[minBound .. maxBound]@ y no una lista escrita a mano.
+originRoundTrips :: Int -> Property
+originRoundTrips n = originFrom (originLabel origin) === Just origin
+  where
+    origin = toEnum (n `mod` 3)
+
+-- | La regla que gobierna el aviso: __callar es privilegio de 'Fresh'__ y de nadie
+-- más, con hora o sin ella. Es la propiedad que impide el fallo que motivó el
+-- módulo — servir un respaldo sin decirlo—, y la que impide el error simétrico:
+-- avisar sobre un dato que sí es bueno.
+onlyFreshIsSilent :: Int -> Maybe String -> Property
+onlyFreshIsSilent n at = silent === (origin == Fresh)
+  where
+    origin = toEnum (n `mod` 3)
+    silent =
+      case originNotice origin (T.pack <$> at) of
+        Nothing -> True
+        Just _  -> False
