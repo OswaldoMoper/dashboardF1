@@ -28,7 +28,8 @@
 --   widget de comparación teclea (2026-08-05). Es lógica de
 --   __widget__ probada aquí: sin esto, lo único que impide mandar un acrónimo a
 --   un endpoint que lo absorbe en silencio estaría solo revisado a ojo.
--- * 'Common.Layout' — la aritmética del lienzo, más los siete rectángulos de los
+-- * 'Common.Layout' — la aritmética del lienzo y la traducción del rectángulo a
+--   CSS (2026-09-07), más los siete rectángulos de los
 --   layouts fijos, que son una __copia__ de @Pages.Dashboard@ porque @frontend@ no
 --   está en @cabal.project@ y la suite no puede importarlo.
 -- * 'Common.Origin' — la procedencia del dato que viaja en cabecera
@@ -50,7 +51,8 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
 import           Common.Format               (formatFixed, formatTrimmed, noData)
 import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
                                               gridDivisions, minWidthFor,
-                                              overlaps, snapTo)
+                                              overlaps, slotStyle, snapTo,
+                                              spanCss)
 import           Common.Origin               (Origin (..), originFrom,
                                               originLabel, originNotice)
 import           Common.Route                (comparisonPathFor, driversParam,
@@ -740,6 +742,45 @@ main = hspec $ do
 
     prop "es simétrica" overlapIsSymmetric
 
+  -- La traducción del rectángulo a CSS (2026-09-07). Lo que
+  -- se prueba NO es la aritmética —con `calc` la hace el navegador y aquí no hay
+  -- ninguna división— sino que la traducción __no pierde nada__: si la unidad
+  -- viaja literal, la exactitud de los bordes compartidos es consecuencia y no
+  -- hace falta una cota de redondeo que probar.
+  describe "slotStyle" $ do
+    it "emite la unidad y el lienzo tal cual, sin dividir" $
+      spanCss 35 `shouldBe` "calc(35 * 100% / 120)"
+
+    -- El caso que motivó `calc`: 35·100/120 = 29.1666… Si alguna unidad llegara
+    -- a producir un decimal, la división se estaría haciendo aquí.
+    it "ninguna unidad del lienzo produce un decimal" $
+      filter (T.any (== '.')) (map spanCss [0 .. canvasSpan]) `shouldBe` []
+
+    it "emite las cuatro declaraciones, y ninguna más" $
+      map (T.takeWhile (/= ':')) (T.splitOn "; " (slotStyle (rect LiveTiming (0, 0, 60, 90))))
+        `shouldBe` ["left", "top", "width", "height"]
+
+    -- El borde entre `telemetry` y `telemetry-2`, que `overlaps` ya declaró que
+    -- no es solape: el bajo de uno y el alto del otro tienen que salir como la
+    -- MISMA cantidad, no como dos redondeos que casi coinciden. Es lo que impide
+    -- la raya de fondo o el píxel montado entre dos widgets pegados.
+    it "el borde compartido de dos widgets pegados es la misma cantidad exacta" $
+      let arriba = rect Telemetry (60,  0, 60, 35)
+          abajo  = rect Telemetry (60, 35, 60, 35)
+       in spanCss (wcY arriba + wcH arriba) `shouldBe` spanCss (wcY abajo)
+
+    it "el widget que llena el lienzo va del 0 al 100 %" $
+      map slotStyle qualyFixture
+        `shouldBe` [ "left: calc(0 * 100% / 120); top: calc(0 * 100% / 120); \
+                     \width: calc(120 * 100% / 120); height: calc(120 * 100% / 120)" ]
+
+    -- Las 5 unidades bajo `lap-comparison` son un hueco deliberado (los huecos
+    -- son legales desde el 2026-09-03) y existen para comprobar que el lienzo NO
+    -- los rellena solo. Si la traducción los cerrara por redondeo, la
+    -- comprobación visual de hoy diría que sí los rellena y sería mentira.
+    it "el hueco bajo lap-comparison sobrevive a la traducción" $
+      spanCss 85 `shouldNotBe` spanCss 90
+
   -- __El caso que más vale de todo el bloque.__ Los siete rectángulos de
   -- `Pages.Dashboard` están escritos a mano y un typo NO lo caza el compilador —
   -- mismo riesgo que los `WidgetId` literales del 2026-09-01, con la misma
@@ -773,6 +814,22 @@ main = hspec $ do
     it "Race Overview deja libre el hueco de debajo de lap-comparison" $
       filter (overlaps (rect Custom (60, 85, 60, 5))) raceOverviewFixture
         `shouldBe` []
+
+    -- Los mismos siete rectángulos, ahora vistos por el lado que la página
+    -- consume. Los dos casos de arriba dicen que los rectángulos son legales;
+    -- este dice CUÁLES son, que es lo único que caza un 35 escrito donde iba
+    -- un 30.
+    it "los siete slots traducen a su rectángulo" $
+      map slotStyle (raceOverviewFixture <> qualyFixture)
+        `shouldBe` map expectedSlot
+             [ (  0,  0,  60,  90)
+             , ( 60,  0,  60,  35)
+             , ( 60, 35,  60,  35)
+             , ( 60, 70,  60,  15)
+             , (  0, 90,  60,  30)
+             , ( 60, 90,  60,  30)
+             , (  0,  0, 120, 120)
+             ]
 
     it "las coordenadas caen todas en celda del imán" $
       let coords w = [wcX w, wcY w, wcW w, wcH w]
@@ -900,6 +957,20 @@ rectNamed wid wt (x, y, w, h) = WidgetConfig
   , wcW           = w
   , wcH           = h
   }
+
+-- | El estilo que un rectángulo __debe__ producir, escrito a mano y __no__ con
+-- 'spanCss': si el esperado llamara a la función bajo prueba, cambiar el
+-- denominador o el orden de las declaraciones dejaría el caso verde. Aquí el
+-- @120@, el orden y el separador son literales, así que cualquiera de las tres
+-- cosas se nota.
+expectedSlot :: (Int, Int, Int, Int) -> T.Text
+expectedSlot (x, y, w, h) = T.intercalate "; "
+  [ "left: calc("   <> n x <> " * 100% / 120)"
+  , "top: calc("    <> n y <> " * 100% / 120)"
+  , "width: calc("  <> n w <> " * 100% / 120)"
+  , "height: calc(" <> n h <> " * 100% / 120)"
+  ]
+  where n = T.pack . show
 
 -- | __Copia__ de @Pages.Dashboard.raceOverview@, y no el valor de verdad: el
 -- paquete @frontend@ no está en @cabal.project@ y solo se construye con GHCJS, así

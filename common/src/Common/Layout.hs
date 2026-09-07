@@ -1,5 +1,6 @@
 -- | Aritmética del __lienzo libre__: pegar a la rejilla, el ancho mínimo por
--- widget, y si un widget cabe donde dice estar.
+-- widget, si un widget cabe donde dice estar, y la traducción de su rectángulo a
+-- CSS.
 --
 -- Desde el 2026-09-03 un 'Common.Types.Layout' no es una
 -- lista cuyo orden coloca ni un árbol cuyos hermanos reparten: cada widget lleva
@@ -28,6 +29,9 @@ module Common.Layout
   ( -- * El lienzo
     canvasSpan
   , gridDivisions
+    -- * El slot
+  , slotStyle
+  , spanCss
     -- * Imán
   , snapTo
     -- * Ancho mínimo
@@ -39,6 +43,8 @@ module Common.Layout
   ) where
 
 import           Common.Types (WidgetConfig (..), WidgetType (..))
+import           Data.Text    (Text)
+import qualified Data.Text    as T
 
 -- | Lado del lienzo, en sus propias unidades: __120__, en los dos ejes.
 --
@@ -59,6 +65,48 @@ canvasSpan = 120
 -- mientras dura el arrastre.
 gridDivisions :: Int
 gridDivisions = 24
+
+-- | Una medida en unidades del lienzo, como longitud CSS: @35@ sale como
+-- @calc(35 * 100% \/ 120)@.
+--
+-- __El @calc@ es la decisión, no un detalle de escritura__ (2026-09-07). La otra
+-- salida era emitir el porcentaje ya dividido, y no es equivalente: @35@ da
+-- @29.1666…@, o sea que habría que elegir cuántos decimales y aceptar el error
+-- que dejan. Con @calc@ la división __no se hace aquí__: viajan el numerador y el
+-- denominador tal cual y la resuelve el navegador a precisión de subpíxel.
+--
+-- Lo que eso compra es __exactitud en los bordes compartidos__, que es donde el
+-- redondeo se vería. Dos widgets pegados —uno acabando en 60 y el otro empezando
+-- en 60, el caso que el par @telemetry@\/@telemetry-2@ produce— no dejan una raya
+-- de fondo entre ellos ni se montan un píxel, porque
+-- @calc(60 * 100% \/ 120)@ y @calc(60 * 100% \/ 120)@ son __la misma cantidad__ y
+-- no dos redondeos que casi coinciden. Lo que se paga es que el inspector del
+-- navegador muestra la expresión y no el porcentaje.
+--
+-- __No recorta ni valida__: una coordenada fuera del lienzo se traduce igual, y
+-- decir que no cabe es cosa de 'fitsAt'.
+spanCss :: Int -> Text
+spanCss v =
+  "calc(" <> T.pack (show v) <> " * 100% / " <> T.pack (show canvasSpan) <> ")"
+
+-- | Estilo del __slot__ de un widget: los cuatro bordes de su rectángulo como
+-- declaraciones CSS, listas para el atributo @style@.
+--
+-- El slot es la caja que __envuelve__ al widget y lo coloca. El widget no sabe
+-- dónde va —@renderWidget@ despacha por tipo y nada más—, así que el rectángulo lo
+-- pone quien llama; ver (2026-09-07).
+--
+-- __Emite la posición y el tamaño, y nada más.__ Ni @position: absolute@, ni el
+-- separador entre widgets, ni el @z-index@: eso es política del lienzo y vive en
+-- la hoja de estilos, junto a la regla de @.widget-slot@. Aquí solo está lo que
+-- __depende del dato__ y por eso no puede estar en un fichero @.css@.
+slotStyle :: WidgetConfig -> Text
+slotStyle w = T.intercalate "; "
+  [ "left: "   <> spanCss (wcX w)
+  , "top: "    <> spanCss (wcY w)
+  , "width: "  <> spanCss (wcW w)
+  , "height: " <> spanCss (wcH w)
+  ]
 
 -- | Pega una coordenada a una rejilla de N divisiones, y la deja siempre dentro
 -- del lienzo.
