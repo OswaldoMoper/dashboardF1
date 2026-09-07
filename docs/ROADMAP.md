@@ -262,6 +262,20 @@ encimarse** como las ventanas de un escritorio, y **qué hace el lienzo en panta
 `auto-fit` daba el responsive gratis y un lienzo de posiciones libres no—. Las dos se deciden al ver el
 lienzo funcionando, no antes.
 
+**Desde el 2026-09-07 la segunda ya se puede responder mirando, y ha crecido.** El lienzo existe, así
+que la pregunta deja de ser hipotética; y ahora arrastra tres cosas concretas que antes no tenía:
+
+- La **cabecera flotante** (2026-09-07 b) tapa lienzo, y en pantalla estrecha tapa proporcionalmente
+  más. El botón que la pliega tapa una esquina siempre.
+- Dentro del `@media (max-width: 52rem)`, `.app` baja su padding a `--sp-3` mientras `.canvas` resta
+  `--sp-5 * 2` fijo: el lienzo queda **1,5 rem corto** en estrecho. Es un defecto conocido y se arregla
+  **con** esta respuesta, no antes y no de paso.
+- Las dos `grid-column` de `.widget--comparison` siguen en la hoja, **inertes**, esperando a saber si el
+  estrecho vuelve a tener columnas o no.
+
+**Lo que hoy NO se hizo, y es deliberado:** ni un `@media` escrito a ojo. Cerrar el responsive por
+accidente mientras se encendía el lienzo era el riesgo, y se evitó no tocando el bloque.
+
 **Dos cosas medidas el 2026-08-27 que acotan el coste, para que la fase no las descubra en marcha:**
 
 - **Redimensionar y mover no cuestan lo mismo.** `resize: both` sobre `.widget` es CSS y cero Haskell —la
