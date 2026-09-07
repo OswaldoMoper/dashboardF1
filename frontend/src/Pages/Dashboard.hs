@@ -11,6 +11,13 @@
 -- 'dyn_' re-monta la lista de widgets en cada cambio. Único consumidor de
 -- 'Layout'\/'WidgetConfig'\/'WidgetType'\/'WidgetParams'\/'WidgetId'.
 --
+-- __Desde el 2026-09-07 el layout coloca de verdad.__ Hasta entonces los widgets
+-- se montaban como hermanos sobre una rejilla @auto-fit@ y el rectángulo de cada
+-- 'WidgetConfig' —que existe desde el 2026-09-03 y está probado en
+-- "Common.Layout"— no lo miraba nadie. Ahora 'slot' envuelve cada widget en su
+-- rectángulo y la rejilla desaparece. Lo que el @.css@ ya no puede saber lo emite
+-- 'Common.Layout.slotStyle', porque depende del dato y no de la clase.
+--
 -- __Los 'WidgetId' se escriben aquí__, uno por widget y a mano: desde el
 -- 2026-09-01 la identidad no se deriva del tipo, así que los layouts de este
 -- módulo son quienes la ponen. Un typo no lo caza el compilador; se nota al usar
@@ -20,6 +27,7 @@
 -- re-dispara su fetch (@getPostBuild@ corre al montar). Aceptable en esta fase.
 module Pages.Dashboard where
 
+import           Common.Layout      (slotStyle)
 import           Common.Types       (Layout (..), LayoutId (..),
                                      WidgetConfig (..), WidgetId (..),
                                      WidgetType (..), noParams)
@@ -30,13 +38,36 @@ import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
 import           Widgets.LiveTiming (liveTimingWidget)
 import           Widgets.Telemetry  (telemetryWidget)
 
--- | Pantalla del dashboard: barra de conmutación de layouts + la lista de widgets
--- del layout activo (re-montada con 'dyn_' en cada cambio).
+-- | Pantalla del dashboard: la cabecera —título y conmutación de layouts— y el
+-- __lienzo__ con los widgets del layout activo, cada uno en su rectángulo.
+--
+-- __La cabecera y el lienzo son hermanos, y no un encabezado dentro del lienzo__:
+-- los widgets se colocan desde la esquina de arriba de su contenedor, así que un
+-- título en flujo dentro de él lo taparía el widget de @y = 0@. La cabecera flota
+-- por encima (@position: sticky@ en la hoja de estilos) y el lienzo se lleva la
+-- ventana entera.
 dashboardPage :: MonadWidget t m => m ()
 dashboardPage = divClass "page page--dashboard" $ do
-  el "h1" $ text "F1 Functional Dashboard"
-  layoutDyn <- layoutSwitcher
-  dyn_ $ ffor layoutDyn $ \l -> mapM_ renderWidget (widgets l)
+  layoutDyn <- divClass "dashboard-header" $ do
+    el "h1" $ text "F1 Functional Dashboard"
+    layoutSwitcher
+  divClass "canvas" $
+    dyn_ $ ffor layoutDyn $ \l -> mapM_ slot (widgets l)
+
+-- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
+-- lienzo, con el estilo que calcula 'slotStyle'.
+--
+-- __El rectángulo lo pone quien envuelve y no el widget__, y no es una elección
+-- de estilo: 'renderWidget' despacha por 'widgetType' y cada widget emite su
+-- propia @divClass "widget …"@ sin saber dónde va. Meterle la posición obligaría
+-- a pasarle la 'WidgetConfig' a los siete y a que los siete la usaran igual.
+--
+-- Del estilo, aquí solo viaja lo que __depende del dato__; @position: absolute@ y
+-- la separación entre widgets viven en la regla de @.widget-slot@.
+slot :: MonadWidget t m => WidgetConfig -> m ()
+slot wc =
+  elAttr "div" ("class" =: "widget-slot" <> "style" =: slotStyle wc) $
+    renderWidget wc
 
 -- | Barra de botones que conmutan entre los layouts fijos. Sostiene el layout
 -- activo en un @Dynamic t Layout@ (arranca en 'raceOverview').

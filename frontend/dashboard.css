@@ -60,14 +60,17 @@ body {
   padding: var(--sp-5);
 }
 
-.page--dashboard > h1 {
+/* El título vive dentro de `.dashboard-header` desde el 2026-09-07, y no suelto en
+   la página: se pliega junto a los botones de layout, así que necesitan un padre
+   común. Antes del navbar estas tres reglas colgaban de `.page--dashboard > h1`. */
+.dashboard-header > h1 {
   margin: 0 0 var(--sp-4);
   font-size: var(--fs-xl);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 
-.page--dashboard > h1::before {
+.dashboard-header > h1::before {
   content: "";
   display: inline-block;
   width: 3px;
@@ -78,32 +81,72 @@ body {
   border-radius: var(--r-sm);
 }
 
-/* ── Rejilla de widgets ─────────────────────────────────────────────────── */
+/* ── El lienzo ──────────────────────────────────────────────────────────── */
 
-/* `dyn_` monta los widgets como hermanos directos de la página, así que la
-   rejilla vive en la página y no en un contenedor propio. El switcher de
-   layouts ocupa la fila entera. */
-.page--dashboard {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
-  gap: var(--sp-4);
-  align-items: start;
+/* Hasta el 2026-09-07 esto era una rejilla `auto-fit` y el orden de la lista
+   colocaba. Ya no: desde el 2026-09-03 cada widget lleva su rectángulo propio en
+   unidades de 1/120 (2026-09-04), y `Common.Layout.slotStyle` lo traduce a CSS.
+   La página vuelve a ser flujo normal y quien coloca es `.canvas`.
+
+   La regla `grid-column: 1 / -1` que estiraba el `h1` y el switcher se fue con la
+   rejilla: apuntaba a una fila que ya no existe. Las dos de `.widget--comparison`
+   se quedan a la espera de la pregunta abierta del responsive. */
+
+/* El lienzo NO hereda alto de sus hijos: son todos `position: absolute` y flotan,
+   así que sin un alto explícito se queda en cero y los `height` en porcentaje de
+   los slots se calculan contra nada.
+
+   El alto se mide contra la ventana (2026-09-07): el dashboard cabe siempre en
+   pantalla y nunca desliza en vertical. Lo que se resta NO es una medida a ojo de
+   la cabecera —que flota encima y no ocupa sitio— sino exactamente el padding de
+   `.app`, de ahí que sea el mismo token y no un número. */
+.canvas {
+  position: relative;
+  height: calc(100vh - var(--sp-5) * 2);
 }
 
-.page--dashboard > h1,
-.layout-switcher {
-  grid-column: 1 / -1;
+/* El rectángulo lo pone el atributo `style` que emite `slotStyle`; aquí va solo
+   lo que NO depende del dato.
+
+   El `padding` es el `gap: var(--sp-4)` de la rejilla convertido en separación
+   interna: media por cada lado, así que entre dos widgets pegados sigue habiendo
+   la misma distancia que antes. Va aquí y no en `.widget` porque el que tiene el
+   tamaño del rectángulo es el slot. */
+.widget-slot {
+  position: absolute;
+  box-sizing: border-box;
+  padding: var(--sp-2);
 }
 
-/* `min-width: 0` impide que la tabla ancha __estire la columna__ de la rejilla;
-   `overflow-x: auto` impide que la tabla se salga __pintando fuera de la
-   tarjeta__. Son dos cosas distintas y hacen falta las dos: sin la segunda, la
-   tabla de telemetría (8 columnas con `nowrap`) se desbordaba por la derecha y
-   la tarjeta vecina —con fondo opaco— la tapaba. Se veía como «Lap Comparison
-   se come Telemetry», y no era de la rejilla sino de la tabla. */
+/* La cabecera flota sobre el lienzo en vez de empujarlo (2026-09-07). Es lo que
+   permite que `.canvas` se lleve la ventana entera sin restarle una altura que
+   habría que medir a ojo y que el `@media` de abajo cambia. Fondo opaco porque
+   tapa widgets: sin él se leerían las dos capas a la vez. */
+.dashboard-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--c-bg);
+}
+
+/* `min-width: 0` impide que la tabla ancha __estire su caja__; `overflow-x: auto`
+   impide que la tabla se salga __pintando fuera de la tarjeta__. Son dos cosas
+   distintas y hacen falta las dos: sin la segunda, la tabla de telemetría (8
+   columnas con `nowrap`) se desbordaba por la derecha y la tarjeta vecina —con
+   fondo opaco— la tapaba. Se veía como «Lap Comparison se come Telemetry», y no
+   era de la rejilla sino de la tabla.
+
+   `height: 100%` y `overflow-y: auto` son del 2026-09-07 y van juntos: la tarjeta
+   ya no crece con su contenido, porque ahora su alto lo fija el rectángulo del
+   layout. Sin el `overflow-y` el contenido largo se recortaría en silencio, y ese
+   scroll vertical es el que `Common.Layout.fitsAt` da por existente al mirar solo
+   el eje horizontal. */
 .widget {
   min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
+  overflow-y: auto;
   padding: var(--sp-4);
   background: var(--c-surface);
   border: 1px solid var(--c-border);
@@ -465,7 +508,7 @@ body {
     padding: var(--sp-3);
   }
 
-  .page--dashboard > h1 {
+  .dashboard-header > h1 {
     font-size: var(--fs-lg);
   }
 }
