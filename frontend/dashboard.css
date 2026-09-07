@@ -129,6 +129,27 @@ body {
   background: var(--c-bg);
 }
 
+/* Plegada se va ENTERA: título y botones de layout juntos (2026-09-07). Que los
+   botones se vayan con ella es la decisión, no un efecto colateral — conmutar de
+   layout pasa a ser dos gestos a cambio de que no quede nada tapando el lienzo. */
+.dashboard-header--hidden {
+  display: none;
+}
+
+/* El botón NO vive dentro de la cabecera: tiene que seguir viéndose justo cuando
+   ella no se ve. Por eso es `fixed` y no `sticky`, y por eso su `z-index` va por
+   encima del de la cabecera, que si no lo taparía al desplegarse.
+
+   Es lo único que ocupa lienzo de forma permanente, y ese es el precio de que el
+   pliegue sea descubrible: sin él, la cabecera plegada no tendría cómo volver.
+   El aspecto lo comparte con los switchers, arriba, en vez de inventar otro. */
+.header-toggle {
+  position: fixed;
+  top: var(--sp-5);
+  right: var(--sp-5);
+  z-index: 20;
+}
+
 /* `min-width: 0` impide que la tabla ancha __estire su caja__; `overflow-x: auto`
    impide que la tabla se salga __pintando fuera de la tarjeta__. Son dos cosas
    distintas y hacen falta las dos: sin la segunda, la tabla de telemetría (8
@@ -345,7 +366,8 @@ body {
    conserva, que es lo que 2026-08-21 (c) unificó. Los bloques siguen siendo
    distintos. */
 .switcher__btn,
-.car-selector__btn {
+.car-selector__btn,
+.header-toggle {
   padding: var(--sp-1) var(--sp-3);
   font: inherit;
   font-size: var(--fs-sm);
@@ -357,13 +379,15 @@ body {
 }
 
 .switcher__btn:hover,
-.car-selector__btn:hover {
+.car-selector__btn:hover,
+.header-toggle:hover {
   border-color: var(--c-muted);
 }
 
 .switcher__btn:focus-visible,
 .car-selector__btn:focus-visible,
-.car-selector__select:focus-visible {
+.car-selector__select:focus-visible,
+.header-toggle:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 1px;
 }

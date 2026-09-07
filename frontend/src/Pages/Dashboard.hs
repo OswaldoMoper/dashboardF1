@@ -46,13 +46,56 @@ import           Widgets.Telemetry  (telemetryWidget)
 -- título en flujo dentro de él lo taparía el widget de @y = 0@. La cabecera flota
 -- por encima (@position: sticky@ en la hoja de estilos) y el lienzo se lleva la
 -- ventana entera.
+--
+-- Y precisamente porque flota encima, __se pliega__: 'headerToggle' la abre y la
+-- cierra, y arranca abierta. Los tres se montan en este orden por dependencia y
+-- no por posición en pantalla — el botón emite el 'Event', 'toggle' lo convierte
+-- en estado y la cabecera lo consume.
 dashboardPage :: MonadWidget t m => m ()
 dashboardPage = divClass "page page--dashboard" $ do
-  layoutDyn <- divClass "dashboard-header" $ do
-    el "h1" $ text "F1 Functional Dashboard"
-    layoutSwitcher
+  toggleClick <- headerToggle
+  openDyn     <- toggle True toggleClick
+  layoutDyn   <- dashboardHeader openDyn
   divClass "canvas" $
     dyn_ $ ffor layoutDyn $ \l -> mapM_ slot (widgets l)
+
+-- | Botón que pliega y despliega la cabecera. __Es hermano de ella y no hijo__,
+-- que es lo único que le permite seguir visible cuando ella no lo está: metido
+-- dentro, plegar la cabecera se lo llevaría por delante y no habría forma de
+-- traerla de vuelta.
+--
+-- Por eso también es lo primero que se monta, antes que la propia cabecera: el
+-- 'Event' que emite es lo que alimenta el @Dynamic t Bool@ que ella consume, así
+-- que el orden evita el ciclo y con él el 'RecursiveDo' que 'Widgets.Comparison'
+-- sí necesita.
+--
+-- Clase propia y no @switcher__btn@ —no conmuta entre alternativas, abre y
+-- cierra—, pero el __aspecto__ lo comparte con los switchers en la hoja de
+-- estilos, que es lo que 2026-08-21 (c) unificó.
+headerToggle :: DomBuilder t m => m (Event t ())
+headerToggle = do
+  (e, _) <- elClass' "button" "header-toggle" $ text "☰"
+  pure (domEvent Click e)
+
+-- | La cabecera: título y conmutación de layouts, que se pliegan __juntos__
+-- (2026-09-07). Devuelve el layout activo, porque el switcher vive dentro.
+--
+-- __Se pliega con una clase y no desmontando__, y la diferencia importa: con
+-- 'dyn' el contenido se re-monta en cada cambio, así que 'layoutSwitcher'
+-- perdería su @Dynamic t Layout@ y __volvería a 'raceOverview'__ cada vez que se
+-- desplegara. Es el mismo mecanismo que ya hace que 'liveTimingWidget' re-dispare
+-- su fetch al conmutar de layout; aquí no sería una observación aceptable sino un
+-- estado perdido. Con 'elDynClass' el DOM se queda montado y solo cambia si se
+-- pinta.
+dashboardHeader :: MonadWidget t m => Dynamic t Bool -> m (Dynamic t Layout)
+dashboardHeader openDyn =
+  elDynClass "div" (headerClass <$> openDyn) $ do
+    el "h1" $ text "F1 Functional Dashboard"
+    layoutSwitcher
+  where
+    headerClass open
+      | open      = "dashboard-header"
+      | otherwise = "dashboard-header dashboard-header--hidden"
 
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
 -- lienzo, con el estilo que calcula 'slotStyle'.
