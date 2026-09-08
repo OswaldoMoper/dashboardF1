@@ -24,7 +24,7 @@ hablar Python ni pandas. Fase 4, cuatro endpoints:
 En los tres primeros las claves son las del DTO de Haskell, para que el decode
 del backend sea directo; el cuarto usa el prefijo que su DTO usaría.
 
-Contrato con el lado Haskell (ver 2026-07-31):
+Contrato con el lado Haskell (decidido el 2026-07-31):
 
 * **Las unidades las fija el DTO, y las normaliza este servicio.** FastF1
   publica ``Throttle`` en 0-100 y ``Brake`` como booleano; aquí salen como

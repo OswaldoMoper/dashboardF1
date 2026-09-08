@@ -63,7 +63,7 @@ instance FromJSON Of1Stint where
 -- ausencia para no perder la entidad entera—, porque la unidad de la fila es otra:
 -- allí es la entidad y aquí el stint, uno entre decenas, de modo que omitirlo
 -- cuesta un tramo de una barra y no un piloto. Ni se inventa un @\"UNKNOWN\"@ que
--- OpenF1 no publicó. El contraste, en 2026-08-25 y 2026-08-24.
+-- OpenF1 no publicó. El contraste, en las decisiones del 2026-08-25 y 2026-08-24.
 assembleStints :: [Of1Driver] -> [Of1Stint] -> [TyreStint]
 assembleStints drivers stints =
   sortOn (\t -> (tsDriver t, tsStartLap t)) (mapMaybe toStint stints)

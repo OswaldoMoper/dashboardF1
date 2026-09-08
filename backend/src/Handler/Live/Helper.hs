@@ -100,7 +100,7 @@ instance FromJSON Of1Lap where
 -- (@duration@ ×15, @gap_to_leader@ ×6, @position@ ×5) y __ninguno__ toca este
 -- decode, porque la posición de la tabla sale de @\/position@ y los otros dos no
 -- se usan. Modelarlos para poder ignorarlos habría añadido tres 'Maybe' sin
--- consumidor. Ver (2026-08-27).
+-- consumidor. Decidido el 2026-08-27.
 --
 -- Vive aquí y no en 'Handler.OpenF1.Helper' porque hoy lo consume solo Live; el
 -- criterio de reparto está en la cabecera de ese módulo y asciende cuando lo
@@ -133,8 +133,7 @@ instance FromJSON Of1Result where
 -- independientes en el contrato y nada impide que lleguen dos a la vez, así que
 -- hay que elegir cuál gana. Se ordena de más específico a menos: una
 -- descalificación explica por sí sola el resultado y una no-salida hace del
--- abandono una consecuencia, no una causa. Ver
--- (2026-08-27).
+-- abandono una consecuencia, no una causa. Decidido el 2026-08-27.
 statusOf :: Of1Result -> DriverStatus
 statusOf r
   | orDsq r   = Dsq

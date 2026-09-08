@@ -50,7 +50,7 @@ curl 'localhost:8000/fastf1/telemetry/latest/all' | head -c 300
   "tpThrottle":1.0,"tpBrake":0.0,"tpGear":8,"tpRpm":11800}]
 ```
 
-Contrato con el lado Haskell (2026-07-31):
+Contrato con el lado Haskell (decidido el 2026-07-31):
 
 - **El servicio normaliza las unidades del DTO.** FastF1 publica `Throttle` en 0–100 y `Brake` como booleano; aquí salen `tpThrottle` en 0.0–1.0 y `tpBrake` como `0.0`/`1.0`.
 - **Nunca `NaN`.** `json.dumps` lo emitiría y **aeson rechaza el arreglo completo**. Un valor no numérico sale como `null` si el campo es prescindible (`tpThrottle`, `tpBrake`, `tpGear`, `tpRpm`) y descarta la muestra si es obligatorio (`tpDriver`, `tpSessionTime`, `tpDistance`, `tpSpeed`).

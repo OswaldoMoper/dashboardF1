@@ -24,7 +24,7 @@
 -- fetch real y su cache es solo respaldo ante fallo). Los dos widgets montan a la
 -- vez, así que el reloj de pared no se dobla; la carga sobre Jolpica sí. Lo cierra
 -- el @Dynamic t SessionKey@ que la página debe compartir, y que implica un fetch
--- compartido. Ver (2026-08-26).
+-- compartido. Decidido el 2026-08-26.
 --
 -- La lista que llega es __heterogénea__ (pilotos y constructores), así que cada
 -- widget la filtra por 'StatEntity' y se queda con la suya: la marca sigue siendo lo

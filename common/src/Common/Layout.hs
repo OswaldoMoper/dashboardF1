@@ -54,7 +54,7 @@ import qualified Data.Text    as T
 -- Con 120 caen en celda la mitad (60), el tercio (40), el cuarto (30) y el sexto
 -- (20); el quinto es 24, exacto como número aunque el imán no lo alcance — que es
 -- media respuesta al riesgo «24 no divide entre 5» del 2026-09-03. El séptimo
--- sigue sin salir. Ver (2026-09-04).
+-- sigue sin salir. Decidido el 2026-09-04.
 canvasSpan :: Int
 canvasSpan = 120
 
@@ -94,7 +94,7 @@ spanCss v =
 --
 -- El slot es la caja que __envuelve__ al widget y lo coloca. El widget no sabe
 -- dónde va —@renderWidget@ despacha por tipo y nada más—, así que el rectángulo lo
--- pone quien llama; ver (2026-09-07).
+-- pone quien llama; decidido el 2026-09-07.
 --
 -- __Emite la posición y el tamaño, y nada más.__ Ni @position: absolute@, ni el
 -- separador entre widgets, ni el @z-index@: eso es política del lienzo y vive en
@@ -156,8 +156,8 @@ snapTo divisions v
 -- __como valor__. Repartidos por widget, la caja tendría que importar los seis
 -- para calcular uno — o sea el @case@ de @renderWidget@ duplicado, que es
 -- justamente el trabajo que ese punto señala. Lo que se pierde es la cercanía del
--- número al contenido que lo justifica, y lo recupera la lista de arriba. Ver
--- (2026-09-04 b).
+-- número al contenido que lo justifica, y lo recupera la lista de arriba.
+-- Decidido el 2026-09-04 (b).
 minWidthFor :: WidgetType -> Int
 minWidthFor LiveTiming       = 55
 minWidthFor Telemetry        = 50
@@ -176,7 +176,7 @@ minWidthFor Custom           = 25
 -- pinte la marca de «aquí no cabe». Y el reparto es deliberado: si esta función
 -- corrigiera el desbordamiento moviendo el widget a la izquierda, sobre un layout
 -- ya saneado 'fitsAt' diría siempre que sí y __la marca no aparecería jamás__.
--- Ver (2026-09-04 c).
+-- Decidido el 2026-09-04 (c).
 clampToMin :: WidgetConfig -> WidgetConfig
 clampToMin w = w { wcW = max (wcW w) (minWidthFor (widgetType w)) }
 

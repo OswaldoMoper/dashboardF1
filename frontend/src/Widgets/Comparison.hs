@@ -246,7 +246,7 @@ carSelector grid shown = divClass "car-selector" $ do
 -- parsee. Con la posición, el orden del 'Map' __es__ el que dio FastF1 —medido
 -- el 2026-08-07: @1 3 12 16 44 6 63 30 27 41 5 10 18 14 43 31 23 55 87 81 11
 -- 77@, que en una carrera cargada es el de clasificación— y que
--- 2026-08-06 registra como información del servicio:
+-- la decisión del 2026-08-06 registra como información del servicio:
 -- reordenar aquí la destruiría.
 --
 -- El precio es que la selección no lleva el número encima y hay que buscarlo
@@ -478,6 +478,6 @@ polylineAttrs series =
 -- @frontend\/dashboard.css@ cuando la hoja llegó el 2026-08-21: el CSS gana a
 -- los atributos de presentación, así que sobrescribirlos allí dejaría este
 -- Haddock diciendo una mentira. La hoja estila solo la caja del gráfico
--- (@comparison__chart@). Ver 2026-08-21 (c).
+-- (@comparison__chart@). Decidido el 2026-08-21 (c).
 num :: Double -> Text
 num = T.pack . show . (round :: Double -> Int)

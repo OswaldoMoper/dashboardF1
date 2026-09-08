@@ -161,7 +161,7 @@ placeholderWidget name = divClass "widget widget--placeholder" $ do
 --
 -- El id es argumento y no derivado del tipo desde el 2026-09-01: derivarlo de
 -- @show wt@ hacía que la identidad __fuera__ el tipo, y entonces dos widgets del
--- mismo tipo compartían id. Ver (2026-09-01).
+-- mismo tipo compartían id. Decidido el 2026-09-01.
 --
 -- __El rectángulo también es argumento, y no puede no serlo__: con el lienzo
 -- libre (2026-09-03) la colocación es dato del widget, así

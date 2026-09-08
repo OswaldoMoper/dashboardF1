@@ -23,7 +23,7 @@ newtype LayoutId = LayoutId Text
 -- (coche 23) que sí trae @position@. Estado y posición son hechos
 -- independientes, así que un @'Maybe' Int@ en 'ltPosition' no podría
 -- expresarlos —y además obligaría a decidir dónde ordenar los 'Nothing'—.
--- Ver (2026-08-27).
+-- Decidido el 2026-08-27.
 --
 -- 'Running' es el estado por defecto: significa «no consta que abandonara», no
 -- «se comprobó que sigue en pista». Es lo que se sirve cuando
@@ -90,7 +90,7 @@ instance FromJSON LiveTimingRow
 -- (código + nombre + apellido, 2026-07-28): una fila de
 -- telemetría no es una fila de identidad — el acrónimo es la etiqueta de serie,
 -- y repetir tres campos de identidad en cada una de las ~60 muestras por piloto
--- es payload sin información nueva. Ver (2026-07-31).
+-- es payload sin información nueva. Decidido el 2026-07-31.
 data TelemetryPoint = TelemetryPoint
   { tpDriver      :: Text    -- ^ Acrónimo del piloto (p. ej. @"VER"@).
   , tpSessionTime :: Double  -- ^ Tiempo de sesión en segundos.
@@ -173,8 +173,8 @@ instance FromJSON TyreStint
 --
 -- La lista que sirve @\/api\/historical@ es __heterogénea__ (pilotos y
 -- constructores) y una fila de constructor no tiene acrónimo ni nombre\/apellido,
--- así que el consumidor necesita saber qué proyección de etiqueta aplicar. Ver
--- (2026-07-29).
+-- así que el consumidor necesita saber qué proyección de etiqueta aplicar.
+-- Decidido el 2026-07-29.
 data StatEntity
   = DriverStat
   | ConstructorStat
@@ -188,7 +188,7 @@ instance FromJSON StatEntity
 --
 -- La identidad va __estructurada__ (código + nombre + apellido) en vez de una sola
 -- etiqueta: el consumidor elige qué mostrar sin poder reconstruir el código a partir
--- del nombre. Ver (2026-07-28).
+-- del nombre. Decidido el 2026-07-28.
 --
 -- 'hsEntity' marca de qué clasificación viene la fila
 -- (2026-07-29). Para un constructor la convención es @hsCode@ = @constructorId@
@@ -206,7 +206,7 @@ instance FromJSON StatEntity
 -- __solo a sí mismo__ y la fila de puntos sobrevivía; con una fila por entidad esa
 -- salida no existe, y la alternativa a @Maybe@ sería descartar __la entidad
 -- entera__ o inventar un cero que Jolpica no publicó. Que @wins@ pueda faltar es
--- un caso previsto del decode desde (2026-07-30), no una
+-- un caso previsto del decode desde el 2026-07-30, no una
 -- observación: medido el 2026-08-24, Jolpica lo publica para las 34 entidades.
 data HistoricalStat = HistoricalStat
   { hsEntity     :: StatEntity  -- ^ Piloto o constructor.
@@ -232,7 +232,7 @@ instance FromJSON HistoricalStat
 -- 'WidgetParams' su primer consumidor, pero fijaría su forma antes de que la Fase 6
 -- —que es la que va de layouts y de configurar widgets— hubiera decidido cuál es. Un
 -- constructor por widget mantiene la invariante que esa fase necesita intacta: una
--- 'WidgetConfig' es __un__ widget. Ver (2026-08-26).
+-- 'WidgetConfig' es __un__ widget. Decidido el 2026-08-26.
 --
 -- La forma de 'WidgetParams' quedó decidida el 2026-09-01 —sesión, piloto y
 -- pilotos— y __no__ discrimina clasificaciones, así que la distinción sigue
@@ -255,8 +255,8 @@ instance FromJSON WidgetType
 --
 -- __Es espejo de 'Common.Route' y no una forma nueva__: @telemetryPathFor@ y
 -- @comparisonPathFor@ son @'Maybe' 'Text' -> 'Maybe' 'Text' -> 'Text'@, con el
--- mismo tipo y el mismo significado del 'Nothing' desde el 2026-08-01. Ver
--- (2026-09-01 b), que es donde está el por qué.
+-- mismo tipo y el mismo significado del 'Nothing' desde el 2026-08-01. El por
+-- qué está en la decisión del 2026-09-01 (b).
 --
 -- __Es la semilla del estado del widget, no su sustituto.__ El @driverSwitcher@
 -- de 'Widgets.Telemetry' y los dos @\<select\>@ de 'Widgets.Comparison' siguen
@@ -304,7 +304,7 @@ noParams = WidgetParams
 -- 'Layout' y estable frente a reordenar, ocultar y editar parámetros. Que sea
 -- explícito es lo que hace referenciable a un widget — sin él la identidad era el
 -- tipo y dos 'Telemetry' colisionaban. La unicidad es __convención y no tipo__:
--- @['WidgetConfig']@ admite ids repetidos. Ver (2026-09-01).
+-- @['WidgetConfig']@ admite ids repetidos. Decidido el 2026-09-01.
 --
 -- __Los cuatro últimos campos son el lienzo libre__
 -- (2026-09-03): cada widget lleva posición y tamaño __propios, independientes de
@@ -337,8 +337,7 @@ data WidgetConfig = WidgetConfig
     -- ni se deriva del tipo de widget ni de la adyacencia. Dentro del grupo el
     -- tamaño de los miembros queda __acoplado__ (el borde entre dos es un
     -- separador arrastrable, y el grupo se mueve y escala como un bloque), que es
-    -- justo lo que el lienzo niega fuera del grupo. Ver
-    -- (2026-09-03 b).
+    -- justo lo que el lienzo niega fuera del grupo. Decidido el 2026-09-03 (b).
   , wcX           :: Int
     -- ^ Borde izquierdo, en 1\/120 del __ancho__ del contenedor.
   , wcY           :: Int
