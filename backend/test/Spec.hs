@@ -53,7 +53,8 @@ import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
                                               gridDivisions, minWidthFor,
                                               overlaps, slotStyle, snapTo,
                                               spanCss)
-import           Common.Origin               (Origin (..), originFrom,
+import           Common.Origin               (Origin (..), fetchedAtHeader,
+                                              originFrom, originHeader,
                                               originLabel, originNotice)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
@@ -72,13 +73,20 @@ import           Data.Aeson                  (eitherDecodeStrict)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import           Data.List                   (nub)
+import           Data.Proxy                  (Proxy (..))
 import qualified Data.Text                   as T
+import           Data.Time.Calendar          (fromGregorian)
+import           Data.Time.Clock             (UTCTime (..))
+import           GHC.TypeLits                (symbolVal)
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
 import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
+import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
+                                              OriginHeaderName, fetchedAtText,
+                                              withOrigin)
 import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
                                               Of1Result, assembleRows)
 import           Handler.OpenF1.Helper       (Of1Driver)
@@ -86,6 +94,8 @@ import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
 import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
 import           Outcome                     (Rejection (..), rejectionFor)
+import           Servant.API                 (ResponseHeader (..), getResponse,
+                                              lookupResponseHeader)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck     (prop)
 import           Test.QuickCheck           (Property, (.&&.), (===))
@@ -875,6 +885,35 @@ main = hspec $ do
     prop "originFrom es inversa de originLabel para las tres" originRoundTrips
     prop "solo Fresh calla; los otros dos avisan siempre" onlyFreshIsSilent
 
+  -- El nombre de cada cabecera vive dos veces —'Text' en 'Common.Origin', 'Symbol'
+  -- en el tipo de Servant— y si divergen el widget no reconoce la cabecera y calla
+  -- sin error. El primer caso es el que lo impide.
+  describe "Handler.Live — procedencia en cabeceras" $ do
+    it "los nombres del tipo de Servant son los de Common.Origin" $
+      map T.pack [ symbolVal (Proxy :: Proxy OriginHeaderName)
+                 , symbolVal (Proxy :: Proxy FetchedAtHeaderName)
+                 ]
+        `shouldBe` [originHeader, fetchedAtHeader]
+
+    it "el dato fresco lleva la procedencia y no el instante" $
+      headersOf (withOrigin (Fresh, Nothing, liveRowsFixture))
+        `shouldBe` (Header "fresh", MissingHeader)
+
+    it "el dato guardado lleva la procedencia y el instante" $
+      headersOf (withOrigin (Cached, Just fetchInstant, liveRowsFixture))
+        `shouldBe` (Header "cached", Header "2026-09-11T14:03:22Z")
+
+    it "el dato de ejemplo lleva la procedencia y no el instante" $
+      headersOf (withOrigin (Sample, Nothing, liveRowsFixture))
+        `shouldBe` (Header "sample", MissingHeader)
+
+    it "el cuerpo son las filas, sin tocar" $
+      getResponse (withOrigin (Cached, Just fetchInstant, liveRowsFixture))
+        `shouldBe` liveRowsFixture
+
+    it "el instante sale en UTC y sin fracción de segundo" $
+      fetchedAtText fetchInstant `shouldBe` "2026-09-11T14:03:22Z"
+
 -- * Propiedades
 
 -- | @points@\/@wins@ llegan de Ergast como enteros en cadena; es la forma que
@@ -1554,6 +1593,26 @@ resultWithoutFlagKeys =
   "[" <> resultNoFlags 16 "1"
     <> "," <> resultNoFlags 1 "2"
     <> "]"
+
+-- | Filas ya ensambladas para los casos de procedencia: no prueban el ensamblado,
+-- sino lo que 'withOrigin' pone alrededor, así que no pasan por ningún fixture JSON.
+liveRowsFixture :: [LiveTimingRow]
+liveRowsFixture =
+  [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:21.004" Running
+  , LiveTimingRow 2 "NOR" "McLaren" "+0.412" "+0.412" "1:21.390" Running
+  ]
+
+-- | Las 14:03:22 UTC del 2026-09-11 __con fracción de segundo__, que es lo que da
+-- 'getCurrentTime': 'fetchedAtText' tiene que tirarla.
+fetchInstant :: UTCTime
+fetchInstant = UTCTime (fromGregorian 2026 9 11) 50602.123456
+
+-- | Las dos cabeceras de una respuesta de @\/api\/live@, buscadas por su nombre
+-- __de tipo__, que es el que Servant usa al serializarlas.
+headersOf
+  :: LiveResponse
+  -> (ResponseHeader OriginHeaderName T.Text, ResponseHeader FetchedAtHeaderName T.Text)
+headersOf r = (lookupResponseHeader r, lookupResponseHeader r)
 
 -- | La propiedad que 'show' __no__ cumple y que motiva el módulo: una cifra
 -- formateada no lleva nunca @e@, porque una celda que dice @1.0e-2@ no comunica una

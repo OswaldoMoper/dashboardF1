@@ -5,30 +5,42 @@
 -- cache STM del 'Env' como respaldo: intenta el fetch real; si funciona,
 -- refresca la cache y devuelve; si falla (red/4xx/5xx) o no trae filas, sirve
 -- la última respuesta buena, y si nunca la hubo, el dummy estático.
+--
+-- Cada peldaño devuelve además __de dónde salió el dato__ ('Common.Origin') y, el
+-- de la cache, __cuándo llegó__. La escalera siempre lo supo; hasta ahora lo tiraba.
 module Handler.Live.Context where
 
 import           App                    (Env (..))
+import           Common.Origin          (Origin (..))
 import           Common.Types           (DriverStatus (..), LiveTimingRow (..))
 import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, readTVarIO, writeTVar)
 import           Control.Exception      (SomeException, try)
-import           Data.Maybe             (fromMaybe)
+import           Data.Time.Clock        (UTCTime, getCurrentTime)
 import           Handler.Live.Helper    (assembleRows)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
--- | Devuelve la tabla de live timing (real de OpenF1, cache o dummy).
-getLiveTiming :: Env -> IO [LiveTimingRow]
+-- | Devuelve la tabla de live timing (real de OpenF1, cache o dummy), con su
+-- procedencia y, solo cuando sale de la cache, el instante en que llegó.
+--
+-- El instante va aparte y no dentro de 'Origin' por la razón que da
+-- 'Common.Origin.fetchedAtHeader': de un dato fresco la hora es «ahora», y de uno
+-- inventado no hay hora.
+getLiveTiming :: Env -> IO (Origin, Maybe UTCTime, [LiveTimingRow])
 getLiveTiming env = do
   result <-
     try (fetchRows (envConfig env)) :: IO (Either SomeException [LiveTimingRow])
   case result of
     Right rows | not (null rows) -> do
-      atomically (writeTVar (envLiveCache env) (Just rows))
-      pure rows
+      now <- getCurrentTime
+      atomically (writeTVar (envLiveCache env) (Just (now, rows)))
+      pure (Fresh, Nothing, rows)
     _ -> do
       cached <- readTVarIO (envLiveCache env)
-      pure (fromMaybe dummy cached)
+      pure (maybe (Sample, Nothing, dummy) fromCache cached)
+  where
+    fromCache (fetchedAt, rows) = (Cached, Just fetchedAt, rows)
 
 -- | Fetch de los 5 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
 --

@@ -18,11 +18,18 @@ import           Control.Concurrent.STM (TVar, newTVarIO)
 import           Data.Map.Strict        (Map)
 import qualified Data.Map.Strict        as Map
 import           Data.Text              (Text)
+import           Data.Time.Clock        (UTCTime)
 
 data Env = Env
   { envConfig          :: Config
-  , envLiveCache       :: TVar (Maybe [LiveTimingRow])
-    -- ^ Última respuesta buena de @/api/live@ (respaldo si OpenF1 falla).
+  , envLiveCache       :: TVar (Maybe (UTCTime, [LiveTimingRow]))
+    -- ^ Última respuesta buena de @/api/live@ __y el instante en que llegó__
+    -- (respaldo si OpenF1 falla).
+    --
+    -- El instante es lo que deja a 'Handler.Live' emitir @X-Data-Fetched-At@
+    -- cuando sirve desde aquí ('Common.Origin.Cached'). Va en la misma caja y no
+    -- en una aparte porque dato e instante son un solo hecho: dos cajas se
+    -- escribirían en dos pasos y podrían contar historias distintas.
   , envTyreCache       :: TVar (Maybe [TyreStint])
     -- ^ Última respuesta buena de @/api/tyre-strategy@ (respaldo si OpenF1 falla).
   , envHistoricalCache :: TVar (Maybe [HistoricalStat])

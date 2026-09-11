@@ -76,6 +76,7 @@ library
       , servant-server
       , stm
       , text
+      , time
       , wai
       , wai-app-static
       , warp
@@ -103,4 +104,6 @@ test-suite backend-test
       , bytestring
       , common
       , hspec
+      , servant
       , text
+      , time

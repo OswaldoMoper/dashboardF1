@@ -46,7 +46,7 @@ data Origin
 
 -- | Cabecera que transporta la procedencia.
 --
--- Se eligió cabecera y no envoltorio del JSON (decisión del 2026-09-06) para que los
+-- Se eligió cabecera y no envoltorio del JSON (decisión del 2026-09-11) para que los
 -- seis endpoints sigan devolviendo __exactamente__ el mismo cuerpo: ni los DTO de
 -- este paquete ni los widgets cambian de forma. El precio es que no se ve sin
 -- @curl -i@, y está aceptado a sabiendas.

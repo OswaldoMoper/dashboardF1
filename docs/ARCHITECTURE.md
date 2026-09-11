@@ -47,6 +47,9 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   (se degrada a cache o dummy). El criterio vive en el `Context`; el handler solo traduce
   con `Outcome.serve` (2026-08-14). **Aplicado hoy solo a `Comparison`**;
   las otras áreas siguen con `IO a` hasta que se cierre la Fase 4.
+- **Procedencia del dato:** `/api/live` emite `X-Data-Origin` (`fresh`/`cached`/`sample`) y, solo
+  con `cached`, `X-Data-Fetched-At` en ISO 8601 UTC; el cuerpo JSON no cambia. Tipo y valores en
+  `Common.Origin`.
 - **NEGOCIO (`Handler/`) por área:** `Handler.<Área>{,.Context,.Helper,.Manager}` (interfaz → orquestación → efectos → pureza). Áreas: `Live`, `Historical`, `Telemetry`, `Comparison`, `TyreStrategy`; luego `OpenF1`/`Jolpica`/`FastF1` como `Manager`s. Cache en memoria (STM) como infra cuando llegue (Fase 3).
 - **DTOs compartidos:** paquete `common` (`Common.Types`).
 - **DB:** `Database.Esqueleto.Legacy` + `Database.Esqueleto.PostgreSQL`; `Persist` solo modelos.
