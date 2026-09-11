@@ -1,13 +1,24 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecursiveDo       #-}
 
 -- | Widget de Live timing (categoría Timing).
 --
 -- Renderiza una tabla con las filas de 'LiveTimingRow' del dominio compartido
 -- ('Common.Types'). Consume @GET \/api\/live@ en runtime vía
--- 'Client.fetchJson' + 'Common.Route.livePath' (relativo, misma-origen: el
+-- 'Client.fetchJsonSourced' + 'Common.Route.livePath' (relativo, misma-origen: el
 -- backend sirve el bundle y la API en el mismo puerto). Modela los tres estados
 -- del fetch ('Loading' \/ 'Failed' \/ 'Loaded'); ya no hay datos dummy locales.
+--
+-- __Se refresca solo cada 'liveRefreshSeconds'__ (2026-09-11 (c)), con un reloj que
+-- __salta el tic__ si la petición anterior no ha vuelto: nunca hay dos en vuelo, y
+-- una respuesta vieja no puede pisar a una nueva. Cuándo pedir y qué conservar si
+-- falla es 'Common.Refresh', pura y con suite; aquí solo se cablea al reloj y a la
+-- petición.
+--
+-- __Un refresco fallido conserva la tabla sin señalarlo.__ 'pollLastFailed' lo sabe,
+-- igual que 'Common.Origin.Sourced' sabe la procedencia de lo que se enseña; pintar
+-- las dos cosas es trabajo del indicador de procedencia, que aún no existe.
 --
 -- __La columna de estado se añade al final a propósito__ (2026-08-27). La hoja
 -- alinea las columnas numéricas de esta tabla por @nth-child(1,4,5,6)@ —las
@@ -18,28 +29,55 @@
 -- y lo nuevo no la reabre.
 module Widgets.LiveTiming where
 
-import           Client       (fetchJson)
-import           Common.Route (livePath)
-import           Common.Types (DriverStatus (..), LiveTimingRow (..),
-                               statusLabel)
-import           Data.Text    (Text)
-import qualified Data.Text    as T
+import           Client         (fetchJsonSourced)
+import           Common.Origin  (Sourced (..))
+import           Common.Refresh (Poll (..), PollEvent (..), canRequest,
+                                 liveRefreshSeconds, pollIdle, pollStep)
+import           Common.Route   (livePath)
+import           Common.Types   (DriverStatus (..), LiveTimingRow (..),
+                                 statusLabel)
+import           Data.Text      (Text)
+import qualified Data.Text      as T
 import           Reflex.Dom
 
--- | Estado del fetch de @\/api\/live@. 'Failed' (no 'Error') para no chocar con
+-- | Qué enseña la tarjeta. 'Failed' (no 'Error') para no chocar con
 -- nombres de @base@\/@Prelude@.
 data LiveState
   = Loading
   | Failed
   | Loaded [LiveTimingRow]
+  deriving (Eq)
 
--- | Tabla de live timing alimentada por @\/api\/live@.
+-- | Lo que se enseña a partir del estado del refresco.
+--
+-- __Deja fuera a propósito si hay una petición en vuelo.__ Si entrara, la tabla se
+-- volvería a montar al pedir y otra vez al llegar la respuesta —dos veces cada
+-- diez segundos— aunque el dato no hubiera cambiado. Con 'holdUniqDyn' encima, se
+-- monta solo cuando cambia lo que se ve.
+liveStateOf :: Poll (Sourced [LiveTimingRow]) -> LiveState
+liveStateOf p =
+  case pollShown p of
+    Just shown           -> Loaded (srcValue shown)
+    Nothing
+      | pollLastFailed p -> Failed
+      | otherwise        -> Loading
+
+-- | Tabla de live timing alimentada por @\/api\/live@, refrescada cada
+-- 'liveRefreshSeconds'.
+--
+-- __El @mdo@ no crea un bucle instantáneo:__ el tic se filtra con 'current' del
+-- estado, que es su valor al empezar el frame, y no con su 'updated'. La petición
+-- que sale en un frame marca 'Sent' al final de ese frame, y el siguiente tic ya la
+-- ve en vuelo.
 liveTimingWidget :: MonadWidget t m => m ()
-liveTimingWidget = divClass "widget widget--live-timing" $ do
+liveTimingWidget = divClass "widget widget--live-timing" $ mdo
   el "h2" $ text "Live Timing"
   pb    <- getPostBuild
-  resp  <- fetchJson (livePath <$ pb)          -- Event t (Maybe [LiveTimingRow])
-  state <- holdDyn Loading (ffor resp (maybe Failed Loaded))
+  tick  <- tickLossyFromPostBuildTime (fromIntegral liveRefreshSeconds)
+  let sent = leftmost [pb, () <$ gate (canRequest <$> current poll) tick]
+  resp  <- fetchJsonSourced (livePath <$ sent)
+  poll  <- foldDyn pollStep pollIdle (leftmost [Sent <$ sent, Arrived <$> resp])
+  state <- holdUniqDyn (liveStateOf <$> poll)
   dyn_ (renderState <$> state)
   where
     renderState :: DomBuilder t m => LiveState -> m ()

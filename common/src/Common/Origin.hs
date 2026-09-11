@@ -24,6 +24,8 @@ module Common.Origin
   , originLabel
   , originFrom
   , originNotice
+  , Sourced (..)
+  , sourcedFrom
   ) where
 
 import           Data.Text (Text)
@@ -112,3 +114,32 @@ originNotice Sample _ =
 -- vacía es lo mismo que ausente, y sin esto el aviso acabaría en @\"… ()\"@.
 nonBlank :: Text -> Maybe Text
 nonBlank t = if T.null (T.strip t) then Nothing else Just (T.strip t)
+
+-- | Un valor junto con la procedencia que traían las cabeceras de su respuesta.
+--
+-- Es lo que el widget tiene en la mano tras leer la respuesta: el cuerpo ya
+-- decodificado y lo que dijeron las dos cabeceras. La procedencia va en 'Maybe'
+-- porque la duda es un caso real —cabecera ausente o irreconocible, ver
+-- 'originFrom'— y el widget decide qué pintar con ella.
+data Sourced a = Sourced
+  { srcOrigin    :: Maybe Origin
+    -- ^ 'Nothing' si la cabecera no llegó o no se reconoce.
+  , srcFetchedAt :: Maybe Text
+    -- ^ El instante tal cual viaja, recortado; 'Nothing' si falta o está en blanco.
+  , srcValue     :: a
+  }
+  deriving stock (Eq, Show)
+
+-- | Arma un 'Sourced' a partir de una forma de buscar cabeceras por nombre.
+--
+-- __Recibe la búsqueda como función y no el mapa de cabeceras__ porque las del XHR
+-- vienen con claves que ignoran mayúsculas (@CI Text@, del paquete
+-- @case-insensitive@), y traerlo aquí haría depender a @common@ de él solo por la
+-- clave. Quien llama sabe cómo buscar; aquí se decide qué significa lo encontrado.
+sourcedFrom :: (Text -> Maybe Text) -> a -> Sourced a
+sourcedFrom lookupHeader value =
+  Sourced
+    { srcOrigin    = originFrom =<< lookupHeader originHeader
+    , srcFetchedAt = nonBlank =<< lookupHeader fetchedAtHeader
+    , srcValue     = value
+    }

@@ -6,11 +6,19 @@
 -- de 'Common.Route', así el fetch es relativo y misma-origen (el backend sirve
 -- el bundle y @\/api\/*@ en el mismo puerto). XSRF, headers y utilidades de
 -- @location@ llegan cuando haya mutaciones (POST/PUT) y navegación.
+--
+-- Las cabeceras __de respuesta__ sí se leen ya, pero solo las de procedencia y
+-- solo en 'fetchJsonSourced' ('Common.Origin').
 module Client where
 
-import           Data.Aeson         (FromJSON, decodeStrict)
-import           Data.Text          (Text)
-import           Data.Text.Encoding (encodeUtf8)
+import           Common.Origin        (Sourced, fetchedAtHeader, originHeader,
+                                       sourcedFrom)
+import           Data.Aeson           (FromJSON, decodeStrict)
+import qualified Data.CaseInsensitive as CI
+import qualified Data.Map             as Map
+import qualified Data.Set             as Set
+import           Data.Text            (Text)
+import           Data.Text.Encoding   (encodeUtf8)
 import           Reflex.Dom
 
 -- | Request GET simple (sin cuerpo). Base para variantes con headers/XSRF.
@@ -32,3 +40,29 @@ fetchJson
 fetchJson urls = do
   resp <- performRequestAsync (getReq <$> urls)
   pure (decodeXhr <$> resp)
+
+-- | GET que además pide las dos cabeceras de procedencia.
+--
+-- __Hay que pedirlas por nombre:__ el @def@ de 'XhrRequestConfig' trae
+-- @OnlyHeaders mempty@, así que con 'getReq' el mapa de cabeceras de la respuesta
+-- llega vacío. Y el fallo sería silencioso, porque 'Common.Origin.originFrom' trata
+-- la ausencia como duda y no como error.
+getReqSourced :: Text -> XhrRequest ()
+getReqSourced url =
+  XhrRequest "GET" url
+    (def
+       { _xhrRequestConfig_responseHeaders =
+           OnlyHeaders (Set.fromList (map CI.mk [originHeader, fetchedAtHeader]))
+       })
+
+-- | Como 'fetchJson', pero el valor llega con la procedencia que traían sus
+-- cabeceras. 'Nothing' en los mismos casos que 'fetchJson': un fallo de la
+-- petición o del decode no tiene procedencia que contar.
+fetchJsonSourced
+  :: (MonadWidget t m, FromJSON a)
+  => Event t Text -> m (Event t (Maybe (Sourced a)))
+fetchJsonSourced urls = do
+  resp <- performRequestAsync (getReqSourced <$> urls)
+  pure (ffor resp $ \r -> sourcedFrom (headerOf r) <$> decodeXhr r)
+  where
+    headerOf r name = Map.lookup (CI.mk name) (_xhrResponse_headers r)

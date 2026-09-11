@@ -24,6 +24,7 @@ library
         Common.Format
         Common.Layout
         Common.Origin
+        Common.Refresh
         Common.Route
         Common.Types
     build-depends:

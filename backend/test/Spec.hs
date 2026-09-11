@@ -53,9 +53,12 @@ import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
                                               gridDivisions, minWidthFor,
                                               overlaps, slotStyle, snapTo,
                                               spanCss)
-import           Common.Origin               (Origin (..), fetchedAtHeader,
-                                              originFrom, originHeader,
-                                              originLabel, originNotice)
+import           Common.Origin               (Origin (..), Sourced (..),
+                                              fetchedAtHeader, originFrom,
+                                              originHeader, originLabel,
+                                              originNotice, sourcedFrom)
+import           Common.Refresh              (Poll (..), PollEvent (..),
+                                              canRequest, pollIdle, pollStep)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Types                (DriverEntry (..),
@@ -913,6 +916,53 @@ main = hspec $ do
 
     it "el instante sale en UTC y sin fracción de segundo" $
       fetchedAtText fetchInstant `shouldBe` "2026-09-11T14:03:22Z"
+
+  -- Lo que puede salir mal en un reloj que pide solo —dos peticiones a la vez, una
+  -- tabla que se borra por un fallo puntual— vive aquí y no en 'Widgets.LiveTiming',
+  -- que es ciego.
+  describe "Common.Refresh" $ do
+    it "arranca sin nada en vuelo, nada que enseñar y ningún fallo" $
+      (pollIdle :: Poll Int) `shouldBe` Poll False Nothing False
+
+    it "arranca pudiendo pedir" $
+      canRequest (pollIdle :: Poll Int) `shouldBe` True
+
+    it "con una petición en vuelo, el tic no puede lanzar otra" $
+      canRequest (pollStep Sent (pollIdle :: Poll Int)) `shouldBe` False
+
+    it "pedir no toca lo enseñado ni el fallo" $
+      pollStep Sent (Poll False (Just (1 :: Int)) True)
+        `shouldBe` Poll True (Just 1) True
+
+    it "una respuesta buena sustituye lo enseñado y libera el reloj" $
+      pollStep (Arrived (Just (2 :: Int))) (Poll True (Just 1) False)
+        `shouldBe` Poll False (Just 2) False
+
+    it "un fallo conserva lo enseñado, lo marca y libera el reloj" $
+      pollStep (Arrived Nothing) (Poll True (Just (1 :: Int)) False)
+        `shouldBe` Poll False (Just 1) True
+
+    it "un fallo sin nada enseñado queda vacío con fallo, que es el «Error al cargar»" $
+      pollStep (Arrived Nothing) (Poll True (Nothing :: Maybe Int) False)
+        `shouldBe` Poll False Nothing True
+
+    it "una respuesta buena tras un fallo limpia el fallo" $
+      pollStep (Arrived (Just (3 :: Int))) (Poll True (Just 1) True)
+        `shouldBe` Poll False (Just 3) False
+
+  describe "sourcedFrom" $ do
+    it "lee la procedencia y el instante de sus cabeceras, recortando" $
+      sourcedFrom
+        (`lookup` [("X-Data-Origin", "cached"), ("X-Data-Fetched-At", " 2026-09-11T14:03:22Z ")])
+        ()
+        `shouldBe` Sourced (Just Cached) (Just "2026-09-11T14:03:22Z") ()
+
+    it "sin cabeceras no adivina: procedencia e instante en Nothing" $
+      sourcedFrom (`lookup` []) () `shouldBe` Sourced Nothing Nothing ()
+
+    it "una procedencia irreconocible es Nothing, y el valor llega igual" $
+      sourcedFrom (`lookup` [("X-Data-Origin", "live")]) 'x'
+        `shouldBe` Sourced Nothing Nothing 'x'
 
 -- * Propiedades
 
