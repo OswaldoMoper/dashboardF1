@@ -32,10 +32,17 @@
   --sp-5: 1.5rem;
   --sp-6: 2rem;
 
-  /* Hueco que la tarjeta de la esquina superior derecha le deja al botón de
-     plegar la cabecera, que es `fixed` sobre el lienzo. No sale de la escala:
-     es una medida contra otro elemento, y se ajusta mirándolo. */
-  --gap-toggle: 24px;
+  /* La muesca que la tarjeta de la esquina superior derecha le abre al botón de
+     plegar la cabecera. No salen de la escala tipográfica ni de la de espaciado:
+     son medidas contra OTRO elemento, y se ajustan mirándolas.
+
+     De dónde vienen los números: el botón ocupa de 24 a 63 px desde el borde
+     derecho de la ventana y de 24 a 53 px desde el superior; la tarjeta empieza
+     a 32 px de los dos (24 de `.app` + 8 de `.widget-slot`). O sea que el botón
+     se mete 31 px dentro de la tarjeta a lo ancho y 21 a lo alto, y lo que
+     sobra de estos dos números es el aire que queda a su alrededor. */
+  --notch-w: 43px;  /* 31 que se mete + 12 de aire */
+  --notch-h: 33px;  /* 21 que se mete + 12 de aire */
 
   /* Radios. */
   --r-sm: 4px;
@@ -127,13 +134,49 @@ body {
 /* La tarjeta que ocupa la esquina superior derecha del lienzo tiene encima el
    botón de plegar la cabecera, que es `fixed` sobre la ventana y no sabe nada
    de los widgets. Quién es esa tarjeta lo dice `Common.Layout.touchesTopRight`,
-   que informa y no corrige; cuánto hueco dejarle es este número, que depende de
-   lo que mida el botón y por eso vive aquí y no en el layout.
+   que informa y no corrige; qué hacer al respecto es cosa de esta hoja, que es
+   la única que sabe lo que mide el botón.
 
-   Solo encoge la FILA DEL TÍTULO, no la tarjeta: el botón ocupa una esquina, no
-   una columna, y sangrar la tabla entera por él se vería como un error. */
-.widget-slot--top-right .widget__head {
-  padding-right: var(--gap-toggle);
+   __La tarjeta le cede la esquina en vez de dejar que se la pisen__
+   (2026-09-12). El botón queda en el hueco, asomando 8 px por arriba y por la
+   derecha del contorno, y el gap se ve: es una decisión, no un choque.
+
+   __Y solo con la cabecera plegada__, que es cuando hay choque. Desplegada, la
+   cabecera ocupa sitio —es `sticky`, no flota— y empuja el lienzo hacia abajo,
+   así que el botón ya no cae sobre ninguna tarjeta: la muesca sería un mordisco
+   vacío, y eso se lee como fallo y no como decisión. Quién está plegada lo dice
+   `.canvas--header-hidden`, que pone `Pages.Dashboard.dashboardPage`.
+
+   La muesca se DIBUJA y no se recorta. `clip-path` haría el mordisco de verdad,
+   pero se llevaría por delante el borde de 1 px justo en los dos cantos nuevos
+   —que son los que hacen que la forma se lea como intencional— y el contenido
+   que pasara por ahí se cortaría en seco. Así que la esquina se tapa con el
+   color del lienzo y los dos cantos se pintan.
+
+   Va en el SLOT y no en `.widget` porque la tarjeta es contenedor de scroll
+   (`overflow: auto`): dentro de ella, la muesca se desplazaría con el contenido
+   y quedaría recortada. El slot es `position: absolute` y no desplaza nada, y
+   su `padding` es justo lo que separa su borde del de la tarjeta. */
+.canvas--header-hidden .widget-slot--top-right::after {
+  content: "";
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  box-sizing: border-box;
+  width: var(--notch-w);
+  height: var(--notch-h);
+  background: var(--c-bg);
+  border-left: 1px solid var(--c-border);
+  border-bottom: 1px solid var(--c-border);
+}
+
+/* La fila del título se aparta de la muesca, y se aparta SOLO cuando la muesca
+   existe: un título sangrado sin nada que esquivar no tiene explicación.
+
+   Lo que se le suma es lo que la muesca entra MÁS ALLÁ del padding que la
+   tarjeta ya tiene: sin restarlo, el título se separaría del borde dos veces. */
+.canvas--header-hidden .widget-slot--top-right .widget__head {
+  padding-right: calc(var(--notch-w) - var(--sp-4));
 }
 
 /* La cabecera flota sobre el lienzo en vez de empujarlo (2026-09-07). Es lo que

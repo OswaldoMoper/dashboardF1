@@ -56,8 +56,22 @@ dashboardPage = divClass "page page--dashboard" $ do
   toggleClick <- headerToggle
   openDyn     <- toggle True toggleClick
   layoutDyn   <- dashboardHeader openDyn
-  divClass "canvas" $
+  elDynClass "div" (canvasClass <$> openDyn) $
     dyn_ $ ffor layoutDyn $ \l -> mapM_ slot (widgets l)
+  where
+    -- __El lienzo sabe si la cabecera está plegada__, y no por simetría con
+    -- ella: plegada deja de ocupar sitio, el lienzo sube, y solo entonces el
+    -- botón —que es @fixed@ contra la ventana— cae sobre la tarjeta de la
+    -- esquina. La muesca que esa tarjeta abre existe por el choque, así que
+    -- desplegada no debe estar: sería un mordisco sin nada dentro.
+    --
+    -- __Va aquí y no en @.page--dashboard@__ para no atar un nudo: el botón que
+    -- produce el 'Event' es hijo de la página, así que una clase dinámica en
+    -- ella tendría que leer algo que se define dentro de ella misma. El lienzo
+    -- se monta después del botón y del estado, y el valor ya está en la mano.
+    canvasClass open
+      | open      = "canvas"
+      | otherwise = "canvas canvas--header-hidden"
 
 -- | Botón que pliega y despliega la cabecera. __Es hermano de ella y no hijo__,
 -- que es lo único que le permite seguir visible cuando ella no lo está: metido
@@ -110,9 +124,11 @@ dashboardHeader openDyn =
 --
 -- __El modificador de la esquina lo pone el slot y no el widget__, por la misma
 -- razón: quien sabe dónde está la tarjeta es quien la coloca. El botón de plegar
--- la cabecera es @fixed@ en la esquina de la ventana (2026-09-07 b), así que la
--- tarjeta que la ocupa tiene que dejarle sitio a la etiqueta de procedencia; a
--- quién le toca lo dice 'touchesTopRight' y cuánto hueco, la hoja de estilos.
+-- la cabecera es @fixed@ en la esquina de la ventana (2026-09-07 b), y la tarjeta
+-- que la ocupa __le cede la esquina__ en vez de dejar que se la pise: la hoja de
+-- estilos le abre una muesca. A quién le toca lo dice 'touchesTopRight'; la forma
+-- y el tamaño de la muesca, la hoja, que es la única que sabe lo que mide el
+-- botón.
 slot :: MonadWidget t m => WidgetConfig -> m ()
 slot wc =
   elAttr "div" ("class" =: slotClass wc <> "style" =: slotStyle wc) $
