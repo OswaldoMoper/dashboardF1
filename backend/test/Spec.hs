@@ -76,7 +76,8 @@ import           Common.Types                (DriverEntry (..),
                                               WidgetConfig (..), WidgetId (..),
                                               WidgetType (..), noParams,
                                               statusLabel)
-import           Data.Aeson                  (eitherDecodeStrict)
+import           Data.Aeson                  (Value (..), eitherDecodeStrict,
+                                              toJSON)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import           Data.List                   (nub)
@@ -95,7 +96,9 @@ import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               OriginHeaderName, fetchedAtText,
                                               withOrigin)
 import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
-                                              Of1Result, assembleRows)
+                                              Of1Result (..), assembleRows,
+                                              classificationGaps,
+                                              classificationTime)
 import           Handler.OpenF1.Helper       (Of1Driver)
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
@@ -397,8 +400,8 @@ main = hspec $ do
   --     ejercita el fixture de aquí. Es la segunda vez que pasa (la del @compound@
   --     nulo, arriba, es la primera).
   --   * De los 26 nulos de la respuesta (@duration@ ×15, @gap_to_leader@ ×6,
-  --     @position@ ×5) __ninguno__ toca el decode, porque 'Of1Result' modela solo
-  --     los cuatro campos que se consumen.
+  --     @position@ ×5) solo los de @duration@ llegan al decode, y entran como
+  --     'Nothing' sin tumbarlo; los otros dos campos no se modelan.
   describe "assembleRows" $ do
     it "cruza las cinco respuestas y ordena por posición" $
       -- El orden que llega es el de `/drivers` (coche 1 primero); el que sale es
@@ -495,6 +498,122 @@ main = hspec $ do
       -- parrilla y en `/position`, pero no tiene una sola vuelta buena.
       map ltLastLap (rowsOf openF1Grid positionArray intervalArray emptyArray resultArray)
         `shouldBe` ["-", "-"]
+
+    -- Las seis que siguen son el caso de las sesiones sin `/intervals`, que son
+    -- cuatro de las cinco del fin de semana: medido el 2026-09-12, el endpoint da
+    -- 404 en las tres prácticas __y en la Qualy__, y solo la carrera lo publica.
+    it "saca gap e intervalo de la clasificación cuando `/intervals` llega vacía" $
+      -- Es la mitad que faltaba: `assembleRows` ya toleraba la ausencia poniendo
+      -- `-`, y una tabla con dos columnas a raya es el mismo vacío con otra forma.
+      map (\r -> (ltGap r, ltInterval r))
+          (rowsOf openF1Grid positionArray emptyArray lapArray resultPractice)
+        `shouldBe` [("LEADER", "-"), ("+0.166", "+0.166")]
+
+    it "deja ganar a `/intervals` cuando sí trae datos" $
+      -- La prueba que evita pasar por el motivo equivocado: el mismo fixture de
+      -- prácticas daría `+0.166`, así que este `+2.310` solo puede venir de
+      -- `/intervals`. Sin este caso, una regla invertida pasaría los dos.
+      map (\r -> (ltGap r, ltInterval r))
+          (rowsOf openF1Grid positionArray intervalArray lapArray resultPractice)
+        `shouldBe` [("LEADER", "-"), ("+2.310", "+2.310")]
+
+    it "toma el último tiempo no nulo del arreglo de una Qualy" $
+      -- El 1 cayó en Q1 y vale su Q1; el 16 corrió las tres y vale su Q3. La
+      -- diferencia es contra la __pole__ (+0.993) y no los +0.167 que OpenF1
+      -- publica contra el líder de Q1, que es justo lo que se descartó.
+      map (\r -> (ltGap r, ltInterval r))
+          (rowsOf openF1Grid positionArray emptyArray lapArray resultQualy)
+        `shouldBe` [("LEADER", "-"), ("+0.993", "+0.993")]
+
+    it "pone `-` al piloto cuyo arreglo de Qualy está entero a nulos" $
+      map (\r -> (ltGap r, ltInterval r))
+          (rowsOf openF1Grid positionArray emptyArray lapArray resultQualyAllNull)
+        `shouldBe` [("LEADER", "-"), ("-", "-")]
+
+    it "da el gap de carrera al restar tiempos totales" $
+      -- En carrera solo se llega aquí si `/intervals` falló. `duration` no es una
+      -- vuelta sino el tiempo total, y aun así la __resta__ sale bien: +3.857 es
+      -- exactamente el `gap_to_leader` que la 11361 publica para el segundo.
+      map (\r -> (ltGap r, ltInterval r))
+          (rowsOf openF1Grid positionArray emptyArray lapArray resultRace)
+        `shouldBe` [("LEADER", "-"), ("+3.857", "+3.857")]
+
+    it "pone `-` al piloto que no tiene tiempo en la clasificación" $
+      -- El coche 23 de la FP3 de hoy, con 2 vueltas y ninguna cronometrada:
+      -- `duration` nulo sin ninguna bandera puesta. La fila sigue en la tabla.
+      map (\r -> (ltGap r, ltInterval r))
+          (rowsOf openF1Grid positionArray emptyArray lapArray resultNoTime)
+        `shouldBe` [("LEADER", "-"), ("-", "-")]
+
+  -- Vive separada de `assembleRows` porque es la única pieza del área que no cruza
+  -- respuestas: entra una lista y sale otra, así que sus casos límite se escriben
+  -- sin montar los cinco fixtures.
+  describe "classificationGaps" $ do
+    it "devuelve [] sobre una clasificación vacía" $
+      classificationGaps [] `shouldBe` []
+
+    it "deja al más rápido con las dos a `-`" $
+      -- No tiene a nadie delante ni diferencia consigo mismo. En la tabla esa fila
+      -- la pinta el `pos == 1` de `assembleRows`, que llega antes.
+      classificationGaps [timedResult 16 (Just 92.797)]
+        `shouldBe` [(16, ("-", "-"))]
+
+    it "ordena por tiempo y no por el orden de llegada" $
+      -- La lista de `/session_result` viene ordenada, pero la función no puede
+      -- depender de eso: el intervalo al de delante sería el de otro piloto.
+      map fst (classificationGaps
+                 [ timedResult 1 (Just 92.963)
+                 , timedResult 16 (Just 92.797)
+                 , timedResult 4 (Just 92.986)
+                 ])
+        `shouldBe` [16, 1, 4]
+
+    it "acumula la diferencia al líder y no al de delante" $
+      -- Las dos columnas dicen cosas distintas, y con tres pilotos se separan: el
+      -- tercero está a +0.189 del líder pero a +0.023 del segundo.
+      map snd (classificationGaps
+                 [ timedResult 16 (Just 92.797)
+                 , timedResult 1 (Just 92.963)
+                 , timedResult 4 (Just 92.986)
+                 ])
+        `shouldBe` [("-", "-"), ("+0.166", "+0.166"), ("+0.189", "+0.023")]
+
+    it "da `+0.000` al empatado en vez de tratarlo como el líder" $
+      map snd (classificationGaps
+                 [ timedResult 16 (Just 92.797), timedResult 1 (Just 92.797) ])
+        `shouldBe` [("-", "-"), ("+0.000", "+0.000")]
+
+    it "omite al piloto sin tiempo en vez de colocarlo el primero" $
+      -- Con 'Nothing' ordenando antes que cualquier 'Just', un piloto sin tiempo
+      -- sería el líder y le robaría la referencia a toda la tabla.
+      classificationGaps [timedResult 1 Nothing, timedResult 16 (Just 92.797)]
+        `shouldBe` [(16, ("-", "-"))]
+
+  -- La misma clave con tres formas, y las tres legítimas. Los casos de abajo son
+  -- los que el decode no ve nunca en producción; los que sí se ven van por
+  -- `assembleRows`, que los ejercita a través del JSON.
+  describe "classificationTime" $ do
+    it "toma el número tal cual" $
+      classificationTime (Number 92.797) `shouldBe` Just 92.797
+
+    it "toma el último no nulo del arreglo, no el primero ni el mínimo" $
+      -- El mínimo daría 82.077 (el Q2), y lo que la clasificación enseña es el Q3.
+      classificationTime (jsonArray [Number 82.612, Number 82.077, Number 81.786])
+        `shouldBe` Just 81.786
+
+    it "salta los nulos de las Q que el piloto no disputó" $
+      classificationTime (jsonArray [Number 84.595, Null, Null])
+        `shouldBe` Just 84.595
+
+    it "da Nothing con el arreglo entero a nulos y con el arreglo vacío" $
+      map classificationTime [jsonArray [Null, Null, Null], jsonArray []]
+        `shouldBe` [Nothing, Nothing]
+
+    it "da Nothing ante el nulo y ante cualquier forma que no sea número" $
+      -- La cadena es la forma que `gap_to_leader` trae en carrera (@\"+1 LAP\"@);
+      -- aquí no se ha visto, y el decode tiene que sobrevivirla igual.
+      map classificationTime [Null, String "+1 LAP", Bool True]
+        `shouldBe` [Nothing, Nothing, Nothing]
 
   -- Vive en `common` y no en el widget justamente para poder probarse aquí: el
   -- paquete `frontend` no tiene suite, así que sin esta mudanza la única cobertura
@@ -1672,19 +1791,24 @@ lap number lapNum duration =
     <> ",\"st_speed\":208}"
 
 -- | Un objeto de @\/session_result@ con las __diez__ claves reales, de las que
--- 'Of1Result' consume cuatro. Lleva los seis campos que no modela —@position@,
--- @duration@ y @gap_to_leader@ entre ellos, los tres que la respuesta trae nulos—
--- porque el decode tiene que ignorarlos: es la misma razón por la que 'openF1Grid'
--- lleva @broadcast_name@.
-result :: Int -> ByteString -> ByteString -> ByteString -> ByteString -> ByteString
-result number pos dnf dns dsq =
+-- 'Of1Result' consume cinco. Lleva los cinco que no modela —@position@ y
+-- @gap_to_leader@ entre ellos— porque el decode tiene que ignorarlos: es la misma
+-- razón por la que 'openF1Grid' lleva @broadcast_name@.
+--
+-- @duration@ entra __ya serializado__, por lo mismo que los gaps de 'interval': su
+-- forma es lo que se prueba, y OpenF1 la emite como número en prácticas y carrera,
+-- como arreglo de tres en Qualy y como @null@ cuando no hay tiempo.
+result
+  :: Int -> ByteString -> ByteString -> ByteString -> ByteString -> ByteString
+  -> ByteString
+result number pos dnf dns dsq duration =
   "{\"position\":" <> pos
     <> ",\"driver_number\":" <> BC.pack (show number)
     <> ",\"number_of_laps\":72,\"points\":25.0"
     <> ",\"dnf\":" <> dnf
     <> ",\"dns\":" <> dns
     <> ",\"dsq\":" <> dsq
-    <> ",\"duration\":7484.859,\"gap_to_leader\":0"
+    <> ",\"duration\":" <> duration <> ",\"gap_to_leader\":0"
     <> ",\"meeting_key\":1292,\"session_key\":11353}"
 
 -- | Igual que 'result' pero __sin las tres banderas__. Protege el decode ante un
@@ -1761,34 +1885,104 @@ lapWithNullDuration =
     <> "," <> lap 16 3 "null"
     <> "]"
 
+-- | Un 'Of1Result' con solo lo que 'classificationGaps' mira: el coche y su tiempo.
+-- Las tres banderas van a 'False' porque esa función no las lee.
+timedResult :: Int -> Maybe Double -> Of1Result
+timedResult number duration =
+  Of1Result
+    { orNumber   = number
+    , orDnf      = False
+    , orDns      = False
+    , orDsq      = False
+    , orDuration = duration
+    }
+
+-- | Un arreglo JSON a partir de sus elementos. 'Data.Aeson.Array' pide un @Vector@,
+-- y traerlo aquí haría depender la suite de @vector@ solo por el constructor.
+jsonArray :: [Value] -> Value
+jsonArray = toJSON
+
+-- | La duración de carrera de los dos coches en los fixtures que no prueban las
+-- diferencias derivadas. Es la de la 11353, y la comparten a propósito: cualquier
+-- caso que las use lleva @\/intervals@ con datos, así que 'classificationGaps' no
+-- se alcanza.
+raceDuration :: ByteString
+raceDuration = "7484.859"
+
 -- | Clasificación sin incidencias: los dos coches con las tres banderas en @false@.
 resultArray :: ByteString
 resultArray =
-  "[" <> result 16 "1" "false" "false" "false"
-    <> "," <> result 1 "2" "false" "false" "false"
+  "[" <> result 16 "1" "false" "false" "false" raceDuration
+    <> "," <> result 1 "2" "false" "false" "false" raceDuration
     <> "]"
 
 -- | El caso medido del coche 23 de la 11353, trasplantado al coche 1: @dnf: true@
 -- __con__ @position@. Es el que hace que 'ltStatus' tenga que ser campo propio.
 resultWithDnf :: ByteString
 resultWithDnf =
-  "[" <> result 16 "1" "false" "false" "false"
-    <> "," <> result 1 "2" "true" "false" "false"
+  "[" <> result 16 "1" "false" "false" "false" raceDuration
+    <> "," <> result 1 "2" "true" "false" "false" raceDuration
     <> "]"
 
 -- | El coche 1 con abandono __y__ descalificación. No se ha observado; fija la
 -- prioridad de 'statusOf' para que no la decida el orden de los guardas.
 resultDsqAndDnf :: ByteString
 resultDsqAndDnf =
-  "[" <> result 16 "1" "false" "false" "false"
-    <> "," <> result 1 "2" "true" "false" "true"
+  "[" <> result 16 "1" "false" "false" "false" raceDuration
+    <> "," <> result 1 "2" "true" "false" "true" raceDuration
     <> "]"
 
 -- | El coche 1 sin tomar la salida. Cero casos en las cuatro sesiones medidas.
 resultWithDns :: ByteString
 resultWithDns =
-  "[" <> result 16 "1" "false" "false" "false"
-    <> "," <> result 1 "null" "false" "true" "false"
+  "[" <> result 16 "1" "false" "false" "false" raceDuration
+    <> "," <> result 1 "null" "false" "true" "false" "null"
+    <> "]"
+
+-- | Clasificación de una sesión de prácticas: @duration@ es la mejor vuelta y llega
+-- como número. Los dos tiempos son los del podio de la FP3 de Madrid (11364), y su
+-- diferencia real es @+0.166@.
+resultPractice :: ByteString
+resultPractice =
+  "[" <> result 16 "1" "false" "false" "false" "92.797"
+    <> "," <> result 1 "2" "false" "false" "false" "92.963"
+    <> "]"
+
+-- | Clasificación de una Qualy: @duration@ llega como __arreglo de tres__, con nulos
+-- en los segmentos que el piloto no disputó. Los números son los de la Qualy 11357:
+-- el 16 corrió las tres Q y vale su Q3 (81.786); el 1 cayó en Q1 y vale su Q1
+-- (82.779), o sea @+0.993@ contra la pole y __no__ los @+0.167@ que OpenF1 publica
+-- contra el líder de Q1.
+resultQualy :: ByteString
+resultQualy =
+  "[" <> result 16 "1" "false" "false" "false" "[82.612,82.077,81.786]"
+    <> "," <> result 1 "2" "false" "false" "false" "[82.779,null,null]"
+    <> "]"
+
+-- | El coche 1 con el arreglo de Qualy __entero a nulos__: no marcó tiempo en
+-- ninguna Q. No se ha observado; la forma solo se construye a mano.
+resultQualyAllNull :: ByteString
+resultQualyAllNull =
+  "[" <> result 16 "1" "false" "false" "false" "[82.612,82.077,81.786]"
+    <> "," <> result 1 "2" "false" "false" "false" "[null,null,null]"
+    <> "]"
+
+-- | Clasificación de una carrera: @duration@ es el tiempo __total__, no una vuelta.
+-- Los dos son los de la 11361, cuya diferencia publicada es @+3.857@.
+resultRace :: ByteString
+resultRace =
+  "[" <> result 16 "1" "false" "false" "false" "6675.281"
+    <> "," <> result 1 "2" "false" "false" "false" "6679.138"
+    <> "]"
+
+-- | El coche 1 con @duration@ nulo y __sin ninguna bandera puesta__: el caso medido
+-- del coche 23 en la FP3 de hoy (11364), que dio dos vueltas y no cronometró
+-- ninguna. Va aparte de 'resultWithDns' para que la ausencia de tiempo no se pruebe
+-- a través de una incidencia.
+resultNoTime :: ByteString
+resultNoTime =
+  "[" <> result 16 "1" "false" "false" "false" "92.797"
+    <> "," <> result 1 "2" "false" "false" "false" "null"
     <> "]"
 
 -- | Las tres banderas ausentes en los dos objetos. Con @.:@ este fixture no

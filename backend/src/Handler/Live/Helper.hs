@@ -16,12 +16,15 @@ module Handler.Live.Helper
   , statusOf
   , latestByDriver
   , formatLap
+  , classificationTime
+  , classificationGaps
   ) where
 
 import           Common.Types          (DriverStatus (..), LiveTimingRow (..))
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
+import           Data.Foldable         (toList)
 import           Data.Function         (on)
 import           Data.List             (find, groupBy, maximumBy, sortOn)
 import           Data.Maybe            (fromMaybe, mapMaybe)
@@ -75,8 +78,16 @@ instance FromJSON Of1Interval where
 gapText :: Value -> Parser Text
 gapText Null       = pure "-"
 gapText (String s) = pure s
-gapText (Number n) = pure (T.pack (printf "%+.3f" (realToFrac n :: Double)))
+gapText (Number n) = pure (diffText (realToFrac n))
 gapText _          = pure "-"
+
+-- | Una diferencia en segundos, con signo y tres decimales (@0.166 → \"+0.166\"@).
+--
+-- La comparten el gap que publica OpenF1 y el que se deriva de la clasificación
+-- ('classificationGaps'), para que las dos procedencias de la misma columna no se
+-- distingan al leerlas.
+diffText :: Double -> Text
+diffText d = T.pack (printf "%+.3f" d)
 
 -- | @/laps@: duración de una vuelta concreta (@null@ en out/in laps).
 data Of1Lap = Of1Lap
@@ -95,21 +106,22 @@ instance FromJSON Of1Lap where
 
 -- | @/session_result@: clasificación de la sesión, una fila por piloto.
 --
--- __Se modelan solo los cuatro campos que se consumen__, y eso lo decidió una
--- medición: la respuesta de la sesión 11353 trae 26 nulos sobre 22 filas
--- (@duration@ ×15, @gap_to_leader@ ×6, @position@ ×5) y __ninguno__ toca este
--- decode, porque la posición de la tabla sale de @\/position@ y los otros dos no
--- se usan. Modelarlos para poder ignorarlos habría añadido tres 'Maybe' sin
--- consumidor. Decidido el 2026-08-27.
+-- __Se modelan cinco de los diez campos.__ @position@ y @gap_to_leader@ siguen
+-- fuera: la posición de la tabla sale de @\/position@, y la diferencia se deriva de
+-- 'orDuration' en vez de leerse, porque la que publica OpenF1 en una Qualy es
+-- contra el líder de __cada segmento__ y no contra la pole.
 --
 -- Vive aquí y no en 'Handler.OpenF1.Helper' porque hoy lo consume solo Live; el
 -- criterio de reparto está en la cabecera de ese módulo y asciende cuando lo
 -- comparta una segunda área.
 data Of1Result = Of1Result
-  { orNumber :: Int
-  , orDnf    :: Bool
-  , orDns    :: Bool
-  , orDsq    :: Bool
+  { orNumber   :: Int
+  , orDnf      :: Bool
+  , orDns      :: Bool
+  , orDsq      :: Bool
+  , orDuration :: Maybe Double
+    -- ^ El tiempo que la clasificación ordena, en segundos; 'Nothing' si el piloto
+    -- no tiene ninguno. Ver 'classificationTime': __no siempre es una vuelta__.
   }
   deriving (Eq, Show)
 
@@ -119,6 +131,9 @@ data Of1Result = Of1Result
 -- del arreglo y con él @\/api\/live@ entera. Y el default es __semánticamente__
 -- correcto, que es lo que lo hace aceptable: una bandera ausente significa «no
 -- consta que abandonara», que es exactamente 'Running'.
+--
+-- @duration@ entra por la misma puerta y por el mismo motivo que los dos gaps de
+-- 'Of1Interval': con @.:? … .!= Null@, la clave ausente y el nulo comparten rama.
 instance FromJSON Of1Result where
   parseJSON = withObject "Of1Result" $ \o ->
     Of1Result
@@ -126,6 +141,27 @@ instance FromJSON Of1Result where
       <*> o .:? "dnf" .!= False
       <*> o .:? "dns" .!= False
       <*> o .:? "dsq" .!= False
+      <*> (classificationTime <$> (o .:? "duration" .!= Null))
+
+-- | El tiempo por el que la clasificación ordena, a partir del valor crudo de
+-- @duration@.
+--
+-- __La misma clave llega con tres formas, y las tres son legítimas:__ un número en
+-- prácticas (la mejor vuelta), un __arreglo de tres__ en Qualy (Q1, Q2 y Q3, con
+-- nulos en los segmentos que el piloto no disputó) y un número en carrera (el
+-- tiempo total, no una vuelta). De ahí que el consumidor no pueda pintar este valor
+-- tal cual: 'classificationGaps' solo lo resta.
+--
+-- Del arreglo vale __el último no nulo__, que es el mejor tiempo de la última Q que
+-- el piloto corrió y el que enseña la clasificación oficial. Cualquier otra forma
+-- —cadena, booleano, nulo o clave ausente— da 'Nothing'.
+classificationTime :: Value -> Maybe Double
+classificationTime (Number n) = Just (realToFrac n)
+classificationTime (Array xs) =
+  case [ realToFrac n :: Double | Number n <- toList xs ] of
+    [] -> Nothing
+    ns -> Just (last ns)
+classificationTime _ = Nothing
 
 -- | Estado de un piloto a partir de las tres banderas de @/session_result@.
 --
@@ -140,6 +176,27 @@ statusOf r
   | orDns r   = Dns
   | orDnf r   = Dnf
   | otherwise = Running
+
+-- | Diferencia al mejor y al de delante por piloto, derivadas de la clasificación.
+--
+-- Es lo que alimenta las columnas @Gap@ e @Interval@ en las sesiones donde
+-- @\/intervals@ no publica nada, que son todas menos la carrera. El piloto sin
+-- tiempo no aparece en la lista, y el más rápido lleva las dos a @\"-\"@: no tiene
+-- a nadie delante ni diferencia consigo mismo.
+--
+-- __Lo que devuelve es siempre una resta, nunca el tiempo crudo__, y por eso vale
+-- igual para las cinco sesiones: en prácticas resta vueltas, en Qualy resta el
+-- tiempo de cada uno contra la pole, y en carrera —donde solo se llega si
+-- @\/intervals@ falló— resta tiempos totales, que da el mismo gap de carrera.
+classificationGaps :: [Of1Result] -> [(Int, (Text, Text))]
+classificationGaps results =
+  case sortOn snd [ (orNumber r, t) | r <- results, Just t <- [orDuration r] ] of
+    []                       -> []
+    ordered@((n0, best) : _) ->
+      (n0, ("-", "-"))
+        : [ (n, (diffText (t - best), diffText (t - ahead)))
+          | ((n, t), (_, ahead)) <- zip (drop 1 ordered) ordered
+          ]
 
 -- | Reduce una serie temporal a la última entrada por piloto: agrupa por
 -- @driver_number@ y se queda con el máximo según la clave de orden dada.
@@ -176,6 +233,10 @@ formatLap secs =
 -- un piloto que no aparezca en ella entra como 'Running'. Es degradado parcial a
 -- propósito —la tabla sin marcas sigue siendo la tabla—, y no lo elige esta
 -- función sino el default de 'Of1Result'.
+--
+-- __@\/intervals@ vacía no vacía las columnas:__ cuando no trae nada, el gap y el
+-- intervalo salen de 'classificationGaps' en vez de perderse. La condición es la
+-- lista y no el tipo de sesión, así que no hace falta averiguarlo.
 assembleRows
   :: [Of1Driver]
   -> [Of1Position]
@@ -192,18 +253,28 @@ assembleRows drivers positions intervals laps results =
       latestByDriver olNumber olLapNum $
         filter (maybe False (> 0) . olDuration) laps
 
+    derived = classificationGaps results
+
+    -- El gap y el intervalo de un piloto, de la fuente que haya. Se elige una sola
+    -- vez para toda la tabla, para que dos filas no puedan salir de fuentes
+    -- distintas.
+    gapsFor n
+      | null intervals = lookup n derived
+      | otherwise =
+          (\i -> (oiGap i, oiInterval i)) <$> find ((== n) . oiNumber) intByDrv
+
     row d = do
       p <- find ((== odNumber d) . opNumber) posByDrv
-      let mi  = find ((== odNumber d) . oiNumber) intByDrv
+      let mg  = gapsFor (odNumber d)
           ml  = find ((== odNumber d) . olNumber) lapByDrv
           mr  = find ((== odNumber d) . orNumber) results
           pos = opPosition p
           gap
             | pos == 1  = "LEADER"
-            | otherwise = maybe "-" oiGap mi
+            | otherwise = maybe "-" fst mg
           intv
             | pos == 1  = "-"
-            | otherwise = maybe "-" oiInterval mi
+            | otherwise = maybe "-" snd mg
           lastLap = maybe "-" (formatLap . fromMaybe 0 . olDuration) ml
       pure
         LiveTimingRow
