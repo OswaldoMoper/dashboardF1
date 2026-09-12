@@ -2,12 +2,15 @@
 -- ('Handler.Historical.Helper'), Telemetry ('Handler.Telemetry.Helper' y la
 -- resolución de parámetros de 'Handler.Telemetry.Context'), Comparison
 -- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context'), Drivers
--- (ídem) y TyreStrategy ('Handler.TyreStrategy.Helper').
+-- (ídem), TyreStrategy ('Handler.TyreStrategy.Helper'), Live
+-- ('Handler.Live.Helper' y las cabeceras de procedencia de 'Handler.Live') y los
+-- tipos crudos compartidos de OpenF1 ('Handler.OpenF1.Helper'). Con el último no
+-- queda ninguna función pura del backend sin cubrir.
 --
--- TyreStrategy es la primera de las tres áreas que quedaban sin suite (siguen sin
--- ella 'Handler.Live.Helper' y 'Handler.OpenF1.Helper'), y entra
--- por la puerta de al lado: es también la primera que se prueba __contra dos
--- respuestas a la vez__, porque su función pura cruza @/stints@ con @/drivers@.
+-- TyreStrategy es la primera área que se prueba __contra dos respuestas a la vez__,
+-- porque su función pura cruza @/stints@ con @/drivers@; `assembleRows` sube esa
+-- escalera a cinco, y de ahí que los helpers de la suite crezcan en número de
+-- fixtures y no en número de formas.
 --
 -- Un caso no encaja en ese reparto y es deliberado: la __coherencia entre los
 -- dummies__ de Drivers y Comparison. No prueba una función sino un acuerdo entre
@@ -80,6 +83,7 @@ import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
+import           Data.Either                 (isLeft)
 import           Data.List                   (nub)
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Text                   as T
@@ -99,7 +103,7 @@ import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
                                               Of1Result (..), assembleRows,
                                               classificationGaps,
                                               classificationTime)
-import           Handler.OpenF1.Helper       (Of1Driver)
+import           Handler.OpenF1.Helper       (Of1Driver (..))
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
 import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
@@ -327,6 +331,55 @@ main = hspec $ do
 
     it "con sesión la pone en el query, y no hay segundo parámetro que omitir" $
       driversPathFor (Just "2026-13-R") `shouldBe` "/api/drivers?session=2026-13-R"
+
+  -- Único `describe` de la suite cuyos casos afirman que un fixture __no__
+  -- decodifica, y por eso es el único que usa `tryOf1Drivers` en vez de un helper
+  -- que aborte. `Of1Driver` es la puerta de entrada de dos áreas —Live y
+  -- TyreStrategy— y sus tres campos son obligatorios: lo que se fija aquí es que
+  -- ese «todo o nada» sea el criterio y no una casualidad, porque es lo que
+  -- decide si la tabla cae a cache/dummy o se sirve a medias.
+  --
+  -- El camino feliz ya estaba cubierto de rebote —`stintsOf` y `rowsOf` decodifican
+  -- esta misma parrilla y abortan si falla—, así que lo que estos casos añaden son
+  -- las ramas negativas y el mapeo campo a campo.
+  --
+  -- El orden de salida __no__ se prueba, y es deliberado: las dos consumidoras
+  -- usan la lista como tabla de búsqueda (`find` por `odNumber`) y reordenan lo que
+  -- emiten, así que un caso de orden probaría a aeson y no a este repo.
+  describe "Of1Driver" $ do
+    it "mapea los tres campos e ignora las claves que no modela" $
+      -- La respuesta real trae once claves; el tipo consume tres. Que las otras
+      -- ocho no estorben es contrato del decode y no una propiedad de aeson que
+      -- se pueda dar por supuesta: bastaría un `withObject` estricto para que la
+      -- parrilla entera dejara de decodificar sin que nada más cambiara.
+      fmap (map (\d -> (odNumber d, odAcronym d, odTeam d))) (tryOf1Drivers openF1Grid)
+        `shouldBe` Right [(1, "NOR", "McLaren"), (16, "LEC", "Ferrari")]
+
+    it "sin team_name no decodifica, y eso tumba la parrilla entera" $
+      -- El contrario exacto de `assembleDrivers`, que ante el equipo ausente
+      -- conserva la lista y pierde la decoración (`.:? … .!= ""`). Aquí los tres
+      -- campos son `.:`, así que el área pierde la traducción
+      -- `driver_number → name_acronym` y no solo el nombre del equipo: servir la
+      -- tabla sin ella daría filas que el widget no puede etiquetar. Que las dos
+      -- áreas traten el mismo no-dato al revés es decisión, y sin este caso nada
+      -- la sostiene.
+      tryOf1Drivers openF1GridWithoutTeam `shouldSatisfy` isLeft
+
+    it "con driver_number como cadena tampoco decodifica" $
+      -- Los dos `/drivers` del repo discrepan en el tipo del mismo concepto: el de
+      -- FastF1 emite el número como texto (ver `driverGrid`) y el de OpenF1 como
+      -- entero. Confundirlos es el error que este caso ancla, y el fallo tiene que
+      -- ser de lista entera: una fila descartada en silencio dejaría a un piloto
+      -- fuera de la tabla con la red viva.
+      tryOf1Drivers openF1GridNumberAsText `shouldSatisfy` isLeft
+
+    it "una sesión sin parrilla publicada decodifica como []" $
+      -- La sesión sin parrilla tiene que __decodificar__, no reventar: el `[]` es
+      -- la puerta por la que los `Context` de Live y TyreStrategy degradan, porque
+      -- su condición de éxito es `not (null rows)`. Las dos puertas acaban en
+      -- cache/dummy, y este caso fija que esta pasa por la lista vacía y no por la
+      -- excepción. Mismo papel que el `[]` de `assembleDrivers`.
+      tryOf1Drivers emptyArray `shouldBe` Right []
 
   -- Primera cobertura del área TyreStrategy, y la única función del repo que
   -- cruza __dos__ respuestas: los stints traen
@@ -1417,6 +1470,13 @@ decodeOf1Drivers :: ByteString -> [Of1Driver]
 decodeOf1Drivers raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
 
+-- | Contrafigura de 'decodeOf1Drivers' para el @describe@ de 'Of1Driver': devuelve
+-- el 'Either' en vez de abortar, porque ahí el fallo del decode __es__ lo que se
+-- prueba. Las dos conviven a propósito: para 'stintsOf' y 'rowsOf' la parrilla es
+-- un supuesto y un fixture roto es error del test; aquí es el sujeto.
+tryOf1Drivers :: ByteString -> Either String [Of1Driver]
+tryOf1Drivers = eitherDecodeStrict
+
 decodeStints :: ByteString -> [Of1Stint]
 decodeStints raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
@@ -1682,6 +1742,24 @@ openF1Grid =
   \\"broadcast_name\":\"L NORRIS\",\"team_colour\":\"F47600\"},\
   \{\"driver_number\":16,\"name_acronym\":\"LEC\",\"team_name\":\"Ferrari\",\
   \\"broadcast_name\":\"C LECLERC\",\"team_colour\":\"ED1131\"}]"
+
+-- | 'openF1Grid' sin @team_name@ en el segundo coche. Espejo de 'gridWithoutTeam'
+-- para el otro @\/drivers@, y con el desenlace __contrario__: allí el equipo es
+-- prescindible y la lista sobrevive; aquí es @.:@ y no decodifica ninguno de los
+-- dos, porque lo que se perdería con el equipo es la traducción
+-- @driver_number → name_acronym@ que las dos áreas consumen.
+openF1GridWithoutTeam :: ByteString
+openF1GridWithoutTeam =
+  "[{\"driver_number\":1,\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"},\
+  \{\"driver_number\":16,\"name_acronym\":\"LEC\"}]"
+
+-- | 'openF1Grid' con @driver_number@ como cadena. No es una forma que OpenF1 emita:
+-- es la del __otro__ @\/drivers@, el de FastF1, que publica el número como texto
+-- (ver 'driverGrid'). Los dos servicios discrepan en el tipo del mismo concepto, y
+-- este fixture ancla que confundirlos no pase por bueno.
+openF1GridNumberAsText :: ByteString
+openF1GridNumberAsText =
+  "[{\"driver_number\":\"1\",\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"}]"
 
 -- | Recorte de @GET \/stints@ de OpenF1 (sesión 11353, 2026-08-25): dos stints de
 -- cada coche, __intercalados__ para que el orden de salida no pueda venir de
