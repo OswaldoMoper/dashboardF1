@@ -307,8 +307,53 @@ accidente mientras se encendía el lienzo era el riesgo, y se evitó no tocando 
   declarado. **El lienzo no depende de esto**: con posiciones escritas a mano funciona igual, y arrastrar
   es una capa encima.
 
+**Ampliación del 2026-09-12 — un requisito que se había perdido y una fuente que no se sostiene.**
+
+- **Nada es fijo, y es en dos niveles.** Lo que los widgets enseñan hoy es **un ejemplo** y no el
+  producto: las siete columnas de Live Timing son una lista fija en el código, o sea andamio. Lo pedido
+  es elegir **qué contenido va en cada rectángulo y con qué parámetros** —telemetría de dos pilotos
+  concretos, o de uno contra su propia referencia— **y qué KPIs enseña ese contenido**. Los dos niveles
+  son del usuario y **el tipo de sesión no los decide**: el mismo tipo de sesión puede querer unos KPIs
+  un día y otros al siguiente.
+  **Reabre los catálogos, y ninguno existe todavía:** la lista de contenidos disponibles está implícita
+  en el `case` de `renderWidget`, y **un catálogo de KPIs no existe en ninguna parte**. El alcance
+  elegido el 2026-09-12 es **todo lo que la fuente cubra**, lo que mete dentro los mejores sectores y
+  las velocidades punta por piloto, que hoy ningún widget enseña.
+- **La referencia es por tarjeta, con defecto global.** Comparar con las sesiones anteriores del gran
+  premio es propiedad de **cada** tarjeta: una contra la primera práctica y la de al lado contra la
+  segunda, a la vez. Un mando general fija el valor por omisión y cada tarjeta puede apartarse.
+  **Ese defecto global es el selector de sesión** que esta fase ya tenía como entregable: son la misma
+  pieza y no dos.
+- **El directo no puede salir de OpenF1.** Medido el 2026-09-12: devuelve **401 en todos sus
+  endpoints mientras hay una sesión en marcha** —incluidas las sesiones pasadas— y el acceso
+  autenticado es de pago, descartado por propósito el 2026-09-06. Y `/intervals` da 404 en las tres
+  prácticas **y en la clasificación**: solo la carrera lo publica, o sea **cuatro de las cinco sesiones
+  del fin de semana**. Sin el feed oficial el dashboard no enseña dato real **durante** ninguna sesión,
+  que es justo cuando se mira.
+  **Medido también que el estado de sesión del feed no sirve para decidir:** cicla por segmento, y marcó
+  «terminada» con veinticuatro minutos de clasificación por delante.
+
 **Entregables:**
 
+- [ ] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
+      si trae filas son de la sesión en marcha; si no trae ninguna, se cae a OpenF1, que es exactamente
+      cuando OpenF1 responde. El orden lo decide **qué contesta** y no qué hora es — decidir por la
+      ventana oficial se descartó porque el correr acaba antes que la hora: el 2026-09-12 se dejó de
+      rodar dieciocho minutos antes del final publicado, y OpenF1 no abrió hasta ese final.
+- [ ] **Conexión permanente al feed con estado acumulado**, en el microservicio (2026-09-12). El feed
+      manda deltas —un coche, un sector, un segmento— y llega a **323 mensajes por minuto** en el pico
+      de una clasificación, con tres minutos casi mudos en cada corte. La respuesta a la suscripción
+      trae **cada tema completo**, así que una foto por petición ya funciona; lo que la foto pierde son
+      las transiciones, no el estado.
+- [ ] **Cliente de SignalR en Haskell**, para mover la conexión y el acumulador al backend
+      (2026-09-12). **Arranca cuando el feed sea el único camino de más de dos áreas**, y no antes: la
+      condición es contable y evita convertir por plan en vez de por necesidad. No existe cliente para
+      ese protocolo en el ecosistema, así que entran negociación, socket y acumulador. **Se prueba
+      contra una sesión grabada** y no contra una en vivo, que es lo que lo hace abordable.
+- [ ] **Catálogo de contenidos y catálogo de KPIs**, los dos niveles de «nada es fijo» (2026-09-12).
+      El primero saca a un valor la lista que hoy vive en el `case` de `renderWidget`; el segundo hay
+      que escribirlo entero, y arrastra la advertencia del KPI pedido que resulta ser otra cosa: por
+      cada uno, de qué endpoint sale y quién agrega.
 - [ ] Layouts guardables/cargables.
 - [ ] Modo “sync” básico (input manual de tiempo).
 - [ ] `WidgetId` como identidad real, no derivada del tipo, y `WidgetParams` con forma decidida.
@@ -344,6 +389,12 @@ accidente mientras se encendía el lienzo era el riesgo, y se evitó no tocando 
       completo, con control híbrido —pestañas, desplegable al estrecharse, ciclado por el título—, y la
       caja conservando su rectángulo al conmutar (2026-09-03 (c)).
 - [ ] Selector de sesión compartido por la página. Estado de **página**, no de `Layout`.
+      **Ampliado el 2026-09-12:** es el **defecto global** de la referencia por tarjeta, así que el
+      selector y comparar con las sesiones anteriores del gran premio son **la misma pieza**. Y la
+      lista de dónde elegir ya está medida: el endpoint de sesiones de OpenF1, filtrado por reunión,
+      publica las cinco del fin de semana con su tipo y su nombre. Ojo al filtrar por tipo: los valores
+      son tres —prácticas, clasificación y carrera— y **el sprint no es uno de ellos**, sino un
+      *nombre* dentro de los dos últimos, así que distinguir cuatro modos pide **los dos campos**.
 
 **Lo que NO es de esta fase**, aunque se pida junto con lo de arriba y se le parezca:
 
