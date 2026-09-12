@@ -102,10 +102,12 @@ import           Handler.Historical.Helper   (Root, assembleConstructorStats,
 import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               OriginHeaderName, fetchedAtText,
                                               withOrigin)
+import           Handler.Feed.Helper         (FeedRow)
 import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
                                               Of1Result (..), assembleRows,
                                               classificationGaps,
-                                              classificationTime)
+                                              classificationTime, feedRows,
+                                              feedStatus)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
@@ -670,6 +672,66 @@ main = hspec $ do
       -- aquí no se ha visto, y el decode tiene que sobrevivirla igual.
       map classificationTime [Null, String "+1 LAP", Bool True]
         `shouldBe` [Nothing, Nothing, Nothing]
+
+  -- La otra fuente, y el reparto con OpenF1 es el contrario: allí se ensamblan cinco
+  -- respuestas, aquí la tabla llega hecha. Lo que estos casos sostienen es lo poco
+  -- que queda en el lado Haskell —quién puede faltar, el estado y el orden—, que es
+  -- justo lo que decide si una sesión en marcha se ve o se pierde: por la decisión
+  -- del 2026-09-12, un decode roto es un fallo del feed y la tabla sale de la cache.
+  describe "FeedRow y feedRows" $ do
+    it "mapea la tabla que emite el microservicio, con el líder tal cual viene" $
+      -- El `\"LEADER\"` y el `\"-\"` los pone el microservicio, con el mismo
+      -- criterio que `assembleRows`: la tabla no puede decir dos cosas distintas
+      -- según de dónde venga el dato, así que aquí no se recalculan.
+      fmap feedRows (tryFeedRows feedTable)
+        `shouldBe` Right
+          [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running
+          , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Dnf
+          ]
+
+    it "ordena por posición aunque el emisor mande la tabla desordenada" $
+      -- El microservicio ya ordena. Que esta función lo repita es lo que impide que
+      -- un cambio en la otra punta salga como una tabla desordenada sin error.
+      fmap (map ltPosition . feedRows) (tryFeedRows feedTableUnordered)
+        `shouldBe` Right [1, 2, 3]
+
+    it "con solo posición y piloto la fila sobrevive, con lo demás en blanco" $
+      -- El contrario de `Of1Driver`, que ante el equipo ausente tumba la parrilla
+      -- entera. Aquí degradar es lo correcto porque el precio de no hacerlo es la
+      -- tabla de la sesión en marcha, que es el único momento en que OpenF1 calla.
+      fmap feedRows (tryFeedRows feedTableMinimal)
+        `shouldBe` Right [LiveTimingRow 4 "ANT" "" "" "" "" Running]
+
+    it "sin ltPosition no decodifica, y eso tumba la tabla entera" $
+      -- Sin posición no hay fila que ordenar, que es el criterio que ya aplican
+      -- `assembleRows` y el propio microservicio. El fallo tiene que ser de tabla
+      -- entera: una fila descartada en silencio dejaría a un coche fuera con el
+      -- feed vivo.
+      tryFeedRows feedTableWithoutPosition `shouldSatisfy` isLeft
+
+    it "sin ltDriver tampoco, porque la fila no identificaría a nadie" $
+      tryFeedRows feedTableWithoutDriver `shouldSatisfy` isLeft
+
+    it "una sesión que no está en marcha decodifica como [], no revienta" $
+      -- El `[]` es la puerta por la que la escalera baja a OpenF1: si esto fuera una
+      -- excepción, sería un fallo del feed y se iría a la cache, dejando la página
+      -- sin el dato real que OpenF1 sí tiene fuera de sesión.
+      fmap feedRows (tryFeedRows emptyArray) `shouldBe` Right []
+
+  describe "feedStatus" $ do
+    it "lee los cuatro nombres tal cual los emite el microservicio" $
+      map feedStatus ["Running", "Dnf", "Dns", "Dsq"]
+        `shouldBe` [Running, Dnf, Dns, Dsq]
+
+    it "tolera espacios y mayúsculas, como el resto de lo que llega por cable" $
+      map feedStatus ["  dnf ", "DSQ"] `shouldBe` [Dnf, Dsq]
+
+    it "lo que no reconoce entra como Running, y ésa es la decisión" $
+      -- Inventar un abandono haría creer en un incidente que nadie reportó, y
+      -- tirar la fila perdería un coche que sí está en pista. `Running` significa
+      -- «no consta que abandonara», igual que en `statusOf`.
+      map feedStatus ["", "  ", "Retired", "InPit"]
+        `shouldBe` [Running, Running, Running, Running]
 
   -- Vive en `common` y no en el widget justamente para poder probarse aquí: el
   -- paquete `frontend` no tiene suite, así que sin esta mudanza la única cobertura
@@ -1581,6 +1643,12 @@ decodeOf1Drivers raw =
 tryOf1Drivers :: ByteString -> Either String [Of1Driver]
 tryOf1Drivers = eitherDecodeStrict
 
+-- | Espejo de 'tryOf1Drivers' para la tabla del feed, y por el mismo motivo: lo que
+-- se prueba aquí incluye __que un fixture no decodifique__, así que abortar ante el
+-- 'Left' pondría verde el caso por la razón contraria.
+tryFeedRows :: ByteString -> Either String [FeedRow]
+tryFeedRows = eitherDecodeStrict
+
 decodeStints :: ByteString -> [Of1Stint]
 decodeStints raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
@@ -1852,6 +1920,37 @@ openF1Grid =
 -- prescindible y la lista sobrevive; aquí es @.:@ y no decodifica ninguno de los
 -- dos, porque lo que se perdería con el equipo es la traducción
 -- @driver_number → name_acronym@ que las dos áreas consumen.
+-- | La tabla tal cual la emite @GET \/fastf1\/live@: siete claves por fila, con el
+-- líder ya marcado y el estado como el nombre del constructor.
+feedTable :: ByteString
+feedTable =
+  "[{\"ltPosition\":1,\"ltDriver\":\"VER\",\"ltTeam\":\"Red Bull\",\
+  \\"ltGap\":\"LEADER\",\"ltInterval\":\"-\",\"ltLastLap\":\"1:29.345\",\
+  \\"ltStatus\":\"Running\"},\
+  \{\"ltPosition\":2,\"ltDriver\":\"LEC\",\"ltTeam\":\"Ferrari\",\
+  \\"ltGap\":\"+1.234\",\"ltInterval\":\"+1.234\",\"ltLastLap\":\"1:29.512\",\
+  \\"ltStatus\":\"Dnf\"}]"
+
+-- | Tres filas en orden 3-1-2. No es una forma que el microservicio emita hoy —ya
+-- ordena—: ancla que el orden de la tabla lo decide este lado.
+feedTableUnordered :: ByteString
+feedTableUnordered =
+  "[{\"ltPosition\":3,\"ltDriver\":\"NOR\"},\
+  \{\"ltPosition\":1,\"ltDriver\":\"VER\"},\
+  \{\"ltPosition\":2,\"ltDriver\":\"LEC\"}]"
+
+-- | Lo mínimo que una fila puede traer sin dejar de ser fila.
+feedTableMinimal :: ByteString
+feedTableMinimal = "[{\"ltPosition\":4,\"ltDriver\":\"ANT\"}]"
+
+feedTableWithoutPosition :: ByteString
+feedTableWithoutPosition =
+  "[{\"ltPosition\":1,\"ltDriver\":\"VER\"},{\"ltDriver\":\"LEC\"}]"
+
+feedTableWithoutDriver :: ByteString
+feedTableWithoutDriver =
+  "[{\"ltPosition\":1,\"ltDriver\":\"VER\"},{\"ltPosition\":2}]"
+
 openF1GridWithoutTeam :: ByteString
 openF1GridWithoutTeam =
   "[{\"driver_number\":1,\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"},\

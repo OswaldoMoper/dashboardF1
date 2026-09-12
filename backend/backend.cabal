@@ -32,6 +32,7 @@ library
         Outcome
         Handler.FastF1.Manager
         Handler.PublicApi.Manager
+        Handler.Feed.Helper
         Handler.OpenF1.Helper
         Handler.OpenF1.Manager
         Handler.Live

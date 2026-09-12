@@ -1,10 +1,17 @@
 -- | Área Live timing — lógica pura.
 --
--- Modela solo los campos de OpenF1 que se consumen y los traduce a
--- 'LiveTimingRow'. Las respuestas @/position@, @/intervals@ y @/laps@ son
--- series temporales (muchas filas por piloto); aquí se reducen a la última
--- entrada por piloto y se ensambla la tabla ordenada por posición. Sin
--- efectos: todo es determinista y testeable.
+-- Traduce a 'LiveTimingRow' lo que llega de las __dos fuentes__, y el trabajo que
+-- hace con cada una no se parece:
+--
+-- * __OpenF1__ entrega series temporales por endpoint (@/position@, @/intervals@,
+--   @/laps@), así que aquí se reducen a la última entrada por piloto y se ensambla
+--   la tabla ('assembleRows'). Los tipos crudos de esos endpoints viven en este
+--   módulo.
+-- * __El feed__ entrega la tabla ya armada por el microservicio, así que el mapeo es
+--   el estado y el orden ('feedRows'). Su tipo crudo es de la fuente y vive en
+--   'Handler.Feed.Helper'.
+--
+-- Sin efectos: todo es determinista y testeable.
 module Handler.Live.Helper
   ( -- * Tipos crudos OpenF1 específicos de Live
     Of1Position (..)
@@ -13,6 +20,8 @@ module Handler.Live.Helper
   , Of1Result (..)
     -- * Transformaciones puras
   , assembleRows
+  , feedRows
+  , feedStatus
   , statusOf
   , latestByDriver
   , formatLap
@@ -31,6 +40,7 @@ import           Data.Maybe            (fromMaybe, mapMaybe)
 import           Data.Ord              (comparing)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
+import           Handler.Feed.Helper   (FeedRow (..))
 import           Handler.OpenF1.Helper (Of1Driver (..))
 import           Text.Printf           (printf)
 
@@ -176,6 +186,44 @@ statusOf r
   | orDns r   = Dns
   | orDnf r   = Dnf
   | otherwise = Running
+
+-- | La tabla del feed, ya armada por el microservicio, traducida a
+-- 'LiveTimingRow'.
+--
+-- Es el mapeo de la otra fuente, y aquí no hay nada que ensamblar: las columnas
+-- llegan resueltas porque el microservicio aplica las mismas reglas que
+-- 'assembleRows'. Lo que queda es el estado, que viaja como texto, y el orden.
+--
+-- __Ordena por posición aunque el emisor ya ordene.__ La tabla es de esta función y
+-- no del cable: hacerla depender de que la otra punta ordene convertiría un cambio
+-- allí en una tabla desordenada aquí, sin error que lo delate.
+feedRows :: [FeedRow] -> [LiveTimingRow]
+feedRows = map toRow . sortOn frPosition
+  where
+    toRow r =
+      LiveTimingRow
+        { ltPosition = frPosition r
+        , ltDriver   = frDriver r
+        , ltTeam     = frTeam r
+        , ltGap      = frGap r
+        , ltInterval = frInterval r
+        , ltLastLap  = frLastLap r
+        , ltStatus   = feedStatus (frStatus r)
+        }
+
+-- | El estado del feed, que viaja como el nombre del constructor.
+--
+-- __Lo que no se reconoce entra como 'Running'__, con el mismo significado que en
+-- 'statusOf': «no consta que abandonara», no «se comprobó que sigue en pista».
+-- Inventar un abandono haría creer en un incidente que nadie reportó, y tirar la
+-- fila perdería un coche que sí está en pista.
+feedStatus :: Text -> DriverStatus
+feedStatus raw =
+  case T.toLower (T.strip raw) of
+    "dnf" -> Dnf
+    "dns" -> Dns
+    "dsq" -> Dsq
+    _     -> Running
 
 -- | Diferencia al mejor y al de delante por piloto, derivadas de la clasificación.
 --
