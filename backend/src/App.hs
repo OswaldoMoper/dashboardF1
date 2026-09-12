@@ -2,14 +2,15 @@
 --
 -- El 'Env' transporta la configuración y el estado mutable compartido entre
 -- handlers. Fase 3: gana la cache en memoria (STM) de live timing, poblada por
--- 'Handler.Live.Context' con la última respuesta buena de OpenF1. Fase 4: las
--- cajas de telemetría y comparación — importan más que las otras tres porque el
--- microservicio FastF1 es __nuestro__ y estará apagado la mayor parte del
--- tiempo, y son las dos que llevan __clave__, porque son los dos endpoints que
--- aceptan parámetros. El pool de PostgreSQL y otros clientes externos aterrizan
--- aquí conforme lleguen.
+-- 'Handler.Live.Context' con la última respuesta buena de cualquiera de sus dos
+-- fuentes. Fase 4: las cajas de telemetría y comparación — importan más que las
+-- otras tres porque el microservicio FastF1 es __nuestro__ y estará apagado la
+-- mayor parte del tiempo, y son las dos que llevan __clave__, porque son los dos
+-- endpoints que aceptan parámetros. El pool de PostgreSQL y otros clientes
+-- externos aterrizan aquí conforme lleguen.
 module App where
 
+import           Common.Origin          (Source)
 import           Common.Types           (DriverEntry, HistoricalStat,
                                          LapComparison, LiveTimingRow,
                                          TelemetryPoint, TyreStint)
@@ -22,14 +23,18 @@ import           Data.Time.Clock        (UTCTime)
 
 data Env = Env
   { envConfig          :: Config
-  , envLiveCache       :: TVar (Maybe (UTCTime, [LiveTimingRow]))
-    -- ^ Última respuesta buena de @/api/live@ __y el instante en que llegó__
-    -- (respaldo si OpenF1 falla).
+  , envLiveCache       :: TVar (Maybe (UTCTime, Source, [LiveTimingRow]))
+    -- ^ Última respuesta buena de @/api/live@, __el instante en que llegó y de
+    -- qué fuente salió__ (respaldo si ninguna de las dos contesta).
     --
     -- El instante es lo que deja a 'Handler.Live' emitir @X-Data-Fetched-At@
     -- cuando sirve desde aquí ('Common.Origin.Cached'). Va en la misma caja y no
     -- en una aparte porque dato e instante son un solo hecho: dos cajas se
     -- escribirían en dos pasos y podrían contar historias distintas.
+    --
+    -- La fuente va por lo mismo y por una razón propia: quien sirve desde aquí
+    -- tiene que poder decir de dónde salió lo guardado, o el tooltip afirmaría
+    -- una fuente que no es. Guardarla aquí es lo que impide que se adivine.
   , envTyreCache       :: TVar (Maybe [TyreStint])
     -- ^ Última respuesta buena de @/api/tyre-strategy@ (respaldo si OpenF1 falla).
   , envHistoricalCache :: TVar (Maybe [HistoricalStat])

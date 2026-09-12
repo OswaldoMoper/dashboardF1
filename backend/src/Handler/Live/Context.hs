@@ -1,46 +1,102 @@
 -- | Área Live timing — orquestación del caso de uso.
 --
--- Coordina 'Handler.Live.Manager' (efectos: GET a OpenF1) y
--- 'Handler.Live.Helper' (mapeo puro) para producir @[LiveTimingRow]@, con la
--- cache STM del 'Env' como respaldo: intenta el fetch real; si funciona,
--- refresca la cache y devuelve; si falla (red/4xx/5xx) o no trae filas, sirve
--- la última respuesta buena, y si nunca la hubo, el dummy estático.
+-- Coordina las dos fuentes —'Handler.Feed.Manager' y 'Handler.Live.Manager'— con
+-- 'Handler.Live.Helper' (mapeo puro) para producir @[LiveTimingRow]@, y la cache STM
+-- del 'Env' como respaldo de las dos.
 --
--- Cada peldaño devuelve además __de dónde salió el dato__ ('Common.Origin') y, el
--- de la cache, __cuándo llegó__. La escalera siempre lo supo; hasta ahora lo tiraba.
+-- __El feed va delante de OpenF1, y el orden lo decide qué contesta, no qué hora
+-- es__ (2026-09-12): OpenF1 responde @401@ en todos sus endpoints mientras una
+-- sesión rueda —incluidas las pasadas— y abre después; el feed publica mientras
+-- rueda y calla después. Son complementarias, así que la escalera se alarga en vez
+-- de cambiar de fuente.
+--
+-- Cada peldaño devuelve además __de dónde salió el dato__ —el peldaño y la fuente,
+-- que son dos preguntas ('Common.Origin')— y, el de la cache, __cuándo llegó__.
 module Handler.Live.Context where
 
 import           App                    (Env (..))
-import           Common.Origin          (Origin (..))
+import           Common.Origin          (Origin (..), Source (..))
 import           Common.Types           (DriverStatus (..), LiveTimingRow (..))
 import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, readTVarIO, writeTVar)
 import           Control.Exception      (SomeException, try)
 import           Data.Time.Clock        (UTCTime, getCurrentTime)
-import           Handler.Live.Helper    (Of1Interval, assembleRows)
+import           Handler.Feed.Helper    (FeedRow)
+import qualified Handler.Feed.Manager   as Feed
+import           Handler.Live.Helper    (Of1Interval, assembleRows, feedRows)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
--- | Devuelve la tabla de live timing (real de OpenF1, cache o dummy), con su
--- procedencia y, solo cuando sale de la cache, el instante en que llegó.
+-- | La tabla de live timing con todo lo que hace falta para servirla: qué peldaño
+-- la produjo, de qué fuente salió y, solo cuando sale de la cache, cuándo llegó.
 --
--- El instante va aparte y no dentro de 'Origin' por la razón que da
+-- El instante va aparte de 'Origin' por la razón que da
 -- 'Common.Origin.fetchedAtHeader': de un dato fresco la hora es «ahora», y de uno
--- inventado no hay hora.
-getLiveTiming :: Env -> IO (Origin, Maybe UTCTime, [LiveTimingRow])
+-- inventado no hay hora. La fuente va en 'Maybe' por la simétrica: el respaldo
+-- estático no salió de ninguna.
+data LiveResult = LiveResult
+  { lrOrigin    :: Origin
+  , lrSource    :: Maybe Source
+  , lrFetchedAt :: Maybe UTCTime
+  , lrRows      :: [LiveTimingRow]
+  }
+  deriving (Eq, Show)
+
+-- | Devuelve la tabla de live timing por la escalera de cuatro peldaños.
+--
+-- __El fallo del feed y su lista vacía significan cosas distintas y se tratan
+-- distinto__ (2026-09-12):
+--
+-- * __Filas__ → son de la sesión en marcha, y es la única fuente que las tiene.
+-- * __Lista vacía__ → no hay sesión rodando, que es exactamente cuando OpenF1
+--   contesta: se baja a él.
+-- * __Excepción__ (microservicio apagado, @503@ del feed o techo vencido) → se sirve
+--   desde la cache __sin__ intentar OpenF1.
+--
+-- Ese último peldaño tiene un precio que conviene tener escrito: con el
+-- microservicio apagado y OpenF1 abierto —el estado más frecuente fuera de
+-- sesión— la tabla sale de la cache aunque haya dato real disponible. Se eligió
+-- a sabiendas, para que un feed roto durante la carrera no pague además los @401@
+-- de OpenF1 antes de enseñar algo.
+getLiveTiming :: Env -> IO LiveResult
 getLiveTiming env = do
+  feed <-
+    try (Feed.fetchFeedRows (envConfig env)) :: IO (Either SomeException [FeedRow])
+  case feed of
+    Left _       -> fromCache env
+    Right []     -> fromOpenF1 env
+    Right raw    -> serveFresh env Feed (feedRows raw)
+
+-- | El peldaño de OpenF1: los cinco GET y el ensamblado, con la cache detrás.
+--
+-- La condición de éxito es __traer filas__ y no solo no fallar: una lista vacía es
+-- una sesión sin parrilla publicada, y servirla dejaría la tabla en blanco teniendo
+-- una anterior buena guardada.
+fromOpenF1 :: Env -> IO LiveResult
+fromOpenF1 env = do
   result <-
     try (fetchRows (envConfig env)) :: IO (Either SomeException [LiveTimingRow])
   case result of
-    Right rows | not (null rows) -> do
-      now <- getCurrentTime
-      atomically (writeTVar (envLiveCache env) (Just (now, rows)))
-      pure (Fresh, Nothing, rows)
-    _ -> do
-      cached <- readTVarIO (envLiveCache env)
-      pure (maybe (Sample, Nothing, dummy) fromCache cached)
+    Right rows | not (null rows) -> serveFresh env OpenF1 rows
+    _                            -> fromCache env
+
+-- | Sirve lo que acaba de llegar y refresca la cache con su fuente.
+serveFresh :: Env -> Source -> [LiveTimingRow] -> IO LiveResult
+serveFresh env source rows = do
+  now <- getCurrentTime
+  atomically (writeTVar (envLiveCache env) (Just (now, source, rows)))
+  pure (LiveResult Fresh (Just source) Nothing rows)
+
+-- | El respaldo: la última respuesta buena con su fuente y su instante, y si nunca
+-- la hubo, el dummy — que no tiene fuente porque no salió de ninguna.
+fromCache :: Env -> IO LiveResult
+fromCache env = do
+  cached <- readTVarIO (envLiveCache env)
+  pure (maybe sample fromEntry cached)
   where
-    fromCache (fetchedAt, rows) = (Cached, Just fetchedAt, rows)
+    fromEntry (fetchedAt, source, rows) =
+      LiveResult Cached (Just source) (Just fetchedAt) rows
+    sample = LiveResult Sample Nothing Nothing dummy
 
 -- | Fetch de los 5 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
 --
@@ -85,7 +141,7 @@ fetchIntervalsOrEmpty cfg = do
     try (Manager.fetchIntervals cfg) :: IO (Either SomeException [Of1Interval])
   pure (either (const []) id result)
 
--- | Top 3 estático (respaldo cuando aún no hay respuesta real de OpenF1).
+-- | Top 3 estático (respaldo cuando aún no hay respuesta real de ninguna fuente).
 --
 -- Los tres van 'Running': el dummy representa una sesión en marcha, y marcar un
 -- abandono inventado haría creer en un incidente que nadie reportó.

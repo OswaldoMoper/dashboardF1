@@ -102,8 +102,10 @@ import           Handler.Historical.Helper   (Root, assembleConstructorStats,
 import           Handler.Feed.Helper         (FeedRow)
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
-                                              OriginHeaderName, fetchedAtText,
+                                              OriginHeaderName,
+                                              SourceHeaderName, fetchedAtText,
                                               withOrigin)
+import           Handler.Live.Context        (LiveResult (..))
 import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
                                               Of1Result (..), assembleRows,
                                               classificationGaps,
@@ -1197,23 +1199,34 @@ main = hspec $ do
     it "los nombres del tipo de Servant son los de Common.Origin" $
       map T.pack [ symbolVal (Proxy :: Proxy OriginHeaderName)
                  , symbolVal (Proxy :: Proxy FetchedAtHeaderName)
+                 , symbolVal (Proxy :: Proxy SourceHeaderName)
                  ]
-        `shouldBe` [originHeader, fetchedAtHeader]
+        `shouldBe` [originHeader, fetchedAtHeader, sourceHeader]
 
-    it "el dato fresco lleva la procedencia y no el instante" $
-      headersOf (withOrigin (Fresh, Nothing, liveRowsFixture))
-        `shouldBe` (Header "fresh", MissingHeader)
+    it "el dato fresco del feed lleva procedencia y fuente, y no el instante" $
+      headersOf (withOrigin (LiveResult Fresh (Just Feed) Nothing liveRowsFixture))
+        `shouldBe` (Header "fresh", MissingHeader, Header "feed")
 
-    it "el dato guardado lleva la procedencia y el instante" $
-      headersOf (withOrigin (Cached, Just fetchInstant, liveRowsFixture))
-        `shouldBe` (Header "cached", Header "2026-09-11T14:03:22Z")
+    it "el dato fresco de OpenF1 dice que es de OpenF1, con la misma procedencia" $
+      -- La mitad que hace falta la cabecera: los dos peldaños son `fresh` y sin
+      -- ella la página no puede distinguir la sesión en marcha de la terminada.
+      headersOf (withOrigin (LiveResult Fresh (Just OpenF1) Nothing liveRowsFixture))
+        `shouldBe` (Header "fresh", MissingHeader, Header "openf1")
 
-    it "el dato de ejemplo lleva la procedencia y no el instante" $
-      headersOf (withOrigin (Sample, Nothing, liveRowsFixture))
-        `shouldBe` (Header "sample", MissingHeader)
+    it "el dato guardado lleva la procedencia, el instante y la fuente que tenía" $
+      -- La fuente sale de la caja de la cache, no se adivina: lo guardado conserva
+      -- de dónde salió, o el tooltip afirmaría una fuente que no es.
+      headersOf
+        (withOrigin (LiveResult Cached (Just OpenF1) (Just fetchInstant) liveRowsFixture))
+        `shouldBe` (Header "cached", Header "2026-09-11T14:03:22Z", Header "openf1")
+
+    it "el dato de ejemplo no lleva instante ni fuente, porque no tuvo ninguno" $
+      headersOf (withOrigin (LiveResult Sample Nothing Nothing liveRowsFixture))
+        `shouldBe` (Header "sample", MissingHeader, MissingHeader)
 
     it "el cuerpo son las filas, sin tocar" $
-      getResponse (withOrigin (Cached, Just fetchInstant, liveRowsFixture))
+      getResponse
+        (withOrigin (LiveResult Cached (Just Feed) (Just fetchInstant) liveRowsFixture))
         `shouldBe` liveRowsFixture
 
     it "el instante sale en UTC y sin fracción de segundo" $
@@ -2301,12 +2314,15 @@ liveRowsFixture =
 fetchInstant :: UTCTime
 fetchInstant = UTCTime (fromGregorian 2026 9 11) 50602.123456
 
--- | Las dos cabeceras de una respuesta de @\/api\/live@, buscadas por su nombre
+-- | Las tres cabeceras de una respuesta de @\/api\/live@, buscadas por su nombre
 -- __de tipo__, que es el que Servant usa al serializarlas.
 headersOf
   :: LiveResponse
-  -> (ResponseHeader OriginHeaderName T.Text, ResponseHeader FetchedAtHeaderName T.Text)
-headersOf r = (lookupResponseHeader r, lookupResponseHeader r)
+  -> ( ResponseHeader OriginHeaderName T.Text
+     , ResponseHeader FetchedAtHeaderName T.Text
+     , ResponseHeader SourceHeaderName T.Text
+     )
+headersOf r = (lookupResponseHeader r, lookupResponseHeader r, lookupResponseHeader r)
 
 -- | La propiedad que 'show' __no__ cumple y que motiva el módulo: una cifra
 -- formateada no lleva nunca @e@, porque una celda que dice @1.0e-2@ no comunica una
