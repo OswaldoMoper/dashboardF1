@@ -100,6 +100,15 @@
           mkdir -p $out
           install -m644 ${./telemetry-service/main.py} $out/main.py
         '';
+
+        # Guard shared by the working-tree commands: they run code from $PWD, so
+        # the repository root is a precondition and not an assumption.
+        guardRoot = ''
+          if [ ! -f flake.nix ] || [ ! -d telemetry-service ]; then
+            echo "error: lánzalo desde la raíz del repositorio" >&2
+            exit 2
+          fi
+        '';
       in
       {
         # ── Backend Servant (Fase 1: /home + /api/* en :8080, override con PORT) ──
@@ -174,6 +183,80 @@
           program = "${self'.packages.dev}/bin/dashboardF1-dev";
         };
 
+        # ── Comandos cortos de desarrollo ──
+        #
+        # These provide the ENVIRONMENT and run the code from the working tree,
+        # not a copy in the store, so they run the script as edited instead of
+        # the last committed one. Not hermetic, and that is the point.
+
+        packages.live = pkgs.writeShellApplication {
+          name = "dashboardF1-live";
+          runtimeInputs = [ pythonEnv ];
+          text = ''
+            ${guardRoot}
+            cd telemetry-service
+            exec python live_table.py "$@"
+          '';
+        };
+
+        packages.record = pkgs.writeShellApplication {
+          name = "dashboardF1-record";
+          runtimeInputs = [ pythonEnv ];
+          text = ''
+            ${guardRoot}
+            if [ "$#" -lt 1 ]; then
+              echo "uso: nix run .#record -- <fichero> [timeout_segundos]" >&2
+              exit 2
+            fi
+            exec python telemetry-service/record_live.py "$@"
+          '';
+        };
+
+        # No `runtimeInputs`: it uses the dev shell's cabal, which already has
+        # zlib and pkg-config resolved. A second GHC here would link against a
+        # different zlib and fail where `cabal build` succeeds.
+        packages.test = pkgs.writeShellApplication {
+          name = "dashboardF1-test";
+          text = ''
+            ${guardRoot}
+            if ! command -v cabal >/dev/null 2>&1; then
+              echo "error: no hay cabal en el PATH; entra antes a nix develop" >&2
+              exit 2
+            fi
+            cabal build all
+            exec cabal test all --test-show-details=direct "$@"
+          '';
+        };
+
+        packages.api = pkgs.writeShellApplication {
+          name = "dashboardF1-api";
+          runtimeInputs = [ pkgs.curl ];
+          text = ''
+            port="''${PORT:-8080}"
+            exec curl -i -sS "http://127.0.0.1:$port/api/''${1:-live}"
+          '';
+        };
+
+        apps.live = {
+          type = "app";
+          program = "${self'.packages.live}/bin/dashboardF1-live";
+        };
+
+        apps.record = {
+          type = "app";
+          program = "${self'.packages.record}/bin/dashboardF1-record";
+        };
+
+        apps.test = {
+          type = "app";
+          program = "${self'.packages.test}/bin/dashboardF1-test";
+        };
+
+        apps.api = {
+          type = "app";
+          program = "${self'.packages.api}/bin/dashboardF1-api";
+        };
+
         # ── Haskell dev shell (backend + frontend source-level tooling) ──
         devShells.default = pkgs.mkShell {
           name = "dashboardF1-dev";
@@ -193,6 +276,8 @@
             echo "F1 Functional Dashboard — dev shell (Haskell)"
             echo "  backend : cabal run backend   # Servant en :8080 (Fase 0, sesión 3)"
             echo "  todo    : nix run .#dev       # microservicio + backend, STATIC_DIR desde el store"
+            echo "  pruebas : nix run .#test      # cabal build all + cabal test all"
+            echo "  api     : nix run .#api -- live   # curl -i a /api/live, con cabeceras"
           '';
         };
 
@@ -201,9 +286,11 @@
           name = "dashboardF1-telemetry";
           packages = [ pythonEnv ];
           shellHook = ''
-            echo "telemetry-service — Python dev shell (FastF1, Fase 4)"
+            echo "telemetry-service — Python dev shell (FastF1)"
             echo "  correr:  cd telemetry-service && uvicorn main:app   (:8000)"
             echo "  o sin shell:  nix run .#telemetry -- --port 8000"
+            echo "  feed en vivo: nix run .#live                  # la tabla, ahora"
+            echo "  grabar feed : nix run .#record -- salida.txt 900"
           '';
         };
       };
