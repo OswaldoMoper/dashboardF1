@@ -332,9 +332,51 @@ accidente mientras se encendía el lienzo era el riesgo, y se evitó no tocando 
   que es justo cuando se mira.
   **Medido también que el estado de sesión del feed no sirve para decidir:** cicla por segmento, y marcó
   «terminada» con veinticuatro minutos de clasificación por delante.
+  **Afinado con la clasificación grabada:** ese tema emite «terminada» **tres veces** —el final de cada
+  segmento, a las 14:18, 14:40 y 15:00— y «finalizada» **una sola vez**, a las 15:04:15. O sea que el valor
+  que sí distingue el final de la sesión existe, y es otro. Medido sobre **una** clasificación, así que una
+  carrera con bandera roja puede no emitirlo igual.
+
+**Concretado el 2026-09-12 — los modos por tipo de sesión y el análisis entre sesiones del mismo gran
+premio dejan de ser un requisito suelto y pasan a tener forma.** Once decisiones, registradas como
+2026-09-12 (l) a (r). El resumen:
+
+- **Un modo es un layout guardado del usuario, uno por tipo de sesión**, y el tipo que anuncia el feed solo
+  **elige entre los que ya guardó**: es una llave de búsqueda y no una autoridad, así que no toca el «nada es
+  fijo» de arriba. Un tipo sin layout propio arranca con un **ejemplo** de fábrica —y se llama «ejemplo» en la
+  interfaz, nunca «modo»—, que es exactamente lo que los dos layouts escritos en el código ya son.
+- **El tránsito pregunta y no bloquea.** Al cambiar de tipo, lo movido a mano en el modo que se deja se
+  pregunta —guardar o descartar—, pero el modo nuevo carga **ya** y el aviso viaja en la cabecera: el instante
+  del cambio es el arranque de la sesión, que es lo irrepetible.
+- **La referencia entre sesiones vive en la tarjeta y admite varias a la vez** —el caso pedido es la tercera
+  práctica contra la primera **y** la segunda—, como una columna por sesión. **El ancho se paga comparando
+  menos cosas:** una tarjeta con referencias enseña **un** KPI y no la tabla entera, que es lo ya medido sobre
+  el scroll horizontal y respeta que a lo ancho no exista barra nunca.
+- **Comparar entre sesiones es propiedad del KPI, no de la tarjeta.** Lo admiten los tiempos de vuelta, la
+  telemetría y las velocidades; no el hueco al líder ni el intervalo, que son relaciones **dentro** de una
+  sesión. Por eso el selector solo ofrece referencias donde tienen sentido, y no hay que avisar de un dato que
+  nadie pudo pedir.
+- **Una sesión de referencia se pide una vez y se congela.** Con tres referencias y el refresco de diez
+  segundos serían veinticuatro peticiones por minuto y tarjeta, y el primer acceso a una sesión del
+  microservicio tarda minutos.
+- **Los parámetros tienen tres ámbitos: página, grupo y tarjeta, y manda el más cercano**, con un interruptor
+  visible en la tarjeta que dice a quién obedece. «Seguir a un piloto sesión a sesión» **no es una pieza**: es
+  un parámetro más, y puede vivir en los tres sitios porque quien elige es el usuario.
+- **El orden de construcción**, y el primero es prerequisito de los otros dos: (1) la página sabe y dice qué
+  sesión es, (2) los modos, (3) la referencia entre sesiones.
+
+**Y el primer paso ya está pagado por el feed.** Su tema de información de sesión trae el tipo, el nombre, la
+clave, el gran premio con su número, las fechas con su desfase y el estado; el microservicio **ya lo pide** en
+la suscripción y el endpoint del directo lo **descarta** sin leerlo. Es una clave del diccionario que ya está
+en memoria. Queda por medir si el número de reunión del feed es la ronda que la gramática
+`AÑO-RONDA-SESIÓN` del microservicio espera: de ese encaje depende poder nombrar las sesiones anteriores del
+gran premio, y es **plausible y no medido**.
 
 **Entregables:**
 
+- [ ] **La página sabe y dice qué sesión es** (2026-09-12): tipo, gran premio y estado, leídos del tema de
+      información de sesión del feed. **Prerequisito de los dos siguientes** y el más pequeño de los tres: los
+      modos necesitan el tipo y la referencia necesita la identidad del gran premio.
 - [ ] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
       si trae filas son de la sesión en marcha; si no trae ninguna, se cae a OpenF1, que es exactamente
       cuando OpenF1 responde. El orden lo decide **qué contesta** y no qué hora es — decidir por la
@@ -354,7 +396,14 @@ accidente mientras se encendía el lienzo era el riesgo, y se evitó no tocando 
       El primero saca a un valor la lista que hoy vive en el `case` de `renderWidget`; el segundo hay
       que escribirlo entero, y arrastra la advertencia del KPI pedido que resulta ser otra cosa: por
       cada uno, de qué endpoint sale y quién agrega.
-- [ ] Layouts guardables/cargables.
+- [ ] Layouts guardables/cargables. **Ampliado el 2026-09-12:** son **los modos**, así que el layout gana
+      **nombre** y queda asociado a un tipo de sesión, el feed decide cuál se carga, y el cambio arrastra el
+      aviso de lo no guardado. La forma de la persistencia —disco o navegador— sigue **sin decidir**, y es lo
+      que hace de éste el entregable más grande de la fase.
+- [ ] **La referencia entre sesiones del gran premio, por tarjeta** (2026-09-12): varias sesiones a la vez
+      como columnas, **un solo KPI** por tarjeta, el dato de cada referencia **congelado** al cargarlo, y el
+      selector ofreciendo solo las que ese KPI admite. Va **después** del catálogo de KPIs, que es de donde
+      sale la marca de qué se puede comparar.
 - [ ] Modo “sync” básico (input manual de tiempo).
 - [ ] `WidgetId` como identidad real, no derivada del tipo, y `WidgetParams` con forma decidida.
       **Forma cerrada el 2026-09-01:** id explícito que pone quien construye el `Layout` (entrada del día),
@@ -385,6 +434,8 @@ accidente mientras se encendía el lienzo era el riesgo, y se evitó no tocando 
 - [ ] Agrupación de widgets. **Reescrita el 2026-09-03 (b)**: el grupo lo **declara el autor** con
       membresía arbitraria sobre `widgetGroup :: Maybe Text`, y **acopla el tamaño** —separador compartido
       entre miembros, y el grupo se mueve y escala como bloque—. Ni adyacencia ni derivación por tipo.
+      **Ampliada el 2026-09-12:** el grupo es además el **ámbito intermedio de un parámetro** —página, grupo,
+      tarjeta, y manda el más cercano—, así que agrupar deja de ser solo disposición.
 - [ ] **Conmutación de contenido por caja**: lista de favoritos configurada más «otro…» al catálogo
       completo, con control híbrido —pestañas, desplegable al estrecharse, ciclado por el título—, y la
       caja conservando su rectángulo al conmutar (2026-09-03 (c)).
@@ -395,6 +446,10 @@ accidente mientras se encendía el lienzo era el riesgo, y se evitó no tocando 
       publica las cinco del fin de semana con su tipo y su nombre. Ojo al filtrar por tipo: los valores
       son tres —prácticas, clasificación y carrera— y **el sprint no es uno de ellos**, sino un
       *nombre* dentro de los dos últimos, así que distinguir cuatro modos pide **los dos campos**.
+      **Ampliado otra vez el 2026-09-12, entrada (q):** es el ámbito **de página** de la escalera de tres
+      —página, grupo, tarjeta—, así que no es el único mando de sesión sino el de arriba. Y la sesión
+      **en marcha** no hay que ir a buscarla a OpenF1: el feed la anuncia, que es justo cuando OpenF1
+      está cerrado.
 
 **Lo que NO es de esta fase**, aunque se pida junto con lo de arriba y se le parezca:
 
