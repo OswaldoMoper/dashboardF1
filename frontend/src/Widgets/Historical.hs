@@ -70,7 +70,7 @@ data HState
 -- etiqueta ya compuesta.
 driverStatsWidget :: MonadWidget t m => m ()
 driverStatsWidget = divClass "widget widget--driver-stats" $ do
-  el "h2" $ text "Pilotos"
+  divClass "widget__head" $ el "h2" $ text "Pilotos"
   pb    <- getPostBuild
   resp  <- fetchJson (historicalPath <$ pb)
   state <- holdDyn Loading (ffor resp (maybe Failed Loaded))
@@ -101,7 +101,7 @@ driverStatsWidget = divClass "widget widget--driver-stats" $ do
 -- 'hsFamilyName', el nombre legible.
 constructorStatsWidget :: MonadWidget t m => m ()
 constructorStatsWidget = divClass "widget widget--constructor-stats" $ do
-  el "h2" $ text "Constructores"
+  divClass "widget__head" $ el "h2" $ text "Constructores"
   pb    <- getPostBuild
   resp  <- fetchJson (historicalPath <$ pb)
   state <- holdDyn Loading (ffor resp (maybe Failed Loaded))

@@ -15,6 +15,7 @@
   --c-ok:        #35c46b;
   --c-warn:      #e0a90b;
   --c-error:     #ff5a52;
+  --c-sample:    #3b8eea;  /* dato de ejemplo: azul, porque nunca fue cierto */
 
   /* Escala tipográfica. */
   --fs-xs: 0.75rem;
@@ -30,6 +31,11 @@
   --sp-4: 1rem;
   --sp-5: 1.5rem;
   --sp-6: 2rem;
+
+  /* Hueco que la tarjeta de la esquina superior derecha le deja al botón de
+     plegar la cabecera, que es `fixed` sobre el lienzo. No sale de la escala:
+     es una medida contra otro elemento, y se ajusta mirándolo. */
+  --gap-toggle: 24px;
 
   /* Radios. */
   --r-sm: 4px;
@@ -118,6 +124,18 @@ body {
   padding: var(--sp-2);
 }
 
+/* La tarjeta que ocupa la esquina superior derecha del lienzo tiene encima el
+   botón de plegar la cabecera, que es `fixed` sobre la ventana y no sabe nada
+   de los widgets. Quién es esa tarjeta lo dice `Common.Layout.touchesTopRight`,
+   que informa y no corrige; cuánto hueco dejarle es este número, que depende de
+   lo que mida el botón y por eso vive aquí y no en el layout.
+
+   Solo encoge la FILA DEL TÍTULO, no la tarjeta: el botón ocupa una esquina, no
+   una columna, y sangrar la tabla entera por él se vería como un error. */
+.widget-slot--top-right .widget__head {
+  padding-right: var(--gap-toggle);
+}
+
 /* La cabecera flota sobre el lienzo en vez de empujarlo (2026-09-07). Es lo que
    permite que `.canvas` se lleve la ventana entera sin restarle una altura que
    habría que medir a ojo y que el `@media` de abajo cambia. Fondo opaco porque
@@ -174,11 +192,56 @@ body {
   border-radius: var(--r-md);
 }
 
-.widget > h2 {
-  margin: 0 0 var(--sp-3);
+/* La fila del título. El `h2` deja de ser hijo directo de `.widget` el
+   2026-09-12, y por eso la regla de abajo cambió de selector: el título tiene
+   ahora un vecino —el indicador de procedencia— y los dos necesitan una fila
+   que compartir.
+
+   El envoltorio está en los SEIS widgets aunque hoy solo uno traiga indicador.
+   Dos formas conviviendo obligarían a que el selector fuera descendiente y
+   perdiera la precisión que el 2026-08-26 buscó al retirar `.widget > h3`; y la
+   fila va a recibir más inquilinos, porque una caja que conmuta de contenido
+   (2026-09-03 c) necesita su control aquí.
+
+   El `margin-bottom` es el que tenía el `h2`: se mueve al envoltorio porque
+   ahora es él quien está en el flujo de la tarjeta. */
+.widget__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.widget__head > h2 {
+  margin: 0;
   font-size: var(--fs-lg);
   font-weight: 600;
 }
+
+/* El indicador de procedencia (2026-09-11 d). El texto es SIEMPRE `Live` y lo
+   que habla es el punto, así que el texto se queda en el gris del resto de
+   secundarios y el color de estado va sobre el `::before` —no sobre `color`—
+   para que no arrastre a la palabra.
+
+   `margin-left: auto` es lo que lo lleva al borde derecho de la tarjeta, que es
+   donde se lee sin depender del largo del título. `cursor: help` es lo único
+   que delata que hay un tooltip: sin él, la explicación de cada color no se
+   descubre. */
+.widget__badge {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--c-muted);
+  cursor: help;
+}
+
+/* Los cinco colores del punto van con los demás estados, abajo: comparten con
+   `.status::before` la forma y la especificidad, así que tienen que venir
+   DESPUÉS de ella o el `currentColor` de aquélla se los llevaría por delante. */
 
 /* `.widget > h3` retirada el 2026-08-26. Era el encabezado de sección de las dos
    tablas de históricos, y con cada clasificación en su propia tarjeta cada una tiene
@@ -477,13 +540,66 @@ body {
   color: var(--c-muted);
 }
 
-.status::before {
+/* El punto, compartido por el aviso de estado y el indicador de procedencia: la
+   forma es la misma y solo cambia quién pone el color. En `.status` lo pone el
+   texto (`currentColor`), porque ahí el texto YA lleva el color del estado; en
+   `.widget__badge` el texto no cambia nunca, así que el color va en las cinco
+   reglas de debajo. De ahí que estén debajo y no arriba con el widget: misma
+   especificidad, y gana la última. */
+.status::before,
+.widget__badge::before {
   content: "";
   flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: currentColor;
+}
+
+/* Dato real y refrescándose: la luz de grabación. Es el único que parpadea
+   (2026-09-12): el color dice de dónde sale el dato y el parpadeo dice que está
+   pasando ahora, que son dos cosas distintas y por eso son dos señales. */
+.widget__badge--live::before {
+  background: var(--c-accent);
+  animation: badge-blink 1s ease-in-out infinite;
+}
+
+/* Dato real cuyo último refresco no volvió: el mismo rojo, quieto. Lo que los
+   separa es justo el movimiento, y por eso el movimiento no puede apagarse. */
+.widget__badge--stalled::before {
+  background: var(--c-accent);
+}
+
+/* Guardado: el dato fue cierto, la duda es cuándo. Con o sin fallo de refresco
+   se ve igual — el fallo lo cuenta el tooltip (2026-09-12). */
+.widget__badge--saved::before {
+  background: var(--c-accent);
+  opacity: 0.35;
+}
+
+/* De ejemplo: nunca fue cierto, así que no es un rojo más apagado sino otro
+   color. */
+.widget__badge--sample::before {
+  background: var(--c-sample);
+}
+
+/* Sin procedencia: antes de la primera respuesta, o con la cabecera ausente o
+   irreconocible. Gris, que es no decir nada. */
+.widget__badge--unknown::before {
+  background: var(--c-muted);
+}
+
+@keyframes badge-blink {
+  50% { opacity: 0.25; }
+}
+
+/* El parpadeo NO se apaga con el movimiento reducido: solo se alarga. No es
+   decoración — es la única señal de que lo que se lee está pasando ahora, y
+   apagarla dejaría dos estados distintos pintados igual. */
+@media (prefers-reduced-motion: reduce) {
+  .widget__badge--live::before {
+    animation-duration: 3s;
+  }
 }
 
 .status--loading,

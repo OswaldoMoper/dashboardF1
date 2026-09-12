@@ -102,7 +102,7 @@ data CState
 -- gráfico anterior.
 comparisonWidget :: MonadWidget t m => m ()
 comparisonWidget = divClass "widget widget--comparison" $ mdo
-  el "h2" $ text "Lap Comparison"
+  divClass "widget__head" $ el "h2" $ text "Lap Comparison"
   pb      <- getPostBuild
   gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
   grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)

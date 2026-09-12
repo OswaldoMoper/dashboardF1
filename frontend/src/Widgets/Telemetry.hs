@@ -46,7 +46,7 @@ data TState
 -- | Tabla de telemetría alimentada por @\/api\/telemetry@.
 telemetryWidget :: MonadWidget t m => m ()
 telemetryWidget = divClass "widget widget--telemetry" $ do
-  el "h2" $ text "Telemetry"
+  divClass "widget__head" $ el "h2" $ text "Telemetry"
   pb    <- getPostBuild
   resp  <- fetchJson (telemetryPath <$ pb)
   state <- holdDyn Loading (ffor resp (maybe Failed Loaded))

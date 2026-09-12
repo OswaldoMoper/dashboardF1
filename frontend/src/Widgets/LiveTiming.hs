@@ -16,9 +16,11 @@
 -- falla es 'Common.Refresh', pura y con suite; aquí solo se cablea al reloj y a la
 -- petición.
 --
--- __Un refresco fallido conserva la tabla sin señalarlo.__ 'pollLastFailed' lo sabe,
--- igual que 'Common.Origin.Sourced' sabe la procedencia de lo que se enseña; pintar
--- las dos cosas es trabajo del indicador de procedencia, que aún no existe.
+-- __Lo que se enseña y de dónde salió son dos cosas, y las pintan dos sitios.__ La
+-- tabla sale de 'liveStateOf', que mira solo si hay filas; el indicador @● Live@
+-- de la cabecera sale de 'Common.Indicator', que mira la procedencia y el último
+-- refresco. Por eso un fallo puntual no borra la tabla —la conserva desde el
+-- 2026-09-11 (c)— y aun así se ve: lo dice el indicador, no el cuerpo.
 --
 -- __La columna de estado se añade al final a propósito__ (2026-08-27). La hoja
 -- alinea las columnas numéricas de esta tabla por @nth-child(1,4,5,6)@ —las
@@ -29,15 +31,17 @@
 -- y lo nuevo no la reabre.
 module Widgets.LiveTiming where
 
-import           Client         (fetchJsonSourced)
-import           Common.Origin  (Sourced (..))
-import           Common.Refresh (Poll (..), PollEvent (..), canRequest,
-                                 liveRefreshSeconds, pollIdle, pollStep)
-import           Common.Route   (livePath)
-import           Common.Types   (DriverStatus (..), LiveTimingRow (..),
-                                 statusLabel)
-import           Data.Text      (Text)
-import qualified Data.Text      as T
+import           Client            (fetchJsonSourced)
+import           Common.Indicator  (Indicator, indicatorClass, indicatorFrom,
+                                    indicatorTooltip)
+import           Common.Origin     (Sourced (..))
+import           Common.Refresh    (Poll (..), PollEvent (..), canRequest,
+                                    liveRefreshSeconds, pollIdle, pollStep)
+import           Common.Route      (livePath)
+import           Common.Types      (DriverStatus (..), LiveTimingRow (..),
+                                    statusLabel)
+import           Data.Text         (Text)
+import qualified Data.Text         as T
 import           Reflex.Dom
 
 -- | Qué enseña la tarjeta. 'Failed' (no 'Error') para no chocar con
@@ -71,7 +75,9 @@ liveStateOf p =
 -- ve en vuelo.
 liveTimingWidget :: MonadWidget t m => m ()
 liveTimingWidget = divClass "widget widget--live-timing" $ mdo
-  el "h2" $ text "Live Timing"
+  divClass "widget__head" $ do
+    el "h2" $ text "Live Timing"
+    liveBadge (indicatorFrom <$> poll)
   pb    <- getPostBuild
   tick  <- tickLossyFromPostBuildTime (fromIntegral liveRefreshSeconds)
   let sent = leftmost [pb, () <$ gate (canRequest <$> current poll) tick]
@@ -80,6 +86,21 @@ liveTimingWidget = divClass "widget widget--live-timing" $ mdo
   state <- holdUniqDyn (liveStateOf <$> poll)
   dyn_ (renderState <$> state)
   where
+    -- __El texto es siempre @Live@__ (2026-09-11 (d)) y lo que cambia es el
+    -- punto: un texto que cambiara de palabra se leería sin mirar el color, pero
+    -- también se movería la fila del título cada diez segundos.
+    --
+    -- __Hace falta 'elDynAttr' y no 'elDynClass'__ porque son dos atributos: la
+    -- clase la pinta la hoja y el @title@ la explica. Medido en la fuente: el
+    -- elemento se construye __sin__ atributos y los recibe al disparar el
+    -- post-build, así que leer aquí un @poll@ que el @mdo@ define más abajo no
+    -- muestrea nada al construir.
+    liveBadge :: MonadWidget t m => Dynamic t Indicator -> m ()
+    liveBadge indicator =
+      elDynAttr "span" (attrsFor <$> indicator) $ text "Live"
+      where
+        attrsFor i = "class" =: indicatorClass i <> "title" =: indicatorTooltip i
+
     renderState :: DomBuilder t m => LiveState -> m ()
     renderState Loading =
       elClass "p" "status status--loading" $ text "Cargando…"

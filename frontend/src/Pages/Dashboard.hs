@@ -27,7 +27,7 @@
 -- re-dispara su fetch (@getPostBuild@ corre al montar). Aceptable en esta fase.
 module Pages.Dashboard where
 
-import           Common.Layout      (slotStyle)
+import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Types       (Layout (..), LayoutId (..),
                                      WidgetConfig (..), WidgetId (..),
                                      WidgetType (..), noParams)
@@ -107,10 +107,24 @@ dashboardHeader openDyn =
 --
 -- Del estilo, aquí solo viaja lo que __depende del dato__; @position: absolute@ y
 -- la separación entre widgets viven en la regla de @.widget-slot@.
+--
+-- __El modificador de la esquina lo pone el slot y no el widget__, por la misma
+-- razón: quien sabe dónde está la tarjeta es quien la coloca. El botón de plegar
+-- la cabecera es @fixed@ en la esquina de la ventana (2026-09-07 b), así que la
+-- tarjeta que la ocupa tiene que dejarle sitio a la etiqueta de procedencia; a
+-- quién le toca lo dice 'touchesTopRight' y cuánto hueco, la hoja de estilos.
 slot :: MonadWidget t m => WidgetConfig -> m ()
 slot wc =
-  elAttr "div" ("class" =: "widget-slot" <> "style" =: slotStyle wc) $
+  elAttr "div" ("class" =: slotClass wc <> "style" =: slotStyle wc) $
     renderWidget wc
+
+-- | Clase del slot: el bloque, y el modificador solo cuando hay algo que
+-- modificar — mismo criterio que el @rowClass@ de 'Widgets.LiveTiming'
+-- (2026-08-27). De los siete slots de los layouts fijos lo llevan dos.
+slotClass :: WidgetConfig -> T.Text
+slotClass wc
+  | touchesTopRight wc = "widget-slot widget-slot--top-right"
+  | otherwise          = "widget-slot"
 
 -- | Barra de botones que conmutan entre los layouts fijos. Sostiene el layout
 -- activo en un @Dynamic t Layout@ (arranca en 'raceOverview').
@@ -152,7 +166,7 @@ renderWidget wc = case widgetType wc of
 -- | Widget aún no disponible: recuadro con etiqueta del tipo.
 placeholderWidget :: DomBuilder t m => T.Text -> m ()
 placeholderWidget name = divClass "widget widget--placeholder" $ do
-  el "h2" $ text name
+  divClass "widget__head" $ el "h2" $ text name
   elClass "p" "status status--placeholder" $ text "Widget no disponible"
 
 -- | 'WidgetConfig' con su sitio en el lienzo: el 'WidgetId' y el rectángulo
