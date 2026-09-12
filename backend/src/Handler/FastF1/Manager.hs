@@ -85,9 +85,12 @@ fastf1Port = port
 fastf1Timeout :: Int -> Option 'Http
 fastf1Timeout seconds = responseTimeout (seconds * 1000000)
 
--- | Las 'Option' que todo GET al microservicio necesita: puerto y techo de
--- duración, ya resueltos desde la 'Config'. Los clientes añaden las suyas con
--- @\<\>@ (por ejemplo el @drivers@ de comparación).
+-- | Puerto y techo de duración juntos, ya resueltos desde la 'Config'. Los clientes
+-- añaden las suyas con @\<\>@ (por ejemplo el @drivers@ de comparación).
+--
+-- __Lo usan los clientes que comparten el techo, no todos.__
+-- 'Handler.Feed.Manager' compone el puerto con un techo propio, porque una foto del
+-- feed cuesta ~17 s y el default de aquí la leería como fallo.
 fastf1Options :: Config -> Option 'Http
 fastf1Options cfg =
   fastf1Port (cfgTelemetryPort cfg) <> fastf1Timeout (cfgTelemetryTimeout cfg)

@@ -99,10 +99,11 @@ import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
+import           Handler.Feed.Helper         (FeedRow)
+import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               OriginHeaderName, fetchedAtText,
                                               withOrigin)
-import           Handler.Feed.Helper         (FeedRow)
 import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
                                               Of1Result (..), assembleRows,
                                               classificationGaps,
@@ -732,6 +733,19 @@ main = hspec $ do
       -- «no consta que abandonara», igual que en `statusOf`.
       map feedStatus ["", "  ", "Retired", "InPit"]
         `shouldBe` [Running, Running, Running, Running]
+
+  -- El único caso del cliente del feed que no necesita red: su techo de duración.
+  -- Existe porque el número no es una preferencia sino una medición, y bajarlo
+  -- rompería el peldaño entero sin que nada más se pusiera rojo.
+  describe "feedTimeoutSeconds" $
+    it "deja margen sobre lo que cuesta una foto del feed" $ do
+      -- Medido el 2026-09-12 sin sesión en marcha: 16,87, 17,00 y 16,99 s. Con un
+      -- techo por debajo, TODA respuesta buena se leería como fallo del feed, y un
+      -- fallo del feed sirve desde la cache sin intentar OpenF1.
+      feedTimeoutSeconds `shouldSatisfy` (> 17)
+      -- Y no tanto como para que un feed atascado deje la tabla sin cambiar más de
+      -- lo que el propio microservicio puede tardar contestando bien (15 s × 2).
+      feedTimeoutSeconds `shouldSatisfy` (< 30)
 
   -- Vive en `common` y no en el widget justamente para poder probarse aquí: el
   -- paquete `frontend` no tiene suite, así que sin esta mudanza la única cobertura
