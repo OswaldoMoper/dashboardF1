@@ -228,11 +228,24 @@
           '';
         };
 
+        # Without PORT it LOCATES the listening backend instead of assuming one:
+        # a guessed port answers with whatever else is bound there, and a reply
+        # from a stranger reads like a bug in ours. And `127.0.0.1`, not
+        # `localhost`, which resolves to IPv6 while the backend binds v4.
         packages.api = pkgs.writeShellApplication {
           name = "dashboardF1-api";
-          runtimeInputs = [ pkgs.curl ];
+          runtimeInputs = [ pkgs.curl pkgs.iproute2 ];
           text = ''
-            port="''${PORT:-8080}"
+            port="''${PORT:-}"
+            if [ -z "$port" ]; then
+              port="$(ss -ltnpH 2>/dev/null \
+                | awk '/"backend"/ { split($4, a, ":"); print a[length(a)]; exit }')"
+            fi
+            if [ -z "$port" ]; then
+              echo "error: no hay ningún backend escuchando. Arráncalo, o di el puerto:" >&2
+              echo "       PORT=8097 nix run .#api -- live" >&2
+              exit 2
+            fi
             exec curl -i -sS "http://127.0.0.1:$port/api/''${1:-live}"
           '';
         };
