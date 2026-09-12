@@ -30,7 +30,8 @@ module Common.Indicator
   , fetchedAtLabel
   ) where
 
-import           Common.Origin  (Origin (..), Sourced (..), originNotice)
+import           Common.Origin  (Origin (..), Source, Sourced (..), originNotice,
+                                 sourceName)
 import           Common.Refresh (Poll (..), liveRefreshSeconds)
 import           Data.Char      (isDigit)
 import           Data.Maybe     (fromMaybe, isJust)
@@ -39,8 +40,8 @@ import qualified Data.Text      as T
 
 -- | Lo que el indicador necesita saber para pintarse.
 --
--- __'indOrigin' e 'indFetched' solo significan algo con 'indShown' a 'True'__:
--- son la procedencia de lo que hay en pantalla, y sin pantalla no hay
+-- __'indOrigin', 'indSource' e 'indFetched' solo significan algo con 'indShown' a
+-- 'True'__: son la procedencia de lo que hay en pantalla, y sin pantalla no hay
 -- procedencia. El único constructor legítimo es 'indicatorFrom', que mantiene
 -- esa relación; el récord es plano por la misma razón que 'Common.Refresh.Poll'
 -- lo es, y no para poder construirlo a mano.
@@ -54,6 +55,9 @@ data Indicator = Indicator
   , indOrigin  :: Maybe Origin
     -- ^ Procedencia de lo que se ve; 'Nothing' si la cabecera faltaba, no se
     -- reconoció o aún no ha llegado ninguna respuesta.
+  , indSource  :: Maybe Source
+    -- ^ Fuente de lo que se ve; 'Nothing' también cuando el dato es el respaldo
+    -- estático, que no salió de ninguna.
   , indFetched :: Maybe Text
     -- ^ El instante tal cual viajó en la cabecera, sin formatear.
   , indFailed  :: Bool
@@ -66,6 +70,7 @@ indicatorFrom :: Poll (Sourced a) -> Indicator
 indicatorFrom p = Indicator
   { indShown   = isJust (pollShown p)
   , indOrigin  = srcOrigin =<< pollShown p
+  , indSource  = srcSource =<< pollShown p
   , indFetched = srcFetchedAt =<< pollShown p
   , indFailed  = pollLastFailed p
   }
@@ -101,13 +106,19 @@ indicatorClass i = "widget__badge widget__badge--" <> modifier
 --
 -- El dato fresco es la excepción: si su refresco falló, «en vivo» ya no es
 -- cierto, así que no se compone — se sustituye.
+--
+-- __La fuente va delante y como etiqueta__, separada por @·@ y no por un punto: es
+-- lo primero que se lee y no alarga la cadena de frases, que en el peor caso ya son
+-- dos. El respaldo estático no lleva ninguna porque no salió de ninguna fuente.
 indicatorTooltip :: Indicator -> Text
-indicatorTooltip i =
-  case (indOrigin i, indFailed i) of
-    (Just Fresh, False) -> liveNotice
-    (Just Fresh, True)  -> retryFailedNotice
-    (origin, failed)    -> withFailure failed (noticeOf origin)
+indicatorTooltip i = maybe body (\s -> sourceName s <> " · " <> body) (indSource i)
   where
+    body =
+      case (indOrigin i, indFailed i) of
+        (Just Fresh, False) -> liveNotice
+        (Just Fresh, True)  -> retryFailedNotice
+        (origin, failed)    -> withFailure failed (noticeOf origin)
+
     noticeOf (Just origin) =
       fromMaybe unknownNotice (originNotice origin (fetchedAtLabel =<< indFetched i))
     noticeOf Nothing = unknownNotice

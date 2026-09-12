@@ -59,10 +59,13 @@ import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
                                               gridDivisions, minWidthFor,
                                               overlaps, slotStyle, snapTo,
                                               spanCss, touchesTopRight)
-import           Common.Origin               (Origin (..), Sourced (..),
-                                              fetchedAtHeader, originFrom,
-                                              originHeader, originLabel,
-                                              originNotice, sourcedFrom)
+import           Common.Origin               (Origin (..), Source (..),
+                                              Sourced (..), fetchedAtHeader,
+                                              originFrom, originHeader,
+                                              originLabel, originNotice,
+                                              sourceFrom, sourceHeader,
+                                              sourceLabel, sourceName,
+                                              sourcedFrom)
 import           Common.Refresh              (Poll (..), PollEvent (..),
                                               canRequest, liveRefreshSeconds,
                                               pollIdle, pollStep)
@@ -1080,6 +1083,37 @@ main = hspec $ do
     prop "originFrom es inversa de originLabel para las tres" originRoundTrips
     prop "solo Fresh calla; los otros dos avisan siempre" onlyFreshIsSilent
 
+  -- El segundo eje del módulo, y va aparte porque es una pregunta distinta: el
+  -- peldaño dice qué sirvió el dato y la fuente de dónde salió. Las dos fuentes son
+  -- complementarias —el feed publica mientras la sesión rueda y OpenF1 después—, así
+  -- que ningún valor de un eje implica uno del otro.
+  describe "Common.Origin — la fuente" $ do
+    it "cada fuente tiene su valor de cabecera, y son distintos entre sí" $
+      map sourceLabel [minBound .. maxBound] `shouldBe` ["feed", "openf1"]
+
+    it "lee el valor tal cual lo emite el backend" $
+      map sourceFrom ["feed", "openf1"] `shouldBe` [Just Feed, Just OpenF1]
+
+    it "tolera espacios y mayúsculas, como la procedencia" $
+      map sourceFrom ["  FEED ", "OpenF1"] `shouldBe` [Just Feed, Just OpenF1]
+
+    it "no adivina: lo que no reconoce es Nothing" $
+      map sourceFrom ["", "   ", "open f1", "fastf1", "sample"]
+        `shouldBe` [Nothing, Nothing, Nothing, Nothing, Nothing]
+
+    -- Uno lo lee una máquina y el otro una persona; si coincidieran, el texto de la
+    -- pantalla quedaría atado al valor del protocolo.
+    it "el nombre que se lee no es el valor que viaja" $
+      map sourceName [minBound .. maxBound] `shouldBe` ["Feed oficial", "OpenF1"]
+
+    -- Los tres nombres los leen los dos extremos, así que clavarlos aquí es lo que
+    -- impide renombrar uno de un lado y dejar al otro buscando el viejo.
+    it "las tres cabeceras tienen nombres distintos, y son éstos" $
+      [originHeader, fetchedAtHeader, sourceHeader]
+        `shouldBe` ["X-Data-Origin", "X-Data-Fetched-At", "X-Data-Source"]
+
+    prop "sourceFrom es inversa de sourceLabel para las dos" sourceRoundTrips
+
   -- El nombre de cada cabecera vive dos veces —'Text' en 'Common.Origin', 'Symbol'
   -- en el tipo de Servant— y si divergen el widget no reconoce la cabecera y calla
   -- sin error. El primer caso es el que lo impide.
@@ -1147,14 +1181,26 @@ main = hspec $ do
       sourcedFrom
         (`lookup` [("X-Data-Origin", "cached"), ("X-Data-Fetched-At", " 2026-09-11T14:03:22Z ")])
         ()
-        `shouldBe` Sourced (Just Cached) (Just "2026-09-11T14:03:22Z") ()
+        `shouldBe` Sourced (Just Cached) Nothing (Just "2026-09-11T14:03:22Z") ()
 
-    it "sin cabeceras no adivina: procedencia e instante en Nothing" $
-      sourcedFrom (`lookup` []) () `shouldBe` Sourced Nothing Nothing ()
+    it "lee también la fuente, que es la tercera cabecera" $
+      sourcedFrom
+        (`lookup` [("X-Data-Origin", "fresh"), ("X-Data-Source", " FEED ")])
+        ()
+        `shouldBe` Sourced (Just Fresh) (Just Feed) Nothing ()
+
+    it "sin cabeceras no adivina: procedencia, fuente e instante en Nothing" $
+      sourcedFrom (`lookup` []) () `shouldBe` Sourced Nothing Nothing Nothing ()
 
     it "una procedencia irreconocible es Nothing, y el valor llega igual" $
       sourcedFrom (`lookup` [("X-Data-Origin", "live")]) 'x'
-        `shouldBe` Sourced Nothing Nothing 'x'
+        `shouldBe` Sourced Nothing Nothing Nothing 'x'
+
+    -- El dato de ejemplo no sale de ninguna fuente, así que su respuesta no lleva
+    -- la cabecera: ausente y desconocida se leen igual, y es lo correcto.
+    it "un dato con procedencia pero sin fuente es un caso normal, no un fallo" $
+      sourcedFrom (`lookup` [("X-Data-Origin", "sample")]) ()
+        `shouldBe` Sourced (Just Sample) Nothing Nothing ()
 
   -- El indicador cruza las dos preguntas que 'Common.Origin' y 'Common.Refresh'
   -- responden por separado —de dónde salió lo que se ve, y si lo último que se
@@ -1163,13 +1209,14 @@ main = hspec $ do
   -- así que un fallo NO puede cambiar el color, y «en vivo» SÍ tiene que dejar
   -- de decirse.
   describe "Common.Indicator" $ do
-    it "recoge la procedencia, el instante y el fallo de lo que se está enseñando" $
-      indicatorFrom (Poll False (Just (Sourced (Just Cached) (Just fetchedAtIso) [1 :: Int])) True)
-        `shouldBe` Indicator True (Just Cached) (Just fetchedAtIso) True
+    it "recoge la procedencia, la fuente, el instante y el fallo de lo que se está enseñando" $
+      indicatorFrom
+        (Poll False (Just (Sourced (Just Cached) (Just OpenF1) (Just fetchedAtIso) [1 :: Int])) True)
+        `shouldBe` Indicator True (Just Cached) (Just OpenF1) (Just fetchedAtIso) True
 
     it "antes de la primera respuesta no hay nada que enseñar ni procedencia" $
       indicatorFrom (pollIdle :: Poll (Sourced [Int]))
-        `shouldBe` Indicator False Nothing Nothing False
+        `shouldBe` Indicator False Nothing Nothing Nothing False
 
     it "los cinco estados del punto, cada uno con su modificador" $
       map indicatorClass
@@ -1238,12 +1285,55 @@ main = hspec $ do
     -- indicador sepa si hay tabla: el cuerpo de la tarjeta ya pinta su «Error al
     -- cargar», y prometer «se muestra la tabla anterior» sin tabla es mentir.
     it "sin nada en pantalla, el fallo no promete una tabla anterior" $
-      indicatorTooltip (Indicator False Nothing Nothing True)
+      indicatorTooltip (Indicator False Nothing Nothing Nothing True)
         `shouldBe` "Procedencia desconocida"
 
     it "un instante ilegible deja el tooltip sin hora, pero sigue avisando" $
       indicatorTooltip (shownAs (Just Cached) (Just "ayer por la tarde") False)
         `shouldBe` "Dato guardado: la fuente no responde ahora mismo"
+
+    -- La fuente es el segundo eje y el punto ya pinta el primero: si el color
+    -- cambiara con ella, dos señales distintas compartirían pintura.
+    it "la fuente no cambia el punto: el color sigue siendo el del peldaño" $
+      map indicatorClass
+        [ shownFrom Feed   (Just Fresh)  Nothing             False
+        , shownFrom OpenF1 (Just Fresh)  Nothing             False
+        , shownFrom OpenF1 (Just Cached) (Just fetchedAtIso) False
+        ]
+        `shouldBe` [ "widget__badge widget__badge--live"
+                   , "widget__badge widget__badge--live"
+                   , "widget__badge widget__badge--saved"
+                   ]
+
+    it "la fuente va delante y con su nombre legible, no con el valor de la cabecera" $
+      map (\s -> indicatorTooltip (shownFrom s (Just Fresh) Nothing False)) [Feed, OpenF1]
+        `shouldBe` [ "Feed oficial · En vivo: se actualiza cada "
+                       <> T.pack (show liveRefreshSeconds) <> " s"
+                   , "OpenF1 · En vivo: se actualiza cada "
+                       <> T.pack (show liveRefreshSeconds) <> " s"
+                   ]
+
+    -- El caso largo, que es el que la fuente podía empeorar: dos frases compuestas
+    -- más la etiqueta. Por eso la fuente va delante y separada por «·».
+    it "guardado, fallo y fuente caben los tres, y la fuente no encadena otra frase" $
+      indicatorTooltip (shownFrom OpenF1 (Just Cached) (Just fetchedAtIso) True)
+        `shouldBe` "OpenF1 · Dato guardado: la fuente no responde ahora mismo (14:03 UTC). \
+                   \No se pudo recargar: se muestra la tabla anterior"
+
+    it "el dato fresco que no se pudo recargar conserva su fuente" $
+      indicatorTooltip (shownFrom Feed (Just Fresh) Nothing True)
+        `shouldBe` "Feed oficial · No se pudo recargar: se muestra la tabla anterior"
+
+    -- El respaldo estático nunca salió de una fuente, así que su respuesta no trae
+    -- la cabecera y su tooltip no gana etiqueta: es la razón de que el campo sea
+    -- 'Maybe' y no un tercer valor de 'Source'.
+    it "el dato de ejemplo no lleva fuente, porque no la tuvo" $
+      indicatorTooltip (shownAs (Just Sample) Nothing False)
+        `shouldBe` "Datos de ejemplo: la fuente nunca ha respondido"
+
+    it "una fuente conocida con la procedencia desconocida sigue diciéndose" $
+      indicatorTooltip (shownFrom Feed Nothing Nothing False)
+        `shouldBe` "Feed oficial · Procedencia desconocida"
 
   describe "fetchedAtLabel" $ do
     it "saca la hora y el minuto del instante que emite el backend" $
@@ -1390,16 +1480,30 @@ qualyFixture = [rectNamed "qualy-live-timing" LiveTiming (0, 0, 120, 120)]
 fetchedAtIso :: T.Text
 fetchedAtIso = "2026-09-11T14:03:22Z"
 
--- | Indicador de una tarjeta __con algo en pantalla__, que es el caso normal.
--- El que no tiene nada se escribe entero, porque es la excepción y conviene que
--- se lea como tal.
+-- | Indicador de una tarjeta __con algo en pantalla y sin fuente__, que es el caso
+-- normal. El que no tiene nada se escribe entero, porque es la excepción y conviene
+-- que se lea como tal; los que llevan fuente usan 'shownFrom'.
 shownAs :: Maybe Origin -> Maybe T.Text -> Bool -> Indicator
 shownAs origin fetched failed =
-  Indicator {indShown = True, indOrigin = origin, indFetched = fetched, indFailed = failed}
+  Indicator
+    { indShown   = True
+    , indOrigin  = origin
+    , indSource  = Nothing
+    , indFetched = fetched
+    , indFailed  = failed
+    }
 
--- | Los diez estados en los que el indicador puede encontrarse: las cuatro
--- procedencias (contando la desconocida) por si el último refresco volvió o no,
--- más los dos de antes de la primera respuesta.
+shownFrom :: Source -> Maybe Origin -> Maybe T.Text -> Bool -> Indicator
+shownFrom source origin fetched failed =
+  (shownAs origin fetched failed) {indSource = Just source}
+
+-- | Los diez estados que el __punto__ distingue: las cuatro procedencias (contando
+-- la desconocida) por si el último refresco volvió o no, más los dos de antes de la
+-- primera respuesta.
+--
+-- __La fuente no entra en la lista__, y no por olvido: 'indicatorClass' no la lee, y
+-- meterla duplicaría cada estado sin añadir ninguno. Que no la lea lo afirma su
+-- propio caso, no esta lista.
 --
 -- Existe para que los casos puedan preguntar «¿cuántos de TODOS hacen X?» en vez
 -- de enumerar los que se espera que lo hagan, que es lo que deja fuera al estado
@@ -1410,7 +1514,7 @@ everyIndicator =
     <> [ shownAs (Just Cached) (Just fetchedAtIso) failed | failed <- [False, True] ]
     <> [ shownAs (Just Sample) Nothing             failed | failed <- [False, True] ]
     <> [ shownAs Nothing       Nothing             failed | failed <- [False, True] ]
-    <> [ Indicator False Nothing Nothing failed          | failed <- [False, True] ]
+    <> [ Indicator False Nothing Nothing Nothing failed  | failed <- [False, True] ]
 
 -- | Decodifica un fixture y aplana la clasificación de pilotos. Un fixture que no
 -- decodifica es un error del test, no un fallo del código bajo prueba: por eso
@@ -2127,6 +2231,15 @@ originRoundTrips :: Int -> Property
 originRoundTrips n = originFrom (originLabel origin) === Just origin
   where
     origin = toEnum (n `mod` 3)
+
+-- | El número de fuentes sale del propio tipo y no de un literal, al revés que el
+-- @3@ de 'originRoundTrips': si mañana hay una tercera, la propiedad la cubre sin
+-- que nadie se acuerde de tocar el módulo.
+sourceRoundTrips :: Int -> Property
+sourceRoundTrips n = sourceFrom (sourceLabel source) === Just source
+  where
+    sources = [minBound .. maxBound] :: [Source]
+    source = sources !! (n `mod` length sources)
 
 -- | La regla que gobierna el aviso: __callar es privilegio de 'Fresh'__ y de nadie
 -- más, con hora o sin ella. Es la propiedad que impide el fallo que motivó el

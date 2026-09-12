@@ -17,6 +17,13 @@
 -- backend lo emite y el widget lo lee para decidir si avisa. Es el criterio del
 -- 2026-08-04 —lo puro y sin Reflex va a @common@, que es lo único con suite—, el
 -- mismo que trajo 'Common.Format' y 'Common.Layout'.
+--
+-- __El módulo responde dos preguntas, y son independientes.__ 'Origin' dice __qué
+-- peldaño__ de la escalera sirvió el dato; 'Source' dice __de qué fuente__ salió.
+-- Un dato fresco puede venir del feed o de OpenF1, y uno guardado conserva la
+-- fuente que tenía cuando se guardó. Cruzarlas en un solo tipo daría seis valores
+-- de los que dos no existen —el respaldo estático no tiene fuente— y obligaría a
+-- cada lector a casar contra casos que no le llegan.
 module Common.Origin
   ( Origin (..)
   , originHeader
@@ -24,6 +31,11 @@ module Common.Origin
   , originLabel
   , originFrom
   , originNotice
+  , Source (..)
+  , sourceHeader
+  , sourceLabel
+  , sourceFrom
+  , sourceName
   , Sourced (..)
   , sourcedFrom
   ) where
@@ -116,6 +128,52 @@ originNotice Cached at =
 originNotice Sample _ =
   Just "Datos de ejemplo: la fuente nunca ha respondido"
 
+-- | De qué fuente salió el dato.
+--
+-- Las dos son __complementarias y no redundantes__ (2026-09-12 (h)): el feed publica
+-- mientras la sesión rueda y calla después; OpenF1 cierra con @401@ mientras rueda y
+-- abre después. Por eso ninguna sustituye a la otra y la respuesta tiene que decir
+-- cuál contestó.
+--
+-- No hay constructor para el respaldo estático: no salió de ninguna fuente, y por eso
+-- la cabecera __falta__ en ese caso en vez de llevar un valor inventado.
+data Source
+  = -- | El feed oficial de cronometraje, a través del microservicio.
+    Feed
+  | -- | La API pública de OpenF1.
+    OpenF1
+  deriving stock (Eq, Show, Enum, Bounded)
+
+-- | Cabecera que transporta la fuente.
+--
+-- Es una tercera cabecera y no un campo de 'Origin' por lo mismo que
+-- 'fetchedAtHeader': hay un peldaño que no tiene qué poner en ella.
+sourceHeader :: Text
+sourceHeader = "X-Data-Source"
+
+-- | El valor que viaja en la cabecera. Minúsculas y sin espacios, como
+-- 'originLabel': es un valor de protocolo, no un texto para leer.
+sourceLabel :: Source -> Text
+sourceLabel Feed   = "feed"
+sourceLabel OpenF1 = "openf1"
+
+-- | La fuente a partir del valor de la cabecera, con el criterio de 'originFrom':
+-- recorta, normaliza a minúsculas y __no adivina__.
+sourceFrom :: Text -> Maybe Source
+sourceFrom raw =
+  case T.toLower (T.strip raw) of
+    "feed"   -> Just Feed
+    "openf1" -> Just OpenF1
+    _        -> Nothing
+
+-- | El nombre de la fuente para leerlo, que es lo que enseña el tooltip.
+--
+-- Va aparte de 'sourceLabel' porque uno lo lee una persona y el otro una máquina:
+-- fundirlos ataría el texto de la pantalla al valor del protocolo.
+sourceName :: Source -> Text
+sourceName Feed   = "Feed oficial"
+sourceName OpenF1 = "OpenF1"
+
 -- | El texto si dice algo, 'Nothing' si está en blanco. Una cabecera presente pero
 -- vacía es lo mismo que ausente, y sin esto el aviso acabaría en @\"… ()\"@.
 nonBlank :: Text -> Maybe Text
@@ -130,6 +188,9 @@ nonBlank t = if T.null (T.strip t) then Nothing else Just (T.strip t)
 data Sourced a = Sourced
   { srcOrigin    :: Maybe Origin
     -- ^ 'Nothing' si la cabecera no llegó o no se reconoce.
+  , srcSource    :: Maybe Source
+    -- ^ 'Nothing' si la cabecera no llegó, no se reconoce o el dato no salió de
+    -- ninguna fuente.
   , srcFetchedAt :: Maybe Text
     -- ^ El instante tal cual viaja, recortado; 'Nothing' si falta o está en blanco.
   , srcValue     :: a
@@ -146,6 +207,7 @@ sourcedFrom :: (Text -> Maybe Text) -> a -> Sourced a
 sourcedFrom lookupHeader value =
   Sourced
     { srcOrigin    = originFrom =<< lookupHeader originHeader
+    , srcSource    = sourceFrom =<< lookupHeader sourceHeader
     , srcFetchedAt = nonBlank =<< lookupHeader fetchedAtHeader
     , srcValue     = value
     }
