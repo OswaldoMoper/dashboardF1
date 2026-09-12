@@ -40,6 +40,7 @@ module Common.Layout
     -- * Comprobaciones que informan
   , fitsAt
   , overlaps
+  , touchesTopRight
   ) where
 
 import           Common.Types (WidgetConfig (..), WidgetType (..))
@@ -219,6 +220,27 @@ overlaps a b =
     && overlaps1 (wcY a) (wcH a) (wcY b) (wcH b)
   where
     overlaps1 p s q t = p < q + t && q < p + s
+
+-- | Si el rectángulo de un widget __toca la esquina superior derecha del
+-- lienzo__: empieza arriba del todo y acaba en el borde derecho.
+--
+-- Existe por una colisión concreta y no por simetría: el botón que pliega la
+-- cabecera (2026-09-07 b) es @position: fixed@ en esa esquina de la ventana, así
+-- que la tarjeta que la ocupa tiene ahí encima algo que no es suyo. El indicador
+-- @● Live@ va al borde derecho de su tarjeta (2026-09-12), y en esa —y solo en
+-- esa— quedaría debajo del botón.
+--
+-- __Informa; no corrige__, como 'fitsAt' y 'overlaps'. Cuánto hueco dejar y con
+-- qué regla es cosa de la hoja de estilos, que es la que sabe lo que mide el
+-- botón; aquí solo se dice __a quién__ le pasa. Emitir el hueco en los seis
+-- widgets sería más simple y se vería como un sangrado sin motivo en los cinco
+-- que no lo necesitan.
+--
+-- El borde es exacto y por eso la comparación es de igualdad: un widget que
+-- acabe en 119 no toca la esquina, y uno que se pase de 'canvasSpan' tampoco
+-- —que no quepa ya lo dice 'fitsAt'—.
+touchesTopRight :: WidgetConfig -> Bool
+touchesTopRight w = wcY w == 0 && wcX w + wcW w == canvasSpan
 
 -- | Recorta una coordenada al lienzo. Privada: fuera de 'snapTo' invitaría a
 -- sanear posiciones a mano, que es justo lo que 'fitsAt' existe para no hacer.

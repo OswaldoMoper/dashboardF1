@@ -49,16 +49,20 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, zeroLineY)
 import           Common.Format               (formatFixed, formatTrimmed, noData)
+import           Common.Indicator            (Indicator (..), fetchedAtLabel,
+                                              indicatorClass, indicatorFrom,
+                                              indicatorTooltip)
 import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
                                               gridDivisions, minWidthFor,
                                               overlaps, slotStyle, snapTo,
-                                              spanCss)
+                                              spanCss, touchesTopRight)
 import           Common.Origin               (Origin (..), Sourced (..),
                                               fetchedAtHeader, originFrom,
                                               originHeader, originLabel,
                                               originNotice, sourcedFrom)
 import           Common.Refresh              (Poll (..), PollEvent (..),
-                                              canRequest, pollIdle, pollStep)
+                                              canRequest, liveRefreshSeconds,
+                                              pollIdle, pollStep)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Types                (DriverEntry (..),
@@ -849,6 +853,22 @@ main = hspec $ do
        in filter ((/= 0) . (`mod` 5)) (concatMap coords (raceOverviewFixture <> qualyFixture))
             `shouldBe` []
 
+    -- Quién queda debajo del botón de plegar la cabecera, que es `fixed` en la
+    -- esquina de la ventana. El caso vale por lo que NOMBRA: si mañana alguien
+    -- mueve `telemetry` a x=55, el hueco se quedaría en un widget que ya no lo
+    -- necesita y le faltaría al que sí, y eso no se ve compilando.
+    it "solo telemetry y el live timing de Qualy tocan la esquina superior derecha" $
+      map widgetId (filter touchesTopRight (raceOverviewFixture <> qualyFixture))
+        `shouldBe` [WidgetId "telemetry", WidgetId "qualy-live-timing"]
+
+    -- Las dos mitades de la condición, cada una por su lado: `live-timing`
+    -- empieza arriba pero acaba en 60, y `constructor-stats` acaba en el borde
+    -- derecho pero empieza abajo. Ninguno de los dos toca la esquina, y son los
+    -- vecinos que la delatarían si la condición perdiera una de sus dos mitades.
+    it "ni empezar arriba ni acabar a la derecha bastan por separado" $
+      map touchesTopRight [rect LiveTiming (0, 0, 60, 90), rect ConstructorStats (60, 90, 60, 30)]
+        `shouldBe` [False, False]
+
   describe "Common.Origin" $ do
     it "cada procedencia tiene su valor de cabecera, y son distintos entre sí" $
       map originLabel [minBound .. maxBound] `shouldBe` ["fresh", "cached", "sample"]
@@ -963,6 +983,112 @@ main = hspec $ do
     it "una procedencia irreconocible es Nothing, y el valor llega igual" $
       sourcedFrom (`lookup` [("X-Data-Origin", "live")]) 'x'
         `shouldBe` Sourced Nothing Nothing 'x'
+
+  -- El indicador cruza las dos preguntas que 'Common.Origin' y 'Common.Refresh'
+  -- responden por separado —de dónde salió lo que se ve, y si lo último que se
+  -- pidió volvió—, y es el único sitio donde se cruzan. Lo que aquí se prueba es
+  -- el reparto: el color dice la procedencia y el parpadeo dice «ahora mismo»,
+  -- así que un fallo NO puede cambiar el color, y «en vivo» SÍ tiene que dejar
+  -- de decirse.
+  describe "Common.Indicator" $ do
+    it "recoge la procedencia, el instante y el fallo de lo que se está enseñando" $
+      indicatorFrom (Poll False (Just (Sourced (Just Cached) (Just fetchedAtIso) [1 :: Int])) True)
+        `shouldBe` Indicator True (Just Cached) (Just fetchedAtIso) True
+
+    it "antes de la primera respuesta no hay nada que enseñar ni procedencia" $
+      indicatorFrom (pollIdle :: Poll (Sourced [Int]))
+        `shouldBe` Indicator False Nothing Nothing False
+
+    it "los cinco estados del punto, cada uno con su modificador" $
+      map indicatorClass
+        [ shownAs (Just Fresh)  Nothing             False
+        , shownAs (Just Fresh)  Nothing             True
+        , shownAs (Just Cached) (Just fetchedAtIso) False
+        , shownAs (Just Sample) Nothing             False
+        , shownAs Nothing       Nothing             False
+        ]
+        `shouldBe` [ "widget__badge widget__badge--live"
+                   , "widget__badge widget__badge--stalled"
+                   , "widget__badge widget__badge--saved"
+                   , "widget__badge widget__badge--sample"
+                   , "widget__badge widget__badge--unknown"
+                   ]
+
+    -- La mitad del reparto que no se ve mirando: el parpadeo es de UN estado, y
+    -- de los nueve posibles. Escrito así, un estado nuevo que se colara en la
+    -- clase `--live` rompe el caso sin que nadie tenga que acordarse.
+    it "solo el dato fresco con el refresco volviendo pide parpadeo" $
+      filter ((== "widget__badge widget__badge--live") . indicatorClass) everyIndicator
+        `shouldBe` [shownAs (Just Fresh) Nothing False]
+
+    it "un refresco fallido no cambia el punto del dato guardado ni el del de ejemplo" $
+      map indicatorClass
+        [ shownAs (Just Cached) (Just fetchedAtIso) True
+        , shownAs (Just Sample) Nothing             True
+        ]
+        `shouldBe` [ "widget__badge widget__badge--saved"
+                   , "widget__badge widget__badge--sample"
+                   ]
+
+    it "el dato fresco dice que está en vivo, y con el periodo real del refresco" $
+      indicatorTooltip (shownAs (Just Fresh) Nothing False)
+        `shouldBe` ("En vivo: se actualiza cada " <> T.pack (show liveRefreshSeconds) <> " s")
+
+    -- No se compone: «en vivo» dejó de ser cierto en cuanto el refresco falló,
+    -- así que decirlo además del fallo sería decir las dos cosas a la vez.
+    it "el dato fresco que no se pudo recargar sustituye su aviso, no lo acumula" $
+      indicatorTooltip (shownAs (Just Fresh) Nothing True)
+        `shouldBe` "No se pudo recargar: se muestra la tabla anterior"
+
+    it "el dato guardado lleva la hora ya legible, y no el instante tal cual viaja" $
+      indicatorTooltip (shownAs (Just Cached) (Just fetchedAtIso) False)
+        `shouldBe` "Dato guardado: la fuente no responde ahora mismo (14:03 UTC)"
+
+    it "guardado y fallo son dos hechos, y el tooltip los dice los dos" $
+      indicatorTooltip (shownAs (Just Cached) (Just fetchedAtIso) True)
+        `shouldBe` "Dato guardado: la fuente no responde ahora mismo (14:03 UTC). \
+                   \No se pudo recargar: se muestra la tabla anterior"
+
+    it "el dato de ejemplo avisa de que lo es, falle o no el refresco" $
+      map (indicatorTooltip . shownAs (Just Sample) Nothing) [False, True]
+        `shouldBe` [ "Datos de ejemplo: la fuente nunca ha respondido"
+                   , "Datos de ejemplo: la fuente nunca ha respondido. \
+                     \No se pudo recargar: se muestra la tabla anterior"
+                   ]
+
+    it "sin procedencia reconocible lo dice, y compone igual con el fallo" $
+      map (indicatorTooltip . shownAs Nothing Nothing) [False, True]
+        `shouldBe` [ "Procedencia desconocida"
+                   , "Procedencia desconocida. No se pudo recargar: se muestra la tabla anterior"
+                   ]
+
+    -- El caso del fallo en la PRIMERA carga, que es el que obliga a que el
+    -- indicador sepa si hay tabla: el cuerpo de la tarjeta ya pinta su «Error al
+    -- cargar», y prometer «se muestra la tabla anterior» sin tabla es mentir.
+    it "sin nada en pantalla, el fallo no promete una tabla anterior" $
+      indicatorTooltip (Indicator False Nothing Nothing True)
+        `shouldBe` "Procedencia desconocida"
+
+    it "un instante ilegible deja el tooltip sin hora, pero sigue avisando" $
+      indicatorTooltip (shownAs (Just Cached) (Just "ayer por la tarde") False)
+        `shouldBe` "Dato guardado: la fuente no responde ahora mismo"
+
+  describe "fetchedAtLabel" $ do
+    it "saca la hora y el minuto del instante que emite el backend" $
+      fetchedAtLabel fetchedAtIso `shouldBe` Just "14:03 UTC"
+
+    it "la fracción de segundo no le estorba, y los espacios tampoco" $
+      map fetchedAtLabel ["2026-09-11T14:03:22.512Z", "  2026-09-11T14:03:22Z  "]
+        `shouldBe` [Just "14:03 UTC", Just "14:03 UTC"]
+
+    -- La medianoche es el caso que un recorte mal hecho convierte en `Nothing`
+    -- una vez al día y solo una vez al día.
+    it "la medianoche es una hora como las demás" $
+      fetchedAtLabel "2026-09-11T00:00:00Z" `shouldBe` Just "00:00 UTC"
+
+    it "lo que no tiene esa forma no se adivina" $
+      map fetchedAtLabel ["", "   ", "2026-09-11", "ayer", "2026-09-11T4:03:22Z"]
+        `shouldBe` [Nothing, Nothing, Nothing, Nothing, Nothing]
 
 -- * Propiedades
 
@@ -1084,6 +1210,35 @@ raceOverviewFixture =
 -- 'raceOverviewFixture'. Es el caso límite del rectángulo: el lienzo entero.
 qualyFixture :: [WidgetConfig]
 qualyFixture = [rectNamed "qualy-live-timing" LiveTiming (0, 0, 120, 120)]
+
+-- | El instante tal cual lo emite @\/api\/live@ en la cabecera @X-Data-Fetched-At@
+-- (2026-09-11 (b)): UTC, sin fracción de segundo. Es el mismo que produce
+-- 'fetchInstant' del bloque de @Handler.Live@, aquí como texto porque es lo que
+-- el widget recibe.
+fetchedAtIso :: T.Text
+fetchedAtIso = "2026-09-11T14:03:22Z"
+
+-- | Indicador de una tarjeta __con algo en pantalla__, que es el caso normal.
+-- El que no tiene nada se escribe entero, porque es la excepción y conviene que
+-- se lea como tal.
+shownAs :: Maybe Origin -> Maybe T.Text -> Bool -> Indicator
+shownAs origin fetched failed =
+  Indicator {indShown = True, indOrigin = origin, indFetched = fetched, indFailed = failed}
+
+-- | Los diez estados en los que el indicador puede encontrarse: las cuatro
+-- procedencias (contando la desconocida) por si el último refresco volvió o no,
+-- más los dos de antes de la primera respuesta.
+--
+-- Existe para que los casos puedan preguntar «¿cuántos de TODOS hacen X?» en vez
+-- de enumerar los que se espera que lo hagan, que es lo que deja fuera al estado
+-- que alguien añada mañana.
+everyIndicator :: [Indicator]
+everyIndicator =
+  [ shownAs (Just Fresh)  Nothing             failed | failed <- [False, True] ]
+    <> [ shownAs (Just Cached) (Just fetchedAtIso) failed | failed <- [False, True] ]
+    <> [ shownAs (Just Sample) Nothing             failed | failed <- [False, True] ]
+    <> [ shownAs Nothing       Nothing             failed | failed <- [False, True] ]
+    <> [ Indicator False Nothing Nothing failed          | failed <- [False, True] ]
 
 -- | Decodifica un fixture y aplana la clasificación de pilotos. Un fixture que no
 -- decodifica es un error del test, no un fallo del código bajo prueba: por eso

@@ -22,6 +22,7 @@ library
     exposed-modules:
         Common.Chart
         Common.Format
+        Common.Indicator
         Common.Layout
         Common.Origin
         Common.Refresh
