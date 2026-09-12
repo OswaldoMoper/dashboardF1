@@ -17,7 +17,7 @@ import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, readTVarIO, writeTVar)
 import           Control.Exception      (SomeException, try)
 import           Data.Time.Clock        (UTCTime, getCurrentTime)
-import           Handler.Live.Helper    (assembleRows)
+import           Handler.Live.Helper    (Of1Interval, assembleRows)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
@@ -48,23 +48,42 @@ getLiveTiming env = do
 -- techo de duración de los GET ('Handler.PublicApi.Manager'); la cache la maneja el
 -- llamador. La firma de 'getLiveTiming' no cambia por esto.
 --
--- __El quinto GET entra en el mismo @try@ que los otros cuatro, y eso es «todo o
--- nada» aceptado a sabiendas:__ si @\/session_result@ falla, la tabla entera cae
--- al respaldo aunque los cuatro primeros hayan contestado. Es el mismo criterio
--- que los 2 GET en serie de Historical (2026-07-29) y la
--- misma contrapartida ya anotada: más superficie
--- de fallo en un solo @try@. Degradar solo las marcas pediría un @try@ por GET,
--- que es un cambio de forma del área — y la asimetría estaría
--- mal puesta, porque las marcas ya tienen su propio degradado en el default de
--- 'Of1Result': un piloto ausente de la respuesta entra como @Running@.
+-- __Cuatro de los cinco GET son «todo o nada»; el de los intervalos no.__ Si falla
+-- @\/drivers@, @\/position@, @\/laps@ o @\/session_result@, la tabla entera cae al
+-- respaldo aunque los otros hayan contestado — el mismo criterio que los 2 GET en
+-- serie de Historical (2026-07-29). @\/intervals@ está aparte
+-- ('fetchIntervalsOrEmpty') porque su fallo __no es un fallo__: el endpoint no
+-- existe fuera de carrera, y la tabla sin él sigue siendo la tabla.
+--
+-- Las marcas de @\/session_result@ tienen además su propio degradado en el default
+-- de 'Handler.Live.Helper.Of1Result': un piloto ausente de la respuesta entra como
+-- @Running@.
 fetchRows :: Config -> IO [LiveTimingRow]
 fetchRows cfg = do
   drivers   <- OpenF1.fetchDrivers cfg
   positions <- Manager.fetchPositions cfg
-  intervals <- Manager.fetchIntervals cfg
+  intervals <- fetchIntervalsOrEmpty cfg
   laps      <- Manager.fetchLaps cfg
   results   <- Manager.fetchResults cfg
   pure (assembleRows drivers positions intervals laps results)
+
+-- | @\/intervals@ con su propio @try@: una lista vacía si el GET no sale, en vez de
+-- propagar y tirar los otros cuatro.
+--
+-- __La ausencia de intervalos es el caso normal, no la excepción.__ Medido el
+-- 2026-09-12: el endpoint da @404 «No results found»@ en las tres prácticas y en la
+-- Qualy, y solo la carrera lo publica — cuatro de las cinco sesiones del fin de
+-- semana. Con los cinco GET en un @try@ común, ese 404 tiraba la tabla entera y la
+-- página enseñaba el dummy con la red viva.
+--
+-- __La lista vacía no vacía las columnas:__ 'Handler.Live.Helper.assembleRows' las
+-- rellena entonces desde la clasificación. Y la procedencia sigue siendo @Fresh@,
+-- porque lo que se sirve acaba de llegar.
+fetchIntervalsOrEmpty :: Config -> IO [Of1Interval]
+fetchIntervalsOrEmpty cfg = do
+  result <-
+    try (Manager.fetchIntervals cfg) :: IO (Either SomeException [Of1Interval])
+  pure (either (const []) id result)
 
 -- | Top 3 estático (respaldo cuando aún no hay respuesta real de OpenF1).
 --
