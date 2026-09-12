@@ -228,6 +228,39 @@
           '';
         };
 
+        # Runs the binary `cabal build backend` leaves in the working tree, so a
+        # code change needs no `nix build`. Its path carries the GHC and package
+        # version, so it is located and never spelled out. The default port
+        # stays off 8080, which another service holds on this machine;
+        # `nix run .#api` finds whichever port this binds.
+        packages.serve = pkgs.writeShellApplication {
+          name = "dashboardF1-serve";
+          runtimeInputs = [ pkgs.findutils ];
+          text = ''
+            ${guardRoot}
+            binary="$(find dist-newstyle -type f -name backend -perm -u+x \
+              -print -quit 2>/dev/null || true)"
+            if [ -z "$binary" ]; then
+              echo "error: no encuentro el binario. Corre antes: cabal build backend" >&2
+              exit 2
+            fi
+            if [ ! -e result ]; then
+              echo "aviso: no hay ./result, así que el bundle del frontend no se sirve." >&2
+              echo "       Lo deja ahí nix build .#frontend; la API funciona igual." >&2
+            fi
+            export STATIC_DIR="''${STATIC_DIR:-result}"
+            export PORT="''${PORT:-8097}"
+            echo "backend → :$PORT   (STATIC_DIR: $STATIC_DIR)"
+            echo "                     binario: $binary"
+            exec "$binary"
+          '';
+        };
+
+        apps.serve = {
+          type = "app";
+          program = "${self'.packages.serve}/bin/dashboardF1-serve";
+        };
+
         # Without PORT it LOCATES the listening backend instead of assuming one:
         # a guessed port answers with whatever else is bound there, and a reply
         # from a stranger reads like a bug in ours. And `127.0.0.1`, not
@@ -290,6 +323,7 @@
             echo "  backend : cabal run backend   # Servant en :8080 (Fase 0, sesión 3)"
             echo "  todo    : nix run .#dev       # microservicio + backend, STATIC_DIR desde el store"
             echo "  pruebas : nix run .#test      # cabal build all + cabal test all"
+            echo "  servir  : nix run .#serve     # el binario de cabal, :8097, STATIC_DIR=result"
             echo "  api     : nix run .#api -- live   # curl -i a /api/live, con cabeceras"
           '';
         };
