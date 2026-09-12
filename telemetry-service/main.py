@@ -1,7 +1,16 @@
 """telemetry-service — FastF1 detrás de una interfaz HTTP estable.
 
 Microservicio que encapsula FastF1 para que el backend Haskell no tenga que
-hablar Python ni pandas. Fase 4, cuatro endpoints:
+hablar Python ni pandas. Cuatro endpoints sobre datos archivados, más uno sobre
+el feed en vivo:
+
+* ``GET /fastf1/live`` — la tabla de live timing de la sesión **en marcha**, con
+  las claves de ``Common.Types.LiveTimingRow``. No sale de FastF1 sino del feed
+  que alimenta la web de la F1, y es la única fuente que responde durante una
+  sesión: OpenF1 devuelve 401 en todo mientras hay una en directo. Ver
+  ``_live_snapshot``.
+
+Los cuatro de FastF1:
 
 * ``GET /fastf1/telemetry/{session_key}/{driver}`` — arreglo JSON plano de
   muestras de telemetría, cada una **etiquetada con el acrónimo del piloto**
@@ -754,3 +763,199 @@ def laps(session_key: str, driver: str = "all") -> List[Dict[str, Any]]:
         for _, row in picked.iterrows():
             entries.append(_lap_entry(label, number, row))
     return entries
+
+
+# --- Feed de timing en vivo ---------------------------------------------------
+#
+# Lo de arriba sale de FastF1 sobre datos ya archivados. Esto sale del feed que
+# alimenta la web de la F1, y es la única fuente que responde **durante** una
+# sesión: OpenF1 devuelve 401 en todos sus endpoints mientras hay una en marcha
+# —«including past sessions»— y abrirlo es de pago.
+
+_LIVE_FEED_URL = "wss://livetiming.formula1.com/signalrcore"
+_LIVE_NEGOTIATE_URL = "https://livetiming.formula1.com/signalrcore/negotiate"
+
+# Solo los tres topics que la tabla necesita, de los veinte que el feed publica.
+# Pedir menos hace la respuesta de `Subscribe` más pequeña y más rápida.
+_LIVE_TOPICS = ["DriverList", "SessionInfo", "TimingData"]
+
+
+def _live_snapshot(timeout: float = 15.0) -> Dict[str, Any]:
+    """El estado completo de la sesión en marcha, de un solo tiro.
+
+    **No acumula estado, y por eso cabe en una petición.** El feed manda deltas
+    —un mensaje es un coche, un sector, un segmento—, pero la respuesta a
+    ``Subscribe`` es un ``CompletionMessage`` cuyo ``result`` trae **cada topic
+    completo**. Se captura ése y se corta la conexión.
+
+    La contrapartida, y hay que tenerla presente antes de confiar en esto: cada
+    llamada abre y cierra una conexión, así que refrescar cada diez segundos son
+    seis conexiones por minuto. Sostener una conexión viva y acumular los deltas
+    es otra forma, más barata en red y más cara en diseño, y se decide con una
+    sesión entera grabada delante.
+
+    La conexión es **anónima**: ``access_token_factory`` devuelve la cadena
+    vacía. ``signalrcore`` rechaza el ``None`` que ``no_auth=True`` de FastF1 le
+    pasa, así que se le da una función que devuelve el token vacío, que es lo
+    que el modo anónimo quiere mandar.
+    """
+    # Importados aquí y no arriba para que el microservicio arranque igual si el
+    # cliente de SignalR falta: los cuatro endpoints de FastF1 no lo necesitan.
+    import threading
+
+    import requests
+    from signalrcore.hub_connection_builder import HubConnectionBuilder
+    from signalrcore.messages.completion_message import CompletionMessage
+
+    # Pre-negociación: el feed exige la cookie que devuelve este OPTIONS.
+    negotiated = requests.options(_LIVE_NEGOTIATE_URL, timeout=timeout)
+    headers = {"Cookie": f"AWSALBCORS={negotiated.cookies['AWSALBCORS']}"}
+
+    connection = (
+        HubConnectionBuilder()
+        .with_url(
+            _LIVE_FEED_URL,
+            options={
+                "verify_ssl": True,
+                "access_token_factory": lambda: "",
+                "headers": headers,
+            },
+        )
+        .build()
+    )
+
+    opened = threading.Event()
+    captured: Dict[str, Any] = {}
+    arrived = threading.Event()
+
+    def _on_subscribed(msg: Any) -> None:
+        if isinstance(msg, CompletionMessage) and isinstance(msg.result, dict):
+            captured.update(msg.result)
+            arrived.set()
+
+    connection.on_open(opened.set)
+    # Un manejador vacío para los deltas: llegan de todas formas mientras la
+    # conexión vive, y sin él el cliente los trata como mensaje sin destino.
+    connection.on("feed", lambda _msg: None)
+
+    connection.start()
+    try:
+        if not opened.wait(timeout):
+            raise TimeoutError("el feed no aceptó la conexión")
+        connection.send("Subscribe", [_LIVE_TOPICS], on_invocation=_on_subscribed)
+        if not arrived.wait(timeout):
+            raise TimeoutError("el feed aceptó la conexión pero no mandó el estado")
+    finally:
+        connection.stop()
+
+    return captured
+
+
+def _feed_text(value: Any) -> str:
+    """Un campo del feed como texto, desenvolviendo la forma ``{"Value": …}``.
+
+    El feed publica unos campos como cadena y otros como objeto con ``Value``
+    dentro (``LastLapTime``, ``BestLapTime``). Lo que queda vacío sale ``"-"``,
+    que es lo que ``Common.Types.LiveTimingRow`` usa para el hueco.
+    """
+    if isinstance(value, dict):
+        value = value.get("Value")
+    text = _text(value).strip()
+    return text or "-"
+
+
+def _feed_gaps(line: Dict[str, Any], part: Any) -> Tuple[str, str]:
+    """Diferencia al mejor y al de delante de un coche, del feed.
+
+    **Medido en la Qualy 11365 (2026-09-12):** las dos viven en ``Stats``, que es
+    una lista **por segmento** (Q1, Q2, Q3), y ``SessionPart`` de ``TimingData``
+    dice cuál mirar. Un piloto eliminado conserva las de su último segmento.
+
+    **La forma de carrera NO está medida.** Se buscan ``GapToLeader`` e
+    ``IntervalToPositionAhead`` en la propia línea, que es donde el feed las
+    pone cuando no hay segmentos, y se confirma con la grabación de la carrera.
+    Hasta entonces esta rama es una hipótesis, no un contrato.
+    """
+    stats = line.get("Stats")
+    if isinstance(stats, list) and stats:
+        index = part - 1 if isinstance(part, int) and 1 <= part <= len(stats) else 0
+        entry = stats[index] if isinstance(stats[index], dict) else {}
+        return (
+            _feed_text(entry.get("TimeDiffToFastest")),
+            _feed_text(entry.get("TimeDifftoPositionAhead")),
+        )
+    return (
+        _feed_text(line.get("GapToLeader")),
+        _feed_text(line.get("IntervalToPositionAhead")),
+    )
+
+
+def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """El snapshot del feed como las filas de ``Common.Types.LiveTimingRow``.
+
+    Las claves son las del DTO de Haskell, igual que en los otros cuatro
+    endpoints, para que el decode del backend sea directo.
+
+    Tres decisiones de mapeo que conviene conocer:
+
+    * **El líder lleva ``"LEADER"`` y ``"-"``**, como ya hace
+      ``Handler.Live.Helper.assembleRows``: la tabla no puede decir dos cosas
+      distintas según de dónde venga el dato.
+    * **``KnockedOut`` no es un abandono.** Un eliminado de Q1 terminó su
+      sesión; marcarlo haría creer en un incidente. Solo ``Retired`` y
+      ``Stopped`` dan ``Dnf``, y el feed no publica nada que distinga ``Dns`` de
+      ``Dsq``.
+    * **Un coche sin ``Position`` se omite**, por lo mismo que en
+      ``assembleRows``: sin posición no hay fila que ordenar.
+    """
+    drivers = snapshot.get("DriverList") or {}
+    timing = snapshot.get("TimingData") or {}
+    lines = timing.get("Lines") or {}
+    part = timing.get("SessionPart")
+
+    rows: List[Dict[str, Any]] = []
+    for number, line in lines.items():
+        if not isinstance(line, dict):
+            continue
+        position = _num(line.get("Position"))
+        if position is None:
+            continue
+        info = drivers.get(number) if isinstance(drivers, dict) else None
+        info = info if isinstance(info, dict) else {}
+        gap, interval = _feed_gaps(line, part)
+        leader = int(position) == 1
+        rows.append(
+            {
+                "ltPosition": int(position),
+                "ltDriver": _text(info.get("Tla")) or str(number),
+                "ltTeam": _text(info.get("TeamName")),
+                "ltGap": "LEADER" if leader else gap,
+                "ltInterval": "-" if leader else interval,
+                "ltLastLap": _feed_text(line.get("LastLapTime")),
+                "ltStatus": (
+                    "Dnf" if line.get("Retired") or line.get("Stopped") else "Running"
+                ),
+            }
+        )
+
+    rows.sort(key=lambda row: row["ltPosition"])
+    return rows
+
+
+@app.get("/fastf1/live")
+def live() -> List[Dict[str, Any]]:
+    """La tabla de live timing de la sesión **en marcha**, desde el feed oficial.
+
+    Devuelve ``[]`` si no hay sesión en directo, por el mismo criterio que los
+    otros cuatro: **degradar es trabajo del backend**, así que aquí una sesión
+    sin datos no es un error.
+
+    Solo se traduce a ``503`` el fallo del propio feed —conexión rechazada o
+    estado que no llega—, que es lo que ``Handler.Live.Context`` necesita
+    distinguir para caer a su cache.
+    """
+    try:
+        snapshot = _live_snapshot()
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"feed no disponible: {error}")
+    return _feed_rows(snapshot)
