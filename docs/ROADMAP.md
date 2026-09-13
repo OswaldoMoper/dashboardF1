@@ -377,11 +377,21 @@ gran premio, y es **plausible y no medido**.
 - [ ] **La página sabe y dice qué sesión es** (2026-09-12): tipo, gran premio y estado, leídos del tema de
       información de sesión del feed. **Prerequisito de los dos siguientes** y el más pequeño de los tres: los
       modos necesitan el tipo y la referencia necesita la identidad del gran premio.
-- [ ] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
-      si trae filas son de la sesión en marcha; si no trae ninguna, se cae a OpenF1, que es exactamente
-      cuando OpenF1 responde. El orden lo decide **qué contesta** y no qué hora es — decidir por la
-      ventana oficial se descartó porque el correr acaba antes que la hora: el 2026-09-12 se dejó de
-      rodar dieciocho minutos antes del final publicado, y OpenF1 no abrió hasta ese final.
+- [x] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
+      si trae filas son de la sesión en marcha; si no trae ninguna, se cae a OpenF1; y si **falla**, se
+      sirve desde la cache sin intentar OpenF1, para que un feed roto durante una sesión no pague además
+      los rechazos de OpenF1 antes de enseñar algo. El orden lo decide **qué contesta** y no qué hora es
+      — decidir por la ventana oficial se descartó porque el correr acaba antes que la hora: el
+      2026-09-12 se dejó de rodar dieciocho minutos antes del final publicado, y OpenF1 no abrió hasta
+      ese final.
+      **La respuesta dice de qué fuente salió**, en cabecera propia y en el texto del indicador, porque
+      con dos fuentes el dato de la sesión en marcha y el de la terminada no son el mismo dato.
+      **Y el peldaño del feed lleva su propio techo de espera**: una foto cuesta unos diecisiete
+      segundos medidos —el coste está en la conversación con el feed, no en la red—, así que el techo
+      que comparten los otros clientes del microservicio leería como fallo toda respuesta buena.
+      **Medido después, y pendiente de resolver:** el feed **sigue publicando la sesión terminada**
+      —ocho horas después de una clasificación seguía dando su tabla final—, así que el peldaño de
+      OpenF1 no se alcanza en la práctica. Se corrige con lo que mida una carrera completa.
 - [ ] **Conexión permanente al feed con estado acumulado**, en el microservicio (2026-09-12). El feed
       manda deltas —un coche, un sector, un segmento— y llega a **323 mensajes por minuto** en el pico
       de una clasificación, con tres minutos casi mudos en cada corte. La respuesta a la suscripción
