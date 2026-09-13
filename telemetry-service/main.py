@@ -878,10 +878,10 @@ def _feed_gaps(line: Dict[str, Any], part: Any) -> Tuple[str, str]:
 
     **Lo devuelto no siempre es una duración, y las dos no comparten unidad:**
     ``"LAP n"`` marca al coche que acaba de empezar la vuelta ``n`` —en la
-    primera lo llevan varios y después solo el líder—; un coche doblado lleva
-    ``"1 L"`` al mejor y sigue llevando segundos al de delante; y una línea sin
-    diferencia las manda vacías, que salen como ``"-"``. Quien llame no puede
-    parsearlas como tiempo sin mirar.
+    primera lo llevan varios y después solo el líder—; ``"3 L"`` es una
+    diferencia en vueltas, y **cualquiera de las dos la toma** cuando el rival
+    va doblado; y una línea sin diferencia las manda vacías, que salen como
+    ``"-"``. Quien llame no puede parsearlas como tiempo sin mirar.
     """
     stats = line.get("Stats")
     if isinstance(stats, list) and stats:
