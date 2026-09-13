@@ -876,9 +876,11 @@ def _feed_gaps(line: Dict[str, Any], part: Any) -> Tuple[str, str]:
     siempre como cadena; ``IntervalToPositionAhead``, siempre como dict con
     ``Value``, que ``_feed_text`` desenvuelve.
 
-    **Lo devuelto no siempre es una duración:** en la primera vuelta las dos
-    valen el texto ``"LAP 1"``, y una línea sin diferencia las manda vacías, que
-    salen como ``"-"``. Quien llame no puede parsearlas como tiempo sin mirar.
+    **Lo devuelto no siempre es una duración, y las dos no comparten unidad:**
+    en la primera vuelta ambas valen el texto ``"LAP 1"``; un coche doblado
+    lleva ``"1 L"`` al mejor y sigue llevando segundos al de delante; y una
+    línea sin diferencia las manda vacías, que salen como ``"-"``. Quien llame
+    no puede parsearlas como tiempo sin mirar.
     """
     stats = line.get("Stats")
     if isinstance(stats, list) and stats:
