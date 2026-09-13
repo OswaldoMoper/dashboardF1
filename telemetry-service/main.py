@@ -871,10 +871,14 @@ def _feed_gaps(line: Dict[str, Any], part: Any) -> Tuple[str, str]:
     una lista **por segmento** (Q1, Q2, Q3), y ``SessionPart`` de ``TimingData``
     dice cuál mirar. Un piloto eliminado conserva las de su último segmento.
 
-    **La forma de carrera NO está medida.** Se buscan ``GapToLeader`` e
-    ``IntervalToPositionAhead`` en la propia línea, que es donde el feed las
-    pone cuando no hay segmentos, y se confirma con la grabación de la carrera.
-    Hasta entonces esta rama es una hipótesis, no un contrato.
+    **Medido en la carrera 11369 (2026-09-13):** no hay ``Stats`` ni
+    ``SessionPart``, y las dos viven en la propia línea. ``GapToLeader`` llega
+    siempre como cadena; ``IntervalToPositionAhead``, siempre como dict con
+    ``Value``, que ``_feed_text`` desenvuelve.
+
+    **Lo devuelto no siempre es una duración:** en la primera vuelta las dos
+    valen el texto ``"LAP 1"``, y una línea sin diferencia las manda vacías, que
+    salen como ``"-"``. Quien llame no puede parsearlas como tiempo sin mirar.
     """
     stats = line.get("Stats")
     if isinstance(stats, list) and stats:
