@@ -740,14 +740,16 @@ main = hspec $ do
   -- Existe porque el número no es una preferencia sino una medición, y bajarlo
   -- rompería el peldaño entero sin que nada más se pusiera rojo.
   describe "feedTimeoutSeconds" $
-    it "deja margen sobre lo que cuesta una foto del feed" $ do
+    it "deja margen sobre lo que cuesta una foto del feed, sin esperar lo imposible" $ do
       -- Medido el 2026-09-12 sin sesión en marcha: 16,87, 17,00 y 16,99 s. Con un
       -- techo por debajo, TODA respuesta buena se leería como fallo del feed, y un
-      -- fallo del feed sirve desde la cache sin intentar OpenF1.
-      feedTimeoutSeconds `shouldSatisfy` (> 17)
-      -- Y no tanto como para que un feed atascado deje la tabla sin cambiar más de
-      -- lo que el propio microservicio puede tardar contestando bien (15 s × 2).
-      feedTimeoutSeconds `shouldSatisfy` (< 30)
+      -- fallo del feed sirve desde la cache sin intentar OpenF1. El margen tiene que
+      -- cubrir además el solape de dos clientes, que ya se vio pasarse de 20 s.
+      feedTimeoutSeconds `shouldSatisfy` (>= 30)
+      -- Por arriba, el propio microservicio se rinde: aplica su plazo de 15 s tres
+      -- veces, así que pasados ~45 s contesta 503 y esperar más es esperar algo que
+      -- ya no va a llegar.
+      feedTimeoutSeconds `shouldSatisfy` (<= 45)
 
   -- Vive en `common` y no en el widget justamente para poder probarse aquí: el
   -- paquete `frontend` no tiene suite, así que sin esta mudanza la única cobertura

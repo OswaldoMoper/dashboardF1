@@ -42,11 +42,17 @@ feedBase host = http host /: "fastf1" /: "live"
 -- OpenF1 (2026-09-12). O sea que este número decide cuánto se espera antes de
 -- enseñar dato viejo, no cuánto se espera antes de reintentar.
 --
--- El microservicio puede tardar más que esto contestando bien: su propio
--- @_live_snapshot@ espera hasta 15 s dos veces. Descartar esas respuestas es
--- deliberado.
+-- __El margen sobre los 17 s no es de adorno:__ cada cliente abierto sostiene su
+-- propia conexión durante toda la foto, así que un navegador refrescando y un
+-- @curl@ a la vez se solapan dentro del microservicio. Con 20 s ya se vio una foto
+-- pasarse (2026-09-12, 22:56).
+--
+-- El microservicio puede tardar todavía más contestando bien: su propio
+-- @_live_snapshot@ aplica su plazo de 15 s __tres__ veces —negociación, aceptación
+-- de la conexión y llegada del estado—, o sea hasta ~45 s. Descartar ese tramo es
+-- deliberado: esperar 45 s con un refresco de 10 s congela cuatro ciclos.
 feedTimeoutSeconds :: Int
-feedTimeoutSeconds = 20
+feedTimeoutSeconds = 30
 
 -- | 'feedTimeoutSeconds' como 'Option' (@req@ lo toma en microsegundos).
 feedTimeout :: Option 'Http
