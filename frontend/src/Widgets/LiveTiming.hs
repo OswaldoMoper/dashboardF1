@@ -38,8 +38,8 @@ import           Common.Origin     (Sourced (..))
 import           Common.Refresh    (Poll (..), PollEvent (..), canRequest,
                                     liveRefreshSeconds, pollIdle, pollStep)
 import           Common.Route      (livePath)
-import           Common.Types      (DriverStatus (..), LiveTimingRow (..),
-                                    statusLabel)
+import           Common.Types      (DriverStatus (..), LiveTable (..),
+                                    LiveTimingRow (..), statusLabel)
 import           Data.Text         (Text)
 import qualified Data.Text         as T
 import           Reflex.Dom
@@ -58,10 +58,14 @@ data LiveState
 -- volvería a montar al pedir y otra vez al llegar la respuesta —dos veces cada
 -- diez segundos— aunque el dato no hubiera cambiado. Con 'holdUniqDyn' encima, se
 -- monta solo cuando cambia lo que se ve.
-liveStateOf :: Poll (Sourced [LiveTimingRow]) -> LiveState
+--
+-- __Se queda con las filas y descarta la sesión__ que 'Common.Types.LiveTable'
+-- trae al lado: esta tarjeta todavía no la enseña, y meterla en 'LiveState' la
+-- haría remontar la tabla cada vez que avanzara el reloj.
+liveStateOf :: Poll (Sourced LiveTable) -> LiveState
 liveStateOf p =
   case pollShown p of
-    Just shown           -> Loaded (srcValue shown)
+    Just shown           -> Loaded (liveRows (srcValue shown))
     Nothing
       | pollLastFailed p -> Failed
       | otherwise        -> Loading

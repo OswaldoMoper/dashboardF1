@@ -975,13 +975,73 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
-@app.get("/fastf1/live")
-def live() -> List[Dict[str, Any]]:
-    """La tabla de live timing de la sesión **en marcha**, desde el feed oficial.
+def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Qué sesión anuncia el feed, con las claves de ``Handler.Feed.Helper``.
 
-    Devuelve ``[]`` si no hay sesión en directo, por el mismo criterio que los
-    otros cuatro: **degradar es trabajo del backend**, así que aquí una sesión
-    sin datos no es un error.
+    Sale de tres topics y ninguno de los tres se reordena ni se calcula: el
+    reloj viaja **crudo** —el instante, el restante como texto y la marca— porque
+    quien lo resuelve necesita saber cuándo está sirviendo, y eso no se sabe
+    aquí.
+
+    ``None`` si la foto no trae ``SessionInfo``, y eso significa «el feed no
+    anunció sesión», que no es lo mismo que anunciarla con los campos vacíos.
+    No se ha observado nunca en las dos grabaciones.
+
+    Dos ausencias que son el caso normal y no un fallo:
+
+    * ``LapCount`` **solo existe en carrera**, así que cuatro de las cinco
+      sesiones de un fin de semana llegan sin vuelta. Los dos campos van o no
+      van juntos: una vuelta sin total no dice por dónde va la sesión.
+    * ``ExtrapolatedClock`` puede faltar, y su marca puede faltar dentro de él;
+      ausente se trata como **parado**, que es lo que el feed emitió en los dos
+      únicos mensajes medidos sin ella.
+
+    Y el estado sale del **campo** ``SessionStatus`` de ``SessionInfo``, no del
+    topic homónimo, que es otro y cicla por segmento.
+    """
+    info = snapshot.get("SessionInfo")
+    if not isinstance(info, dict):
+        return None
+
+    meeting = info.get("Meeting")
+    meeting = meeting if isinstance(meeting, dict) else {}
+
+    session: Dict[str, Any] = {
+        "siType": _text(info.get("Type")),
+        "siName": _text(info.get("Name")),
+        "siMeeting": _text(meeting.get("Name")),
+        "siState": _text(info.get("SessionStatus")),
+    }
+
+    laps = snapshot.get("LapCount")
+    if isinstance(laps, dict):
+        current = _num(laps.get("CurrentLap"))
+        total = _num(laps.get("TotalLaps"))
+        if current is not None and total is not None:
+            session["siCurrentLap"] = int(current)
+            session["siTotalLaps"] = int(total)
+
+    clock = snapshot.get("ExtrapolatedClock")
+    if isinstance(clock, dict):
+        session["siClockUtc"] = _text(clock.get("Utc")) or None
+        session["siClockRemaining"] = _text(clock.get("Remaining")) or None
+        session["siClockRunning"] = bool(clock.get("Extrapolating"))
+
+    return session
+
+
+@app.get("/fastf1/live")
+def live() -> Dict[str, Any]:
+    """La sesión en marcha y su tabla de live timing, desde el feed oficial.
+
+    Devuelve ``{"session": …, "rows": [ … ]}``. **La tabla vacía es la señal de
+    que no hay sesión en directo**, por el mismo criterio que los otros cuatro
+    endpoints: degradar es trabajo del backend, así que aquí una sesión sin
+    datos no es un error. ``session`` puede ser ``null`` aunque haya filas, y al
+    revés.
+
+    Las dos mitades salen de la **misma** foto, así que hablan del mismo
+    instante: pedirlas por separado daría dos que pueden discrepar.
 
     Solo se traduce a ``503`` el fallo del propio feed —conexión rechazada o
     estado que no llega—, que es lo que ``Handler.Live.Context`` necesita
@@ -991,4 +1051,4 @@ def live() -> List[Dict[str, Any]]:
         snapshot = _live_snapshot()
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"feed no disponible: {error}")
-    return _feed_rows(snapshot)
+    return {"session": _feed_session(snapshot), "rows": _feed_rows(snapshot)}

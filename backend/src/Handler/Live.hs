@@ -6,8 +6,11 @@
 --
 -- __Es el único handler que responde con cabeceras propias:__ de dónde salió el
 -- dato ('Common.Origin'), que son dos preguntas —qué peldaño de la escalera y qué
--- fuente— y que el @Context@ conoce en cada una. El cuerpo JSON es el mismo que
--- antes de existir ellas, así que ningún DTO ni ningún widget cambia de forma.
+-- fuente— y que el @Context@ conoce en cada una.
+--
+-- __Las cabeceras siguen siendo metadato y el cuerpo sigue siendo contenido__, y
+-- por eso el dato de sesión no entró en ellas: viaja dentro de
+-- 'Common.Types.LiveTable', envolviendo las filas (2026-09-13).
 --
 -- __Los nombres de las cabeceras viven aquí, a nivel de tipo, y no en 'Server'__,
 -- porque 'Server' importa este módulo. Son los mismos que 'Common.Origin' guarda
@@ -18,7 +21,7 @@ module Handler.Live where
 
 import           App                    (Env)
 import           Common.Origin          (originLabel, sourceLabel)
-import           Common.Types           (LiveTimingRow)
+import           Common.Types           (LiveTable)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Text              (Text)
 import qualified Data.Text              as T
@@ -38,14 +41,14 @@ type FetchedAtHeaderName = "X-Data-Fetched-At"
 -- | Nombre de la cabecera de la fuente; espejo de 'Common.Origin.sourceHeader'.
 type SourceHeaderName = "X-Data-Source"
 
--- | La respuesta de @\/api\/live@: las filas de siempre más las tres cabeceras.
+-- | La respuesta de @\/api\/live@: la tabla con su sesión, más las tres cabeceras.
 type LiveResponse =
   Headers
     '[ Header OriginHeaderName Text
      , Header FetchedAtHeaderName Text
      , Header SourceHeaderName Text
      ]
-    [LiveTimingRow]
+    LiveTable
 
 liveHandler :: Env -> Handler LiveResponse
 liveHandler env = withOrigin <$> liftIO (Context.getLiveTiming env)
@@ -60,18 +63,18 @@ withOrigin :: LiveResult -> LiveResponse
 withOrigin result =
   addHeader
     (originLabel (lrOrigin result))
-    (withFetchedAt (withSource (lrRows result)))
+    (withFetchedAt (withSource (lrTable result)))
   where
     withSource
-      :: [LiveTimingRow]
-      -> Headers '[Header SourceHeaderName Text] [LiveTimingRow]
+      :: LiveTable
+      -> Headers '[Header SourceHeaderName Text] LiveTable
     withSource = maybe noHeader (addHeader . sourceLabel) (lrSource result)
 
     withFetchedAt
-      :: Headers '[Header SourceHeaderName Text] [LiveTimingRow]
+      :: Headers '[Header SourceHeaderName Text] LiveTable
       -> Headers
            '[Header FetchedAtHeaderName Text, Header SourceHeaderName Text]
-           [LiveTimingRow]
+           LiveTable
     withFetchedAt = maybe noHeader (addHeader . fetchedAtText) (lrFetchedAt result)
 
 -- | El instante en ISO 8601 y UTC, __con segundos enteros__.

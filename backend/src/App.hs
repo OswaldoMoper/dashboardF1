@@ -12,7 +12,7 @@ module App where
 
 import           Common.Origin          (Source)
 import           Common.Types           (DriverEntry, HistoricalStat,
-                                         LapComparison, LiveTimingRow,
+                                         LapComparison, LiveTable,
                                          TelemetryPoint, TyreStint)
 import           Config                 (Config)
 import           Control.Concurrent.STM (TVar, newTVarIO)
@@ -23,7 +23,7 @@ import           Data.Time.Clock        (UTCTime)
 
 data Env = Env
   { envConfig          :: Config
-  , envLiveCache       :: TVar (Maybe (UTCTime, Source, [LiveTimingRow]))
+  , envLiveCache       :: TVar (Maybe (UTCTime, Source, LiveTable))
     -- ^ Última respuesta buena de @/api/live@, __el instante en que llegó y de
     -- qué fuente salió__ (respaldo si ninguna de las dos contesta).
     --
@@ -35,6 +35,11 @@ data Env = Env
     -- La fuente va por lo mismo y por una razón propia: quien sirve desde aquí
     -- tiene que poder decir de dónde salió lo guardado, o el tooltip afirmaría
     -- una fuente que no es. Guardarla aquí es lo que impide que se adivine.
+    --
+    -- __Se guarda la tabla entera y no solo sus filas__, por el mismo argumento
+    -- llevado un paso más: lo guardado tiene que poder decir __de qué sesión__
+    -- era. Lo único que caduca de ella es el reloj, y de pararlo se encarga
+    -- 'Handler.Live.Helper.freezeClock' al servir.
   , envTyreCache       :: TVar (Maybe [TyreStint])
     -- ^ Última respuesta buena de @/api/tyre-strategy@ (respaldo si OpenF1 falla).
   , envHistoricalCache :: TVar (Maybe [HistoricalStat])

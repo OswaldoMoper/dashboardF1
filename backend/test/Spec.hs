@@ -76,6 +76,7 @@ import           Common.Types                (DriverEntry (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
                                               LapProgress (..),
+                                              LiveTable (..),
                                               LiveTimingRow (..),
                                               SessionClock (..),
                                               SessionInfo (..),
@@ -103,7 +104,8 @@ import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
-import           Handler.Feed.Helper         (FeedRow, FeedSession)
+import           Handler.Feed.Helper         (FeedLive (..), FeedRow (..),
+                                              FeedSession (..))
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               OriginHeaderName,
@@ -115,8 +117,9 @@ import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
                                               classificationGaps,
                                               classificationTime, feedRows,
                                               feedSession, feedStatus,
-                                              lapProgress, parseFeedInstant,
-                                              parseRemaining, sessionClock)
+                                              freezeClock, lapProgress,
+                                              parseFeedInstant, parseRemaining,
+                                              sessionClock)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
@@ -831,6 +834,58 @@ main = hspec $ do
       fmap (sessionClock raceServedAt) (trySession feedSessionUtcOnly)
         `shouldBe` Right Nothing
 
+  describe "freezeClock" $ do
+    it "para el reloj sin borrarlo ni tocar nada más de la sesión" $
+      -- El número guardado sigue diciendo cuánto quedaba al tomarse el dato, y el
+      -- instante de esa toma viaja en cabecera propia. Lo que deja de ser cierto
+      -- es que siga descontando.
+      freezeClock raceSessionFixture
+        `shouldBe` raceSessionFixture { siClock = Just (SessionClock 5400 False) }
+
+    it "una sesión sin reloj sigue sin él, y no se inventa uno parado" $
+      -- Cuatro de las cinco sesiones de un fin de semana llegan sin reloj en la
+      -- foto; «parado en cero» diría que la sesión acabó.
+      freezeClock (raceSessionFixture { siClock = Nothing })
+        `shouldBe` raceSessionFixture { siClock = Nothing }
+
+    it "un reloj ya parado no cambia, así que congelar dos veces es congelar una" $
+      -- Es lo que pasa al servir desde la cache algo que ya salió de ella.
+      (freezeClock . freezeClock) raceSessionFixture
+        `shouldBe` freezeClock raceSessionFixture
+
+  -- Lo que `GET /fastf1/live` entrega: la tabla y la sesión en la MISMA foto, así
+  -- que hablan del mismo instante. Los fixtures llevan las claves que el
+  -- microservicio emite, no una forma inventada.
+  describe "FeedLive" $ do
+    it "lee las dos mitades de una respuesta completa" $
+      fmap (fmap fsState . flSession) (tryLive feedLiveFull)
+        `shouldBe` Right (Just "Started")
+
+    it "y sus filas, que son las de siempre" $
+      fmap (map frDriver . flRows) (tryLive feedLiveFull)
+        `shouldBe` Right ["VER", "LEC"]
+
+    it "la sesión puede ser null, y eso es «el feed no la anunció»" $
+      -- No es lo mismo que anunciarla con los campos vacíos: aquello sí llega como
+      -- un FeedSession con sus defaults, y esto como la ausencia que es.
+      fmap flSession (tryLive feedLiveWithoutSession)
+        `shouldBe` Right Nothing
+
+    it "el campo de sesión puede faltar entero, con el mismo significado" $
+      fmap flSession (tryLive feedLiveSessionAbsent)
+        `shouldBe` Right Nothing
+
+    it "la tabla vacía decodifica: es «no hay sesión rodando», no un fallo" $
+      -- Es la señal con la que `Handler.Live.Context` baja a OpenF1, así que
+      -- tratarla como error cerraría ese camino.
+      fmap flRows (tryLive feedLiveEmpty) `shouldBe` Right []
+
+    it "sin el campo de las filas NO decodifica, que es lo que la manda a la cache" $
+      -- La asimetría con la sesión es deliberada: una respuesta sin filas es
+      -- legítima, y una sin el campo entero es un contrato roto. Fundirlos haría
+      -- que un microservicio averiado se leyera como «no hay sesión».
+      isLeft (tryLive feedLiveRowsAbsent) `shouldBe` True
+
   describe "parseRemaining y parseFeedInstant" $ do
     it "lee las dos longitudes que una duración puede tener" $
       map parseRemaining ["01:59:59", "02:00:00", "00:00:00", "15:00"]
@@ -1325,30 +1380,33 @@ main = hspec $ do
         `shouldBe` [originHeader, fetchedAtHeader, sourceHeader]
 
     it "el dato fresco del feed lleva procedencia y fuente, y no el instante" $
-      headersOf (withOrigin (LiveResult Fresh (Just Feed) Nothing liveRowsFixture))
+      headersOf (withOrigin (LiveResult Fresh (Just Feed) Nothing liveTableFixture))
         `shouldBe` (Header "fresh", MissingHeader, Header "feed")
 
     it "el dato fresco de OpenF1 dice que es de OpenF1, con la misma procedencia" $
       -- La mitad que hace falta la cabecera: los dos peldaños son `fresh` y sin
       -- ella la página no puede distinguir la sesión en marcha de la terminada.
-      headersOf (withOrigin (LiveResult Fresh (Just OpenF1) Nothing liveRowsFixture))
+      headersOf
+        (withOrigin (LiveResult Fresh (Just OpenF1) Nothing namelessTableFixture))
         `shouldBe` (Header "fresh", MissingHeader, Header "openf1")
 
     it "el dato guardado lleva la procedencia, el instante y la fuente que tenía" $
       -- La fuente sale de la caja de la cache, no se adivina: lo guardado conserva
       -- de dónde salió, o el tooltip afirmaría una fuente que no es.
       headersOf
-        (withOrigin (LiveResult Cached (Just OpenF1) (Just fetchInstant) liveRowsFixture))
+        (withOrigin (LiveResult Cached (Just OpenF1) (Just fetchInstant) liveTableFixture))
         `shouldBe` (Header "cached", Header "2026-09-11T14:03:22Z", Header "openf1")
 
     it "el dato de ejemplo no lleva instante ni fuente, porque no tuvo ninguno" $
-      headersOf (withOrigin (LiveResult Sample Nothing Nothing liveRowsFixture))
+      headersOf (withOrigin (LiveResult Sample Nothing Nothing namelessTableFixture))
         `shouldBe` (Header "sample", MissingHeader, MissingHeader)
 
-    it "el cuerpo son las filas, sin tocar" $
+    it "el cuerpo es la tabla entera, sesión incluida y sin tocar" $
+      -- El envoltorio viaja en el CUERPO y no en cabeceras (2026-09-13 (d)), así
+      -- que `withOrigin` no puede tocarlo: lo que entra sale.
       getResponse
-        (withOrigin (LiveResult Cached (Just Feed) (Just fetchInstant) liveRowsFixture))
-        `shouldBe` liveRowsFixture
+        (withOrigin (LiveResult Cached (Just Feed) (Just fetchInstant) liveTableFixture))
+        `shouldBe` liveTableFixture
 
     it "el instante sale en UTC y sin fracción de segundo" $
       fetchedAtText fetchInstant `shouldBe` "2026-09-11T14:03:22Z"
@@ -2120,6 +2178,30 @@ feedTableWithoutDriver =
 trySession :: ByteString -> Either String FeedSession
 trySession = eitherDecodeStrict
 
+tryLive :: ByteString -> Either String FeedLive
+tryLive = eitherDecodeStrict
+
+-- La respuesta completa de @GET /fastf1/live@: las dos mitades de la MISMA foto.
+feedLiveFull :: ByteString
+feedLiveFull =
+  "{\"session\":" <> feedSessionRace <> ",\"rows\":" <> feedTable <> "}"
+
+-- El feed contesta pero no anuncia sesión. No se ha observado en ninguna de las
+-- dos grabaciones; el cable tiene que poder decirlo igual.
+feedLiveWithoutSession :: ByteString
+feedLiveWithoutSession = "{\"session\":null,\"rows\":" <> feedTable <> "}"
+
+feedLiveSessionAbsent :: ByteString
+feedLiveSessionAbsent = "{\"rows\":" <> feedTable <> "}"
+
+-- Ninguna sesión rodando: es la señal con la que la escalera baja a OpenF1.
+feedLiveEmpty :: ByteString
+feedLiveEmpty = "{\"session\":null,\"rows\":[]}"
+
+-- Un contrato roto, que NO es lo mismo que una tabla vacía.
+feedLiveRowsAbsent :: ByteString
+feedLiveRowsAbsent = "{\"session\":" <> feedSessionRace <> "}"
+
 -- El instante en que se sirve la sesión de carrera: media hora después de que el
 -- feed publicara su reloj (13:04:05), para que la resta dé un número que se puede
 -- comprobar a mano. 13:34:05 UTC = 48845 s.
@@ -2506,6 +2588,29 @@ liveRowsFixture =
   [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:21.004" Running
   , LiveTimingRow 2 "NOR" "McLaren" "+0.412" "+0.412" "1:21.390" Running
   ]
+
+-- | La sesión de la carrera 11369 ya mapeada, con los valores que
+-- 'feedSessionRace' produce al servirse en 'raceServedAt'.
+raceSessionFixture :: SessionInfo
+raceSessionFixture =
+  SessionInfo
+    { siType    = "Race"
+    , siName    = "Race"
+    , siMeeting = "Spanish Grand Prix"
+    , siState   = SessionStarted
+    , siLaps    = Just (LapProgress 12 57)
+    , siClock   = Just (SessionClock 5400 True)
+    }
+
+-- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
+liveTableFixture :: LiveTable
+liveTableFixture = LiveTable (Just raceSessionFixture) liveRowsFixture
+
+-- | Lo que sirven los peldaños que no saben de qué sesión hablan — OpenF1 y el
+-- dato de ejemplo. __Es «no se sabe» y no una sesión vacía__, que es la distinción
+-- que motiva el 'Maybe' de 'Common.Types.liveSession'.
+namelessTableFixture :: LiveTable
+namelessTableFixture = LiveTable Nothing liveRowsFixture
 
 -- | Las 14:03:22 UTC del 2026-09-11 __con fracción de segundo__, que es lo que da
 -- 'getCurrentTime': 'fetchedAtText' tiene que tirarla.

@@ -24,6 +24,7 @@ module Handler.Live.Helper
   , feedStatus
   , feedSession
   , sessionClock
+  , freezeClock
   , lapProgress
   , parseRemaining
   , parseFeedInstant
@@ -291,6 +292,22 @@ sessionClock now fs = do
       let elapsed = floor (diffUTCTime now published) :: Int
       pure (SessionClock (max 0 (remaining - elapsed)) True)
     else pure (SessionClock remaining False)
+
+-- | La misma sesión con su reloj parado, para servirla desde la cache.
+--
+-- __Lo que caduca de una sesión guardada es el reloj y solo el reloj.__ El
+-- restante lo resolvió 'sessionClock' al instante de guardarla, así que seguir
+-- descontándolo afirmaría que el dato es de ahora; el nombre, el tipo, el gran
+-- premio, el estado y la vuelta siguen siendo ciertos mientras la sesión sea la
+-- misma. Parado es exactamente lo que 'Common.Types.SessionClock' distingue con
+-- 'Common.Types.scRunning': un reloj frente a la foto de un reloj.
+--
+-- No borra el reloj: el número que se guardó sigue diciendo algo —cuánto quedaba
+-- cuando se tomó el dato—, y el instante de esa toma viaja en cabecera propia.
+freezeClock :: SessionInfo -> SessionInfo
+freezeClock info = info { siClock = stop <$> siClock info }
+  where
+    stop clock = clock { scRunning = False }
 
 -- | Segundos de un @\"HH:MM:SS\"@ del feed, o @\"MM:SS\"@.
 --

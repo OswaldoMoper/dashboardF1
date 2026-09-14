@@ -1,8 +1,13 @@
 -- | Área Live timing — orquestación del caso de uso.
 --
 -- Coordina las dos fuentes —'Handler.Feed.Manager' y 'Handler.Live.Manager'— con
--- 'Handler.Live.Helper' (mapeo puro) para producir @[LiveTimingRow]@, y la cache STM
--- del 'Env' como respaldo de las dos.
+-- 'Handler.Live.Helper' (mapeo puro) para producir 'Common.Types.LiveTable', y la
+-- cache STM del 'Env' como respaldo de las dos.
+--
+-- __Solo el feed sabe de qué sesión habla.__ OpenF1 no la publica en los cinco GET
+-- que se le hacen, y el respaldo estático no salió de ninguna, así que los dos
+-- sirven la tabla sin sesión — que es distinto de servirla con una sesión en
+-- blanco. La cache sí la conserva, porque la guardó junto a sus filas.
 --
 -- __El feed va delante de OpenF1, y el orden lo decide qué contesta, no qué hora
 -- es__ (2026-09-12): OpenF1 responde @401@ en todos sus endpoints mientras una
@@ -16,14 +21,16 @@ module Handler.Live.Context where
 
 import           App                    (Env (..))
 import           Common.Origin          (Origin (..), Source (..))
-import           Common.Types           (DriverStatus (..), LiveTimingRow (..))
+import           Common.Types           (DriverStatus (..), LiveTable (..),
+                                         LiveTimingRow (..))
 import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, readTVarIO, writeTVar)
 import           Control.Exception      (SomeException, try)
 import           Data.Time.Clock        (UTCTime, getCurrentTime)
-import           Handler.Feed.Helper    (FeedRow)
+import           Handler.Feed.Helper    (FeedLive (..))
 import qualified Handler.Feed.Manager   as Feed
-import           Handler.Live.Helper    (Of1Interval, assembleRows, feedRows)
+import           Handler.Live.Helper    (Of1Interval, assembleRows, feedRows,
+                                         feedSession, freezeClock)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
@@ -38,7 +45,7 @@ data LiveResult = LiveResult
   { lrOrigin    :: Origin
   , lrSource    :: Maybe Source
   , lrFetchedAt :: Maybe UTCTime
-  , lrRows      :: [LiveTimingRow]
+  , lrTable     :: LiveTable
   }
   deriving (Eq, Show)
 
@@ -48,8 +55,9 @@ data LiveResult = LiveResult
 -- distinto__ (2026-09-12):
 --
 -- * __Filas__ → son de la sesión en marcha, y es la única fuente que las tiene.
--- * __Lista vacía__ → no hay sesión rodando, que es exactamente cuando OpenF1
---   contesta: se baja a él.
+-- * __Tabla vacía__ → no hay sesión rodando, que es exactamente cuando OpenF1
+--   contesta: se baja a él. La sesión que venga al lado no cambia esto: sin filas
+--   no hay tabla que servir.
 -- * __Excepción__ (microservicio apagado, @503@ del feed o techo vencido) → se sirve
 --   desde la cache __sin__ intentar OpenF1.
 --
@@ -61,42 +69,68 @@ data LiveResult = LiveResult
 getLiveTiming :: Env -> IO LiveResult
 getLiveTiming env = do
   feed <-
-    try (Feed.fetchFeedRows (envConfig env)) :: IO (Either SomeException [FeedRow])
+    try (Feed.fetchFeedLive (envConfig env)) :: IO (Either SomeException FeedLive)
   case feed of
-    Left _       -> fromCache env
-    Right []     -> fromOpenF1 env
-    Right raw    -> serveFresh env Feed (feedRows raw)
+    Left _                          -> fromCache env
+    Right live | null (flRows live) -> fromOpenF1 env
+    Right live                      -> serveFeed env live
+
+-- | Sirve lo que el feed acaba de entregar, sesión incluida.
+--
+-- __El instante se toma una vez y sirve para las dos cosas:__ resolver el reloj de
+-- la sesión ('Handler.Live.Helper.feedSession') y sellar la cache. Tomarlo dos
+-- veces dejaría guardado un reloj que dice de un momento distinto al de su sello.
+serveFeed :: Env -> FeedLive -> IO LiveResult
+serveFeed env live = do
+  now <- getCurrentTime
+  serveFresh env now Feed $
+    LiveTable (feedSession now <$> flSession live) (feedRows (flRows live))
 
 -- | El peldaño de OpenF1: los cinco GET y el ensamblado, con la cache detrás.
 --
 -- La condición de éxito es __traer filas__ y no solo no fallar: una lista vacía es
 -- una sesión sin parrilla publicada, y servirla dejaría la tabla en blanco teniendo
 -- una anterior buena guardada.
+--
+-- __OpenF1 no dice de qué sesión habla__, así que su tabla sale sin ella. No se
+-- hereda la que el feed anunciara antes: OpenF1 pide siempre @session_key=latest@,
+-- y que su «última» y la del feed sean la misma no se puede comprobar desde aquí.
 fromOpenF1 :: Env -> IO LiveResult
 fromOpenF1 env = do
   result <-
     try (fetchRows (envConfig env)) :: IO (Either SomeException [LiveTimingRow])
   case result of
-    Right rows | not (null rows) -> serveFresh env OpenF1 rows
+    Right rows | not (null rows) -> do
+      now <- getCurrentTime
+      serveFresh env now OpenF1 (LiveTable Nothing rows)
     _                            -> fromCache env
 
 -- | Sirve lo que acaba de llegar y refresca la cache con su fuente.
-serveFresh :: Env -> Source -> [LiveTimingRow] -> IO LiveResult
-serveFresh env source rows = do
-  now <- getCurrentTime
-  atomically (writeTVar (envLiveCache env) (Just (now, source, rows)))
-  pure (LiveResult Fresh (Just source) Nothing rows)
+--
+-- __La cache guarda la tabla entera, sesión incluida__, para que lo guardado siga
+-- diciendo de qué sesión era: filas de una sesión bajo el nombre de otra es peor
+-- que filas sin nombre.
+serveFresh :: Env -> UTCTime -> Source -> LiveTable -> IO LiveResult
+serveFresh env now source table = do
+  atomically (writeTVar (envLiveCache env) (Just (now, source, table)))
+  pure (LiveResult Fresh (Just source) Nothing table)
 
 -- | El respaldo: la última respuesta buena con su fuente y su instante, y si nunca
--- la hubo, el dummy — que no tiene fuente porque no salió de ninguna.
+-- la hubo, el dummy — que no tiene fuente ni sesión porque no salió de ninguna.
+--
+-- __El reloj de lo guardado se congela__
+-- ('Handler.Live.Helper.freezeClock'): el restante se resolvió al instante de
+-- guardarlo, y seguir descontándolo afirmaría que el dato es de ahora. El nombre y
+-- la vuelta sí se sirven tal cual — no caducan mientras la sesión sea la misma.
 fromCache :: Env -> IO LiveResult
 fromCache env = do
   cached <- readTVarIO (envLiveCache env)
   pure (maybe sample fromEntry cached)
   where
-    fromEntry (fetchedAt, source, rows) =
-      LiveResult Cached (Just source) (Just fetchedAt) rows
-    sample = LiveResult Sample Nothing Nothing dummy
+    fromEntry (fetchedAt, source, table) =
+      LiveResult Cached (Just source) (Just fetchedAt) (frozen table)
+    frozen table = table { liveSession = freezeClock <$> liveSession table }
+    sample = LiveResult Sample Nothing Nothing (LiveTable Nothing dummy)
 
 -- | Fetch de los 5 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
 --

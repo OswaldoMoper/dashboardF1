@@ -202,7 +202,11 @@ instance FromJSON SessionInfo
 -- que identifica al widget, y son cosas distintas: aquél dice __qué tarjeta es__ y
 -- éste __qué se sirve__.
 data LiveTable = LiveTable
-  { liveSession :: SessionInfo
+  { liveSession :: Maybe SessionInfo
+    -- ^ 'Nothing' cuando las filas no salieron de una sesión que se anuncie: el
+    -- feed es la única fuente que la publica, y el dato de ejemplo no salió de
+    -- ninguna. __Es «no se sabe» y no «sesión en blanco»__, que son distintos: una
+    -- sesión con todos los campos vacíos afirmaría que el emisor los mandó así.
   , liveRows    :: [LiveTimingRow]
   }
   deriving stock (Eq, Show, Generic)

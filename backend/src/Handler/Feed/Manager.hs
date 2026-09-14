@@ -1,8 +1,9 @@
 -- | Cliente del feed oficial — capa de efectos.
 --
 -- @GET \/fastf1\/live@ al microservicio, que es quien mantiene la conversación con
--- el feed y entrega la tabla ya armada. Sin lógica de negocio: la forma del dato es
--- de 'Handler.Feed.Helper', el mapeo al DTO de 'Handler.Live.Helper.feedRows' y la
+-- el feed y entrega la tabla ya armada junto a la sesión que anuncia. Sin lógica de
+-- negocio: la forma del dato es de 'Handler.Feed.Helper', el mapeo al DTO de
+-- 'Handler.Live.Helper.feedRows' y 'Handler.Live.Helper.feedSession', y la
 -- orquestación de 'Handler.Live.Context'.
 --
 -- Comparte con los otros dos clientes del microservicio ('Handler.Telemetry.Manager'
@@ -14,13 +15,13 @@ module Handler.Feed.Manager
   ( feedBase
   , feedTimeoutSeconds
   , feedTimeout
-  , fetchFeedRows
+  , fetchFeedLive
   ) where
 
 import           Config                 (Config (..))
 import           Data.Text              (Text)
 import           Handler.FastF1.Manager (fastf1Config, fastf1Port)
-import           Handler.Feed.Helper    (FeedRow)
+import           Handler.Feed.Helper    (FeedLive)
 import           Network.HTTP.Req
 
 -- | Base del endpoint del directo: @http:\/\/\<host\>\/fastf1\/live@. El host lo
@@ -58,20 +59,20 @@ feedTimeoutSeconds = 30
 feedTimeout :: Option 'Http
 feedTimeout = responseTimeout (feedTimeoutSeconds * 1000000)
 
--- | @GET \/fastf1\/live@, decodificado a @[FeedRow]@.
+-- | @GET \/fastf1\/live@, decodificado a 'FeedLive' — la tabla y su sesión.
 --
--- __La lista vacía es la respuesta normal cuando no hay sesión en marcha__, y no un
+-- __La tabla vacía es la respuesta normal cuando no hay sesión en marcha__, y no un
 -- error: el microservicio reserva el @503@ para el feed caído. Los dos casos llegan
--- aquí distintos —@[]@ frente a excepción— porque la escalera los trata al revés, y
--- fundirlos cerraría el camino a OpenF1 fuera de sesión.
+-- aquí distintos —filas vacías frente a excepción— porque la escalera los trata al
+-- revés, y fundirlos cerraría el camino a OpenF1 fuera de sesión.
 --
 -- Lanza si el servicio está apagado, si vence el techo o si responde otra forma; es
 -- el @try@ del 'Handler.Live.Context' quien decide qué hacer con eso.
 --
 -- La firma de retorno no es opcional: sin ella el tipo que decodifica
 -- 'jsonResponse' queda ambiguo.
-fetchFeedRows :: Config -> IO [FeedRow]
-fetchFeedRows cfg = runReq fastf1Config $ do
+fetchFeedLive :: Config -> IO FeedLive
+fetchFeedLive cfg = runReq fastf1Config $ do
   res <-
     req
       GET

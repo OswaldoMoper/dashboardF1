@@ -13,12 +13,38 @@
 -- justo cuando hay sesión en marcha. Con un tipo propio, quién puede faltar lo
 -- decide esta instancia.
 module Handler.Feed.Helper
-  ( FeedRow (..)
+  ( FeedLive (..)
+  , FeedRow (..)
   , FeedSession (..)
   ) where
 
 import           Data.Aeson (FromJSON (..), withObject, (.!=), (.:), (.:?))
 import           Data.Text  (Text)
+
+-- | Lo que @GET \/fastf1\/live@ entrega: la tabla y de qué sesión es.
+--
+-- __Las filas son obligatorias y la sesión no__, y la asimetría no es un descuido.
+-- Una respuesta sin filas es una respuesta legítima —significa que no hay sesión
+-- rodando, y es lo que manda a 'Handler.Live.Context' a probar OpenF1—, mientras
+-- que una respuesta sin el campo entero es un contrato roto, y un contrato roto
+-- tiene que llegar como fallo para que la escalera sirva desde la cache en vez de
+-- confundirlo con «no hay sesión».
+--
+-- __'flSession' 'Nothing' es «el feed no anunció sesión»__, que no es lo mismo que
+-- anunciarla con los campos vacíos: aquello lo representa un 'FeedSession' con sus
+-- defaults. Las dos mitades salen de la misma foto del feed, así que hablan del
+-- mismo instante.
+data FeedLive = FeedLive
+  { flSession :: Maybe FeedSession
+  , flRows    :: [FeedRow]
+  }
+  deriving (Eq, Show)
+
+instance FromJSON FeedLive where
+  parseJSON = withObject "FeedLive" $ \o ->
+    FeedLive
+      <$> o .:? "session"
+      <*> o .:  "rows"
 
 -- | Una fila de la tabla que sirve el microservicio.
 --
