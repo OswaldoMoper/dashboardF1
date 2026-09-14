@@ -14,6 +14,7 @@
 -- decide esta instancia.
 module Handler.Feed.Helper
   ( FeedRow (..)
+  , FeedSession (..)
   ) where
 
 import           Data.Aeson (FromJSON (..), withObject, (.!=), (.:), (.:?))
@@ -52,3 +53,46 @@ instance FromJSON FeedRow where
       <*> o .:? "ltInterval" .!= ""
       <*> o .:? "ltLastLap"  .!= ""
       <*> o .:? "ltStatus"   .!= "Running"
+
+-- | Qué sesión anuncia el feed, tal como el microservicio la entrega.
+--
+-- __Nada es obligatorio__, al contrario que en 'FeedRow'. Allí la posición y el
+-- piloto lo son porque sin ellos la fila no ordena ni identifica; aquí no hay un
+-- campo del que dependan los demás, y una sesión a medias sigue diciendo algo. El
+-- criterio es el mismo de siempre: perder la tabla entera por una celda es peor que
+-- enseñarla incompleta.
+--
+-- __El reloj viaja crudo y en tres campos, no resuelto__, porque quien lo resuelve
+-- necesita saber cuándo se está sirviendo, y eso no lo sabe el microservicio ni el
+-- decode: lo hace 'Handler.Live.Helper.sessionClock' con el instante en la mano.
+--
+-- __'fsClockRunning' ausente es 'False'__, o sea «no corre» (decidido el
+-- 2026-09-14). Es el valor que el feed emitió en los dos únicos mensajes medidos
+-- que llegaron sin él, los dos al arrancar un segmento con el reloj todavía parado;
+-- y su modo de fallo —un reloj que no se mueve— se ve antes que el contrario, que
+-- sería un número descontando de un valor congelado.
+data FeedSession = FeedSession
+  { fsType           :: Text
+  , fsName           :: Text
+  , fsMeeting        :: Text
+  , fsState          :: Text
+  , fsCurrentLap     :: Maybe Int
+  , fsTotalLaps      :: Maybe Int
+  , fsClockUtc       :: Maybe Text  -- ^ Instante en que el feed publicó el reloj, ISO 8601.
+  , fsClockRemaining :: Maybe Text  -- ^ Lo que quedaba entonces, @\"HH:MM:SS\"@.
+  , fsClockRunning   :: Bool        -- ^ Si descontaba desde ese instante.
+  }
+  deriving (Eq, Show)
+
+instance FromJSON FeedSession where
+  parseJSON = withObject "FeedSession" $ \o ->
+    FeedSession
+      <$> o .:? "siType"           .!= ""
+      <*> o .:? "siName"           .!= ""
+      <*> o .:? "siMeeting"        .!= ""
+      <*> o .:? "siState"          .!= ""
+      <*> o .:? "siCurrentLap"
+      <*> o .:? "siTotalLaps"
+      <*> o .:? "siClockUtc"
+      <*> o .:? "siClockRemaining"
+      <*> o .:? "siClockRunning"   .!= False

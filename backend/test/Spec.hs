@@ -75,7 +75,11 @@ import           Common.Types                (DriverEntry (..),
                                               DriverStatus (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
+                                              LapProgress (..),
                                               LiveTimingRow (..),
+                                              SessionClock (..),
+                                              SessionInfo (..),
+                                              SessionState (..),
                                               StatEntity (..),
                                               TelemetryPoint (..),
                                               TyreStint (..),
@@ -99,7 +103,7 @@ import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
-import           Handler.Feed.Helper         (FeedRow)
+import           Handler.Feed.Helper         (FeedRow, FeedSession)
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               OriginHeaderName,
@@ -110,7 +114,9 @@ import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
                                               Of1Result (..), assembleRows,
                                               classificationGaps,
                                               classificationTime, feedRows,
-                                              feedStatus)
+                                              feedSession, feedStatus,
+                                              lapProgress, parseFeedInstant,
+                                              parseRemaining, sessionClock)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
@@ -735,6 +741,119 @@ main = hspec $ do
       -- «no consta que abandonara», igual que en `statusOf`.
       map feedStatus ["", "  ", "Retired", "InPit"]
         `shouldBe` [Running, Running, Running, Running]
+
+  -- Los fixtures de este bloque son el tema de información de sesión REAL de las
+  -- dos grabaciones —la carrera 11369 y la clasificación 11365—, no una forma
+  -- inventada. Es lo que evita probar contra lo que creemos que el feed manda.
+  describe "FeedSession y feedSession" $ do
+    it "mapea la sesión de una carrera, con sus vueltas y su reloj" $
+      fmap (feedSession raceServedAt) (trySession feedSessionRace)
+        `shouldBe` Right
+          SessionInfo
+            { siType    = "Race"
+            , siName    = "Race"
+            , siMeeting = "Spanish Grand Prix"
+            , siState   = SessionStarted
+            , siLaps    = Just (LapProgress 12 57)
+              -- Publicado a las 13:04:05.01 con 01:59:59 por delante y servido a
+              -- las 13:34:05: han pasado 1799,99 s, o sea 1799 segundos enteros, y
+              -- quedan 5400. El centésimo es del instante REAL de la grabación, y
+              -- es lo que hace que la cuenta no sea la media hora redonda.
+            , siClock   = Just (SessionClock 5400 True)
+            }
+
+    it "una clasificación no cuenta vueltas, y eso no es un fallo" $
+      -- Medido: el tema que las publica manda 57 mensajes en la carrera 11369 y
+      -- NINGUNO en la clasificación 11365. Son cuatro de las cinco sesiones de un
+      -- fin de semana, así que la ausencia es el caso normal.
+      fmap (siLaps . feedSession raceServedAt) (trySession feedSessionQualy)
+        `shouldBe` Right Nothing
+
+    it "un estado que no se reconoce conserva su texto, para poder verlo" $
+      -- Lo que distingue a esto de `originFrom`, que tira lo irreconocible: aquel
+      -- valor lo pone nuestro backend y éste lo pone el feed, que puede estrenar un
+      -- estado sin avisar. Guardarlo es lo que permite saber CUÁL llegó.
+      fmap (siState . feedSession raceServedAt) (trySession feedSessionAborted)
+        `shouldBe` Right (SessionUnknown "Aborted")
+
+    it "sin ningún campo decodifica igual, con todo en blanco" $
+      -- Al contrario que `FeedRow`, aquí no hay campo del que dependan los demás.
+      fmap (feedSession raceServedAt) (trySession "{}")
+        `shouldBe` Right
+          SessionInfo
+            { siType    = ""
+            , siName    = ""
+            , siMeeting = ""
+            , siState   = SessionUnknown ""
+            , siLaps    = Nothing
+            , siClock   = Nothing
+            }
+
+    it "una vuelta sin su total no es medio progreso: es ninguno" $
+      -- Los dos juntos son un solo hecho. «Vuelta 12» sin total no dice por dónde
+      -- va la sesión, así que no hay nada que enseñar.
+      fmap lapProgress (trySession feedSessionLapNoTotal) `shouldBe` Right Nothing
+
+  describe "sessionClock" $ do
+    it "el reloj que corre descuenta lo transcurrido desde que se publicó" $
+      -- EL caso que motiva toda esta función, y está medido: en la carrera 11369 el
+      -- feed publicó su reloj DOS veces, la última a los seis minutos. Servido
+      -- crudo, diría «quedan 1 h 59 min» durante las dos horas siguientes.
+      fmap (sessionClock raceServedAt) (trySession feedSessionRace)
+        `shouldBe` Right (Just (SessionClock 5400 True))
+
+    it "el reloj parado no se toca, sea cuando sea que se sirva" $
+      -- `Extrapolating: false` es lo que el feed emite antes de arrancar y al
+      -- cerrar cada segmento. Descontarle nada sería inventar.
+      fmap (sessionClock raceServedAt) (trySession feedSessionFrozen)
+        `shouldBe` Right (Just (SessionClock 7200 False))
+
+    it "sin la marca se trata como parado, que es lo observado" $
+      -- Decidido el 2026-09-14. Los dos únicos mensajes medidos sin la marca eran
+      -- el arranque de un segmento, con el reloj todavía quieto. Y su modo de fallo
+      -- —un reloj que no se mueve— se ve antes que el contrario.
+      fmap (sessionClock raceServedAt) (trySession feedSessionNoMark)
+        `shouldBe` Right (Just (SessionClock 900 False))
+
+    it "corriendo pero sin saber desde cuándo, no hay reloj que servir" $
+      -- Servir el número sin corregir afirmaría que quedan exactamente esos
+      -- segundos, y es justo la afirmación que no se sostiene.
+      fmap (sessionClock raceServedAt) (trySession feedSessionRunningNoUtc)
+        `shouldBe` Right Nothing
+
+    it "una foto muy posterior deja el reloj en cero, no en negativo" $
+      -- El feed no calla al acabar la sesión (2026-09-13 (b)), así que este caso no
+      -- es raro: es lo que devuelve al día siguiente.
+      fmap (sessionClock dayAfterRace) (trySession feedSessionRace)
+        `shouldBe` Right (Just (SessionClock 0 True))
+
+    it "sin restante no hay reloj, aunque venga el instante" $
+      fmap (sessionClock raceServedAt) (trySession feedSessionUtcOnly)
+        `shouldBe` Right Nothing
+
+  describe "parseRemaining y parseFeedInstant" $ do
+    it "lee las dos longitudes que una duración puede tener" $
+      map parseRemaining ["01:59:59", "02:00:00", "00:00:00", "15:00"]
+        `shouldBe` [Just 7199, Just 7200, Just 0, Just 900]
+
+    it "lo que no es una duración entera da Nothing, sin quedarse con la mitad" $
+      -- Un reloj a medio leer es peor que ninguno: diría una hora que nadie dio.
+      map parseRemaining ["", "1:2:3:4", "01:xx:59", "01:59", "-1:00:00", "1h"]
+        `shouldBe` [Nothing, Nothing, Nothing, Just 119, Nothing, Nothing]
+
+    it "lee el instante con cualquier precisión de fracción, y sin ella" $
+      -- Medido: siete dígitos en la foto inicial y dos en un delta de la misma
+      -- carrera, así que fijar la precisión habría roto con uno de los dos.
+      map (fmap (const ()) . parseFeedInstant)
+        [ "2026-09-13T12:58:15.4797492Z"
+        , "2026-09-13T13:04:05.01Z"
+        , "2026-09-13T13:04:05Z"
+        ]
+        `shouldBe` [Just (), Just (), Just ()]
+
+    it "un instante con otra forma da Nothing" $
+      map parseFeedInstant ["", "13:04:05", "2026-09-13 13:04:05"]
+        `shouldBe` [Nothing, Nothing, Nothing]
 
   -- El único caso del cliente del feed que no necesita red: su techo de duración.
   -- Existe porque el número no es una preferencia sino una medición, y bajarlo
@@ -1997,6 +2116,65 @@ feedTableWithoutPosition =
 feedTableWithoutDriver :: ByteString
 feedTableWithoutDriver =
   "[{\"ltPosition\":1,\"ltDriver\":\"VER\"},{\"ltPosition\":2}]"
+
+trySession :: ByteString -> Either String FeedSession
+trySession = eitherDecodeStrict
+
+-- El instante en que se sirve la sesión de carrera: media hora después de que el
+-- feed publicara su reloj (13:04:05), para que la resta dé un número que se puede
+-- comprobar a mano. 13:34:05 UTC = 48845 s.
+raceServedAt :: UTCTime
+raceServedAt = UTCTime (fromGregorian 2026 9 13) 48845
+
+-- Servir al día siguiente no es un caso rebuscado: el feed no calla al acabar la
+-- sesión (2026-09-13 (b)) y sigue devolviendo su última foto indefinidamente.
+dayAfterRace :: UTCTime
+dayAfterRace = UTCTime (fromGregorian 2026 9 14) 48845
+
+-- La sesión de la carrera 11369 tal como el microservicio la entregaría: los
+-- campos de identidad salen del tema de información de sesión y el reloj del suyo,
+-- con los valores REALES de la grabación —el reloj se publicó a las 13:04:05 con
+-- 01:59:59 por delante, y no se volvió a publicar en toda la carrera—.
+feedSessionRace :: ByteString
+feedSessionRace =
+  "{\"siType\":\"Race\",\"siName\":\"Race\",\
+  \\"siMeeting\":\"Spanish Grand Prix\",\"siState\":\"Started\",\
+  \\"siCurrentLap\":12,\"siTotalLaps\":57,\
+  \\"siClockUtc\":\"2026-09-13T13:04:05.01Z\",\
+  \\"siClockRemaining\":\"01:59:59\",\"siClockRunning\":true}"
+
+-- La clasificación 11365, que no publica vueltas.
+feedSessionQualy :: ByteString
+feedSessionQualy =
+  "{\"siType\":\"Qualifying\",\"siName\":\"Qualifying\",\
+  \\"siMeeting\":\"Spanish Grand Prix\",\"siState\":\"Finalised\"}"
+
+-- Un estado que el feed no ha emitido en ninguna de las dos grabaciones. Existe
+-- para comprobar que llega hasta el otro lado con su texto y no como un hueco.
+feedSessionAborted :: ByteString
+feedSessionAborted = "{\"siState\":\"Aborted\"}"
+
+feedSessionLapNoTotal :: ByteString
+feedSessionLapNoTotal = "{\"siCurrentLap\":12}"
+
+-- La foto inicial de la carrera, con el reloj aún parado en las dos horas.
+feedSessionFrozen :: ByteString
+feedSessionFrozen =
+  "{\"siClockUtc\":\"2026-09-13T12:58:15.4797492Z\",\
+  \\"siClockRemaining\":\"02:00:00\",\"siClockRunning\":false}"
+
+-- Sin la marca: la forma de los dos mensajes que el feed mandó al arrancar un
+-- segmento de la clasificación, con el reloj todavía quieto.
+feedSessionNoMark :: ByteString
+feedSessionNoMark =
+  "{\"siClockUtc\":\"2026-09-12T14:24:00.04Z\",\"siClockRemaining\":\"15:00\"}"
+
+feedSessionRunningNoUtc :: ByteString
+feedSessionRunningNoUtc =
+  "{\"siClockRemaining\":\"01:59:59\",\"siClockRunning\":true}"
+
+feedSessionUtcOnly :: ByteString
+feedSessionUtcOnly = "{\"siClockUtc\":\"2026-09-13T13:04:05.01Z\"}"
 
 openF1GridWithoutTeam :: ByteString
 openF1GridWithoutTeam =

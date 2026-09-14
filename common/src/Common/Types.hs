@@ -2,9 +2,10 @@
 
 module Common.Types where
 
-import Data.Aeson (FromJSON, ToJSON)
-import Data.Text (Text)
-import GHC.Generics (Generic)
+import           Data.Aeson   (FromJSON (..), ToJSON (..), withText)
+import           Data.Text    (Text)
+import qualified Data.Text    as T
+import           GHC.Generics (Generic)
 
 -- | Identificador de un widget dentro de un 'Layout'.
 newtype WidgetId = WidgetId Text
@@ -76,6 +77,138 @@ data LiveTimingRow = LiveTimingRow
 
 instance ToJSON LiveTimingRow
 instance FromJSON LiveTimingRow
+
+-- | En qué punto de su vida está una sesión.
+--
+-- __Los tres primeros son los únicos observados__ en las dos sesiones grabadas
+-- —una clasificación y una carrera—, y salen del campo de estado del tema de
+-- información de sesión del feed, no del tema de estado, que es otro y cicla por
+-- segmento. Medido: el campo __nunca__ pasa por «terminada»; va de «en marcha» a
+-- «finalizada» directamente, también en una clasificación con tres cortes.
+--
+-- __'SessionUnknown' lleva el texto dentro, y eso lo aparta de
+-- 'Common.Origin.originFrom'__, que ante un valor irreconocible devuelve 'Nothing'
+-- y lo tira. La asimetría es del emisor: aquellos valores los pone nuestro propio
+-- backend, y éstos los pone el feed, que es de terceros y puede estrenar un estado
+-- sin avisar. Conservarlo es lo que permite ver __cuál__ llegó en vez de solo saber
+-- que hubo uno.
+data SessionState
+  = SessionInactive       -- ^ Anunciada y todavía sin empezar.
+  | SessionStarted        -- ^ En marcha.
+  | SessionFinalised      -- ^ Terminada, y su resultado ya no cambia.
+  | SessionUnknown Text   -- ^ Un valor que el feed emite y aquí no se reconoce.
+  deriving stock (Eq, Show, Generic)
+
+-- | El valor tal cual viaja, que para lo desconocido es lo que el feed dijo.
+sessionStateLabel :: SessionState -> Text
+sessionStateLabel SessionInactive   = "Inactive"
+sessionStateLabel SessionStarted    = "Started"
+sessionStateLabel SessionFinalised  = "Finalised"
+sessionStateLabel (SessionUnknown t) = t
+
+-- | El estado a partir del valor del feed. __No falla:__ lo que no reconoce se
+-- conserva, que es el motivo de que 'SessionUnknown' exista.
+--
+-- Recorta y compara en minúsculas por el criterio de 'Common.Origin.originFrom'
+-- —un valor de cable atraviesa cosas que no controlamos— pero __guarda el texto sin
+-- normalizar__: lo que se enseña es lo que llegó, o el aviso mentiría sobre su
+-- propia causa.
+sessionStateFrom :: Text -> SessionState
+sessionStateFrom raw =
+  case T.toLower (T.strip raw) of
+    "inactive"  -> SessionInactive
+    "started"   -> SessionStarted
+    "finalised" -> SessionFinalised
+    _           -> SessionUnknown raw
+
+-- __Instancias a mano, y no el derive genérico del resto del módulo.__ Con un
+-- constructor que lleva carga, el genérico emitiría un objeto etiquetado para todos
+-- —@{"tag":"SessionStarted"}@— y el cable dejaría de parecerse a
+-- 'DriverStatus', que viaja como cadena. Así viaja siempre una cadena y __la del
+-- estado desconocido es la que el feed mandó__, que es justo lo que hay que poder
+-- leer al otro lado.
+instance ToJSON SessionState where
+  toJSON = toJSON . sessionStateLabel
+
+instance FromJSON SessionState where
+  parseJSON = withText "SessionState" (pure . sessionStateFrom)
+
+-- | Por qué vuelta va la sesión y de cuántas.
+--
+-- __Los dos juntos y no dos campos sueltos__, porque son un solo hecho: o la sesión
+-- cuenta vueltas o no las cuenta. Separarlos dejaría representable «total sin
+-- actual», que el feed no produce, y obligaría a cada lector a casar cuatro
+-- combinaciones en vez de una.
+data LapProgress = LapProgress
+  { lpCurrent :: Int
+  , lpTotal   :: Int
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON LapProgress
+instance FromJSON LapProgress
+
+-- | Lo que queda de sesión, ya resuelto al instante en que se sirvió.
+--
+-- __'scRemaining' son segundos y no un texto formateado__ porque quien lo pinta
+-- tiene que poder seguir descontando entre refrescos: de @\"01:23:45\"@ no se resta
+-- nada. El formateo es de quien pinta.
+--
+-- __'scRunning' es la diferencia entre un reloj y una foto de un reloj.__ Con
+-- 'False' el número está congelado —es lo que el feed emite al acabar un segmento—
+-- y descontarle nada sería inventar.
+data SessionClock = SessionClock
+  { scRemaining :: Int
+  , scRunning   :: Bool
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON SessionClock
+instance FromJSON SessionClock
+
+-- | Qué sesión es y por dónde va.
+--
+-- Es lo que la tabla del directo necesita para decir de qué está hablando, y sale
+-- entero del feed sin calcular nada salvo el reloj (ver 'siClock').
+--
+-- __Las dos ausencias son casos normales y no fallos.__ Las vueltas solo las
+-- publica la carrera —medido: 57 mensajes en una y ninguno en una clasificación—,
+-- así que cuatro de las cinco sesiones de un fin de semana llegan sin ellas; y el
+-- reloj falta si su tema no viene en la foto.
+data SessionInfo = SessionInfo
+  { siType    :: Text  -- ^ Tipo, tal cual lo nombra el feed (@\"Race\"@, @\"Qualifying\"@).
+  , siName    :: Text  -- ^ Nombre de la sesión (@\"Race\"@, @\"Sprint Qualifying\"@).
+  , siMeeting :: Text  -- ^ Gran premio (@\"Spanish Grand Prix\"@).
+  , siState   :: SessionState
+  , siLaps    :: Maybe LapProgress
+    -- ^ 'Nothing' fuera de carrera, que es el caso de cuatro de las cinco sesiones.
+  , siClock   :: Maybe SessionClock
+    -- ^ Ya resuelto al instante de servir, no como el feed lo publicó: el feed lo
+    -- emite dos veces en una carrera entera, así que su valor crudo envejece horas.
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON SessionInfo
+instance FromJSON SessionInfo
+
+-- | Lo que sirve @GET \/api\/live@: la tabla y de qué sesión es.
+--
+-- __El dato de sesión envuelve las filas en vez de viajar en cabeceras__ porque es
+-- contenido y no metadato, y porque no cabe en una fila. Decidido el 2026-09-13.
+-- Las cabeceras de 'Common.Origin' siguen siendo lo que eran —de dónde salió el
+-- dato—, que sí es metadato.
+--
+-- No se llama @LiveTiming@ porque ese nombre ya es el constructor de 'WidgetType'
+-- que identifica al widget, y son cosas distintas: aquél dice __qué tarjeta es__ y
+-- éste __qué se sirve__.
+data LiveTable = LiveTable
+  { liveSession :: SessionInfo
+  , liveRows    :: [LiveTimingRow]
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON LiveTable
+instance FromJSON LiveTable
 
 -- | Punto de telemetría a lo largo de una vuelta.
 --

@@ -22,6 +22,11 @@ module Handler.Live.Helper
   , assembleRows
   , feedRows
   , feedStatus
+  , feedSession
+  , sessionClock
+  , lapProgress
+  , parseRemaining
+  , parseFeedInstant
   , statusOf
   , latestByDriver
   , formatLap
@@ -29,7 +34,9 @@ module Handler.Live.Helper
   , classificationGaps
   ) where
 
-import           Common.Types          (DriverStatus (..), LiveTimingRow (..))
+import           Common.Types          (DriverStatus (..), LapProgress (..),
+                                        LiveTimingRow (..), SessionClock (..),
+                                        SessionInfo (..), sessionStateFrom)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
@@ -40,7 +47,10 @@ import           Data.Maybe            (fromMaybe, mapMaybe)
 import           Data.Ord              (comparing)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
-import           Handler.Feed.Helper   (FeedRow (..))
+import           Data.Text.Read        (decimal)
+import           Data.Time.Clock       (UTCTime, diffUTCTime)
+import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
+import           Handler.Feed.Helper   (FeedRow (..), FeedSession (..))
 import           Handler.OpenF1.Helper (Of1Driver (..))
 import           Text.Printf           (printf)
 
@@ -224,6 +234,88 @@ feedStatus raw =
     "dns" -> Dns
     "dsq" -> Dsq
     _     -> Running
+
+-- | La sesión que el feed anuncia, traducida a 'SessionInfo'.
+--
+-- __Recibe el instante por argumento__ y no lo pide al reloj: esta capa es pura, y
+-- el único campo que depende de «ahora» es el restante ('sessionClock'). Quien
+-- llama pasa el mismo instante que va a servir, de modo que la sesión y las filas
+-- hablan del mismo momento.
+feedSession :: UTCTime -> FeedSession -> SessionInfo
+feedSession now fs =
+  SessionInfo
+    { siType    = fsType fs
+    , siName    = fsName fs
+    , siMeeting = fsMeeting fs
+    , siState   = sessionStateFrom (fsState fs)
+    , siLaps    = lapProgress fs
+    , siClock   = sessionClock now fs
+    }
+
+-- | Por qué vuelta va y de cuántas, si la sesión las cuenta.
+--
+-- __Hacen falta las dos.__ La vuelta sola no dice por dónde va la sesión, así que
+-- una sin la otra es lo mismo que ninguna: el tema del feed que las publica manda
+-- ambas en la foto, y sus deltas posteriores —que sí traen una sola— no llegan
+-- hasta aquí.
+lapProgress :: FeedSession -> Maybe LapProgress
+lapProgress fs = LapProgress <$> fsCurrentLap fs <*> fsTotalLaps fs
+
+-- | Lo que queda de sesión __en el instante dado__, no cuando el feed lo publicó.
+--
+-- __Corregirlo no es un adorno, y está medido:__ en una carrera entera el feed
+-- publicó su reloj __dos veces__, la última a los seis minutos de empezar. Servido
+-- crudo, el valor diría «quedan 1 h 59 min» durante las dos horas siguientes.
+--
+-- Con el reloj parado ('fsClockRunning' 'False') el valor no se toca: es lo que el
+-- feed emite entre segmentos y al acabar, y descontarle nada sería inventar.
+--
+-- __Sin el instante de publicación no hay reloj__, aunque venga el restante y la
+-- marca diga que corre: servir el número sin corregir afirmaría que quedan
+-- exactamente esos segundos, y es la afirmación que no se puede sostener. 'Nothing'
+-- dice lo único cierto, que es que no se sabe.
+--
+-- El restante __no baja de cero__: una foto tomada mucho después de acabar daría un
+-- negativo, y un reloj en negativo no es un dato sino una resta que se fue.
+--
+-- Lo transcurrido se trunca, no se redondea, así que el instante del feed lleva su
+-- fracción a la cuenta: entre @13:04:05.01@ y @13:34:05@ han pasado 1799 segundos
+-- enteros y no 1800. El sesgo es de un segundo como mucho y va a favor del
+-- restante, que es el lado que no adelanta un reloj de cuenta atrás.
+sessionClock :: UTCTime -> FeedSession -> Maybe SessionClock
+sessionClock now fs = do
+  remaining <- parseRemaining =<< fsClockRemaining fs
+  if fsClockRunning fs
+    then do
+      published <- parseFeedInstant =<< fsClockUtc fs
+      let elapsed = floor (diffUTCTime now published) :: Int
+      pure (SessionClock (max 0 (remaining - elapsed)) True)
+    else pure (SessionClock remaining False)
+
+-- | Segundos de un @\"HH:MM:SS\"@ del feed, o @\"MM:SS\"@.
+--
+-- Admite las dos longitudes porque lo que el feed publica es una duración y no una
+-- hora; y 'Nothing' ante cualquier otra cosa, incluidas las partes no numéricas, en
+-- vez de quedarse con lo que entienda. Un reloj a medio leer es peor que ninguno.
+parseRemaining :: Text -> Maybe Int
+parseRemaining raw =
+  case traverse numeric (T.splitOn ":" (T.strip raw)) of
+    Just [h, m, s] -> Just (h * 3600 + m * 60 + s)
+    Just [m, s]    -> Just (m * 60 + s)
+    _              -> Nothing
+  where
+    numeric part = case decimal part of
+      Right (n, rest) | T.null rest -> Just n
+      _                             -> Nothing
+
+-- | El instante que el feed pone en su reloj, en ISO 8601 y con zona @Z@.
+--
+-- La fracción de segundo llega con un número de dígitos que varía —siete en la foto
+-- inicial, dos en un delta—, así que se lee con @%Q@, que acepta cualquiera y
+-- también su ausencia.
+parseFeedInstant :: Text -> Maybe UTCTime
+parseFeedInstant =
+  parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" . T.unpack . T.strip
 
 -- | Diferencia al mejor y al de delante por piloto, derivadas de la clasificación.
 --
