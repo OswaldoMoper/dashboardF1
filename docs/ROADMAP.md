@@ -368,15 +368,41 @@ premio dejan de ser un requisito suelto y pasan a tener forma.** Once decisiones
 **Y el primer paso ya está pagado por el feed.** Su tema de información de sesión trae el tipo, el nombre, la
 clave, el gran premio con su número, las fechas con su desfase y el estado; el microservicio **ya lo pide** en
 la suscripción y el endpoint del directo lo **descarta** sin leerlo. Es una clave del diccionario que ya está
-en memoria. Queda por medir si el número de reunión del feed es la ronda que la gramática
-`AÑO-RONDA-SESIÓN` del microservicio espera: de ese encaje depende poder nombrar las sesiones anteriores del
-gran premio, y es **plausible y no medido**.
+en memoria.
+
+**Comprobado sobre la foto real el 2026-09-14, y no solo sobre el flujo de deltas:** la respuesta a la
+suscripción trae ese tema con el estado **actualizado** —una carrera del día anterior llegó ya como
+finalizada—, así que el estado se puede leer sin sostener la conexión. El número de reunión vale 14 para el
+decimocuarto gran premio del año, lo que **es compatible** con la ronda que la gramática `AÑO-RONDA-SESIÓN`
+del microservicio espera, pero contrastarlo contra el calendario sigue **sin hacerse**: de ese encaje depende
+poder nombrar las sesiones anteriores del gran premio.
+
+**Y el estado que sirve no es el del tema de estado de sesión, que es otro.** Medido sobre una clasificación
+y una carrera: el tema propio cicla por segmento —marca «terminada» tres veces en una clasificación— mientras
+el campo que viaja **dentro** del tema de información de sesión no pasa nunca por ese valor, y va de «en
+marcha» a «finalizada» directamente. Son dos señales distintas con el mismo nombre, y la útil es la segunda.
 
 **Entregables:**
 
 - [ ] **La página sabe y dice qué sesión es** (2026-09-12): tipo, gran premio y estado, leídos del tema de
       información de sesión del feed. **Prerequisito de los dos siguientes** y el más pequeño de los tres: los
       modos necesitan el tipo y la referencia necesita la identidad del gran premio.
+      **Forma cerrada el 2026-09-14, y son siete campos y no tres:** al tipo, el gran premio y el estado se
+      suman el nombre de la sesión, la vuelta actual, el total y el reloj. Los cuatro primeros son texto del
+      propio tema; los tres últimos vienen de otros dos temas del feed y **ninguno está siempre**.
+      - **El dato de sesión envuelve las filas** en la respuesta del directo, en vez de viajar en cabeceras:
+        es contenido y no metadato, y no cabe en una fila. Las cabeceras de procedencia siguen siendo lo que
+        eran, que sí es metadato.
+      - **La vuelta y el total van juntos o no van.** Solo la carrera los publica —medido: ningún mensaje en
+        una clasificación—, así que cuatro de las cinco sesiones de un fin de semana llegan sin ellos, y eso
+        es el caso normal. Separarlos dejaría representable un total sin vuelta actual, que el feed no emite.
+      - **El reloj se sirve resuelto al instante de responder, no como el feed lo publicó.** Medido: en una
+        carrera entera el feed publicó su reloj **dos veces**, la última a los seis minutos de empezar, así
+        que servirlo crudo diría «quedan casi dos horas» hasta el final. Viaja en **segundos** y con la marca
+        de si corre, de modo que quien lo pinta pueda seguir descontando entre refrescos en vez de verlo
+        saltar cada diez segundos; sin esa marca se trata como parado, que es lo observado.
+      - **Un estado que no se reconozca conserva su texto.** El emisor es el feed, que puede estrenar un valor
+        sin avisar, así que tirarlo dejaría el aviso sin poder decir cuál llegó.
 - [x] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
       si trae filas son de la sesión en marcha; si no trae ninguna, se cae a OpenF1; y si **falla**, se
       sirve desde la cache sin intentar OpenF1, para que un feed roto durante una sesión no pague además
