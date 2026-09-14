@@ -11,8 +11,7 @@
 -- solo en 'fetchJsonSourced' ('Common.Origin').
 module Client where
 
-import           Common.Origin        (Sourced, fetchedAtHeader, originHeader,
-                                       sourcedFrom)
+import           Common.Origin        (Sourced, sourcedFrom, sourcedHeaders)
 import           Data.Aeson           (FromJSON, decodeStrict)
 import qualified Data.CaseInsensitive as CI
 import qualified Data.Map             as Map
@@ -41,18 +40,23 @@ fetchJson urls = do
   resp <- performRequestAsync (getReq <$> urls)
   pure (decodeXhr <$> resp)
 
--- | GET que además pide las dos cabeceras de procedencia.
+-- | GET que además pide las cabeceras de procedencia.
 --
 -- __Hay que pedirlas por nombre:__ el @def@ de 'XhrRequestConfig' trae
 -- @OnlyHeaders mempty@, así que con 'getReq' el mapa de cabeceras de la respuesta
 -- llega vacío. Y el fallo sería silencioso, porque 'Common.Origin.originFrom' trata
 -- la ausencia como duda y no como error.
+--
+-- __Cuáles son no se escribe aquí:__ la lista es
+-- 'Common.Origin.sourcedHeaders', la misma que lee 'Common.Origin.sourcedFrom'.
+-- Dos listas que tuvieran que coincidir podrían dejar de hacerlo sin que nada se
+-- pusiera rojo — el paquete @frontend@ no tiene suite.
 getReqSourced :: Text -> XhrRequest ()
 getReqSourced url =
   XhrRequest "GET" url
     (def
        { _xhrRequestConfig_responseHeaders =
-           OnlyHeaders (Set.fromList (map CI.mk [originHeader, fetchedAtHeader]))
+           OnlyHeaders (Set.fromList (map CI.mk sourcedHeaders))
        })
 
 -- | Como 'fetchJson', pero el valor llega con la procedencia que traían sus

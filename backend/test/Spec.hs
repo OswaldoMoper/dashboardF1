@@ -65,7 +65,7 @@ import           Common.Origin               (Origin (..), Source (..),
                                               originLabel, originNotice,
                                               sourceFrom, sourceHeader,
                                               sourceLabel, sourceName,
-                                              sourcedFrom)
+                                              sourcedFrom, sourcedHeaders)
 import           Common.Refresh              (Poll (..), PollEvent (..),
                                               canRequest, liveRefreshSeconds,
                                               pollIdle, pollStep)
@@ -1292,6 +1292,24 @@ main = hspec $ do
     it "un dato con procedencia pero sin fuente es un caso normal, no un fallo" $
       sourcedFrom (`lookup` [("X-Data-Origin", "sample")]) ()
         `shouldBe` Sourced (Just Sample) Nothing Nothing ()
+
+    -- Pedir y leer son dos sitios: un cliente XHR solo recibe las cabeceras que
+    -- declaró, y una que se lea sin pedirse llega SIEMPRE ausente — que aquí
+    -- significa duda y no error, así que nadie se entera. `sourcedHeaders` existe
+    -- para que sea una sola lista, y este caso es lo que lo comprueba: alimenta a
+    -- `sourcedFrom` con lo que esa lista nombra y NADA más, de modo que un campo
+    -- cuya cabecera quedara fuera sale `Nothing` y esto se pone rojo.
+    --
+    -- Es la red que el paquete `frontend` no puede tener, porque no tiene suite.
+    it "pidiendo solo sourcedHeaders, sourcedFrom puebla sus tres campos" $
+      let served = [ (originHeader,    "cached")
+                   , (sourceHeader,    "feed")
+                   , (fetchedAtHeader, "2026-09-11T14:03:22Z")
+                   ]
+          onlyRequested n =
+            if n `elem` sourcedHeaders then lookup n served else Nothing
+       in sourcedFrom onlyRequested ()
+            `shouldBe` Sourced (Just Cached) (Just Feed) (Just "2026-09-11T14:03:22Z") ()
 
   -- El indicador cruza las dos preguntas que 'Common.Origin' y 'Common.Refresh'
   -- responden por separado —de dónde salió lo que se ve, y si lo último que se

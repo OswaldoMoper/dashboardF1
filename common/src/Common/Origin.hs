@@ -37,6 +37,7 @@ module Common.Origin
   , sourceFrom
   , sourceName
   , Sourced (..)
+  , sourcedHeaders
   , sourcedFrom
   ) where
 
@@ -197,12 +198,25 @@ data Sourced a = Sourced
   }
   deriving stock (Eq, Show)
 
+-- | Las cabeceras que 'sourcedFrom' lee, y por tanto las que hay que pedir.
+--
+-- __Existe porque pedir y leer son dos sitios que tienen que decir lo mismo.__ Un
+-- cliente XHR declara qué cabeceras de respuesta quiere y las demás no le llegan,
+-- así que una que se lea aquí sin pedirse allí sale __siempre__ ausente — y la
+-- ausencia es un caso legítimo ('sourcedFrom'), no un error, o sea que nadie se
+-- entera. Con una sola lista no hay dos que puedan divergir.
+sourcedHeaders :: [Text]
+sourcedHeaders = [originHeader, sourceHeader, fetchedAtHeader]
+
 -- | Arma un 'Sourced' a partir de una forma de buscar cabeceras por nombre.
 --
 -- __Recibe la búsqueda como función y no el mapa de cabeceras__ porque las del XHR
 -- vienen con claves que ignoran mayúsculas (@CI Text@, del paquete
 -- @case-insensitive@), y traerlo aquí haría depender a @common@ de él solo por la
 -- clave. Quien llama sabe cómo buscar; aquí se decide qué significa lo encontrado.
+--
+-- __Quien llama tiene que haber pedido 'sourcedHeaders'__: lo que no se pida llega
+-- ausente, y ausente aquí significa duda y no fallo.
 sourcedFrom :: (Text -> Maybe Text) -> a -> Sourced a
 sourcedFrom lookupHeader value =
   Sourced
