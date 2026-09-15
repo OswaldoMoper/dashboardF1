@@ -51,7 +51,9 @@ module Main (main) where
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, zeroLineY)
-import           Common.Format               (formatFixed, formatTrimmed, noData)
+import           Common.Format               (ClockForm (..), formatClock,
+                                              formatFixed, formatTrimmed,
+                                              noData)
 import           Common.Indicator            (Indicator (..), fetchedAtLabel,
                                               indicatorClass, indicatorFrom,
                                               indicatorTooltip)
@@ -1282,8 +1284,40 @@ main = hspec $ do
       formatFixed 0 0.0 `shouldBe` "0"
       formatFixed 0 1.0 `shouldBe` "1"
 
+    -- El reloj de la sesión. La entrada son los segundos que `SessionClock`
+    -- lleva, y las tres formas se distinguen solo en cuánto sitio ocupan.
+    it "por debajo de la hora, la forma corta se ahorra las horas" $ do
+      formatClock ClockCompact 900 `shouldBe` "15:00"
+      formatClock ClockCompact 59  `shouldBe` "0:59"
+      formatClock ClockCompact 9   `shouldBe` "0:09"
+      formatClock ClockCompact 60  `shouldBe` "1:00"
+
+    it "la hora justa es donde la corta cambia de forma" $ do
+      formatClock ClockCompact 3599 `shouldBe` "59:59"
+      formatClock ClockCompact 3600 `shouldBe` "1:00:00"
+
+    it "la media lleva horas aunque sean cero" $ do
+      formatClock ClockHours 900 `shouldBe` "0:15:00"
+      formatClock ClockHours 9   `shouldBe` "0:00:09"
+
+    it "la larga rellena la hora a dos dígitos" $ do
+      formatClock ClockPadded 900  `shouldBe` "00:15:00"
+      formatClock ClockPadded 9    `shouldBe` "00:00:09"
+      formatClock ClockPadded 5025 `shouldBe` "01:23:45"
+
+    it "las horas no se envuelven al pasar del día" $ do
+      -- 25 h 1 min 1 s. El relleno de la larga es un mínimo, no un recorte.
+      formatClock ClockCompact 90061 `shouldBe` "25:01:01"
+      formatClock ClockPadded  90061 `shouldBe` "25:01:01"
+
+    it "un restante negativo es cero y no una resta que se fue" $ do
+      formatClock ClockCompact (-1) `shouldBe` "0:00"
+      formatClock ClockHours   (-1) `shouldBe` "0:00:00"
+      formatClock ClockPadded  (-1) `shouldBe` "00:00:00"
+
     prop "formatFixed nunca emite notación científica" neverScientific
     prop "formatTrimmed no deja cola de ceros ni punto suelto" trimLeavesNoTail
+    prop "por encima de la hora, la corta y la media no se distinguen" clockFormsMeet
 
   -- La aritmética del lienzo libre (2026-09-03), cuarto
   -- módulo de `common` que llega aquí por la puerta del 2026-08-04: el paquete
@@ -2973,6 +3007,19 @@ trimLeavesNoTail decimals x =
   where
     trimmed = formatTrimmed (decimals `mod` 7) x
     hasDot  = T.any (== '.') trimmed
+
+-- | La forma corta solo se ahorra las horas mientras no las haya, así que a partir
+-- de la hora las dos primeras formas son la __misma cadena__. Es lo que hace que
+-- elegir entre ellas sea una decisión de ancho por debajo de la hora y nada por
+-- encima; los casos de arriba lo fijan en el borde y esto lo extiende al resto.
+clockFormsMeet :: Int -> Property
+clockFormsMeet n =
+  formatClock ClockCompact secs === formatClock ClockHours secs
+  where
+    -- `mod` con divisor positivo no devuelve negativos ni siquiera con `minBound`,
+    -- al contrario que `abs`; es el patrón que ya usan `neverScientific` y
+    -- `originRoundTrips`.
+    secs = 3600 + (n `mod` 86400)
 
 -- | Lo que hace utilizable la cabecera: lo que el backend escribe es exactamente lo
 -- que el widget recupera. Los casos de arriba lo comprueban sobre las tres

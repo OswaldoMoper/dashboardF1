@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Formateo de cifras para las tablas del dashboard.
+-- | Formateo de cifras y de tiempos para el dashboard.
 --
 -- Vive en @common@ y no en cada widget por dos razones. La primera es que los
 -- consumidores son __dos áreas__ ('Widgets.Historical' y 'Widgets.Telemetry') y el
@@ -32,6 +32,8 @@ module Common.Format
   ( formatFixed
   , formatTrimmed
   , noData
+  , ClockForm (..)
+  , formatClock
   ) where
 
 import           Data.Text (Text)
@@ -92,3 +94,48 @@ formatTrimmed decimals x
       | otherwise        = t
 
     unsign t = if t == "-0" then "0" else t
+
+-- | Cuánto sitio ocupa un reloj, que es lo único en lo que se distinguen las tres
+-- formas: el valor que dicen es el mismo.
+--
+-- __'ClockCompact' y 'ClockHours' son idénticas por encima de una hora__, así que
+-- la diferencia entre ellas existe solo por debajo. Quien elija 'ClockCompact' tiene
+-- que contar con que el ancho __cambia al cruzar la hora__ y con él la posición de
+-- lo que tenga al lado.
+data ClockForm
+  = ClockCompact  -- ^ Sin horas mientras no haga falta: @\"15:00\"@, @\"0:09\"@.
+  | ClockHours    -- ^ Siempre con horas, sin relleno: @\"0:15:00\"@.
+  | ClockPadded   -- ^ Siempre con horas y a dos dígitos: @\"00:15:00\"@.
+  deriving (Eq, Show)
+
+-- | Segundos a reloj de cuenta atrás.
+--
+-- La entrada son los segundos que quedan de sesión, que es lo que
+-- 'Common.Types.scRemaining' lleva: el minuto y el segundo van __siempre a dos
+-- dígitos__, y lo que varía entre formas es la cabeza.
+--
+-- __Lo negativo es cero__, por el mismo criterio con que 'formatFixed' trata un
+-- número de decimales negativo: no hay forma de expresar «quedan menos que nada» y
+-- fingir que sí la hay sería peor que ignorarlo. El productor de hoy ya no baja de
+-- cero, pero eso es invariante suyo y no de aquí.
+--
+-- __Las horas no se envuelven a las 24__: un valor de más de un día sale con la
+-- cuenta entera de horas, y el relleno de 'ClockPadded' es un mínimo y no un
+-- recorte.
+formatClock :: ClockForm -> Int -> Text
+formatClock form secs = case form of
+    ClockCompact
+      | hours == 0 -> T.intercalate ":" [tshow minutes, pad2 seconds]
+      | otherwise  -> withHours (tshow hours)
+    ClockHours     -> withHours (tshow hours)
+    ClockPadded    -> withHours (pad2 hours)
+  where
+    (hours, rest)      = max 0 secs `divMod` 3600
+    (minutes, seconds) = rest `divMod` 60
+
+    withHours h = T.intercalate ":" [h, pad2 minutes, pad2 seconds]
+
+    tshow :: Int -> Text
+    tshow = T.pack . show
+
+    pad2 = T.justifyRight 2 '0' . tshow
