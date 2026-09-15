@@ -414,6 +414,46 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       - **Falta la mitad del reloj que vive en el navegador:** el backend sirve los segundos que quedan
         resueltos al instante de responder, y quien los pinta tiene que descontarlos entre refrescos o el
         valor salta cada diez segundos.
+      **La página empieza a decirlo el 2026-09-15, y lo dice en una banda propia** entre la cabecera y el
+      lienzo, no dentro de la tarjeta del directo: la sesión nombra lo que enseñan todas las tarjetas a la
+      vez. Enseña **gran premio y nombre**; el tipo se deja fuera porque coincide con el nombre en 50 de las
+      131 sesiones del calendario —carrera y clasificación, justo las dos que más se miran— y el nombre ya
+      distingue por sí solo las diez formas publicadas, sprint incluido.
+      - **La petición del directo pasa a ser de la página**, porque la banda vive fuera de la tarjeta y dos
+        peticiones simultáneas al mismo endpoint hacen que la segunda caiga a la cache. De paso, conmutar de
+        layout deja de repetirla y la tabla ya no parpadea a «cargando» al volver.
+      - **La banda no desaparece nunca**, ni sin sesión: el lienzo descuenta su alto, así que una banda
+        intermitente movería las seis tarjetas arriba y abajo en cada refresco.
+      - **Lo que queda de este entregable** es el estado, la vuelta y el reloj — o sea todo lo que no es la
+        identidad de la sesión.
+- [ ] **La banda de sesión como pieza colocable** (2026-09-15): se ancla a un **borde** —arriba o abajo en
+      horizontal, y los laterales con el texto en vertical—, se **mueve pero no se puede ocultar**, y vale
+      tanto para el lienzo de escritorio como para la pantalla de teléfono, que todavía no existe. Hoy es un
+      rectángulo fijo arriba. **Pide diseño antes que código**: un ancla a un borde no es un rectángulo en
+      1/120, que es lo único que el lienzo sabe colocar, y el arrastre tampoco existe aún.
+      - **Los botones que conmutan de layout se mudan a ella** con ese diseño, no antes: si los layouts van a
+        ser modos atados a un tipo de sesión, su mando va con la sesión. Tiene un precio ya medido —hoy
+        plegar la cabecera se los lleva a propósito, y desde la banda dejarían de esconderse—.
+      - **El aspecto ya es conmutable** desde el 2026-09-15 —tarjeta o barra de pared a pared, con un mando
+        en la propia banda—, pero **la elección no sobrevive a recargar**: eso llega con los layouts
+        guardables.
+- [ ] **El estado de la sesión cuando la fuente no lo publica** (2026-09-15): se dice el que **publica** la
+      fuente, y si no lo publica se **deduce del calendario**, pero solo cuando la hora de fin quedó
+      claramente atrás; en el borde no se dice nada. El margen depende del tipo: **45 min** en prácticas y
+      clasificación, **3 h** en carrera, que es la única que puede suspenderse largo.
+      No contradice a la medición que descartó deducirlo de las horas —una carrera arrancó cuatro minutos
+      tarde y acabó trece pronto—, porque esa medición habla justo del borde que aquí se evita.
+      - **Lo deducido viaja marcado** y se pinta distinto: «finalizada (prevista)» frente a la que se oyó de
+        la fuente. Sin la marca se perdería en silencio la propiedad de que lo que viaja es lo que la fuente
+        dijo, y al llegar la repetición de sesiones pasadas **todas** serían deducidas.
+- [ ] **Cuál es la próxima sesión y cuánto falta** (2026-09-15), en la banda. «No hay sesión» deja de ser un
+      estado: por defecto se enseña la última y, al lado, la siguiente con su cuenta atrás. El calendario ya
+      está en memoria en el backend desde el 2026-09-15 —lo usa la ventana del feed— pero **no se publica**,
+      así que el trabajo es sacarlo al cable y pintarlo.
+- [ ] **Las cifras de la banda tienen varias formas y se elige la que quepa** (2026-09-15): el reloj en tres
+      —`15:00`, `0:15:00` y `00:15:00`— y la vuelta en dos —`L 12/57` y `Vuelta 12 / 57`—. Manda el ancho
+      disponible, y la elección del usuario por encima de él. Las tres del reloj ya existen como función pura
+      con pruebas; falta quién elige. Lo que **recuerde** lo elegido llega con los layouts guardables.
 - [x] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
       si trae filas **de una sesión en marcha**, son el directo; si no trae ninguna, se cae a OpenF1; y si
       **falla**, se sirve desde la cache sin intentar OpenF1, para que un feed roto durante una sesión no
