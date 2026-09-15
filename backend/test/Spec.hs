@@ -125,6 +125,8 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               parseFeedInstant, parseRemaining,
                                               sessionClock, sessionIsLive)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
+import           Handler.OpenF1.Manager      (endsAfter)
+import           Network.HTTP.Req            (queryParamToList)
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
 import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
@@ -979,6 +981,18 @@ main = hspec $ do
           , siLaps    = Nothing
           , siClock   = Nothing
           }
+
+  -- El único caso de la suite que mira un parámetro de salida en vez de un dato de
+  -- entrada. Existe porque el fallo que ancla no se ve leyendo el código ni
+  -- ejecutando las otras pruebas: la URL la construye `req`, y una forma mal armada
+  -- vuelve como 404 que el `Context` se traga.
+  describe "endsAfter" $
+    it "pega el operador al valor, sin un = entre medias" $
+      -- Con `("date_end>=" =:)` sale `date_end%3E%3D=2026-…` y OpenF1 responde
+      -- 404 «No results found», así que el calendario no llega nunca y la ventana
+      -- del feed no se cierra jamás. Medido el 2026-09-15 contra las dos formas.
+      queryParamToList (endsAfter "2026-09-24T08:30:00Z")
+        `shouldBe` [("date_end>=2026-09-24T08:30:00Z", Nothing)]
 
   -- Cuándo merece la pena pedirle la foto al feed, que cuesta 16-23 s. Todos los
   -- casos son sobre instantes fijos y sin reloj real: la función es pura justo para

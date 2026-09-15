@@ -41,8 +41,21 @@ meetingKey = ("meeting_key" =:)
 -- un backend que reiniciara en plena carrera concluiría que no hay nada que mirar.
 -- Verificado contra OpenF1: preguntando desde mitad de la carrera 11369, con
 -- @date_end@ la sesión en curso sale en la respuesta.
+--
+-- __Va como parámetro sin valor y no con @('=:')@, y eso no es estilo.__ En los
+-- filtros de comparación de OpenF1 el operador forma parte del __nombre__ del
+-- parámetro, así que @\"date_end>=\" '=:' instante@ intercala un @=@ y manda
+-- @date_end%3E%3D=2026-…@, al que OpenF1 responde @404 \"No results found\"@.
+-- 'queryFlag' pega el valor al nombre y manda @date_end%3E%3D2026-…@, que es la
+-- forma que contesta. Medido el 2026-09-15 contra las dos.
+--
+-- __La suite lo ancla mirando el parámetro construido__ (@describe \"endsAfter\"@),
+-- que es la única prueba del repositorio sobre una petición de salida en vez de
+-- sobre un dato de entrada. Hace falta porque el fallo no se ve leyendo: vuelve como
+-- un @404@ que el @Context@ se traga, y lo único que se nota es que el calendario
+-- nunca llega.
 endsAfter :: Text -> Option 'Https
-endsAfter = ("date_end>=" =:)
+endsAfter instant = queryFlag ("date_end>=" <> instant)
 
 -- | GET a un endpoint de OpenF1 que devuelve un arreglo JSON, decodificado, con
 -- las opciones que se le den.
