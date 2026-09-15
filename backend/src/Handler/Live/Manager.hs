@@ -11,9 +11,12 @@
 module Handler.Live.Manager where
 
 import           Config                 (Config)
+import           Data.Time.Clock        (UTCTime)
 import           Handler.Live.Helper    (Of1Interval, Of1Lap, Of1Meeting,
-                                         Of1Position, Of1Result, Of1Session)
-import           Handler.OpenF1.Manager (fetchList, fetchListWith, meetingKey)
+                                         Of1Position, Of1Result, Of1Session,
+                                         isoInstant)
+import           Handler.OpenF1.Manager (endsAfter, fetchList, fetchListWith,
+                                         meetingKey)
 
 -- Los cuatro reciben la 'Config' por lo mismo que 'fetchList': de ella sale el
 -- techo de duración del intento.
@@ -45,3 +48,14 @@ fetchSession cfg = fetchList cfg "sessions"
 -- 'fetchList'.
 fetchMeeting :: Config -> Int -> IO [Of1Meeting]
 fetchMeeting cfg key = fetchListWith cfg "meetings" (meetingKey key)
+
+-- | El calendario: las sesiones que aún no han terminado a la hora dada.
+--
+-- __El instante entra por argumento__ y no se pide al reloj aquí, para que la URL
+-- que esta función construye sea función de sus argumentos y nada más.
+--
+-- Medido el 2026-09-15: 45 sesiones en 16,6 KB y 0,62 s, sin acotar por arriba —así
+-- que no hace falta inventar ninguna ventana de días— y sin filtrar por año, que
+-- daría lo mismo hoy y se rompería en el cambio de año.
+fetchCalendar :: Config -> UTCTime -> IO [Of1Session]
+fetchCalendar cfg now = fetchListWith cfg "sessions" (endsAfter (isoInstant now))

@@ -96,7 +96,7 @@ import           Data.List                   (nub)
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Text                   as T
 import           Data.Time.Calendar          (fromGregorian)
-import           Data.Time.Clock             (UTCTime (..))
+import           Data.Time.Clock             (UTCTime (..), addUTCTime)
 import           GHC.TypeLits                (symbolVal)
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
@@ -119,7 +119,8 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               classificationGaps,
                                               classificationTime, feedRows,
                                               feedSession, feedStatus,
-                                              feedVerdict, freezeClock,
+                                              feedVerdict, feedWindowLead,
+                                              feedWindowOpen, freezeClock,
                                               lapProgress, openf1Session,
                                               parseFeedInstant, parseRemaining,
                                               sessionClock, sessionIsLive)
@@ -911,7 +912,7 @@ main = hspec $ do
   describe "Of1Session y Of1Meeting" $ do
     it "decodifica /sessions e ignora las doce claves que no modela" $
       tryOf1Sessions openF1SessionArray
-        `shouldBe` Right [Of1Session "Race" "Race" 1294]
+        `shouldBe` Right [Of1Session "Race" "Race" 1294 raceStartsAt]
 
     it "decodifica /meetings, que es de donde sale el nombre del gran premio" $
       -- `/sessions` trae la clave del gran premio pero NO su nombre. Medido: lo más
@@ -925,15 +926,24 @@ main = hspec $ do
       -- hasta el `try` del `Context` y sale como «no se sabe», sin tocar la tabla.
       tryOf1Sessions openF1SessionNoType `shouldSatisfy` isLeft
 
+    it "ni sin hora de arranque, que es de lo que cuelga la ventana" $
+      tryOf1Sessions openF1SessionNoStart `shouldSatisfy` isLeft
+
     it "y un gran premio sin nombre, igual" $
       tryOf1Meetings openF1MeetingNoName `shouldSatisfy` isLeft
+
+    it "la hora de arranque llega con el desplazamiento que OpenF1 emite" $
+      -- `date_start` viene como «…T13:00:00+00:00» y no con la Z, así que lo que se
+      -- afirma es que el decode lee ese desplazamiento y no lo ignora.
+      fmap (map osStart) (tryOf1Sessions openF1SessionArray)
+        `shouldBe` Right [raceStartsAt]
 
   describe "openf1Session" $ do
     it "sirve tipo, nombre y gran premio, y deja vacío lo que OpenF1 no publica" $
       -- Los tres huecos no son un degradado: OpenF1 no tiene estado —solo horas
       -- previstas—, no cuenta vueltas y no emite reloj.
       openf1Session
-        (Of1Session "Race" "Race" 1294)
+        (Of1Session "Race" "Race" 1294 raceStartsAt)
         (Just (Of1Meeting "Spanish Grand Prix"))
         `shouldBe` SessionInfo
           { siType    = "Race"
@@ -952,13 +962,15 @@ main = hspec $ do
       -- Y no se deduce de las horas, que sí están en la mano: medido sobre la
       -- carrera 11369, arrancó cuatro minutos después de su `date_start` y acabó
       -- trece antes de su `date_end`, así que la deducción miente en los bordes.
-      siState (openf1Session (Of1Session "Race" "Race" 1294) Nothing)
+      siState (openf1Session (Of1Session "Race" "Race" 1294 raceStartsAt) Nothing)
         `shouldBe` Nothing
 
     it "sin gran premio la sesión se sirve igual, con el nombre en blanco" $
       -- `/meetings` puede devolver el arreglo vacío. El tipo y el nombre siguen
       -- diciendo de qué se habla, así que perder la sesión entera sería peor.
-      openf1Session (Of1Session "Qualifying" "Qualifying" 1294) Nothing
+      openf1Session
+        (Of1Session "Qualifying" "Qualifying" 1294 raceStartsAt)
+        Nothing
         `shouldBe` SessionInfo
           { siType    = "Qualifying"
           , siName    = "Qualifying"
@@ -967,6 +979,62 @@ main = hspec $ do
           , siLaps    = Nothing
           , siClock   = Nothing
           }
+
+  -- Cuándo merece la pena pedirle la foto al feed, que cuesta 16-23 s. Todos los
+  -- casos son sobre instantes fijos y sin reloj real: la función es pura justo para
+  -- que esto se pueda afirmar sin levantar red ni esperar a un fin de semana.
+  describe "feedWindowOpen" $ do
+    it "sin calendario se pregunta: no saber no es saber que no hay nada" $
+      -- Es el estado del proceso recién arrancado, y el de un backend que reinicia
+      -- durante una sesión, cuando OpenF1 responde 401 y no puede decirle la hora.
+      -- El precio es la foto; el beneficio, no perder el directo.
+      feedWindowOpen bakuDuringP1 [] Nothing `shouldBe` True
+
+    it "con la sesión aún lejos, no se pregunta" $
+      -- Hora y media antes de Bakú P1, o sea 45 min antes de que la ventana abra.
+      feedWindowOpen bakuLongBefore [bakuP1, bakuP2] Nothing `shouldBe` False
+
+    it "dentro del margen, antes de la hora prevista, ya se pregunta" $
+      -- Cuarenta minutos antes. Está medido que el feed publica mucho antes de su
+      -- hora —39 min 59 s en la carrera 11369— y que su foto ya trae la parrilla.
+      feedWindowOpen bakuInLead [bakuP1, bakuP2] Nothing `shouldBe` True
+
+    it "justo en la apertura ya se pregunta, no un instante después" $
+      -- La frontera cae del lado de preguntar: el criterio es «ya llegó», no «pasó
+      -- de sobra». Se escribe con la constante y no con el número para que moverla
+      -- no deje este caso afirmando otra cosa.
+      feedWindowOpen
+        (addUTCTime (negate feedWindowLead) bakuP1)
+        [bakuP1]
+        Nothing
+        `shouldBe` True
+
+    it "con la sesión rodando y sin señal de fin, sigue abierta" $
+      feedWindowOpen bakuDuringP1 [bakuP1, bakuP2] Nothing `shouldBe` True
+
+    it "vista la finalización, se cierra" $
+      feedWindowOpen bakuAfterP1 [bakuP1, bakuP2] (Just bakuP1Finalised)
+        `shouldBe` False
+
+    it "y verla dos veces cierra igual, que es lo que la repetición exige" $
+      -- El campo de estado emite `Finalised` más de una vez (2026-09-14 (k)). Aquí
+      -- la señal se COMPARA contra la apertura y no se consume, así que un segundo
+      -- aviso de la misma sesión no adelanta nada. Un «avanza a la siguiente» se
+      -- habría saltado una sesión entera.
+      feedWindowOpen bakuAfterP1 [bakuP1, bakuP2] (Just bakuP1FinalisedAgain)
+        `shouldBe` False
+
+    it "y se reabre sola cuando la siguiente sesión cruza su apertura" $
+      -- Sin olvidar la señal ni mover ningún puntero: la apertura de P2 es
+      -- posterior a la finalización de P1, y con eso basta.
+      feedWindowOpen bakuInLeadP2 [bakuP1, bakuP2] (Just bakuP1Finalised)
+        `shouldBe` True
+
+    it "el orden del calendario no decide nada" $
+      -- OpenF1 lo sirve ordenado, pero apoyarse en eso sería apoyarse en algo que
+      -- nadie promete: lo que manda es la apertura más reciente, no la última fila.
+      feedWindowOpen bakuInLeadP2 [bakuP2, bakuP1] (Just bakuP1Finalised)
+        `shouldBe` True
 
   -- Lo que `GET /fastf1/live` entrega: la tabla y la sesión en la MISMA foto, así
   -- que hablan del mismo instante. Los fixtures llevan las claves que el
@@ -2412,6 +2480,48 @@ openF1GridNumberAsText :: ByteString
 openF1GridNumberAsText =
   "[{\"driver_number\":\"1\",\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"}]"
 
+-- | La hora de arranque prevista de la carrera 11369, tal como OpenF1 la publica.
+raceStartsAt :: UTCTime
+raceStartsAt = UTCTime (fromGregorian 2026 9 13) (13 * 3600)
+
+-- | Las dos primeras sesiones de Bakú y los instantes que rodean a la primera,
+-- tomados del calendario real el 2026-09-15: P1 el 24 a las 08:30 UTC y P2 el mismo
+-- día a las 12:00.
+--
+-- __Se usan horas reales y no redondas inventadas__ para que los casos de la
+-- ventana hablen del calendario que el backend va a leer. Con el margen de 45 min,
+-- P1 abre a las 07:45 y P2 a las 11:15, y los instantes de abajo caen a cada lado
+-- de esas dos fronteras.
+bakuP1, bakuP2 :: UTCTime
+bakuP1 = UTCTime (fromGregorian 2026 9 24) (8 * 3600 + 30 * 60)
+bakuP2 = UTCTime (fromGregorian 2026 9 24) (12 * 3600)
+
+-- | 07:00 — cuarenta y cinco minutos __antes__ de que la ventana de P1 abra.
+bakuLongBefore :: UTCTime
+bakuLongBefore = UTCTime (fromGregorian 2026 9 24) (7 * 3600)
+
+-- | 07:50 — dentro del margen y aún antes de la hora prevista de P1.
+bakuInLead :: UTCTime
+bakuInLead = UTCTime (fromGregorian 2026 9 24) (7 * 3600 + 50 * 60)
+
+-- | 09:00 — P1 rodando.
+bakuDuringP1 :: UTCTime
+bakuDuringP1 = UTCTime (fromGregorian 2026 9 24) (9 * 3600)
+
+-- | 09:25 y 09:26 — el feed dando P1 por finalizada, y repitiéndolo. El segundo
+-- existe porque el campo de estado __repite__ (2026-09-14 (k)).
+bakuP1Finalised, bakuP1FinalisedAgain :: UTCTime
+bakuP1Finalised = UTCTime (fromGregorian 2026 9 24) (9 * 3600 + 25 * 60)
+bakuP1FinalisedAgain = UTCTime (fromGregorian 2026 9 24) (9 * 3600 + 26 * 60)
+
+-- | 10:00 — P1 acabada y la ventana de P2 todavía sin abrir.
+bakuAfterP1 :: UTCTime
+bakuAfterP1 = UTCTime (fromGregorian 2026 9 24) (10 * 3600)
+
+-- | 11:20 — dentro del margen de P2, con la finalización de P1 ya vista.
+bakuInLeadP2 :: UTCTime
+bakuInLeadP2 = UTCTime (fromGregorian 2026 9 24) (11 * 3600 + 20 * 60)
+
 -- | @GET \/sessions?session_key=latest@ __verbatim__, medido el 2026-09-15 con la
 -- carrera 11369 como última sesión. Las quince claves son las que OpenF1 emite; el
 -- tipo consume tres, y que las otras doce no estorben es contrato del decode.
@@ -2431,9 +2541,20 @@ openF1SessionArray =
 -- | 'openF1SessionArray' sin @session_type@. No hay default semánticamente correcto
 -- —una sesión de tipo vacío no existe—, así que tumbar la lista es lo correcto: el
 -- fallo sale del 'Handler.Live.Context' como «no se sabe», sin tocar la tabla.
+--
+-- __Lleva el resto de campos obligatorios__, @date_start@ incluido: sin él fallaría
+-- también por eso y el caso pasaría por el motivo equivocado.
 openF1SessionNoType :: ByteString
 openF1SessionNoType =
-  "[{\"session_key\":11369,\"session_name\":\"Race\",\"meeting_key\":1294}]"
+  "[{\"session_key\":11369,\"session_name\":\"Race\",\"meeting_key\":1294,\
+  \\"date_start\":\"2026-09-13T13:00:00+00:00\"}]"
+
+-- | Y sin @date_start@, que es el campo del que cuelga la ventana entera: sin hora
+-- de arranque esa sesión no puede decidir nada, así que tampoco entra a medias.
+openF1SessionNoStart :: ByteString
+openF1SessionNoStart =
+  "[{\"session_key\":11369,\"session_type\":\"Race\",\"session_name\":\"Race\",\
+  \\"meeting_key\":1294}]"
 
 -- | @GET \/meetings?meeting_key=1294@ __verbatim__, medido el mismo día. Diecisiete
 -- claves, de las que el tipo consume una.

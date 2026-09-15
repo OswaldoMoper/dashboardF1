@@ -33,6 +33,17 @@ latestSession = "session_key" =: ("latest" :: Text)
 meetingKey :: Int -> Option 'Https
 meetingKey = ("meeting_key" =:)
 
+-- | Las sesiones que __aún no han terminado__ según el calendario, dado un instante
+-- en ISO 8601.
+--
+-- __Se filtra por la hora de fin y no por la de inicio__, y la diferencia importa:
+-- con @date_start@ la sesión que está rodando queda fuera —su arranque ya pasó—, y
+-- un backend que reiniciara en plena carrera concluiría que no hay nada que mirar.
+-- Verificado contra OpenF1: preguntando desde mitad de la carrera 11369, con
+-- @date_end@ la sesión en curso sale en la respuesta.
+endsAfter :: Text -> Option 'Https
+endsAfter = ("date_end>=" =:)
+
 -- | GET a un endpoint de OpenF1 que devuelve un arreglo JSON, decodificado, con
 -- las opciones que se le den.
 --

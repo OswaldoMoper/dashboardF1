@@ -21,6 +21,28 @@ import qualified Data.Map.Strict        as Map
 import           Data.Text              (Text)
 import           Data.Time.Clock        (UTCTime)
 
+-- | Lo que se sabe sobre cuándo hay sesión que mirar.
+--
+-- __Las horas son las previstas por el calendario, no las reales__, y por eso quien
+-- decide con ellas les resta un margen ('Handler.Live.Helper.feedWindowOpen'). Se
+-- guardan como instantes y no como sesiones para que este módulo, que es infra, no
+-- tenga que conocer los tipos crudos de una fuente.
+--
+-- __La lista vacía es «no se sabe» y hace preguntar__, no callar: no saber cuándo
+-- empieza la siguiente sesión no es saber que no hay ninguna. Es el estado con el
+-- que arranca el proceso y en el que se queda si OpenF1 no contesta — que es lo que
+-- hace durante una sesión, justo cuando más falta haría saberlo.
+data FeedWindow = FeedWindow
+  { fwStarts      :: [UTCTime]
+    -- ^ Horas de arranque previstas de las sesiones que aún no habían terminado
+    -- cuando se pidió el calendario.
+  , fwFinalisedAt :: Maybe UTCTime
+    -- ^ Cuándo se vio por última vez que el feed daba una sesión por finalizada.
+    -- Es lo que cierra la ventana, en vez de una hora de fin: una carrera alargada
+    -- por bandera roja sigue cubierta sin inventar cuánto puede alargarse.
+  }
+  deriving (Eq, Show)
+
 data Env = Env
   { envConfig          :: Config
   , envLiveCache       :: TVar (Maybe (UTCTime, Source, LiveTable))
@@ -64,6 +86,13 @@ data Env = Env
     -- cuyo valor no es una lista — 'LapComparison' es un objeto, y de ahí que el
     -- criterio de fallo del 'Handler.Comparison.Context' sea @null . lcDelta@ y no
     -- \"lista vacía\".
+  , envFeedWindow      :: TVar FeedWindow
+    -- ^ Lo que el backend sabe sobre __cuándo merece la pena pedirle la foto al
+    -- feed__, que cuesta 16-23 s y fuera de sesión no trae nada que servir.
+    --
+    -- No es una cache: no guarda una respuesta para volver a servirla, sino lo que
+    -- hace falta para decidir si preguntar. De ahí que no caduque ni tenga
+    -- respaldo — su valor vacío significa «se pregunta», no «se sirve el dummy».
   , envDriversCache    :: TVar (Map Text [DriverEntry])
     -- ^ Última parrilla buena de @/api/drivers@ __por sesión__ (respaldo si el
     -- microservicio FastF1 no responde).
@@ -75,6 +104,9 @@ data Env = Env
     -- caja única serviría la de otra sesión presentada como la pedida.
   }
 
+-- El récord se construye __por nombre__ y no por posición: un campo nuevo en medio
+-- no borra ninguna línea, así que con posiciones el compilador solo se queja cuando
+-- los tipos no casan y calla cuando casan.
 mkEnv :: Config -> IO Env
 mkEnv cfg = do
   liveCache <- newTVarIO Nothing
@@ -82,13 +114,16 @@ mkEnv cfg = do
   historicalCache <- newTVarIO Nothing
   telemetryCache <- newTVarIO Map.empty
   comparisonCache <- newTVarIO Map.empty
+  feedWindow <- newTVarIO (FeedWindow [] Nothing)
   driversCache <- newTVarIO Map.empty
   pure
-    (Env
-       cfg
-       liveCache
-       tyreCache
-       historicalCache
-       telemetryCache
-       comparisonCache
-       driversCache)
+    Env
+      { envConfig          = cfg
+      , envLiveCache       = liveCache
+      , envTyreCache       = tyreCache
+      , envHistoricalCache = historicalCache
+      , envTelemetryCache  = telemetryCache
+      , envComparisonCache = comparisonCache
+      , envFeedWindow      = feedWindow
+      , envDriversCache    = driversCache
+      }

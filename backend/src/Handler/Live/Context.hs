@@ -22,16 +22,23 @@
 -- Por eso quién baja a OpenF1 lo decide el __estado de la sesión__
 -- ('Handler.Live.Helper.sessionIsLive') y no que el feed conteste.
 --
+-- __Y antes de nada se mira si toca preguntarle__ ('Handler.Live.Helper.feedWindowOpen'):
+-- la foto cuesta 16-23 s y fuera de sesión no trae nada que servir, así que el
+-- calendario de OpenF1 dice cuándo abre la ventana y el propio feed, al dar la
+-- sesión por finalizada, dice cuándo se cierra. Con la ventana cerrada la escalera
+-- arranca directamente en OpenF1 y el refresco deja de pagar la foto.
+--
 -- Cada peldaño devuelve además __de dónde salió el dato__ —el peldaño y la fuente,
 -- que son dos preguntas ('Common.Origin')— y, el de la cache, __cuándo llegó__.
 module Handler.Live.Context where
 
-import           App                    (Env (..))
+import           App                    (Env (..), FeedWindow (..))
 import           Common.Origin          (Origin (..), Source (..))
 import           Common.Types           (DriverStatus (..), LiveTable (..),
                                          LiveTimingRow (..), SessionInfo)
 import           Config                 (Config)
-import           Control.Concurrent.STM (atomically, readTVarIO, writeTVar)
+import           Control.Concurrent.STM (atomically, modifyTVar', readTVarIO,
+                                         writeTVar)
 import           Control.Exception      (SomeException, try)
 import           Data.Maybe             (listToMaybe)
 import           Data.Time.Clock        (UTCTime, getCurrentTime)
@@ -39,7 +46,8 @@ import           Handler.Feed.Helper    (FeedLive (..))
 import qualified Handler.Feed.Manager   as Feed
 import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
                                          Of1Session (..), assembleRows,
-                                         feedVerdict, freezeClock, openf1Session)
+                                         feedVerdict, feedWindowOpen,
+                                         freezeClock, openf1Session)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
@@ -59,6 +67,16 @@ data LiveResult = LiveResult
   deriving (Eq, Show)
 
 -- | Devuelve la tabla de live timing por la escalera de cuatro peldaños.
+--
+-- __Antes de la escalera se mira si la ventana está abierta__, y con ella cerrada el
+-- feed no se toca: se arranca en OpenF1 y el refresco se ahorra los 16-23 s de la
+-- foto. La ventana no puede dejar la pantalla sin directo — cerrada solo está
+-- cuando hay calendario y dice que no hay sesión, o cuando el propio feed dio la
+-- última por finalizada.
+--
+-- __El instante de la puerta y el de servir son dos y a propósito.__ Entre uno y
+-- otro puede haber medio minuto de foto, y el reloj de la sesión hay que resolverlo
+-- con el de responder, no con el de decidir.
 --
 -- __El fallo del feed y su lista vacía significan cosas distintas y se tratan
 -- distinto__ (2026-09-12):
@@ -80,9 +98,56 @@ data LiveResult = LiveResult
 -- de OpenF1 antes de enseñar algo.
 getLiveTiming :: Env -> IO LiveResult
 getLiveTiming env = do
-  feed <-
-    try (Feed.fetchFeedLive (envConfig env)) :: IO (Either SomeException FeedLive)
-  either (const (fromCache env)) (fromFeed env) feed
+  now <- getCurrentTime
+  window <- readTVarIO (envFeedWindow env)
+  if feedWindowOpen now (fwStarts window) (fwFinalisedAt window)
+    then do
+      feed <-
+        try (Feed.fetchFeedLive (envConfig env))
+          :: IO (Either SomeException FeedLive)
+      either (const (fromCache env)) (fromFeed env) feed
+    else fromOpenF1 env
+
+-- | Guarda cuándo se vio que el feed daba la sesión por finalizada, y vuelve a
+-- pedir el calendario.
+--
+-- __Las dos cosas juntas y en este orden__, porque son el mismo suceso: la señal
+-- cierra la ventana de la sesión que acaba, y el calendario nuevo es el que dice
+-- cuándo abre la siguiente.
+--
+-- __Se ejecuta más de una vez sin daño__: el campo de estado repite @Finalised@
+-- (2026-09-14 (k)), y tanto guardar el instante como releer el calendario dan lo
+-- mismo aplicados dos veces. En la práctica ocurre una sola, porque lo que guarda
+-- es justo lo que cierra la ventana.
+noteFinalised :: Env -> UTCTime -> IO ()
+noteFinalised env at = do
+  atomically $
+    modifyTVar' (envFeedWindow env) (\w -> w {fwFinalisedAt = Just at})
+  refreshFeedWindow env
+
+-- | Pide el calendario y guarda las horas de arranque.
+--
+-- __Un fallo no borra lo que había__, y la diferencia importa: OpenF1 devuelve
+-- @401@ durante una sesión, así que el momento en que más se le pregunta es aquel
+-- en que no contesta. Vaciar la lista por eso convertiría un calendario bueno en
+-- «no se sabe», que hace pagar la foto en cada refresco.
+--
+-- Al arrancar el proceso la lista está vacía, así que hasta que esto salga bien una
+-- vez se pregunta al feed siempre — el precio declarado de no perder el directo.
+refreshFeedWindow :: Env -> IO ()
+refreshFeedWindow env = do
+  now <- getCurrentTime
+  result <-
+    try (Manager.fetchCalendar (envConfig env) now)
+      :: IO (Either SomeException [Of1Session])
+  either
+    (const (pure ()))
+    (\sessions ->
+       atomically $
+       modifyTVar'
+         (envFeedWindow env)
+         (\w -> w {fwStarts = map osStart sessions}))
+    result
 
 -- | El peldaño del feed: despacha sobre lo que 'feedVerdict' decidió.
 --
@@ -105,7 +170,7 @@ fromFeed env live = do
   case feedVerdict now live of
     FeedServes table -> serveFresh env now Feed table
     FeedEmpty        -> fromOpenF1 env
-    FeedFinalised    -> fromOpenF1 env
+    FeedFinalised    -> noteFinalised env now >> fromOpenF1 env
 
 -- | El peldaño de OpenF1: los siete GET y el ensamblado, con la cache detrás.
 --

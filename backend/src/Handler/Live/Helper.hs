@@ -24,7 +24,11 @@ module Handler.Live.Helper
     -- * La decisión de la escalera sobre el feed
   , FeedVerdict (..)
   , feedVerdict
+    -- * Cuándo merece la pena mirar el feed
+  , feedWindowLead
+  , feedWindowOpen
     -- * Transformaciones puras
+  , isoInstant
   , assembleRows
   , feedRows
   , feedStatus
@@ -53,13 +57,15 @@ import           Data.Aeson.Types      (Parser)
 import           Data.Foldable         (toList)
 import           Data.Function         (on)
 import           Data.List             (find, groupBy, maximumBy, sortOn)
-import           Data.Maybe            (fromMaybe, mapMaybe)
-import           Data.Ord              (comparing)
+import           Data.Maybe            (fromMaybe, listToMaybe, mapMaybe)
+import           Data.Ord              (Down (..), comparing)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
 import           Data.Text.Read        (decimal)
-import           Data.Time.Clock       (UTCTime, diffUTCTime)
-import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
+import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime,
+                                        diffUTCTime)
+import           Data.Time.Format      (defaultTimeLocale, formatTime,
+                                        parseTimeM)
 import           Handler.Feed.Helper   (FeedLive (..), FeedRow (..),
                                         FeedSession (..))
 import           Handler.OpenF1.Helper (Of1Driver (..))
@@ -153,6 +159,11 @@ data Of1Session = Of1Session
   { osType    :: Text  -- ^ @\"Race\"@, @\"Qualifying\"@, @\"Practice\"@.
   , osName    :: Text  -- ^ @\"Race\"@, @\"Practice 1\"@.
   , osMeeting :: Int   -- ^ Clave del gran premio, para poder preguntar su nombre.
+  , osStart   :: UTCTime
+    -- ^ Hora de arranque __prevista__, que no es la real: medido sobre la carrera
+    -- 11369, el feed dio la sesión por empezada cuatro minutos después de ésta. Es
+    -- lo que 'feedWindowOpen' usa para saber cuándo empezar a mirar, y por eso le
+    -- resta un margen en vez de creérsela.
   }
   deriving (Eq, Show)
 
@@ -162,6 +173,7 @@ instance FromJSON Of1Session where
       <$> o .: "session_type"
       <*> o .: "session_name"
       <*> o .: "meeting_key"
+      <*> o .: "date_start"
 
 -- | @/meetings@: el nombre del gran premio, que @\/sessions@ no publica.
 --
@@ -372,6 +384,61 @@ sessionClock now fs = do
       let elapsed = floor (diffUTCTime now published) :: Int
       pure (SessionClock (max 0 (remaining - elapsed)) True)
     else pure (SessionClock remaining False)
+
+-- | Cuánto antes de la hora prevista se empieza a mirar el feed.
+--
+-- __Es el único número inventado de la ventana, y aun así tiene dos mediciones
+-- detrás.__ El feed publica mucho antes de la hora oficial: en la carrera 11369 su
+-- foto ya acumulaba dato de 39 min 59 s antes, y en la clasificación 11365 de
+-- 13 min 42 s antes. Las dos son cotas inferiores —la grabación empezó después—,
+-- así que 45 min cubre lo observado con holgura.
+--
+-- __Quedarse corto no rompe nada, solo llega tarde:__ la tabla de parrilla que el
+-- feed ya publica antes de arrancar —22 coches a 1 min 51 s de la hora prevista—
+-- se enseñaría desde OpenF1 en vez de desde el feed.
+feedWindowLead :: NominalDiffTime
+feedWindowLead = 45 * 60
+
+-- | Si merece la pena pedirle la foto al feed en este instante.
+--
+-- Recibe las horas de arranque __previstas__ de las sesiones que el calendario
+-- publica, y el instante en que se vio por última vez que el feed daba una sesión
+-- por finalizada.
+--
+-- __Sin calendario se pregunta__ (la lista vacía), y es deliberado: no saber cuándo
+-- empieza la siguiente no es saber que no hay ninguna. El precio es el de hoy —una
+-- foto de 16-23 s por refresco— y el beneficio es que un reinicio en pleno fin de
+-- semana no deja la pantalla sin directo, que es para lo que existe el dashboard.
+--
+-- __La ventana abre por reloj y cierra por señal.__ Abre 'feedWindowLead' antes de
+-- la hora prevista; no cierra a una hora sino cuando el feed dice que la sesión
+-- acabó, así que __una carrera alargada por bandera roja sigue cubierta__ sin que
+-- nadie haya tenido que inventar cuánto puede alargarse.
+--
+-- __La señal se compara contra la apertura de la sesión vigente, no se consume__, y
+-- eso es lo que hace que la repetición no muerda: el campo de estado emite
+-- @Finalised@ más de una vez (2026-09-14 (k)), y aplicar esto dos veces da lo mismo
+-- que aplicarlo una. Un «avanza a la siguiente» se habría saltado una sesión.
+--
+-- __Y se reabre sola:__ cuando la sesión siguiente cruza su apertura, esa apertura
+-- pasa a ser posterior a la finalización vista, así que vuelve a dar abierto sin
+-- necesidad de olvidar nada.
+feedWindowOpen :: UTCTime -> [UTCTime] -> Maybe UTCTime -> Bool
+feedWindowOpen now starts finalisedAt
+  | null starts = True
+  | otherwise   = maybe False stillLive latestOpening
+  where
+    latestOpening =
+      listToMaybe (sortOn Down (filter (<= now) (map opensAt starts)))
+    opensAt = addUTCTime (negate feedWindowLead)
+    stillLive opened = maybe True (< opened) finalisedAt
+
+-- | Un instante en la forma ISO 8601 que este proyecto emite, con segundos enteros.
+--
+-- La usan el filtro del calendario de OpenF1 y la cabecera @X-Data-Fetched-At@. Son
+-- dos usos distintos de la __misma__ forma, y por eso vive aquí en vez de dos veces.
+isoInstant :: UTCTime -> Text
+isoInstant = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
 
 -- | Si una sesión en ese estado sigue dando directo.
 --

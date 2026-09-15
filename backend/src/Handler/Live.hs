@@ -24,11 +24,10 @@ import           Common.Origin          (originLabel, sourceLabel)
 import           Common.Types           (LiveTable)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Text              (Text)
-import qualified Data.Text              as T
 import           Data.Time.Clock        (UTCTime)
-import           Data.Time.Format       (defaultTimeLocale, formatTime)
 import           Handler.Live.Context   (LiveResult (..))
 import qualified Handler.Live.Context   as Context
+import           Handler.Live.Helper    (isoInstant)
 import           Servant                (Handler, Header, Headers, addHeader,
                                          noHeader)
 
@@ -79,8 +78,12 @@ withOrigin result =
 
 -- | El instante en ISO 8601 y UTC, __con segundos enteros__.
 --
--- @%S@ no lleva fracción, y es a propósito: el sello se lee como una hora
+-- Los segundos van sin fracción a propósito: el sello se lee como una hora
 -- («14:03»), y los microsegundos de 'getCurrentTime' solo serían ruido en la
 -- cabecera.
+--
+-- La forma la pone 'Handler.Live.Helper.isoInstant', que es la misma que el filtro
+-- del calendario de OpenF1 manda en la URL. El nombre se queda porque dice para qué
+-- es este uso, que la función general no puede decir.
 fetchedAtText :: UTCTime -> Text
-fetchedAtText = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
+fetchedAtText = isoInstant
