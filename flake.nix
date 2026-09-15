@@ -109,6 +109,19 @@
             exit 2
           fi
         '';
+
+        # `packages.dev` embeds the frontend, backend and telemetry store paths, so
+        # putting it in the dev shell would rebuild GHCJS on every entry after a
+        # source change — and with direnv, in every terminal. This launcher gives it
+        # the same short name and defers to `nix run`, which builds only when the
+        # command is actually used.
+        devLauncher = pkgs.writeShellApplication {
+          name = "dashboardF1-dev";
+          text = ''
+            ${guardRoot}
+            exec nix run .#dev -- "$@"
+          '';
+        };
       in
       {
         # ── Backend Servant (Fase 1: /home + /api/* en :8080, override con PORT) ──
@@ -205,7 +218,8 @@
           text = ''
             ${guardRoot}
             if [ "$#" -lt 1 ]; then
-              echo "uso: nix run .#record -- <fichero> [timeout_segundos]" >&2
+              echo "uso: dashboardF1-record <fichero> [timeout_segundos]" >&2
+              echo "     (o nix run .#record -- <fichero> [timeout_segundos])" >&2
               exit 2
             fi
             exec python telemetry-service/record_live.py "$@"
@@ -276,7 +290,7 @@
             fi
             if [ -z "$port" ]; then
               echo "error: no hay ningún backend escuchando. Arráncalo, o di el puerto:" >&2
-              echo "       PORT=8097 nix run .#api -- live" >&2
+              echo "       PORT=8097 dashboardF1-api live" >&2
               exit 2
             fi
             exec curl -i -sS "http://127.0.0.1:$port/api/''${1:-live}"
@@ -306,7 +320,7 @@
         # ── Haskell dev shell (backend + frontend source-level tooling) ──
         devShells.default = pkgs.mkShell {
           name = "dashboardF1-dev";
-          packages = with pkgs; [
+          packages = (with pkgs; [
             ghc
             cabal-install
             haskell-language-server
@@ -314,17 +328,26 @@
             stylish-haskell
             hlint
             pkg-config
+          ]) ++ [
+            devLauncher
+            self'.packages.test
+            self'.packages.serve
+            self'.packages.api
+            self'.packages.live
+            self'.packages.record
           ];
           buildInputs = with pkgs; [
             zlib
           ];
           shellHook = ''
             echo "F1 Functional Dashboard — dev shell (Haskell)"
-            echo "  backend : cabal run backend   # Servant en :8080 (Fase 0, sesión 3)"
-            echo "  todo    : nix run .#dev       # microservicio + backend, STATIC_DIR desde el store"
-            echo "  pruebas : nix run .#test      # cabal build all + cabal test all"
-            echo "  servir  : nix run .#serve     # el binario de cabal, :8097, STATIC_DIR=result"
-            echo "  api     : nix run .#api -- live   # curl -i a /api/live, con cabeceras"
+            echo "  backend : cabal run backend       # Servant en :8080 (Fase 0, sesión 3)"
+            echo "  todo    : dashboardF1-dev         # microservicio + backend, STATIC_DIR desde el store"
+            echo "  pruebas : dashboardF1-test        # cabal build all + cabal test all"
+            echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
+            echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
+            echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"
+            echo "  grabar  : dashboardF1-record <fichero> [segundos]"
           '';
         };
 
