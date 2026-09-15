@@ -112,14 +112,16 @@ import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               SourceHeaderName, fetchedAtText,
                                               withOrigin)
 import           Handler.Live.Context        (LiveResult (..))
-import           Handler.Live.Helper         (Of1Interval, Of1Lap, Of1Position,
+import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
+                                              Of1Lap, Of1Position,
                                               Of1Result (..), assembleRows,
                                               classificationGaps,
                                               classificationTime, feedRows,
                                               feedSession, feedStatus,
-                                              freezeClock, lapProgress,
-                                              parseFeedInstant, parseRemaining,
-                                              sessionClock)
+                                              feedVerdict, freezeClock,
+                                              lapProgress, parseFeedInstant,
+                                              parseRemaining, sessionClock,
+                                              sessionIsLive)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
@@ -695,11 +697,7 @@ main = hspec $ do
       -- El `\"LEADER\"` y el `\"-\"` los pone el microservicio, con el mismo
       -- criterio que `assembleRows`: la tabla no puede decir dos cosas distintas
       -- según de dónde venga el dato, así que aquí no se recalculan.
-      fmap feedRows (tryFeedRows feedTable)
-        `shouldBe` Right
-          [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running
-          , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Dnf
-          ]
+      fmap feedRows (tryFeedRows feedTable) `shouldBe` Right feedRowsFixture
 
     it "ordena por posición aunque el emisor mande la tabla desordenada" $
       -- El microservicio ya ordena. Que esta función lo repita es lo que impide que
@@ -833,6 +831,51 @@ main = hspec $ do
     it "sin restante no hay reloj, aunque venga el instante" $
       fmap (sessionClock raceServedAt) (trySession feedSessionUtcOnly)
         `shouldBe` Right Nothing
+
+  describe "sessionIsLive" $ do
+    it "solo una sesión finalizada deja de dar directo" $
+      -- `Finalised` es el único estado que sale exactamente una vez en las dos
+      -- grabaciones (2026-09-13 (c)); «terminada» cicla por segmento y no sirve.
+      map sessionIsLive [SessionInactive, SessionStarted, SessionFinalised]
+        `shouldBe` [True, True, False]
+
+    it "un estado que no se reconoce sigue dando directo" $
+      -- La ausencia de la señal no es la señal contraria: un estado nuevo del feed
+      -- tratado como «acabada» escondería la única fuente que publica en carrera.
+      sessionIsLive (SessionUnknown "Aborted") `shouldBe` True
+
+    it "y sobre las dos grabaciones reales, la carrera sí y la clasificación no" $
+      -- Contra los fixtures y no contra constructores escritos a mano: lo que se
+      -- afirma es que el estado REAL del feed atraviesa el decode y el mapeo hasta
+      -- aquí con el sentido correcto.
+      map
+        (fmap (sessionIsLive . siState . feedSession raceServedAt) . trySession)
+        [feedSessionRace, feedSessionQualy]
+        `shouldBe` [Right True, Right False]
+
+  -- La decisión entera de la escalera sobre el feed, sin levantar red. Vive en el
+  -- `Helper` para que estas tres ramas existan: el `Context` solo despacha sobre
+  -- ellas, y ahí no habría forma de probarlas.
+  describe "feedVerdict" $ do
+    it "con filas y la sesión en marcha, sirve el feed" $
+      fmap (feedVerdict raceServedAt) (tryLive feedLiveFull)
+        `shouldBe` Right (FeedServes (LiveTable (Just raceSessionFixture) feedRowsFixture))
+
+    it "con filas pero la sesión finalizada, NO sirve el feed" $
+      -- Es lo que cierra el §4 punto 37: el feed sigue devolviendo la clasificación
+      -- final durante horas, y servirla como `fresh` es afirmar que es de ahora.
+      fmap (feedVerdict raceServedAt) (tryLive feedLiveFinalised)
+        `shouldBe` Right FeedFinalised
+
+    it "sin filas no hay tabla, anuncie lo que anuncie la sesión" $
+      -- Se mira antes que el estado: la sesión que venga al lado no cambia que no
+      -- haya nada que servir.
+      fmap (feedVerdict raceServedAt) (tryLive feedLiveEmpty)
+        `shouldBe` Right FeedEmpty
+
+    it "con filas y sin sesión, se sirve: la ausencia no es la señal contraria" $
+      fmap (feedVerdict raceServedAt) (tryLive feedLiveWithoutSession)
+        `shouldBe` Right (FeedServes (LiveTable Nothing feedRowsFixture))
 
   describe "freezeClock" $ do
     it "para el reloj sin borrarlo ni tocar nada más de la sesión" $
@@ -2201,6 +2244,24 @@ feedLiveEmpty = "{\"session\":null,\"rows\":[]}"
 -- Un contrato roto, que NO es lo mismo que una tabla vacía.
 feedLiveRowsAbsent :: ByteString
 feedLiveRowsAbsent = "{\"session\":" <> feedSessionRace <> "}"
+
+-- Una sesión ya finalizada que aun así llega con su tabla: es lo que el feed sirvió
+-- durante horas tras la bandera, y lo que hace falta para ejercitar el §4 punto 37.
+-- El estado sale de la clasificación 11365 y es el REAL; medidos sobre la grabación
+-- de la carrera, los cuatro mensajes de `SessionInfo` dan `Inactive`, `Started`,
+-- `Finalised` y `Finalised` — o sea que el campo repite, y por eso lo que se lee es
+-- un estado y no una transición.
+feedLiveFinalised :: ByteString
+feedLiveFinalised =
+  "{\"session\":" <> feedSessionQualy <> ",\"rows\":" <> feedTable <> "}"
+
+-- | 'feedTable' ya mapeada. El líder llega con @\"LEADER\"@ y @\"-\"@ puestos por el
+-- microservicio, y el segundo con su abandono.
+feedRowsFixture :: [LiveTimingRow]
+feedRowsFixture =
+  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running
+  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Dnf
+  ]
 
 -- El instante en que se sirve la sesión de carrera: media hora después de que el
 -- feed publicara su reloj (13:04:05), para que la resta dé un número que se puede

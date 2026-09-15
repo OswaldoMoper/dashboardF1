@@ -11,9 +11,14 @@
 --
 -- __El feed va delante de OpenF1, y el orden lo decide qué contesta, no qué hora
 -- es__ (2026-09-12): OpenF1 responde @401@ en todos sus endpoints mientras una
--- sesión rueda —incluidas las pasadas— y abre después; el feed publica mientras
--- rueda y calla después. Son complementarias, así que la escalera se alarga en vez
--- de cambiar de fuente.
+-- sesión rueda —incluidas las pasadas— y abre después. Son complementarias, así que
+-- la escalera se alarga en vez de cambiar de fuente.
+--
+-- __Pero el feed sigue contestando con la sesión ya acabada__ (2026-09-13 (b)), al
+-- contrario de lo que se creyó al montar esta escalera: durante horas devuelve la
+-- clasificación final como si fuera de ahora, y solo más tarde se queda sin filas.
+-- Por eso quién baja a OpenF1 lo decide el __estado de la sesión__
+-- ('Handler.Live.Helper.sessionIsLive') y no que el feed conteste.
 --
 -- Cada peldaño devuelve además __de dónde salió el dato__ —el peldaño y la fuente,
 -- que son dos preguntas ('Common.Origin')— y, el de la cache, __cuándo llegó__.
@@ -29,8 +34,8 @@ import           Control.Exception      (SomeException, try)
 import           Data.Time.Clock        (UTCTime, getCurrentTime)
 import           Handler.Feed.Helper    (FeedLive (..))
 import qualified Handler.Feed.Manager   as Feed
-import           Handler.Live.Helper    (Of1Interval, assembleRows, feedRows,
-                                         feedSession, freezeClock)
+import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
+                                         assembleRows, feedVerdict, freezeClock)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
@@ -54,7 +59,10 @@ data LiveResult = LiveResult
 -- __El fallo del feed y su lista vacía significan cosas distintas y se tratan
 -- distinto__ (2026-09-12):
 --
--- * __Filas__ → son de la sesión en marcha, y es la única fuente que las tiene.
+-- * __Filas de una sesión viva__ → son de la sesión en marcha, y es la única fuente
+--   que las tiene.
+-- * __Filas de una sesión finalizada__ → el dato ya no cambia y OpenF1 lo tiene
+--   también, con la ventaja de que él sí sabe que es definitivo: se baja a él.
 -- * __Tabla vacía__ → no hay sesión rodando, que es exactamente cuando OpenF1
 --   contesta: se baja a él. La sesión que venga al lado no cambia esto: sin filas
 --   no hay tabla que servir.
@@ -70,21 +78,30 @@ getLiveTiming :: Env -> IO LiveResult
 getLiveTiming env = do
   feed <-
     try (Feed.fetchFeedLive (envConfig env)) :: IO (Either SomeException FeedLive)
-  case feed of
-    Left _                          -> fromCache env
-    Right live | null (flRows live) -> fromOpenF1 env
-    Right live                      -> serveFeed env live
+  either (const (fromCache env)) (fromFeed env) feed
 
--- | Sirve lo que el feed acaba de entregar, sesión incluida.
+-- | El peldaño del feed: despacha sobre lo que 'feedVerdict' decidió.
+--
+-- __Aquí no hay ninguna regla, y es a propósito.__ Las tres ramas las decide una
+-- función pura con suite; este módulo solo pone los efectos. Las dos que bajan a
+-- OpenF1 se escriben por separado aunque hagan lo mismo, para que exponer el motivo
+-- —lo que 2026-09-13 (f) quiere para el otro extremo de la escalera— no obligue a
+-- volver a partirlas.
 --
 -- __El instante se toma una vez y sirve para las dos cosas:__ resolver el reloj de
--- la sesión ('Handler.Live.Helper.feedSession') y sellar la cache. Tomarlo dos
--- veces dejaría guardado un reloj que dice de un momento distinto al de su sello.
-serveFeed :: Env -> FeedLive -> IO LiveResult
-serveFeed env live = do
+-- la sesión y sellar la cache. Tomarlo dos veces dejaría guardado un reloj que dice
+-- de un momento distinto al de su sello.
+--
+-- Bajar a OpenF1 __no refresca la cache con lo del feed__, y es lo que se quiere:
+-- si OpenF1 tampoco contesta, lo guardado sigue siendo la última tabla buena con su
+-- sesión, y es lo que 'fromCache' sirve.
+fromFeed :: Env -> FeedLive -> IO LiveResult
+fromFeed env live = do
   now <- getCurrentTime
-  serveFresh env now Feed $
-    LiveTable (feedSession now <$> flSession live) (feedRows (flRows live))
+  case feedVerdict now live of
+    FeedServes table -> serveFresh env now Feed table
+    FeedEmpty        -> fromOpenF1 env
+    FeedFinalised    -> fromOpenF1 env
 
 -- | El peldaño de OpenF1: los cinco GET y el ensamblado, con la cache detrás.
 --

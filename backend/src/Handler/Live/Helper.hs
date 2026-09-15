@@ -18,12 +18,16 @@ module Handler.Live.Helper
   , Of1Interval (..)
   , Of1Lap (..)
   , Of1Result (..)
+    -- * La decisión de la escalera sobre el feed
+  , FeedVerdict (..)
+  , feedVerdict
     -- * Transformaciones puras
   , assembleRows
   , feedRows
   , feedStatus
   , feedSession
   , sessionClock
+  , sessionIsLive
   , freezeClock
   , lapProgress
   , parseRemaining
@@ -36,8 +40,9 @@ module Handler.Live.Helper
   ) where
 
 import           Common.Types          (DriverStatus (..), LapProgress (..),
-                                        LiveTimingRow (..), SessionClock (..),
-                                        SessionInfo (..), sessionStateFrom)
+                                        LiveTable (..), LiveTimingRow (..),
+                                        SessionClock (..), SessionInfo (..),
+                                        SessionState (..), sessionStateFrom)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
@@ -51,7 +56,8 @@ import qualified Data.Text             as T
 import           Data.Text.Read        (decimal)
 import           Data.Time.Clock       (UTCTime, diffUTCTime)
 import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
-import           Handler.Feed.Helper   (FeedRow (..), FeedSession (..))
+import           Handler.Feed.Helper   (FeedLive (..), FeedRow (..),
+                                        FeedSession (..))
 import           Handler.OpenF1.Helper (Of1Driver (..))
 import           Text.Printf           (printf)
 
@@ -292,6 +298,70 @@ sessionClock now fs = do
       let elapsed = floor (diffUTCTime now published) :: Int
       pure (SessionClock (max 0 (remaining - elapsed)) True)
     else pure (SessionClock remaining False)
+
+-- | Si una sesión en ese estado sigue dando directo.
+--
+-- __El feed no deja de contestar cuando la sesión acaba__, y eso está medido: tras
+-- la bandera siguió publicando 9 min 20 s y después latió cada 15 s
+-- indefinidamente, devolviendo la clasificación final como si fuera de ahora
+-- (2026-09-13 (b)). O sea que «¿hay directo?» no se puede deducir de que el feed
+-- conteste.
+--
+-- __Lo que sí deja de publicar, más tarde, son las filas__, y entonces la tabla
+-- vacía basta para bajar a OpenF1 sin este predicado. Medido a los dos lados: el
+-- feed servía la clasificación final el mismo día de la carrera y el siguiente, y a
+-- los dos días ya no. O sea que la ventana que este predicado cubre es la de
+-- __después de la bandera y antes de que el feed se vacíe__ — que es exactamente el
+-- rato en que alguien está mirando la pantalla.
+--
+-- __'Common.Types.SessionFinalised' es la única señal, y es única de verdad:__ sale
+-- exactamente una vez en las dos sesiones grabadas, mientras que «terminada» cicla
+-- por segmento —tres veces en una clasificación— y «empezada» con ella
+-- (2026-09-13 (c)).
+--
+-- __Lo que no se reconoce sigue dando directo__, igual que en 'feedStatus': un
+-- estado nuevo del feed no es una sesión acabada, y tratarlo como tal escondería la
+-- única fuente que publica durante una carrera.
+sessionIsLive :: SessionState -> Bool
+sessionIsLive SessionFinalised = False
+sessionIsLive _                = True
+
+-- | Qué se puede hacer con lo que el feed acaba de entregar.
+--
+-- __Los dos motivos de no servirlo van separados y no fundidos en un 'Nothing'__,
+-- aunque el llamador haga lo mismo con los dos. Fundirlos repetiría el defecto que
+-- 2026-09-13 (f) dejó abierto en el otro extremo de esta escalera: caer a la cache
+-- por cuatro causas distintas y no poder decir cuál fue. Aquí el «por qué» existe
+-- desde el principio, y cuando alguien quiera exponerlo no habrá que reabrir esto.
+data FeedVerdict
+  = FeedServes LiveTable  -- ^ Sesión en marcha y con filas: esto es el directo.
+  | FeedEmpty             -- ^ Contestó sin filas, o sea que no hay sesión rodando.
+  | FeedFinalised         -- ^ Trae filas, pero de una sesión que ya terminó.
+  deriving (Eq, Show)
+
+-- | La decisión de la escalera sobre el feed, sin efectos.
+--
+-- Vive aquí y no dentro de 'Handler.Live.Context' para que las tres ramas tengan
+-- suite: el @Context@ solo sabe despachar sobre esto. Es el tercer modo de la
+-- disciplina de código ciego —colocarlo donde nace con cobertura— y no una
+-- verificación añadida después.
+--
+-- __El instante entra por argumento__ por lo mismo que en 'feedSession': el único
+-- campo que depende de «ahora» es el restante del reloj, y quien llama pasa el
+-- mismo instante que va a servir.
+--
+-- __Sin filas no hay tabla, se anuncie lo que se anuncie.__ La sesión que venga al
+-- lado no cambia el desenlace, así que ese caso se mira primero.
+feedVerdict :: UTCTime -> FeedLive -> FeedVerdict
+feedVerdict now live
+  | null (flRows live) = FeedEmpty
+  | keepsGoing         = FeedServes (LiveTable session (feedRows (flRows live)))
+  | otherwise          = FeedFinalised
+  where
+    session   = feedSession now <$> flSession live
+    -- Sin sesión que lo desmienta se sirve: la ausencia de la señal no es la señal
+    -- contraria, que es el mismo criterio que 'sessionIsLive' aplica al desconocido.
+    keepsGoing = maybe True (sessionIsLive . siState) session
 
 -- | La misma sesión con su reloj parado, para servirla desde la cache.
 --
