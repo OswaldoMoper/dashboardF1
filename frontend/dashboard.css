@@ -46,12 +46,13 @@
 
   /* La banda de sesión. El alto es un número y no `auto` porque `.canvas` lo
      descuenta: con `auto`, una banda que creciera dejaría el lienzo largo y la
-     página con scroll nuevo.
+     página con scroll nuevo. Da para un botón de la altura de los switchers, que
+     es lo que lleva dentro.
 
      El hueco que le cede al botón sale de la misma cuenta que la muesca, pero la
      banda empieza a 24 px del borde (solo el `padding` de `.app`) donde la tarjeta
      empezaba a 32, así que el botón se le mete 39 px en vez de 31. */
-  --band-h:     2rem;
+  --band-h:     2.75rem;
   --band-notch: 51px;  /* 39 que se mete + 12 de aire */
 
   /* Radios. */
@@ -143,59 +144,26 @@ body {
   padding: var(--sp-2);
 }
 
-/* La tarjeta que ocupa la esquina superior derecha del lienzo tiene encima el
-   botón de plegar la cabecera, que es `fixed` sobre la ventana y no sabe nada
-   de los widgets. Quién es esa tarjeta lo dice `Common.Layout.touchesTopRight`,
-   que informa y no corrige; qué hacer al respecto es cosa de esta hoja, que es
-   la única que sabe lo que mide el botón.
+/* La muesca de la esquina superior derecha NO se dibuja mientras la banda de sesión
+   ocupe la franja de arriba: con la cabecera plegada el botón cae dentro de la
+   banda —que es quien le cede sitio— y no llega a ninguna tarjeta, así que el hueco
+   sería un mordisco vacío.
 
-   __La tarjeta le cede la esquina en vez de dejar que se la pisen__
-   (2026-09-12). El botón queda en el hueco, asomando 8 px por arriba y por la
-   derecha del contorno, y el gap se ve: es una decisión, no un choque.
+   El mecanismo se queda entero y sin pintar: `Common.Layout.touchesTopRight` sigue
+   diciendo qué tarjeta toca la esquina, `Pages.Dashboard.slotClass` sigue emitiendo
+   `widget-slot--top-right`, `canvasClass` sigue emitiendo `canvas--header-hidden`,
+   y todos conservan su suite. Es lo que hace falta el día que la banda se pueda
+   anclar ABAJO, porque entonces el botón vuelve a caer sobre esa tarjeta. Los
+   tokens `--notch-w` y `--notch-h` siguen arriba por lo mismo. */
 
-   __Y solo con la cabecera plegada__, que es cuando hay choque. Desplegada, la
-   cabecera ocupa sitio —es `sticky`, no flota— y empuja el lienzo hacia abajo,
-   así que el botón ya no cae sobre ninguna tarjeta: la muesca sería un mordisco
-   vacío, y eso se lee como fallo y no como decisión. Quién está plegada lo dice
-   `.canvas--header-hidden`, que pone `Pages.Dashboard.dashboardPage`.
+/* Cabecera y banda de sesión viajan juntas en una barra pegajosa. Es lo único que
+   las mantiene a la vista: la página desliza lo que mide la cabecera, y una banda
+   suelta se iría debajo de ella, que es opaca.
 
-   La muesca se DIBUJA y no se recorta. `clip-path` haría el mordisco de verdad,
-   pero se llevaría por delante el borde de 1 px justo en los dos cantos nuevos
-   —que son los que hacen que la forma se lea como intencional— y el contenido
-   que pasara por ahí se cortaría en seco. Así que la esquina se tapa con el
-   color del lienzo y los dos cantos se pintan.
-
-   Va en el SLOT y no en `.widget` porque la tarjeta es contenedor de scroll
-   (`overflow: auto`): dentro de ella, la muesca se desplazaría con el contenido
-   y quedaría recortada. El slot es `position: absolute` y no desplaza nada, y
-   su `padding` es justo lo que separa su borde del de la tarjeta. */
-.canvas--header-hidden .widget-slot--top-right::after {
-  content: "";
-  position: absolute;
-  top: var(--sp-2);
-  right: var(--sp-2);
-  box-sizing: border-box;
-  width: var(--notch-w);
-  height: var(--notch-h);
-  background: var(--c-bg);
-  border-left: 1px solid var(--c-border);
-  border-bottom: 1px solid var(--c-border);
-}
-
-/* La fila del título se aparta de la muesca, y se aparta SOLO cuando la muesca
-   existe: un título sangrado sin nada que esquivar no tiene explicación.
-
-   Lo que se le suma es lo que la muesca entra MÁS ALLÁ del padding que la
-   tarjeta ya tiene: sin restarlo, el título se separaría del borde dos veces. */
-.canvas--header-hidden .widget-slot--top-right .widget__head {
-  padding-right: calc(var(--notch-w) - var(--sp-4));
-}
-
-/* La cabecera flota sobre el lienzo en vez de empujarlo (2026-09-07). Es lo que
-   permite que `.canvas` se lleve la ventana entera sin restarle una altura que
-   habría que medir a ojo y que el `@media` de abajo cambia. Fondo opaco porque
-   tapa widgets: sin él se leerían las dos capas a la vez. */
-.dashboard-header {
+   Fondo opaco porque tapa widgets: sin él se leerían las dos capas a la vez. Y el
+   `z-index` la pone por encima del lienzo pero por debajo del botón de plegar, que
+   tiene que seguir viéndose con la cabecera cerrada. */
+.top-bar {
   position: sticky;
   top: 0;
   z-index: 10;
@@ -204,7 +172,8 @@ body {
 
 /* Plegada se va ENTERA: título y botones de layout juntos (2026-09-07). Que los
    botones se vayan con ella es la decisión, no un efecto colateral — conmutar de
-   layout pasa a ser dos gestos a cambio de que no quede nada tapando el lienzo. */
+   layout pasa a ser dos gestos a cambio de dejar el lienzo despejado. Lo que no se
+   va es la banda de sesión, que vive fuera de ella dentro de `.top-bar`. */
 .dashboard-header--hidden {
   display: none;
 }
@@ -232,11 +201,29 @@ body {
    y bajaría las seis tarjetas con ella. Sin sesión se queda vacía. */
 .session-band {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--sp-2);
   height: var(--band-h);
   box-sizing: border-box;
   font-size: var(--fs-sm);
+}
+
+/* Los dos aspectos entre los que conmuta el botón de la banda. La diferencia no es
+   solo el fondo: la tarjeta se queda dentro del margen de la página, como los seis
+   widgets, y la barra se sale de él a los dos lados. */
+.session-band--card {
+  padding: 0 var(--sp-4);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+}
+
+/* De pared a pared: los márgenes negativos son exactamente el padding de `.app`,
+   que es lo que hay que deshacer para llegar al borde de la ventana. */
+.session-band--bar {
+  margin: 0 calc(var(--sp-5) * -1);
+  padding: 0 var(--sp-5);
+  background: var(--c-surface-2);
 }
 
 /* Con la cabecera plegada el botón cae encima de la banda, igual que caía sobre la
@@ -244,6 +231,18 @@ body {
    plegada: desplegada la cabecera ocupa sitio y el botón no llega hasta aquí. */
 .session-band--header-hidden {
   padding-right: var(--band-notch);
+}
+
+/* La barra llega más a la derecha que la tarjeta —lo que mide el padding de
+   `.app`—, así que para dejar el mismo hueco hay que sumárselo. */
+.session-band--bar.session-band--header-hidden {
+  padding-right: calc(var(--band-notch) + var(--sp-5));
+}
+
+/* El mando de aspecto se va al extremo, como el indicador de las tarjetas, para
+   que su sitio no dependa de lo largo que sea el nombre del gran premio. */
+.session-band__look {
+  margin-left: auto;
 }
 
 /* `min-width: 0` impide que la tabla ancha __estire su caja__; `overflow-x: auto`

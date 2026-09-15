@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecursiveDo       #-}
 
 -- | Página Dashboard (un módulo por flujo, convención @Pages.\<Flujo\>@).
 --
@@ -48,6 +49,10 @@ import           Widgets.Telemetry  (telemetryWidget)
 -- flujo dentro de él la taparía el widget de @y = 0@. Cabecera y banda van delante
 -- en el flujo, y el lienzo se lleva el resto de la ventana.
 --
+-- __Cabecera y banda van dentro de una misma barra pegajosa__ (@.top-bar@), y ése
+-- es el único sitio del que no se escapan al deslizar: sueltas, la página desliza
+-- lo que mide la cabecera y la banda se va debajo de ella, que es opaca.
+--
 -- __La cabecera se pliega y la banda no__: 'headerToggle' abre y cierra la primera
 -- y arranca abierta. El botón se monta antes que ella porque el 'Event' que emite
 -- es lo que alimenta su estado, y no por dónde salga en pantalla.
@@ -60,17 +65,18 @@ dashboardPage :: MonadWidget t m => m ()
 dashboardPage = divClass "page page--dashboard" $ do
   toggleClick <- headerToggle
   openDyn     <- toggle True toggleClick
-  layoutDyn   <- dashboardHeader openDyn
   poll        <- livePoll
-  sessionBand openDyn poll
+  layoutDyn   <- divClass "top-bar" $ do
+    active <- dashboardHeader openDyn
+    sessionBand openDyn poll
+    pure active
   elDynClass "div" (canvasClass <$> openDyn) $
     dyn_ $ ffor layoutDyn $ \l -> mapM_ (slot poll) (widgets l)
   where
-    -- __El lienzo sabe si la cabecera está plegada__, y no por simetría con
-    -- ella: plegada deja de ocupar sitio, el lienzo sube, y solo entonces el
-    -- botón —que es @fixed@ contra la ventana— cae sobre la tarjeta de la
-    -- esquina. La muesca que esa tarjeta abre existe por el choque, así que
-    -- desplegada no debe estar: sería un mordisco sin nada dentro.
+    -- __El lienzo dice si la cabecera está plegada__, para quien necesite saberlo
+    -- desde la hoja de estilos. Hoy no lo lee nadie: lo leía la muesca de la
+    -- esquina, y la banda se la quitó de encima al bajar las tarjetas fuera del
+    -- alcance del botón. Se conserva con el resto de ese mecanismo.
     --
     -- __Va aquí y no en @.page--dashboard@__ para no atar un nudo: el botón que
     -- produce el 'Event' es hijo de la página, así que una clase dinámica en
@@ -127,15 +133,41 @@ dashboardHeader openDyn =
 --
 -- Recibe el pliegue porque con la cabecera plegada el botón le cae encima y tiene
 -- que cederle sitio; quién lo hace y cuánto, lo dice la hoja.
+--
+-- __Tiene dos aspectos y el mando para cambiarlos__ —tarjeta y barra—, y el 'mdo'
+-- es por eso: la clase del contenedor depende de un 'Event' que nace dentro de él.
+-- El estado __no sobrevive a recargar__; recordarlo llega con los layouts
+-- guardables y no antes.
 sessionBand :: MonadWidget t m
             => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> m ()
-sessionBand openDyn poll = do
-  title <- holdUniqDyn (maybe "" sessionTitle . sessionOf <$> poll)
-  elDynClass "div" (bandClass <$> openDyn) (dynText title)
+sessionBand openDyn poll = mdo
+  title  <- holdUniqDyn (maybe "" sessionTitle . sessionOf <$> poll)
+  asCard <- toggle True lookClick
+  lookClick <- elDynClass "div" (bandClass <$> openDyn <*> asCard) $ do
+    dynText title
+    lookSwitch asCard
+  pure ()
   where
-    bandClass open
-      | open      = "session-band"
-      | otherwise = "session-band session-band--header-hidden"
+    bandClass open card =
+      T.unwords $
+        ["session-band", lookClass card]
+          <> ["session-band--header-hidden" | not open]
+
+    lookClass card
+      | card      = "session-band--card"
+      | otherwise = "session-band--bar"
+
+    -- El botón nombra __a dónde lleva__ y no dónde estás: leído sobre una banda
+    -- que ya se ve, «barra» a secas no dice si es lo que hay o lo que habrá.
+    lookSwitch :: MonadWidget t m => Dynamic t Bool -> m (Event t ())
+    lookSwitch card = do
+      (e, _) <- elClass' "button" "switcher__btn session-band__look" $
+                  dynText (lookLabel <$> card)
+      pure (domEvent Click e)
+
+    lookLabel card
+      | card      = "Ver como barra"
+      | otherwise = "Ver como tarjeta"
 
 -- | De qué sesión son las filas que se están enseñando, si se sabe.
 --
@@ -159,12 +191,9 @@ sessionOf p = liveSession . srcValue =<< pollShown p
 -- la separación entre widgets viven en la regla de @.widget-slot@.
 --
 -- __El modificador de la esquina lo pone el slot y no el widget__, por la misma
--- razón: quien sabe dónde está la tarjeta es quien la coloca. El botón de plegar
--- la cabecera es @fixed@ en la esquina de la ventana (2026-09-07 b), y la tarjeta
--- que la ocupa __le cede la esquina__ en vez de dejar que se la pise: la hoja de
--- estilos le abre una muesca. A quién le toca lo dice 'touchesTopRight'; la forma
--- y el tamaño de la muesca, la hoja, que es la única que sabe lo que mide el
--- botón.
+-- razón: quien sabe dónde está la tarjeta es quien la coloca. Marca a la tarjeta
+-- que ocupa la esquina donde vive el botón de plegar, que es @fixed@ contra la
+-- ventana (2026-09-07 b); a quién le toca lo dice 'touchesTopRight'.
 slot :: MonadWidget t m
      => Dynamic t (Poll (Sourced LiveTable)) -> WidgetConfig -> m ()
 slot poll wc =
@@ -174,6 +203,11 @@ slot poll wc =
 -- | Clase del slot: el bloque, y el modificador solo cuando hay algo que
 -- modificar — mismo criterio que el @rowClass@ de 'Widgets.LiveTiming'
 -- (2026-08-27). De los siete slots de los layouts fijos lo llevan dos.
+--
+-- __El modificador no pinta nada hoy:__ la hoja dejó de dibujar la muesca cuando
+-- la banda de sesión bajó las tarjetas fuera del alcance del botón. Se emite igual,
+-- porque la esquina vuelve a estar en disputa en cuanto la banda pueda anclarse
+-- abajo.
 slotClass :: WidgetConfig -> T.Text
 slotClass wc
   | touchesTopRight wc = "widget-slot widget-slot--top-right"
