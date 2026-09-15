@@ -754,7 +754,7 @@ main = hspec $ do
             { siType    = "Race"
             , siName    = "Race"
             , siMeeting = "Spanish Grand Prix"
-            , siState   = SessionStarted
+            , siState   = Just SessionStarted
             , siLaps    = Just (LapProgress 12 57)
               -- Publicado a las 13:04:05.01 con 01:59:59 por delante y servido a
               -- las 13:34:05: han pasado 1799,99 s, o sea 1799 segundos enteros, y
@@ -775,17 +775,20 @@ main = hspec $ do
       -- valor lo pone nuestro backend y éste lo pone el feed, que puede estrenar un
       -- estado sin avisar. Guardarlo es lo que permite saber CUÁL llegó.
       fmap (siState . feedSession raceServedAt) (trySession feedSessionAborted)
-        `shouldBe` Right (SessionUnknown "Aborted")
+        `shouldBe` Right (Just (SessionUnknown "Aborted"))
 
     it "sin ningún campo decodifica igual, con todo en blanco" $
       -- Al contrario que `FeedRow`, aquí no hay campo del que dependan los demás.
+      -- El estado sale en `Just` aun así: el feed que calla dice la cadena vacía, y
+      -- eso es un estado desconocido, no un estado ausente. El hueco del tipo es
+      -- para quien no publica estado ninguno.
       fmap (feedSession raceServedAt) (trySession "{}")
         `shouldBe` Right
           SessionInfo
             { siType    = ""
             , siName    = ""
             , siMeeting = ""
-            , siState   = SessionUnknown ""
+            , siState   = Just (SessionUnknown "")
             , siLaps    = Nothing
             , siClock   = Nothing
             }
@@ -848,10 +851,14 @@ main = hspec $ do
       -- Contra los fixtures y no contra constructores escritos a mano: lo que se
       -- afirma es que el estado REAL del feed atraviesa el decode y el mapeo hasta
       -- aquí con el sentido correcto.
+      --
+      -- El `Just` que queda a la vista es la otra mitad de la afirmación: por el
+      -- feed el estado llega siempre, así que su ausencia no se prueba aquí — se
+      -- prueba donde nace, que es la fuente que no lo publica.
       map
-        (fmap (sessionIsLive . siState . feedSession raceServedAt) . trySession)
+        (fmap (fmap sessionIsLive . siState . feedSession raceServedAt) . trySession)
         [feedSessionRace, feedSessionQualy]
-        `shouldBe` [Right True, Right False]
+        `shouldBe` [Right (Just True), Right (Just False)]
 
   -- La decisión entera de la escalera sobre el feed, sin levantar red. Vive en el
   -- `Helper` para que estas tres ramas existan: el `Context` solo despacha sobre
@@ -2658,7 +2665,7 @@ raceSessionFixture =
     { siType    = "Race"
     , siName    = "Race"
     , siMeeting = "Spanish Grand Prix"
-    , siState   = SessionStarted
+    , siState   = Just SessionStarted
     , siLaps    = Just (LapProgress 12 57)
     , siClock   = Just (SessionClock 5400 True)
     }

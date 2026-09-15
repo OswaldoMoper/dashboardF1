@@ -248,13 +248,18 @@ feedStatus raw =
 -- el único campo que depende de «ahora» es el restante ('sessionClock'). Quien
 -- llama pasa el mismo instante que va a servir, de modo que la sesión y las filas
 -- hablan del mismo momento.
+--
+-- __El estado sale siempre en 'Just'__, aunque 'Common.Types.siState' admita su
+-- ausencia: el feed siempre dice algo, y lo que no se reconozca —la cadena vacía
+-- incluida— entra como desconocido con su texto dentro. El hueco del tipo es para
+-- quien no publica estado ninguno.
 feedSession :: UTCTime -> FeedSession -> SessionInfo
 feedSession now fs =
   SessionInfo
     { siType    = fsType fs
     , siName    = fsName fs
     , siMeeting = fsMeeting fs
-    , siState   = sessionStateFrom (fsState fs)
+    , siState   = Just (sessionStateFrom (fsState fs))
     , siLaps    = lapProgress fs
     , siClock   = sessionClock now fs
     }
@@ -359,9 +364,11 @@ feedVerdict now live
   | otherwise          = FeedFinalised
   where
     session   = feedSession now <$> flSession live
-    -- Sin sesión que lo desmienta se sirve: la ausencia de la señal no es la señal
-    -- contraria, que es el mismo criterio que 'sessionIsLive' aplica al desconocido.
-    keepsGoing = maybe True (sessionIsLive . siState) session
+    -- Sin sesión que lo desmienta se sirve, y sin estado dentro de ella también: la
+    -- ausencia de la señal no es la señal contraria, que es el mismo criterio que
+    -- 'sessionIsLive' aplica al desconocido. Los dos huecos se aplanan en uno
+    -- porque se resuelven igual.
+    keepsGoing = maybe True sessionIsLive (siState =<< session)
 
 -- | La misma sesión con su reloj parado, para servirla desde la cache.
 --

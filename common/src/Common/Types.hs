@@ -179,7 +179,13 @@ data SessionInfo = SessionInfo
   { siType    :: Text  -- ^ Tipo, tal cual lo nombra el feed (@\"Race\"@, @\"Qualifying\"@).
   , siName    :: Text  -- ^ Nombre de la sesión (@\"Race\"@, @\"Sprint Qualifying\"@).
   , siMeeting :: Text  -- ^ Gran premio (@\"Spanish Grand Prix\"@).
-  , siState   :: SessionState
+  , siState   :: Maybe SessionState
+    -- ^ 'Nothing' cuando quien publica la sesión no publica su estado, que es el
+    -- caso de OpenF1: da las horas previstas y nada más. __Es «no se sabe» y no
+    -- «el emisor lo mandó vacío»__, por el mismo criterio que 'liveSession' un
+    -- nivel más arriba; y no se deduce de las horas porque está medido que
+    -- fallaría en los bordes — una carrera arrancó cuatro minutos después de su
+    -- hora prevista y acabó trece antes de la de fin.
   , siLaps    :: Maybe LapProgress
     -- ^ 'Nothing' fuera de carrera, que es el caso de cuatro de las cinco sesiones.
   , siClock   :: Maybe SessionClock
