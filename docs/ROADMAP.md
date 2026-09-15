@@ -403,10 +403,17 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
         saltar cada diez segundos; sin esa marca se trata como parado, que es lo observado.
       - **Un estado que no se reconozca conserva su texto.** El emisor es el feed, que puede estrenar un valor
         sin avisar, así que tirarlo dejaría el aviso sin poder decir cuál llegó.
-      **La mitad de backend está construida desde el 2026-09-14**, y lo que queda es pintarla: el directo ya
-      responde con la sesión envolviendo las filas, y la conocen el feed y la cache. **OpenF1 todavía no dice
-      de cuál habla** —puede, con dos peticiones más, y no da vuelta ni reloj—, así que mientras tanto la
-      cabecera queda vacía siempre que el dato no venga del feed.
+      **La mitad de backend está completa desde el 2026-09-15, y lo único que queda es pintarla.** El directo
+      responde con la sesión envolviendo las filas, y la conocen **las dos fuentes**: el feed la anuncia
+      entera, y OpenF1 da el tipo, el nombre y el gran premio con dos peticiones más. La cache la conserva.
+      Solo el dato de ejemplo sigue sin sesión, porque no salió de ninguna.
+      - **Lo que OpenF1 no puede dar, y hay que pintarlo igual:** no publica estado, ni vuelta, ni reloj, así
+        que los tres llegan vacíos siempre que el dato no venga del feed — que fuera de un fin de semana es
+        casi siempre. Deducir el estado de las horas previstas está descartado por medición: la sesión
+        arrancó cuatro minutos después de la suya y acabó trece antes de la de fin.
+      - **Falta la mitad del reloj que vive en el navegador:** el backend sirve los segundos que quedan
+        resueltos al instante de responder, y quien los pinta tiene que descontarlos entre refrescos o el
+        valor salta cada diez segundos.
 - [x] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
       si trae filas **de una sesión en marcha**, son el directo; si no trae ninguna, se cae a OpenF1; y si
       **falla**, se sirve desde la cache sin intentar OpenF1, para que un feed roto durante una sesión no
