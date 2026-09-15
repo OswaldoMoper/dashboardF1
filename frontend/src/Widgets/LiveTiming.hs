@@ -57,8 +57,9 @@ data LiveState
 -- monta solo cuando cambia lo que se ve.
 --
 -- __Se queda con las filas y descarta la sesión__ que 'Common.Types.LiveTable'
--- trae al lado: esta tarjeta todavía no la enseña, y meterla en 'LiveState' la
--- haría remontar la tabla cada vez que avanzara el reloj.
+-- trae al lado: de la sesión se encarga la banda de la página
+-- ('Pages.Dashboard.sessionBand'), y meterla aquí haría remontar la tabla entera
+-- cada vez que avanzara el reloj.
 liveStateOf :: Poll (Sourced LiveTable) -> LiveState
 liveStateOf p =
   case pollShown p of

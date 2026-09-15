@@ -26,11 +26,12 @@
 module Pages.Dashboard where
 
 import           Common.Layout      (slotStyle, touchesTopRight)
-import           Common.Origin      (Sourced)
-import           Common.Refresh     (Poll)
-import           Common.Types       (Layout (..), LayoutId (..), LiveTable,
-                                     WidgetConfig (..), WidgetId (..),
-                                     WidgetType (..), noParams)
+import           Common.Origin      (Sourced (..))
+import           Common.Refresh     (Poll (..))
+import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
+                                     SessionInfo, WidgetConfig (..),
+                                     WidgetId (..), WidgetType (..), noParams,
+                                     sessionTitle)
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
@@ -38,19 +39,18 @@ import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
 import           Widgets.LiveTiming (livePoll, liveTimingWidget)
 import           Widgets.Telemetry  (telemetryWidget)
 
--- | Pantalla del dashboard: la cabecera —título y conmutación de layouts— y el
--- __lienzo__ con los widgets del layout activo, cada uno en su rectángulo.
+-- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
+-- __banda de sesión__ y el __lienzo__ con los widgets del layout activo, cada uno
+-- en su rectángulo.
 --
--- __La cabecera y el lienzo son hermanos, y no un encabezado dentro del lienzo__:
--- los widgets se colocan desde la esquina de arriba de su contenedor, así que un
--- título en flujo dentro de él lo taparía el widget de @y = 0@. La cabecera flota
--- por encima (@position: sticky@ en la hoja de estilos) y el lienzo se lleva la
--- ventana entera.
+-- __Los tres son hermanos, y el lienzo no lleva encabezado dentro__: los widgets se
+-- colocan desde la esquina de arriba de su contenedor, así que cualquier cosa en
+-- flujo dentro de él la taparía el widget de @y = 0@. Cabecera y banda van delante
+-- en el flujo, y el lienzo se lleva el resto de la ventana.
 --
--- Y precisamente porque flota encima, __se pliega__: 'headerToggle' la abre y la
--- cierra, y arranca abierta. Los tres se montan en este orden por dependencia y
--- no por posición en pantalla — el botón emite el 'Event', 'toggle' lo convierte
--- en estado y la cabecera lo consume.
+-- __La cabecera se pliega y la banda no__: 'headerToggle' abre y cierra la primera
+-- y arranca abierta. El botón se monta antes que ella porque el 'Event' que emite
+-- es lo que alimenta su estado, y no por dónde salga en pantalla.
 --
 -- __El refresco del directo lo monta la página y no la tarjeta__ ('Widgets.LiveTiming.livePoll'),
 -- y se monta __fuera del @dyn_@__: conmutar de layout re-monta los widgets, así que
@@ -62,6 +62,7 @@ dashboardPage = divClass "page page--dashboard" $ do
   openDyn     <- toggle True toggleClick
   layoutDyn   <- dashboardHeader openDyn
   poll        <- livePoll
+  sessionBand openDyn poll
   elDynClass "div" (canvasClass <$> openDyn) $
     dyn_ $ ffor layoutDyn $ \l -> mapM_ (slot poll) (widgets l)
   where
@@ -113,6 +114,38 @@ dashboardHeader openDyn =
     headerClass open
       | open      = "dashboard-header"
       | otherwise = "dashboard-header dashboard-header--hidden"
+
+-- | La banda que dice __de qué sesión__ habla la página.
+--
+-- __Es de la página y no de la tarjeta de Live Timing__, aunque hoy el dato venga
+-- de su misma petición: la sesión nombra lo que enseñan todas las tarjetas a la
+-- vez, y una etiqueta dentro de una de ellas afirmaría que es solo suya.
+--
+-- __No se desmonta cuando no hay sesión__: el lienzo descuenta su alto, así que una
+-- banda que apareciera y desapareciera entre refrescos movería las tarjetas arriba
+-- y abajo. Sin sesión se queda vacía, que es lo que la hoja de estilos espera.
+--
+-- Recibe el pliegue porque con la cabecera plegada el botón le cae encima y tiene
+-- que cederle sitio; quién lo hace y cuánto, lo dice la hoja.
+sessionBand :: MonadWidget t m
+            => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> m ()
+sessionBand openDyn poll = do
+  title <- holdUniqDyn (maybe "" sessionTitle . sessionOf <$> poll)
+  elDynClass "div" (bandClass <$> openDyn) (dynText title)
+  where
+    bandClass open
+      | open      = "session-band"
+      | otherwise = "session-band session-band--header-hidden"
+
+-- | De qué sesión son las filas que se están enseñando, si se sabe.
+--
+-- Los dos 'Nothing' que atraviesa significan cosas distintas y aquí se juntan a
+-- propósito: no haber recibido nada todavía y haber recibido una tabla que no
+-- nombra su sesión se ven igual en la banda, porque en los dos casos no hay sesión
+-- que enseñar. Es el contrapunto de 'Widgets.LiveTiming.liveStateOf', que se queda
+-- con las filas y descarta esto.
+sessionOf :: Poll (Sourced LiveTable) -> Maybe SessionInfo
+sessionOf p = liveSession . srcValue =<< pollShown p
 
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
 -- lienzo, con el estilo que calcula 'slotStyle'.

@@ -197,6 +197,19 @@ data SessionInfo = SessionInfo
 instance ToJSON SessionInfo
 instance FromJSON SessionInfo
 
+-- | De qué sesión habla la página, para enseñárselo a alguien.
+--
+-- __'siType' no entra.__ Coincide con el nombre en la mitad de las sesiones
+-- —medido sobre el calendario de 2026: «Race»\/«Race» y
+-- «Qualifying»\/«Qualifying» son 50 de 131— y el nombre ya distingue por sí solo
+-- las diez formas que se publican, «Sprint» y «Sprint Qualifying» incluidas.
+--
+-- __Un campo en blanco no deja separador suelto:__ el gran premio llega vacío
+-- cuando quien publica la sesión no lo sabe, y entonces esto es el nombre a secas.
+sessionTitle :: SessionInfo -> Text
+sessionTitle s =
+  T.intercalate " · " (filter (not . T.null) [siMeeting s, siName s])
+
 -- | Lo que sirve @GET \/api\/live@: la tabla y de qué sesión es.
 --
 -- __El dato de sesión envuelve las filas en vez de viajar en cabeceras__ porque es

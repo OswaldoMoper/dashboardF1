@@ -82,7 +82,7 @@ import           Common.Types                (DriverEntry (..),
                                               LiveTimingRow (..),
                                               SessionClock (..),
                                               SessionInfo (..),
-                                              SessionState (..),
+                                              SessionState (..), sessionTitle,
                                               StatEntity (..),
                                               TelemetryPoint (..),
                                               TyreStint (..),
@@ -1142,6 +1142,33 @@ main = hspec $ do
       -- el defecto que este módulo existe para cerrar.
       let labels = map statusLabel [Running, Dnf, Dns, Dsq]
        in length (nub labels) `shouldBe` length labels
+
+  describe "sessionTitle" $ do
+    it "junta el gran premio y el nombre, y deja fuera el tipo" $
+      -- El tipo repetiría la palabra: medido sobre el calendario de 2026, tipo y
+      -- nombre coinciden en 50 de las 131 sesiones, y son justo la carrera y la
+      -- clasificación.
+      sessionTitle (namedSession "Race" "Race" "Spanish Grand Prix")
+        `shouldBe` "Spanish Grand Prix · Race"
+
+    it "el nombre distingue las formas que el tipo confunde" $
+      -- `Sprint` llega con tipo `Race` y `Sprint Qualifying` con tipo
+      -- `Qualifying`, que son los mismos que la carrera y la clasificación
+      -- largas: con el tipo dentro, los cuatro modos no se distinguirían.
+      map sessionTitle
+          [ namedSession "Race"       "Sprint"            "Azerbaijan Grand Prix"
+          , namedSession "Qualifying" "Sprint Qualifying" "Azerbaijan Grand Prix"
+          , namedSession "Practice"   "Practice 1"        "Azerbaijan Grand Prix"
+          ]
+        `shouldBe` [ "Azerbaijan Grand Prix · Sprint"
+                   , "Azerbaijan Grand Prix · Sprint Qualifying"
+                   , "Azerbaijan Grand Prix · Practice 1"
+                   ]
+
+    it "sin gran premio no queda un separador suelto" $
+      -- OpenF1 sirve la sesión con el gran premio en blanco cuando no lo sabe
+      -- (`openf1Session`), y entonces el título es el nombre a secas.
+      sessionTitle (namedSession "Race" "Race" "") `shouldBe` "Race"
 
   -- La coherencia entre los dos respaldos de FastF1. No es cosmética: los dos
   -- widgets se miran a la vez, así que un coche que el de comparación pinta y el
@@ -2963,6 +2990,16 @@ raceSessionFixture =
     , siLaps    = Just (LapProgress 12 57)
     , siClock   = Just (SessionClock 5400 True)
     }
+
+-- | Una sesión con el tipo, el nombre y el gran premio que se le pidan, y el resto
+-- como en 'raceSessionFixture'.
+--
+-- __Se construye actualizando y no enumerando los seis campos__: un campo nuevo en
+-- 'SessionInfo' dejaría aquí un hueco que el compilador solo avisa, y actualizando
+-- lo hereda del fixture.
+namedSession :: T.Text -> T.Text -> T.Text -> SessionInfo
+namedSession sType sName sMeeting =
+  raceSessionFixture { siType = sType, siName = sName, siMeeting = sMeeting }
 
 -- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
 liveTableFixture :: LiveTable

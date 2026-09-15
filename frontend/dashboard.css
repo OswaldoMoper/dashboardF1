@@ -44,6 +44,16 @@
   --notch-w: 43px;  /* 31 que se mete + 12 de aire */
   --notch-h: 33px;  /* 21 que se mete + 12 de aire */
 
+  /* La banda de sesión. El alto es un número y no `auto` porque `.canvas` lo
+     descuenta: con `auto`, una banda que creciera dejaría el lienzo largo y la
+     página con scroll nuevo.
+
+     El hueco que le cede al botón sale de la misma cuenta que la muesca, pero la
+     banda empieza a 24 px del borde (solo el `padding` de `.app`) donde la tarjeta
+     empezaba a 32, así que el botón se le mete 39 px en vez de 31. */
+  --band-h:     2rem;
+  --band-notch: 51px;  /* 39 que se mete + 12 de aire */
+
   /* Radios. */
   --r-sm: 4px;
   --r-md: 8px;
@@ -109,13 +119,15 @@ body {
    así que sin un alto explícito se queda en cero y los `height` en porcentaje de
    los slots se calculan contra nada.
 
-   El alto se mide contra la ventana (2026-09-07): el dashboard cabe siempre en
-   pantalla y nunca desliza en vertical. Lo que se resta NO es una medida a ojo de
-   la cabecera —que flota encima y no ocupa sitio— sino exactamente el padding de
-   `.app`, de ahí que sea el mismo token y no un número. */
+   El alto se mide contra la ventana (2026-09-07), y lo que se le resta son los dos
+   elementos que le quitan sitio y que no son medidas a ojo: el padding de `.app`
+   —de ahí que sea el mismo token y no un número— y el alto de la banda de sesión,
+   que va delante de él en el flujo. La cabecera NO entra en la cuenta: es `sticky`,
+   o sea que ocupa sitio y empuja, y por eso la página desliza justo lo que ella
+   mide. */
 .canvas {
   position: relative;
-  height: calc(100vh - var(--sp-5) * 2);
+  height: calc(100vh - var(--sp-5) * 2 - var(--band-h));
 }
 
 /* El rectángulo lo pone el atributo `style` que emite `slotStyle`; aquí va solo
@@ -209,6 +221,29 @@ body {
   top: var(--sp-5);
   right: var(--sp-5);
   z-index: 20;
+}
+
+/* La banda de sesión: dice de qué sesión habla la página. Va entre la cabecera y
+   el lienzo y NO dentro de la tarjeta de Live Timing, aunque hoy el dato salga de
+   su misma petición: la sesión es de la página entera y no de una tarjeta.
+
+   __No desaparece cuando no hay sesión__, y eso no es estética: `.canvas` descuenta
+   su alto, así que una banda que apareciera y desapareciera entre refrescos subiría
+   y bajaría las seis tarjetas con ella. Sin sesión se queda vacía. */
+.session-band {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  height: var(--band-h);
+  box-sizing: border-box;
+  font-size: var(--fs-sm);
+}
+
+/* Con la cabecera plegada el botón cae encima de la banda, igual que caía sobre la
+   tarjeta de la esquina, y la banda le cede el sitio con el mismo criterio. Solo
+   plegada: desplegada la cabecera ocupa sitio y el botón no llega hasta aquí. */
+.session-band--header-hidden {
+  padding-right: var(--band-notch);
 }
 
 /* `min-width: 0` impide que la tabla ancha __estire su caja__; `overflow-x: auto`
