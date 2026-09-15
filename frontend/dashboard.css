@@ -49,11 +49,15 @@
      página con scroll nuevo. Da para un botón de la altura de los switchers, que
      es lo que lleva dentro.
 
-     El hueco que le cede al botón sale de la misma cuenta que la muesca, pero la
-     banda empieza a 24 px del borde (solo el `padding` de `.app`) donde la tarjeta
-     empezaba a 32, así que el botón se le mete 39 px en vez de 31. */
-  --band-h:     2.75rem;
-  --band-notch: 51px;  /* 39 que se mete + 12 de aire */
+     El hueco que le cede al botón se calcula con `--btn-w` y no con `--notch-w`:
+     la banda empieza a 24 px del borde —solo el `padding` de `.app`— donde la
+     tarjeta empezaba a 32, así que el botón le entra entero y no en parte. */
+  --band-h: 2.75rem;
+
+  /* Lo que mide el botón de plegar a lo ancho, sacado de su propia regla: ocupa de
+     24 a 63 px desde el borde derecho de la ventana. Quien le ceda sitio le suma el
+     aire que quiera en vez de arrastrar otro número medido. */
+  --btn-w: 39px;
 
   /* Radios. */
   --r-sm: 4px;
@@ -228,15 +232,32 @@ body {
 
 /* Con la cabecera plegada el botón cae encima de la banda, igual que caía sobre la
    tarjeta de la esquina, y la banda le cede el sitio con el mismo criterio. Solo
-   plegada: desplegada la cabecera ocupa sitio y el botón no llega hasta aquí. */
-.session-band--header-hidden {
-  padding-right: var(--band-notch);
+   plegada: desplegada la cabecera ocupa sitio y el botón no llega hasta aquí.
+
+   __Los dos aspectos se lo ceden de forma distinta porque son formas distintas.__
+   La tarjeta ACABA antes del botón. No es una muesca como la de la esquina de un
+   widget: aquélla mide 41 px de alto y la banda mide 44, así que el mordisco se
+   comería el extremo entero y dejaría un filo de tres píxeles. */
+.session-band--card.session-band--header-hidden {
+  margin-right: calc(var(--btn-w) + var(--sp-2) * 2);
 }
 
-/* La barra llega más a la derecha que la tarjeta —lo que mide el padding de
-   `.app`—, así que para dejar el mismo hueco hay que sumárselo. */
+/* La barra va de pared a pared y no puede acabar antes, así que se le abre una
+   franja del color del fondo, de arriba abajo, con el botón dentro y el mismo aire
+   a los dos lados. El `padding` deja el contenido fuera de esa franja. */
 .session-band--bar.session-band--header-hidden {
-  padding-right: calc(var(--band-notch) + var(--sp-5));
+  position: relative;
+  padding-right: calc(var(--sp-5) + var(--btn-w) + var(--sp-2) * 2);
+}
+
+.session-band--bar.session-band--header-hidden::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--sp-5) - var(--sp-2));
+  width: calc(var(--btn-w) + var(--sp-2) * 2);
+  background: var(--c-bg);
 }
 
 /* El mando de aspecto se va al extremo, como el indicador de las tarjetas, para
