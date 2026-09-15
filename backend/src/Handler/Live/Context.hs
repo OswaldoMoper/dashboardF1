@@ -4,10 +4,12 @@
 -- 'Handler.Live.Helper' (mapeo puro) para producir 'Common.Types.LiveTable', y la
 -- cache STM del 'Env' como respaldo de las dos.
 --
--- __Solo el feed sabe de qué sesión habla.__ OpenF1 no la publica en los cinco GET
--- que se le hacen, y el respaldo estático no salió de ninguna, así que los dos
--- sirven la tabla sin sesión — que es distinto de servirla con una sesión en
--- blanco. La cache sí la conserva, porque la guardó junto a sus filas.
+-- __Las dos fuentes dicen de qué sesión hablan, y no dicen lo mismo.__ El feed la
+-- anuncia entera; OpenF1 da el tipo, el nombre y el gran premio, y __no publica
+-- estado, ni vuelta, ni reloj__, así que los tres salen vacíos. El único que sigue
+-- sirviendo la tabla sin sesión es el respaldo estático, que no salió de ninguna —
+-- y eso es «no se sabe», distinto de una sesión en blanco. La cache la conserva,
+-- porque la guardó junto a sus filas.
 --
 -- __El feed va delante de OpenF1, y el orden lo decide qué contesta, no qué hora
 -- es__ (2026-09-12): OpenF1 responde @401@ en todos sus endpoints mientras una
@@ -27,15 +29,17 @@ module Handler.Live.Context where
 import           App                    (Env (..))
 import           Common.Origin          (Origin (..), Source (..))
 import           Common.Types           (DriverStatus (..), LiveTable (..),
-                                         LiveTimingRow (..))
+                                         LiveTimingRow (..), SessionInfo)
 import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, readTVarIO, writeTVar)
 import           Control.Exception      (SomeException, try)
+import           Data.Maybe             (listToMaybe)
 import           Data.Time.Clock        (UTCTime, getCurrentTime)
 import           Handler.Feed.Helper    (FeedLive (..))
 import qualified Handler.Feed.Manager   as Feed
 import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
-                                         assembleRows, feedVerdict, freezeClock)
+                                         Of1Session (..), assembleRows,
+                                         feedVerdict, freezeClock, openf1Session)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
@@ -103,23 +107,27 @@ fromFeed env live = do
     FeedEmpty        -> fromOpenF1 env
     FeedFinalised    -> fromOpenF1 env
 
--- | El peldaño de OpenF1: los cinco GET y el ensamblado, con la cache detrás.
+-- | El peldaño de OpenF1: los siete GET y el ensamblado, con la cache detrás.
 --
 -- La condición de éxito es __traer filas__ y no solo no fallar: una lista vacía es
 -- una sesión sin parrilla publicada, y servirla dejaría la tabla en blanco teniendo
 -- una anterior buena guardada.
 --
--- __OpenF1 no dice de qué sesión habla__, así que su tabla sale sin ella. No se
--- hereda la que el feed anunciara antes: OpenF1 pide siempre @session_key=latest@,
--- y que su «última» y la del feed sean la misma no se puede comprobar desde aquí.
+-- __La sesión se pide solo si hay filas que nombrar__, y después de tenerlas: dos
+-- peticiones por una tabla que se va a descartar no las paga nadie.
+--
+-- __La sesión que sale es la suya y no la del feed.__ Aunque el feed acabe de
+-- anunciar una, no se hereda: OpenF1 pide siempre @session_key=latest@, y que su
+-- «última» y la que el feed anuncia sean la misma no se puede comprobar desde aquí.
 fromOpenF1 :: Env -> IO LiveResult
 fromOpenF1 env = do
   result <-
     try (fetchRows (envConfig env)) :: IO (Either SomeException [LiveTimingRow])
   case result of
     Right rows | not (null rows) -> do
+      session <- fetchSessionOrNothing (envConfig env)
       now <- getCurrentTime
-      serveFresh env now OpenF1 (LiveTable Nothing rows)
+      serveFresh env now OpenF1 (LiveTable session rows)
     _                            -> fromCache env
 
 -- | Sirve lo que acaba de llegar y refresca la cache con su fuente.
@@ -173,6 +181,41 @@ fetchRows cfg = do
   laps      <- Manager.fetchLaps cfg
   results   <- Manager.fetchResults cfg
   pure (assembleRows drivers positions intervals laps results)
+
+-- | Las dos peticiones que nombran la sesión, con su propio @try@: «no se sabe» si
+-- no salen, en vez de propagar y tirar una tabla que ya está en la mano.
+--
+-- __Mismo criterio que 'fetchIntervalsOrEmpty'__ y por la misma razón: una tabla sin
+-- nombre sigue siendo la tabla, y perderla por la celda de la cabecera es peor que
+-- enseñarla sin ella.
+--
+-- __Pero las dos caen juntas, y ahí se aparta de él.__ La excepción de
+-- @\/intervals@ existe porque su fallo es el __caso normal__ —el endpoint no existe
+-- fuera de carrera—; que @\/sessions@ conteste y @\/meetings@ no, o al revés, no es
+-- un régimen sino una avería. Partirlas serviría una sesión a medias sin que nadie
+-- la hubiera pedido así.
+fetchSessionOrNothing :: Config -> IO (Maybe SessionInfo)
+fetchSessionOrNothing cfg = do
+  result <-
+    try (fetchSessionInfo cfg) :: IO (Either SomeException (Maybe SessionInfo))
+  pure (either (const Nothing) id result)
+
+-- | @\/sessions@ y, con la clave que da, @\/meetings@.
+--
+-- __El arreglo vacío es «no se sabe» y no un fallo:__ OpenF1 responde con una lista,
+-- y sin ninguna sesión dentro no hay nada que nombrar. Se lee la primera casando la
+-- lista y no con 'Prelude.head', que sobre algo que llega de la red no se justifica.
+--
+-- El gran premio va aparte porque @\/sessions@ __no publica su nombre__: solo su
+-- clave. Que su lista venga vacía deja la sesión sin gran premio, no sin sesión.
+fetchSessionInfo :: Config -> IO (Maybe SessionInfo)
+fetchSessionInfo cfg = do
+  sessions <- Manager.fetchSession cfg
+  case sessions of
+    []      -> pure Nothing
+    (s : _) -> do
+      meetings <- Manager.fetchMeeting cfg (osMeeting s)
+      pure (Just (openf1Session s (listToMaybe meetings)))
 
 -- | @\/intervals@ con su propio @try@: una lista vacía si el GET no sale, en vez de
 -- propagar y tirar los otros cuatro.

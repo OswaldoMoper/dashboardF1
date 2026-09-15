@@ -1,10 +1,12 @@
 -- | Cliente OpenF1 — plumbing HTTP compartido (capa de efectos).
 --
--- Punto único de acceso a la API pública de OpenF1 (@api.openf1.org/v1@, sesión
--- @latest@) con el cliente @req@: base de URL, opción de sesión y el GET genérico
--- 'fetchList' que decodifica un arreglo JSON. Reúne también 'fetchDrivers'
--- (@/drivers@), compartido por 'Handler.Live' y 'Handler.TyreStrategy'. Los GET
--- específicos de un área viven en el @Manager@ de esa área, reusando 'fetchList'.
+-- Punto único de acceso a la API pública de OpenF1 (@api.openf1.org/v1@) con el
+-- cliente @req@: base de URL, las opciones que seleccionan de qué se habla y el GET
+-- genérico que decodifica un arreglo JSON — 'fetchListWith' para cualquier
+-- selección y 'fetchList' para la sesión en curso, que es la mayoría. Reúne también
+-- 'fetchDrivers' (@/drivers@), compartido por 'Handler.Live' y
+-- 'Handler.TyreStrategy'. Los GET específicos de un área viven en el @Manager@ de
+-- esa área, reusando estos dos.
 --
 -- La __política de fallo__ (techo por intento y número de intentos) no está aquí
 -- sino en 'Handler.PublicApi.Manager', porque es la misma que la de Jolpica y no
@@ -22,26 +24,40 @@ import           Network.HTTP.Req
 openf1Base :: Url 'Https
 openf1Base = https "api.openf1.org" /: "v1"
 
--- | Todos los endpoints se piden para la sesión en curso.
+-- | La mayoría de los endpoints se piden para la sesión en curso.
 latestSession :: Option 'Https
 latestSession = "session_key" =: ("latest" :: Text)
 
--- | GET a un endpoint de OpenF1 que devuelve un arreglo JSON, decodificado.
+-- | @\/meetings@ no se pide por sesión sino por la clave del gran premio, que
+-- llega dentro de otras respuestas.
+meetingKey :: Int -> Option 'Https
+meetingKey = ("meeting_key" =:)
+
+-- | GET a un endpoint de OpenF1 que devuelve un arreglo JSON, decodificado, con
+-- las opciones que se le den.
 --
--- Recibe la 'Config' porque de ella sale el techo de duración
+-- Existe aparte de 'fetchList' porque __no todos los endpoints hablan de la sesión
+-- en curso__: @\/meetings@ se pide por su propia clave. El techo de duración se
+-- añade aquí y no lo pone quien llama, para que no se pueda olvidar.
+--
+-- Recibe la 'Config' porque de ella sale ese techo
 -- ('Handler.PublicApi.Manager.publicApiOptions'); el 'Env' la transporta, así que
 -- los @Context@ la pasan con @envConfig@ (mismo patrón que
 -- 'Handler.Drivers.Manager.fetchDrivers').
-fetchList :: FromJSON a => Config -> Text -> IO [a]
-fetchList cfg path = runReq publicApiConfig $ do
+fetchListWith :: FromJSON a => Config -> Text -> Option 'Https -> IO [a]
+fetchListWith cfg path opts = runReq publicApiConfig $ do
   res <-
     req
       GET
       (openf1Base /: path)
       NoReqBody
       jsonResponse
-      (latestSession <> publicApiOptions cfg)
+      (opts <> publicApiOptions cfg)
   pure (responseBody res)
+
+-- | 'fetchListWith' para la sesión en curso, que es el caso mayoritario.
+fetchList :: FromJSON a => Config -> Text -> IO [a]
+fetchList cfg path = fetchListWith cfg path latestSession
 
 fetchDrivers :: Config -> IO [Of1Driver]
 fetchDrivers cfg = fetchList cfg "drivers"

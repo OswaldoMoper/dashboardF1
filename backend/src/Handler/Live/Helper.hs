@@ -5,8 +5,9 @@
 --
 -- * __OpenF1__ entrega series temporales por endpoint (@/position@, @/intervals@,
 --   @/laps@), así que aquí se reducen a la última entrada por piloto y se ensambla
---   la tabla ('assembleRows'). Los tipos crudos de esos endpoints viven en este
---   módulo.
+--   la tabla ('assembleRows'); y entrega en otros dos (@/sessions@, @/meetings@) de
+--   qué sesión habla, que es un mapeo directo ('openf1Session'). Los tipos crudos de
+--   esos endpoints viven en este módulo.
 -- * __El feed__ entrega la tabla ya armada por el microservicio, así que el mapeo es
 --   el estado y el orden ('feedRows'). Su tipo crudo es de la fuente y vive en
 --   'Handler.Feed.Helper'.
@@ -18,6 +19,8 @@ module Handler.Live.Helper
   , Of1Interval (..)
   , Of1Lap (..)
   , Of1Result (..)
+  , Of1Session (..)
+  , Of1Meeting (..)
     -- * La decisión de la escalera sobre el feed
   , FeedVerdict (..)
   , feedVerdict
@@ -26,6 +29,7 @@ module Handler.Live.Helper
   , feedRows
   , feedStatus
   , feedSession
+  , openf1Session
   , sessionClock
   , sessionIsLive
   , freezeClock
@@ -130,6 +134,47 @@ instance FromJSON Of1Lap where
       <$> o .: "driver_number"
       <*> o .: "lap_number"
       <*> o .:? "lap_duration"
+
+-- | @/sessions@: de qué sesión habla OpenF1.
+--
+-- __Se modelan tres de los quince campos.__ Circuito, país, año y si está cancelada
+-- no los pide nadie. @meeting_key@ entra porque es lo único que permite preguntar
+-- por el nombre del gran premio, que esta respuesta __no trae__.
+--
+-- __Los tres van con @.:@__, al contrario que las banderas de 'Of1Result': allí el
+-- default es semánticamente correcto —una bandera ausente es «no consta que
+-- abandonara»— y aquí no hay ninguno que lo sea. Una sesión sin tipo no es una
+-- sesión de tipo vacío. El fallo del decode degrada a «no se sabe» sin tocar la
+-- tabla, así que puede permitirse ser estricto.
+--
+-- Vive aquí y no en 'Handler.OpenF1.Helper' por el mismo criterio que 'Of1Result':
+-- hoy lo consume solo Live.
+data Of1Session = Of1Session
+  { osType    :: Text  -- ^ @\"Race\"@, @\"Qualifying\"@, @\"Practice\"@.
+  , osName    :: Text  -- ^ @\"Race\"@, @\"Practice 1\"@.
+  , osMeeting :: Int   -- ^ Clave del gran premio, para poder preguntar su nombre.
+  }
+  deriving (Eq, Show)
+
+instance FromJSON Of1Session where
+  parseJSON = withObject "Of1Session" $ \o ->
+    Of1Session
+      <$> o .: "session_type"
+      <*> o .: "session_name"
+      <*> o .: "meeting_key"
+
+-- | @/meetings@: el nombre del gran premio, que @\/sessions@ no publica.
+--
+-- Un solo campo y aun así un tipo, porque es el borde del decode: el día que haga
+-- falta el nombre oficial o el circuito se gana aquí sin tocar a quien llama.
+newtype Of1Meeting = Of1Meeting
+  { omName :: Text  -- ^ @\"Spanish Grand Prix\"@.
+  }
+  deriving (Eq, Show)
+
+instance FromJSON Of1Meeting where
+  parseJSON = withObject "Of1Meeting" $ \o ->
+    Of1Meeting <$> o .: "meeting_name"
 
 -- | @/session_result@: clasificación de la sesión, una fila por piloto.
 --
@@ -262,6 +307,30 @@ feedSession now fs =
     , siState   = Just (sessionStateFrom (fsState fs))
     , siLaps    = lapProgress fs
     , siClock   = sessionClock now fs
+    }
+
+-- | La sesión que OpenF1 describe, traducida a 'SessionInfo'.
+--
+-- __Los tres huecos son lo que OpenF1 no publica, y ninguno es un fallo:__ no tiene
+-- estado —solo horas previstas—, no cuenta vueltas y no emite reloj. Deducir el
+-- estado de las horas está descartado por medición: la carrera 11369 arrancó cuatro
+-- minutos después de la suya y acabó trece antes de la de fin, así que la deducción
+-- miente justo en los bordes, que es donde se la consultaría.
+--
+-- __No recibe el instante__, al contrario que 'feedSession': aquí no hay ningún
+-- campo que dependa de «ahora», porque el único que dependía era el reloj.
+--
+-- __Sin gran premio la sesión se sirve igual, con el nombre en blanco__: el tipo y
+-- el nombre siguen diciendo de qué se habla, y sale de otra petición.
+openf1Session :: Of1Session -> Maybe Of1Meeting -> SessionInfo
+openf1Session os meeting =
+  SessionInfo
+    { siType    = osType os
+    , siName    = osName os
+    , siMeeting = maybe "" omName meeting
+    , siState   = Nothing
+    , siLaps    = Nothing
+    , siClock   = Nothing
     }
 
 -- | Por qué vuelta va y de cuántas, si la sesión las cuenta.

@@ -113,15 +113,16 @@ import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               withOrigin)
 import           Handler.Live.Context        (LiveResult (..))
 import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
-                                              Of1Lap, Of1Position,
-                                              Of1Result (..), assembleRows,
+                                              Of1Lap, Of1Meeting (..),
+                                              Of1Position, Of1Result (..),
+                                              Of1Session (..), assembleRows,
                                               classificationGaps,
                                               classificationTime, feedRows,
                                               feedSession, feedStatus,
                                               feedVerdict, freezeClock,
-                                              lapProgress, parseFeedInstant,
-                                              parseRemaining, sessionClock,
-                                              sessionIsLive)
+                                              lapProgress, openf1Session,
+                                              parseFeedInstant, parseRemaining,
+                                              sessionClock, sessionIsLive)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
@@ -902,6 +903,70 @@ main = hspec $ do
       -- Es lo que pasa al servir desde la cache algo que ya salió de ella.
       (freezeClock . freezeClock) raceSessionFixture
         `shouldBe` freezeClock raceSessionFixture
+
+  -- La otra fuente que sabe de qué sesión habla. Los fixtures son las respuestas
+  -- REALES medidas el 2026-09-15, no formas inventadas: lo que se prueba incluye que
+  -- el decode ignore los campos que no modela, y eso solo lo ancla la respuesta
+  -- entera.
+  describe "Of1Session y Of1Meeting" $ do
+    it "decodifica /sessions e ignora las doce claves que no modela" $
+      tryOf1Sessions openF1SessionArray
+        `shouldBe` Right [Of1Session "Race" "Race" 1294]
+
+    it "decodifica /meetings, que es de donde sale el nombre del gran premio" $
+      -- `/sessions` trae la clave del gran premio pero NO su nombre. Medido: lo más
+      -- parecido que tiene son `location` y `country_name`, y ninguno es el nombre.
+      tryOf1Meetings openF1MeetingArray
+        `shouldBe` Right [Of1Meeting "Spanish Grand Prix"]
+
+    it "una sesión sin tipo tumba la lista, y eso es lo que se quiere" $
+      -- Al contrario que las banderas de `Of1Result`, aquí no hay default
+      -- semánticamente correcto: una sesión de tipo vacío no existe. El fallo sube
+      -- hasta el `try` del `Context` y sale como «no se sabe», sin tocar la tabla.
+      tryOf1Sessions openF1SessionNoType `shouldSatisfy` isLeft
+
+    it "y un gran premio sin nombre, igual" $
+      tryOf1Meetings openF1MeetingNoName `shouldSatisfy` isLeft
+
+  describe "openf1Session" $ do
+    it "sirve tipo, nombre y gran premio, y deja vacío lo que OpenF1 no publica" $
+      -- Los tres huecos no son un degradado: OpenF1 no tiene estado —solo horas
+      -- previstas—, no cuenta vueltas y no emite reloj.
+      openf1Session
+        (Of1Session "Race" "Race" 1294)
+        (Just (Of1Meeting "Spanish Grand Prix"))
+        `shouldBe` SessionInfo
+          { siType    = "Race"
+          , siName    = "Race"
+          , siMeeting = "Spanish Grand Prix"
+          , siState   = Nothing
+          , siLaps    = Nothing
+          , siClock   = Nothing
+          }
+
+    it "su estado es «no se sabe», que es el primer sitio donde eso existe" $
+      -- Éste es el primer productor de `siState` en `Nothing`, y por eso el caso no
+      -- se pudo escribir al abrir el hueco en el tipo: por el feed el estado llega
+      -- siempre, aunque sea la cadena vacía como desconocido.
+      --
+      -- Y no se deduce de las horas, que sí están en la mano: medido sobre la
+      -- carrera 11369, arrancó cuatro minutos después de su `date_start` y acabó
+      -- trece antes de su `date_end`, así que la deducción miente en los bordes.
+      siState (openf1Session (Of1Session "Race" "Race" 1294) Nothing)
+        `shouldBe` Nothing
+
+    it "sin gran premio la sesión se sirve igual, con el nombre en blanco" $
+      -- `/meetings` puede devolver el arreglo vacío. El tipo y el nombre siguen
+      -- diciendo de qué se habla, así que perder la sesión entera sería peor.
+      openf1Session (Of1Session "Qualifying" "Qualifying" 1294) Nothing
+        `shouldBe` SessionInfo
+          { siType    = "Qualifying"
+          , siName    = "Qualifying"
+          , siMeeting = ""
+          , siState   = Nothing
+          , siLaps    = Nothing
+          , siClock   = Nothing
+          }
 
   -- Lo que `GET /fastf1/live` entrega: la tabla y la sesión en la MISMA foto, así
   -- que hablan del mismo instante. Los fixtures llevan las claves que el
@@ -1923,6 +1988,14 @@ tryOf1Drivers = eitherDecodeStrict
 tryFeedRows :: ByteString -> Either String [FeedRow]
 tryFeedRows = eitherDecodeStrict
 
+-- | Los dos espejos para las respuestas que nombran la sesión en OpenF1. Mismo
+-- motivo que los anteriores: sus ramas negativas son parte de lo que se prueba.
+tryOf1Sessions :: ByteString -> Either String [Of1Session]
+tryOf1Sessions = eitherDecodeStrict
+
+tryOf1Meetings :: ByteString -> Either String [Of1Meeting]
+tryOf1Meetings = eitherDecodeStrict
+
 decodeStints :: ByteString -> [Of1Stint]
 decodeStints raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
@@ -2338,6 +2411,55 @@ openF1GridWithoutTeam =
 openF1GridNumberAsText :: ByteString
 openF1GridNumberAsText =
   "[{\"driver_number\":\"1\",\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"}]"
+
+-- | @GET \/sessions?session_key=latest@ __verbatim__, medido el 2026-09-15 con la
+-- carrera 11369 como última sesión. Las quince claves son las que OpenF1 emite; el
+-- tipo consume tres, y que las otras doce no estorben es contrato del decode.
+--
+-- __Lleva @date_start@ y @date_end@ a propósito aunque el tipo aún no los lea:__ son
+-- los campos con los que se decidirá cuándo mirar el feed, y el fixture tiene que
+-- seguir siendo la respuesta entera cuando les llegue el turno.
+openF1SessionArray :: ByteString
+openF1SessionArray =
+  "[{\"session_key\":11369,\"session_type\":\"Race\",\"session_name\":\"Race\",\
+  \\"date_start\":\"2026-09-13T13:00:00+00:00\",\
+  \\"date_end\":\"2026-09-13T15:00:00+00:00\",\"meeting_key\":1294,\
+  \\"circuit_key\":153,\"circuit_short_name\":\"Madring\",\"country_key\":1,\
+  \\"country_code\":\"ESP\",\"country_name\":\"Spain\",\"location\":\"Madrid\",\
+  \\"gmt_offset\":\"02:00:00\",\"year\":2026,\"is_cancelled\":false}]"
+
+-- | 'openF1SessionArray' sin @session_type@. No hay default semánticamente correcto
+-- —una sesión de tipo vacío no existe—, así que tumbar la lista es lo correcto: el
+-- fallo sale del 'Handler.Live.Context' como «no se sabe», sin tocar la tabla.
+openF1SessionNoType :: ByteString
+openF1SessionNoType =
+  "[{\"session_key\":11369,\"session_name\":\"Race\",\"meeting_key\":1294}]"
+
+-- | @GET \/meetings?meeting_key=1294@ __verbatim__, medido el mismo día. Diecisiete
+-- claves, de las que el tipo consume una.
+--
+-- La eñe del nombre oficial va escapada y no como byte: el valor no lo lee nadie, y
+-- un literal 'ByteString' con UTF-8 crudo se trunca por carácter.
+openF1MeetingArray :: ByteString
+openF1MeetingArray =
+  "[{\"meeting_key\":1294,\"meeting_name\":\"Spanish Grand Prix\",\
+  \\"meeting_official_name\":\
+  \\"FORMULA 1 TAG HEUER GRAN PREMIO DE ESPA\\u00d1A 2026\",\
+  \\"location\":\"Madrid\",\"country_key\":1,\"country_code\":\"ESP\",\
+  \\"country_name\":\"Spain\",\
+  \\"country_flag\":\"https://media.formula1.com/spain-flag.png\",\
+  \\"circuit_key\":153,\"circuit_short_name\":\"Madring\",\
+  \\"circuit_type\":\"Temporary - Street\",\
+  \\"circuit_info_url\":\"https://api.multiviewer.app/api/v1/circuits/153/2026\",\
+  \\"circuit_image\":\"https://media.formula1.com/Spain%20carbon.png\",\
+  \\"gmt_offset\":\"02:00:00\",\
+  \\"date_start\":\"2026-09-11T11:30:00+00:00\",\
+  \\"date_end\":\"2026-09-13T15:00:00+00:00\",\"year\":2026,\
+  \\"is_cancelled\":false}]"
+
+-- | 'openF1MeetingArray' sin @meeting_name@, que es el único campo que el tipo lee.
+openF1MeetingNoName :: ByteString
+openF1MeetingNoName = "[{\"meeting_key\":1294,\"location\":\"Madrid\"}]"
 
 -- | Recorte de @GET \/stints@ de OpenF1 (sesión 11353, 2026-08-25): dos stints de
 -- cada coche, __intercalados__ para que el orden de salida no pueda venir de

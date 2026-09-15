@@ -62,7 +62,8 @@ canRequest = not . pollInFlight
 
 -- | Cada cuántos segundos se refresca Live Timing (2026-09-11 (c)).
 --
--- Cada refresco son cinco GET a OpenF1, cuyo límite de peticiones no está medido.
+-- Cada refresco que llegue a OpenF1 son siete GET, cuyo límite de peticiones no
+-- está medido.
 -- Va en segundos enteros y no en @NominalDiffTime@ para que @common@ no dependa de
 -- @time@; el widget lo convierte con 'fromIntegral'.
 liveRefreshSeconds :: Int
