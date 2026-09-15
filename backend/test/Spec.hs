@@ -1213,10 +1213,13 @@ main = hspec $ do
     it "un solo punto va al centro horizontal y no divide por cero" $
       map fst (deltaPoints [0.5]) `shouldBe` [chartWidth / 2]
 
-    it "la serie del dummy ocupa el ancho útil de extremo a extremo" $ do
-      let xs = map fst (deltaPoints [0.0, -0.048, 0.081, 0.167])
-      head xs `shouldBe` chartPad
-      last xs `shouldBe` chartWidth - chartPad
+    it "la serie del dummy ocupa el ancho útil de extremo a extremo" $
+      -- Se casa la lista entera en vez de pedirle el primero y el último: cuatro
+      -- entradas dan cuatro puntos, y así la aridad queda afirmada junto a los
+      -- extremos en lugar de darse por supuesta.
+      case map fst (deltaPoints [0.0, -0.048, 0.081, 0.167]) of
+        [x0, _, _, x3] -> (x0, x3) `shouldBe` (chartPad, chartWidth - chartPad)
+        other          -> expectationFailure ("se esperaban cuatro puntos: " <> show other)
 
     it "emite `points` con coordenadas enteras, sin notación científica" $
       deltaPolyline [0, 0, 0] `shouldBe` "10,100 300,100 590,100"
