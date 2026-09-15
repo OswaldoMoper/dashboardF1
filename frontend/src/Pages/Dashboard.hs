@@ -23,19 +23,19 @@
 -- módulo son quienes la ponen. Un typo no lo caza el compilador; se nota al usar
 -- lo que referencia por id, no al compilar.
 --
--- Observación: al conmutar, 'dyn_' re-monta los widgets, así que 'liveTimingWidget'
--- re-dispara su fetch (@getPostBuild@ corre al montar). Aceptable en esta fase.
 module Pages.Dashboard where
 
 import           Common.Layout      (slotStyle, touchesTopRight)
-import           Common.Types       (Layout (..), LayoutId (..),
+import           Common.Origin      (Sourced)
+import           Common.Refresh     (Poll)
+import           Common.Types       (Layout (..), LayoutId (..), LiveTable,
                                      WidgetConfig (..), WidgetId (..),
                                      WidgetType (..), noParams)
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
 import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
-import           Widgets.LiveTiming (liveTimingWidget)
+import           Widgets.LiveTiming (livePoll, liveTimingWidget)
 import           Widgets.Telemetry  (telemetryWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts— y el
@@ -51,13 +51,19 @@ import           Widgets.Telemetry  (telemetryWidget)
 -- cierra, y arranca abierta. Los tres se montan en este orden por dependencia y
 -- no por posición en pantalla — el botón emite el 'Event', 'toggle' lo convierte
 -- en estado y la cabecera lo consume.
+--
+-- __El refresco del directo lo monta la página y no la tarjeta__ ('Widgets.LiveTiming.livePoll'),
+-- y se monta __fuera del @dyn_@__: conmutar de layout re-monta los widgets, así que
+-- una petición montada dentro volvería a salir en cada conmutación. Fuera, los dos
+-- layouts comparten una sola.
 dashboardPage :: MonadWidget t m => m ()
 dashboardPage = divClass "page page--dashboard" $ do
   toggleClick <- headerToggle
   openDyn     <- toggle True toggleClick
   layoutDyn   <- dashboardHeader openDyn
+  poll        <- livePoll
   elDynClass "div" (canvasClass <$> openDyn) $
-    dyn_ $ ffor layoutDyn $ \l -> mapM_ slot (widgets l)
+    dyn_ $ ffor layoutDyn $ \l -> mapM_ (slot poll) (widgets l)
   where
     -- __El lienzo sabe si la cabecera está plegada__, y no por simetría con
     -- ella: plegada deja de ocupar sitio, el lienzo sube, y solo entonces el
@@ -97,10 +103,7 @@ headerToggle = do
 -- __Se pliega con una clase y no desmontando__, y la diferencia importa: con
 -- 'dyn' el contenido se re-monta en cada cambio, así que 'layoutSwitcher'
 -- perdería su @Dynamic t Layout@ y __volvería a 'raceOverview'__ cada vez que se
--- desplegara. Es el mismo mecanismo que ya hace que 'liveTimingWidget' re-dispare
--- su fetch al conmutar de layout; aquí no sería una observación aceptable sino un
--- estado perdido. Con 'elDynClass' el DOM se queda montado y solo cambia si se
--- pinta.
+-- desplegara. Con 'elDynClass' el DOM se queda montado y solo cambia si se pinta.
 dashboardHeader :: MonadWidget t m => Dynamic t Bool -> m (Dynamic t Layout)
 dashboardHeader openDyn =
   elDynClass "div" (headerClass <$> openDyn) $ do
@@ -129,10 +132,11 @@ dashboardHeader openDyn =
 -- estilos le abre una muesca. A quién le toca lo dice 'touchesTopRight'; la forma
 -- y el tamaño de la muesca, la hoja, que es la única que sabe lo que mide el
 -- botón.
-slot :: MonadWidget t m => WidgetConfig -> m ()
-slot wc =
+slot :: MonadWidget t m
+     => Dynamic t (Poll (Sourced LiveTable)) -> WidgetConfig -> m ()
+slot poll wc =
   elAttr "div" ("class" =: slotClass wc <> "style" =: slotStyle wc) $
-    renderWidget wc
+    renderWidget poll wc
 
 -- | Clase del slot: el bloque, y el modificador solo cuando hay algo que
 -- modificar — mismo criterio que el @rowClass@ de 'Widgets.LiveTiming'
@@ -169,9 +173,15 @@ switcherButton label = do
 -- clasificación: antes 'HistoricalStats' montaba un widget que pintaba las dos
 -- tablas. La totalidad de este @case@ es la que cobra el constructor nuevo, y
 -- __solo bajo GHCJS__ (@-Wall@ del paquete @frontend@).
-renderWidget :: MonadWidget t m => WidgetConfig -> m ()
-renderWidget wc = case widgetType wc of
-  LiveTiming       -> liveTimingWidget
+--
+-- __El refresco del directo atraviesa las siete ramas y lo usa una__, por la misma
+-- razón por la que el rectángulo no lo lleva el widget: quien conoce el dato es
+-- quien monta, y darlo solo a la rama que lo pide exigiría que el @case@ devolviera
+-- funciones de tipos distintos.
+renderWidget :: MonadWidget t m
+             => Dynamic t (Poll (Sourced LiveTable)) -> WidgetConfig -> m ()
+renderWidget poll wc = case widgetType wc of
+  LiveTiming       -> liveTimingWidget poll
   Telemetry        -> telemetryWidget
   LapComparison    -> comparisonWidget
   TyreStrategy     -> placeholderWidget "Tyre Strategy"

@@ -5,16 +5,13 @@
 -- | Widget de Live timing (categoría Timing).
 --
 -- Renderiza una tabla con las filas de 'LiveTimingRow' del dominio compartido
--- ('Common.Types'). Consume @GET \/api\/live@ en runtime vía
--- 'Client.fetchJsonSourced' + 'Common.Route.livePath' (relativo, misma-origen: el
--- backend sirve el bundle y la API en el mismo puerto). Modela los tres estados
--- del fetch ('Loading' \/ 'Failed' \/ 'Loaded'); ya no hay datos dummy locales.
+-- ('Common.Types'). Modela los tres estados del fetch
+-- ('Loading' \/ 'Failed' \/ 'Loaded'); ya no hay datos dummy locales.
 --
--- __Se refresca solo cada 'liveRefreshSeconds'__ (2026-09-11 (c)), con un reloj que
--- __salta el tic__ si la petición anterior no ha vuelto: nunca hay dos en vuelo, y
--- una respuesta vieja no puede pisar a una nueva. Cuándo pedir y qué conservar si
--- falla es 'Common.Refresh', pura y con suite; aquí solo se cablea al reloj y a la
--- petición.
+-- __La tarjeta no pide: recibe.__ Quien consume @GET \/api\/live@ es 'livePoll', que
+-- vive en este módulo pero la monta la página, y el resultado baja a la tarjeta por
+-- argumento. Así la petición es __una por página__ y no una por tarjeta, que es lo
+-- que permite que la sirvan a la vez varios consumidores sin solaparse entre ellos.
 --
 -- __Lo que se enseña y de dónde salió son dos cosas, y las pintan dos sitios.__ La
 -- tabla sale de 'liveStateOf', que mira solo si hay filas; el indicador @● Live@
@@ -70,23 +67,35 @@ liveStateOf p =
       | pollLastFailed p -> Failed
       | otherwise        -> Loading
 
--- | Tabla de live timing alimentada por @\/api\/live@, refrescada cada
--- 'liveRefreshSeconds'.
+-- | El refresco de @\/api\/live@: lo monta la página __una vez__ y lo reparte entre
+-- quienes lo pintan.
+--
+-- __Se refresca solo cada 'liveRefreshSeconds'__ (2026-09-11 (c)), con un reloj que
+-- __salta el tic__ si la petición anterior no ha vuelto: nunca hay dos en vuelo, y
+-- una respuesta vieja no puede pisar a una nueva. Cuándo pedir y qué conservar si
+-- falla es 'Common.Refresh', pura y con suite; aquí solo se cablea al reloj y a la
+-- petición. La URL es relativa ('Common.Route.livePath'), o sea misma-origen: el
+-- backend sirve el bundle y la API en el mismo puerto.
 --
 -- __El @mdo@ no crea un bucle instantáneo:__ el tic se filtra con 'current' del
 -- estado, que es su valor al empezar el frame, y no con su 'updated'. La petición
 -- que sale en un frame marca 'Sent' al final de ese frame, y el siguiente tic ya la
 -- ve en vuelo.
-liveTimingWidget :: MonadWidget t m => m ()
-liveTimingWidget = divClass "widget widget--live-timing" $ mdo
+livePoll :: MonadWidget t m => m (Dynamic t (Poll (Sourced LiveTable)))
+livePoll = mdo
+  pb   <- getPostBuild
+  tick <- tickLossyFromPostBuildTime (fromIntegral liveRefreshSeconds)
+  let sent = leftmost [pb, () <$ gate (canRequest <$> current poll) tick]
+  resp <- fetchJsonSourced (livePath <$ sent)
+  poll <- foldDyn pollStep pollIdle (leftmost [Sent <$ sent, Arrived <$> resp])
+  pure poll
+
+-- | Tabla de live timing, alimentada por el refresco que le pasa quien la monta.
+liveTimingWidget :: MonadWidget t m => Dynamic t (Poll (Sourced LiveTable)) -> m ()
+liveTimingWidget poll = divClass "widget widget--live-timing" $ do
   divClass "widget__head" $ do
     el "h2" $ text "Live Timing"
     liveBadge (indicatorFrom <$> poll)
-  pb    <- getPostBuild
-  tick  <- tickLossyFromPostBuildTime (fromIntegral liveRefreshSeconds)
-  let sent = leftmost [pb, () <$ gate (canRequest <$> current poll) tick]
-  resp  <- fetchJsonSourced (livePath <$ sent)
-  poll  <- foldDyn pollStep pollIdle (leftmost [Sent <$ sent, Arrived <$> resp])
   state <- holdUniqDyn (liveStateOf <$> poll)
   dyn_ (renderState <$> state)
   where
@@ -95,10 +104,7 @@ liveTimingWidget = divClass "widget widget--live-timing" $ mdo
     -- también se movería la fila del título cada diez segundos.
     --
     -- __Hace falta 'elDynAttr' y no 'elDynClass'__ porque son dos atributos: la
-    -- clase la pinta la hoja y el @title@ la explica. Medido en la fuente: el
-    -- elemento se construye __sin__ atributos y los recibe al disparar el
-    -- post-build, así que leer aquí un @poll@ que el @mdo@ define más abajo no
-    -- muestrea nada al construir.
+    -- clase la pinta la hoja y el @title@ la explica.
     liveBadge :: MonadWidget t m => Dynamic t Indicator -> m ()
     liveBadge indicator =
       elDynAttr "span" (attrsFor <$> indicator) $ text "Live"
