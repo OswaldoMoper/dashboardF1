@@ -30,9 +30,12 @@ import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
 import           Common.Refresh     (Poll (..))
 import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
-                                     SessionInfo, WidgetConfig (..),
-                                     WidgetId (..), WidgetType (..), noParams,
-                                     sessionTitle)
+                                     SessionInfo (..), StateBasis (..),
+                                     StateReading (..), UpNext (..),
+                                     WidgetConfig (..), WidgetId (..),
+                                     WidgetType (..), derivedNote, noParams,
+                                     sessionTitle, stateLabel, tickDown,
+                                     upNextLabel)
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
@@ -141,10 +144,14 @@ dashboardHeader openDyn =
 sessionBand :: MonadWidget t m
             => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> m ()
 sessionBand openDyn poll = mdo
-  title  <- holdUniqDyn (maybe "" sessionTitle . sessionOf <$> poll)
-  asCard <- toggle True lookClick
+  title   <- holdUniqDyn (maybe "" sessionTitle . sessionOf <$> poll)
+  reading <- holdUniqDyn (stateOf <$> poll)
+  next    <- countdown (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
+  asCard  <- toggle True lookClick
   lookClick <- elDynClass "div" (bandClass <$> openDyn <*> asCard) $ do
     dynText title
+    sessionState reading
+    elClass "span" "session-band__next" $ dynText (upNextLabel <$> next)
     lookSwitch asCard
   pure ()
   where
@@ -169,6 +176,64 @@ sessionBand openDyn poll = mdo
       | card      = "Ver como barra"
       | otherwise = "Ver como tarjeta"
 
+-- | En qué punto está la sesión, con la marca de lo deducido y su aviso.
+--
+-- __Todo el DOM se monta una vez y solo cambian clases y texto__, sin 'dyn_'. Es
+-- deliberado: el aviso guarda si está abierto, y re-montar lo cerraría cada vez que
+-- cambiara el estado. De paso es lo único de Reflex que se puede escribir sin verlo
+-- compilar y seguir estando seguro de lo que hace.
+--
+-- __El botón es la etiqueta entera y no solo el asterisco.__ Un carácter es un
+-- blanco de un par de milímetros en un teléfono, que es justo donde el aviso solo
+-- puede abrirse pulsando.
+--
+-- __Sin estado no hay elemento con texto__, pero el hueco se monta igual: la banda
+-- tiene alto fijo y el lienzo lo descuenta, así que lo que aparece y desaparece
+-- mueve las tarjetas.
+sessionState :: MonadWidget t m => Dynamic t (Maybe StateReading) -> m ()
+sessionState reading = do
+  (markEl, _) <-
+    elDynClass' "button" (stateClass <$> reading) $
+      dynText (maybe "" stateLabel <$> reading)
+  noteOpen <- toggle False (domEvent Click markEl)
+  elDynClass "span" (noteClass <$> noteOpen <*> reading) $ text derivedNote
+  where
+    stateClass r = T.unwords $
+      ["session-band__state"] <> ["session-band__state--derived" | isDerived r]
+
+    -- El aviso solo puede estar abierto sobre un estado deducido: sobre uno oído no
+    -- hay nada que aclarar, y el botón queda inerte desde la hoja.
+    noteClass open r = T.unwords $
+      ["session-band__note"] <> ["session-band__note--open" | open && isDerived r]
+
+    isDerived = maybe False ((== Derived) . srBasis)
+
+-- | La cuenta atrás que llega en la respuesta, descontada en el navegador.
+--
+-- __Un tic de un segundo sobre un refresco de diez__, que son los dos relojes de
+-- esta página y no se estorban: cada respuesta reinicia la cuenta al valor que el
+-- backend resolvió, y entre respuestas baja sola. Sin esto el número saltaría de
+-- diez en diez y «la cuenta atrás cuenta» dejaría de poder comprobarse mirando.
+--
+-- __Arranca en 'NextUnknown'__ porque antes de la primera respuesta eso es lo cierto,
+-- y es además lo que la banda pinta como «todavía no se sabe».
+--
+-- __El 'holdUniqDyn' no es una optimización, es lo que impide que el número suba.__
+-- El estado del refresco cambia dos veces por ciclo —al pedir y al llegar— y solo la
+-- segunda trae valor nuevo; sin filtrar, el «al pedir» reiniciaría la cuenta al valor
+-- de la respuesta anterior y el número saltaría diez segundos hacia atrás cada diez
+-- segundos.
+--
+-- __Una respuesta gana al tic si caen en el mismo frame__ ('leftmost' con el valor
+-- servido delante): lo que el backend resolvió manda sobre lo que el navegador
+-- descontó.
+countdown :: MonadWidget t m => Dynamic t UpNext -> m (Dynamic t UpNext)
+countdown served = do
+  fresh <- holdUniqDyn served
+  tick  <- tickLossyFromPostBuildTime 1
+  foldDyn ($) NextUnknown $
+    leftmost [const <$> updated fresh, tickDown <$ tick]
+
 -- | De qué sesión son las filas que se están enseñando, si se sabe.
 --
 -- Los dos 'Nothing' que atraviesa significan cosas distintas y aquí se juntan a
@@ -178,6 +243,13 @@ sessionBand openDyn poll = mdo
 -- con las filas y descarta esto.
 sessionOf :: Poll (Sourced LiveTable) -> Maybe SessionInfo
 sessionOf p = liveSession . srcValue =<< pollShown p
+
+-- | En qué punto está esa sesión, si alguien lo dijo o el calendario lo permitió
+-- deducir. Atraviesa los mismos dos 'Nothing' que 'sessionOf' y uno más —el de la
+-- sesión que no trae estado—, y los tres se pintan igual porque los tres son «no se
+-- sabe».
+stateOf :: Poll (Sourced LiveTable) -> Maybe StateReading
+stateOf p = siState =<< sessionOf p
 
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
 -- lienzo, con el estilo que calcula 'slotStyle'.

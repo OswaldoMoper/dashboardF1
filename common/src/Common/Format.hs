@@ -34,8 +34,10 @@ module Common.Format
   , noData
   , ClockForm (..)
   , formatClock
+  , formatCountdown
   ) where
 
+import           Data.List (dropWhileEnd)
 import           Data.Text (Text)
 import qualified Data.Text as T
 import           Numeric   (showFFloat)
@@ -122,6 +124,47 @@ data ClockForm
 -- __Las horas no se envuelven a las 24__: un valor de más de un día sale con la
 -- cuenta entera de horas, y el relleno de 'ClockPadded' es un mínimo y no un
 -- recorte.
+-- | Cuánto falta para algo, en las __tres unidades mayores__ que no sean cero.
+--
+-- @
+-- 6 d 19 h 25 min
+-- 2 h 30 min 15 s
+-- 4 min 50 s
+-- @
+--
+-- __No es 'formatClock', y la diferencia no es de estilo.__ Aquél cuenta segundos
+-- dentro de una sesión y su unidad mayor es la hora; éste cuenta días, y con dos
+-- puntos —@\"163:25:10\"@— nadie lee una semana. Por eso lleva las unidades escritas
+-- y no separadores.
+--
+-- __Tres unidades y no todas__, porque la cuarta no cambia la decisión de nadie: a
+-- seis días, los segundos son ruido; a cuatro minutos ya no hay días que enseñar y
+-- los segundos entran solos.
+--
+-- __Las unidades de cola que valen cero se recortan__ —@6 d@ y no @6 d 0 h 0 min@—,
+-- pero las de en medio no: @6 d 0 h 25 min@ sale entero, porque saltárselas diría
+-- que faltan seis días y veinticinco minutos.
+--
+-- __Lo negativo es cero__, y el cero se dice @\"0 s\"@ y no en blanco: por el mismo
+-- criterio que 'formatClock', no hay forma de expresar «falta menos que nada», y una
+-- cadena vacía se leería como que la cuenta atrás se rompió.
+formatCountdown :: Int -> Text
+formatCountdown secs
+  | null fromTop = "0 s"
+  | otherwise    = T.unwords (concatMap piece shown)
+  where
+    total              = max 0 secs
+    (days, rest)       = total `divMod` 86400
+    (hours, rest')     = rest `divMod` 3600
+    (minutes, seconds) = rest' `divMod` 60
+
+    fromTop = dropWhile ((== 0) . fst)
+      [(days, "d"), (hours, "h"), (minutes, "min"), (seconds, "s")]
+
+    shown = dropWhileEnd ((== 0) . fst) (take 3 fromTop)
+
+    piece (n, unit) = [T.pack (show n), unit]
+
 formatClock :: ClockForm -> Int -> Text
 formatClock form secs = case form of
     ClockCompact

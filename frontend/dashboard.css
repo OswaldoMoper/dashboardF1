@@ -203,7 +203,11 @@ body {
    __No desaparece cuando no hay sesión__, y eso no es estética: `.canvas` descuenta
    su alto, así que una banda que apareciera y desapareciera entre refrescos subiría
    y bajaría las seis tarjetas con ella. Sin sesión se queda vacía. */
+/* `position: relative` es lo que ancla el aviso del estado deducido, que es
+   `absolute` y cuelga por debajo de la banda. La variante de barra con la cabecera
+   plegada ya lo ponía por su cuenta para su franja; ahora lo tienen las dos. */
 .session-band {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -260,10 +264,61 @@ body {
   background: var(--c-bg);
 }
 
-/* El mando de aspecto se va al extremo, como el indicador de las tarjetas, para
-   que su sitio no dependa de lo largo que sea el nombre del gran premio. */
-.session-band__look {
+/* En qué punto está la sesión. Es un `button` siempre, y no solo cuando hay algo
+   que aclarar, para que el DOM no se re-monte al cambiar el estado: lo que decide
+   si responde al dedo es el modificador. */
+.session-band__state {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  pointer-events: none;
+}
+
+/* Lo deducido se ve atenuado y SÍ se puede pulsar. El asterisco lo pone el texto
+   (`Common.Types.stateLabel`), no esta regla: quien lo lee es también quien lo
+   prueba, y una marca de CSS no la alcanza ninguna suite. */
+.session-band__state--derived {
+  color: var(--c-muted);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* El aviso del asterisco. Se abre al PULSAR y no al pasar por encima, porque en un
+   teléfono no hay hover; de ahí que no sea el `title` del navegador. */
+.session-band__note {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 3;
+  max-width: 22rem;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  color: var(--c-muted);
+  font-size: var(--fs-sm);
+}
+
+.session-band__note--open {
+  display: block;
+}
+
+/* Qué sesión viene después. `margin-left: auto` lo empuja a él y, con él, al mando
+   de aspecto que le sigue: así el hueco lo abre el primero de los dos y no hay dos
+   reglas peleándose por el mismo extremo. */
+.session-band__next {
   margin-left: auto;
+  color: var(--c-muted);
+  white-space: nowrap;
+}
+
+/* El mando de aspecto se queda en el extremo, detrás de la próxima sesión. Ya no
+   necesita `margin-left: auto` propio: se lo da el hermano de delante. */
+.session-band__look {
+  flex-shrink: 0;
 }
 
 /* `min-width: 0` impide que la tabla ancha __estire su caja__; `overflow-x: auto`

@@ -2,10 +2,11 @@
 
 module Common.Types where
 
-import           Data.Aeson   (FromJSON (..), ToJSON (..), withText)
-import           Data.Text    (Text)
-import qualified Data.Text    as T
-import           GHC.Generics (Generic)
+import           Common.Format (formatCountdown)
+import           Data.Aeson    (FromJSON (..), ToJSON (..), withText)
+import           Data.Text     (Text)
+import qualified Data.Text     as T
+import           GHC.Generics  (Generic)
 
 -- | Identificador de un widget dentro de un 'Layout'.
 newtype WidgetId = WidgetId Text
@@ -302,6 +303,46 @@ data UpNext
 
 instance ToJSON UpNext
 instance FromJSON UpNext
+
+-- | Lo que se lee a la derecha de la banda.
+--
+-- __'NextSilent' da cadena vacía y no una raya__, por el criterio de
+-- 'statusLabel': la raya significa «nadie dio este dato», y aquí sí se sabe — es que
+-- se calla a propósito para dejarle el ancho a la sesión que rueda.
+--
+-- __Lo que no se sabe todavía se dice con puntos suspensivos__ y no en blanco: sin
+-- ellos, el arranque del proceso y una sesión rodando se verían igual.
+--
+-- __La sesión que aún no empieza no se nombra__: está escrita al lado, en la misma
+-- banda, y repetirla gastaría el ancho en decir dos veces lo mismo.
+upNextLabel :: UpNext -> Text
+upNextLabel NextSilent       = ""
+upNextLabel NextUnknown      = "Próxima: …"
+upNextLabel (NextStartsIn n) = "empieza en " <> formatCountdown n
+upNextLabel (NextAfter l n)  = l <> " · en " <> formatCountdown n
+
+-- | La misma cuenta atrás un segundo después.
+--
+-- __Existe porque el refresco es de diez segundos y la cuenta es de uno.__ El
+-- backend resuelve los segundos al responder, y quien pinta los descuenta entre
+-- respuestas en vez de verlos saltar de diez en diez — el mismo reparto que
+-- 'SessionClock' declara para el reloj de sesión.
+--
+-- __No baja de cero__ ni inventa un estado nuevo al llegar: lo que hay después de
+-- que la cuenta se agote lo dice la respuesta siguiente, no esta función.
+tickDown :: UpNext -> UpNext
+tickDown (NextStartsIn n) = NextStartsIn (max 0 (n - 1))
+tickDown (NextAfter l n)  = NextAfter l (max 0 (n - 1))
+tickDown other            = other
+
+-- | Qué significa el asterisco de un estado deducido.
+--
+-- Vive aquí y no en el widget por el criterio de 'statusLabel', y __se enseña al
+-- pulsar y no al pasar por encima__: en un teléfono no hay hover, así que un aviso
+-- que solo apareciera ahí no existiría en la mitad de las pantallas.
+derivedNote :: Text
+derivedNote =
+  "Estado previsto por el calendario: la fuente no lo publica"
 
 -- | Lo que sirve @GET \/api\/live@: la tabla y de qué sesión es.
 --

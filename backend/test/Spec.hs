@@ -53,8 +53,8 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, zeroLineY)
 import           Common.Format               (ClockForm (..), formatClock,
-                                              formatFixed, formatTrimmed,
-                                              noData)
+                                              formatCountdown, formatFixed,
+                                              formatTrimmed, noData)
 import           Common.Indicator            (Indicator (..), fetchedAtLabel,
                                               indicatorClass, indicatorFrom,
                                               indicatorTooltip)
@@ -90,7 +90,8 @@ import           Common.Types                (DriverEntry (..),
                                               WidgetConfig (..), WidgetId (..),
                                               WidgetType (..), noParams,
                                               sessionStateWord, sessionTitle,
-                                              stateLabel, statusLabel)
+                                              stateLabel, statusLabel, tickDown,
+                                              upNextLabel)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
 import           Data.ByteString             (ByteString)
@@ -1388,6 +1389,65 @@ main = hspec $ do
       -- OpenF1 sirve la sesión con el gran premio en blanco cuando no lo sabe
       -- (`openf1Session`), y entonces el título es el nombre a secas.
       sessionTitle (namedSession "Race" "Race" "") `shouldBe` "Race"
+
+  describe "formatCountdown" $ do
+    it "da las tres unidades mayores y no la cuarta" $
+      -- A seis días los segundos son ruido; a cuatro minutos ya no hay días y los
+      -- segundos entran solos.
+      map formatCountdown
+          [ 6 * 86400 + 19 * 3600 + 25 * 60 + 10
+          , 2 * 3600 + 30 * 60 + 15
+          , 4 * 60 + 50
+          , 50
+          ]
+        `shouldBe` ["6 d 19 h 25 min", "2 h 30 min 15 s", "4 min 50 s", "50 s"]
+
+    it "recorta las unidades de cola que valen cero" $
+      formatCountdown (6 * 86400) `shouldBe` "6 d"
+
+    it "pero NO las de en medio, que dirían otra cosa" $
+      -- Saltarse la hora en cero diría «faltan seis días y veinticinco minutos», que
+      -- es una cantidad distinta.
+      formatCountdown (6 * 86400 + 25 * 60) `shouldBe` "6 d 0 h 25 min"
+
+    it "el cero se dice, no se calla" $
+      -- En blanco se leería como que la cuenta atrás se rompió.
+      formatCountdown 0 `shouldBe` "0 s"
+
+    it "lo negativo es cero" $
+      -- Mismo criterio que `formatClock`: no hay forma de decir «falta menos que
+      -- nada», y el productor de hoy ya no baja de cero, pero eso es invariante suyo.
+      formatCountdown (negate 500) `shouldBe` "0 s"
+
+    it "cruza el día sin envolverse a 24 h" $
+      -- 48 h son dos días, no cero. Es el equivalente de lo que `formatClock`
+      -- promete al no envolver sus horas.
+      formatCountdown (2 * 86400) `shouldBe` "2 d"
+
+  describe "upNextLabel y tickDown" $ do
+    it "la que rueda calla, y la que no se sabe lo dice" $
+      -- Los dos silencios son distintos: uno es a propósito y el otro es el arranque
+      -- del proceso. En blanco los dos, no se distinguirían.
+      map upNextLabel [NextSilent, NextUnknown] `shouldBe` ["", "Próxima: …"]
+
+    it "la que aún no empieza no se nombra: ya está escrita al lado" $
+      upNextLabel (NextStartsIn (12 * 60)) `shouldBe` "empieza en 12 min"
+
+    it "y la siguiente sí, con su etiqueta delante" $
+      upNextLabel (NextAfter "Azerbaijan Grand Prix" (6 * 86400 + 19 * 3600))
+        `shouldBe` "Azerbaijan Grand Prix · en 6 d 19 h"
+
+    it "el tic descuenta un segundo de las dos que cuentan" $
+      map tickDown [NextStartsIn 100, NextAfter "Baku" 100]
+        `shouldBe` [NextStartsIn 99, NextAfter "Baku" 99]
+
+    it "y no toca a las dos que no cuentan" $
+      map tickDown [NextSilent, NextUnknown] `shouldBe` [NextSilent, NextUnknown]
+
+    it "no baja de cero por mucho que se tique" $
+      -- La respuesta siguiente dice qué hay después de que la cuenta se agote; esta
+      -- función no lo inventa.
+      iterate tickDown (NextStartsIn 2) !! 5 `shouldBe` NextStartsIn 0
 
   describe "sessionStateWord y stateLabel" $ do
     it "da la palabra de los tres estados publicados" $
