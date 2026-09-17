@@ -120,13 +120,14 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               Of1Position, Of1Result (..),
                                               Of1Session (..), assembleRows,
                                               classificationGaps,
-                                              classificationTime, feedRows,
-                                              feedSession, feedStatus,
-                                              feedVerdict, feedWindowLead,
-                                              feedWindowOpen, freezeClock,
-                                              lapProgress, openf1Session,
-                                              parseFeedInstant, parseRemaining,
-                                              sessionClock, sessionIsLive)
+                                              classificationTime, derivedState,
+                                              endMargin, feedRows, feedSession,
+                                              feedStatus, feedVerdict,
+                                              feedWindowLead, feedWindowOpen,
+                                              freezeClock, lapProgress,
+                                              openf1Session, parseFeedInstant,
+                                              parseRemaining, sessionClock,
+                                              sessionIsLive)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import qualified Handler.Telemetry.Context   as Telemetry
@@ -917,7 +918,7 @@ main = hspec $ do
   describe "Of1Session y Of1Meeting" $ do
     it "decodifica /sessions e ignora las doce claves que no modela" $
       tryOf1Sessions openF1SessionArray
-        `shouldBe` Right [Of1Session "Race" "Race" 1294 raceStartsAt]
+        `shouldBe` Right [Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt]
 
     it "decodifica /meetings, que es de donde sale el nombre del gran premio" $
       -- `/sessions` trae la clave del gran premio pero NO su nombre. Medido: lo más
@@ -934,6 +935,15 @@ main = hspec $ do
     it "ni sin hora de arranque, que es de lo que cuelga la ventana" $
       tryOf1Sessions openF1SessionNoStart `shouldSatisfy` isLeft
 
+    it "ni sin hora de fin, que es de lo que cuelga el estado deducido" $
+      tryOf1Sessions openF1SessionNoEnd `shouldSatisfy` isLeft
+
+    it "la hora de fin llega con su desplazamiento, igual que la de arranque" $
+      -- El fixture ya traía `date_end` desde que se escribió, a la espera de que al
+      -- tipo le llegara el turno. Le llegó.
+      fmap (map osEnd) (tryOf1Sessions openF1SessionArray)
+        `shouldBe` Right [raceEndsAt]
+
     it "y un gran premio sin nombre, igual" $
       tryOf1Meetings openF1MeetingNoName `shouldSatisfy` isLeft
 
@@ -948,7 +958,7 @@ main = hspec $ do
       -- Los tres huecos no son un degradado: OpenF1 no tiene estado —solo horas
       -- previstas—, no cuenta vueltas y no emite reloj.
       openf1Session
-        (Of1Session "Race" "Race" 1294 raceStartsAt)
+        (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
         (Just (Of1Meeting "Spanish Grand Prix"))
         `shouldBe` SessionInfo
           { siType    = "Race"
@@ -967,14 +977,14 @@ main = hspec $ do
       -- Y no se deduce de las horas, que sí están en la mano: medido sobre la
       -- carrera 11369, arrancó cuatro minutos después de su `date_start` y acabó
       -- trece antes de su `date_end`, así que la deducción miente en los bordes.
-      siState (openf1Session (Of1Session "Race" "Race" 1294 raceStartsAt) Nothing)
+      siState (openf1Session (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt) Nothing)
         `shouldBe` Nothing
 
     it "sin gran premio la sesión se sirve igual, con el nombre en blanco" $
       -- `/meetings` puede devolver el arreglo vacío. El tipo y el nombre siguen
       -- diciendo de qué se habla, así que perder la sesión entera sería peor.
       openf1Session
-        (Of1Session "Qualifying" "Qualifying" 1294 raceStartsAt)
+        (Of1Session "Qualifying" "Qualifying" 1294 raceStartsAt raceEndsAt)
         Nothing
         `shouldBe` SessionInfo
           { siType    = "Qualifying"
@@ -984,6 +994,81 @@ main = hspec $ do
           , siLaps    = Nothing
           , siClock   = Nothing
           }
+
+  -- El margen de la hora de FIN, simétrico de `feedWindowLead`. Sale de multiplicar
+  -- la duración prevista, así que los dos números que ya estaban decididos no se
+  -- escriben en ningún sitio: se comprueba que salgan.
+  describe "endMargin" $ do
+    it "reproduce los dos números ya decididos sin tenerlos escritos" $
+      -- 3 h para una carrera de 120 min y 45 min para unas prácticas de 60.
+      [endMargin "Race" (120 * 60), endMargin "Practice 1" (60 * 60)]
+        `shouldBe` [3 * 3600, 45 * 60]
+
+    it "el Sprint coge el margen corto aunque su TIPO sea Race" $
+      -- El caso que la regla por tipo se comía, y está medido: el `session_type` del
+      -- Sprint es `"Race"`, así que por tipo se llevaría 3 h siendo de 60 min. El
+      -- nombre es lo que los distingue, y es además lo que la banda ya enseña.
+      endMargin "Sprint" (60 * 60) `shouldBe` 45 * 60
+
+    it "y la Sprint Qualifying, con su duración propia de 44 min" $
+      -- Otra medida del calendario real: no dura los 60 de una clasificación larga.
+      endMargin "Sprint Qualifying" (44 * 60) `shouldBe` 33 * 60
+
+    it "el nombre se compara recortado y en minúsculas" $
+      -- Mismo criterio que `sessionStateFrom`: un valor de cable atraviesa cosas que
+      -- no controlamos.
+      map (\n -> endMargin n (120 * 60)) ["Race", "race", "  RACE  "]
+        `shouldBe` replicate 3 (3 * 3600)
+
+    it "el suelo tapa una duración ridícula, y también una negativa" $
+      -- Ninguna de las dos está observada —las 45 sesiones publicadas van de 44 a
+      -- 120 min—: son cotas de cordura sobre un calendario que no controlamos.
+      map (endMargin "Practice 1") [5 * 60, 0, negate (60 * 60)]
+        `shouldBe` replicate 3 (30 * 60)
+
+    it "y el techo tapa una absurdamente larga" $
+      endMargin "Race" (24 * 3600) `shouldBe` 4 * 3600
+
+  describe "derivedState" $ do
+    it "no dice nada mientras no se cruce el margen, NI JUSTO AL CRUZARLO" $
+      -- El borde es lo que esta función existe para no cruzar: la carrera acaba a
+      -- las 15:00 previstas, el margen son 3 h, y a las 18:00 en punto todavía no se
+      -- afirma nada. Un segundo después, sí.
+      map
+        (\t -> derivedState t (scheduled "Race" "Race" raceStartsAt raceEndsAt))
+        [ raceStartsAt
+        , raceEndsAt
+        , addUTCTime (3 * 3600) raceEndsAt
+        , addUTCTime (3 * 3600 + 1) raceEndsAt
+        ]
+        `shouldBe` [Nothing, Nothing, Nothing, Just SessionFinalised]
+
+    it "solo deduce que acabó, nunca que empezó ni que está rodando" $
+      -- Entre el arranque y el fin previstos no se dice nada, y no es un hueco sin
+      -- rellenar: está medido que ahí las horas mienten —la 11369 arrancó cuatro
+      -- minutos tarde—, así que afirmar sería inventar.
+      derivedState
+        (addUTCTime (60 * 60) raceStartsAt)
+        (scheduled "Race" "Race" raceStartsAt raceEndsAt)
+        `shouldBe` Nothing
+
+    it "el Sprint se da por acabado antes de que empiece la sesión siguiente" $
+      -- El caso concreto de Singapur, medido el 2026-09-17: el Sprint acaba a las
+      -- 10:00 y la clasificación siguiente empieza a las 13:00. Con el margen por
+      -- tipo la banda se pasaría esas tres horas sin poder decir que acabó, y al
+      -- poder decirlo ya habría empezado otra sesión.
+      derivedState
+        (addUTCTime (60 * 60) sprintEndsAt)
+        (scheduled "Race" "Sprint" sprintStartsAt sprintEndsAt)
+        `shouldBe` Just SessionFinalised
+
+    it "y la carrera larga NO, con ese mismo retraso" $
+      -- El control negativo del caso de arriba: si las dos se dieran por acabadas a
+      -- la hora, el test anterior pasaría sin que el nombre discriminara nada.
+      derivedState
+        (addUTCTime (60 * 60) raceEndsAt)
+        (scheduled "Race" "Race" raceStartsAt raceEndsAt)
+        `shouldBe` Nothing
 
   -- El único caso de la suite que mira un parámetro de salida en vez de un dato de
   -- entrada. Existe porque el fallo que ancla no se ve leyendo el código ni
@@ -2602,6 +2687,32 @@ openF1GridNumberAsText =
 raceStartsAt :: UTCTime
 raceStartsAt = UTCTime (fromGregorian 2026 9 13) (13 * 3600)
 
+-- | La hora de fin __prevista__ de la misma carrera: dos horas justas después. La
+-- real fue trece minutos antes, y esa diferencia es la que obliga a 'endMargin'.
+raceEndsAt :: UTCTime
+raceEndsAt = UTCTime (fromGregorian 2026 9 13) (15 * 3600)
+
+-- | El Sprint de Singapur, del calendario real medido el 2026-09-17: el 10 de
+-- octubre de 09:00 a 10:00 UTC, con la clasificación siguiente a las 13:00.
+--
+-- __Es el caso que decidió que el margen lo eligiera el nombre y no el tipo:__ su
+-- @session_type@ es @\"Race\"@ igual que el de la carrera larga, y dura la mitad.
+sprintStartsAt :: UTCTime
+sprintStartsAt = UTCTime (fromGregorian 2026 10 10) (9 * 3600)
+
+sprintEndsAt :: UTCTime
+sprintEndsAt = UTCTime (fromGregorian 2026 10 10) (10 * 3600)
+
+-- | Una sesión del calendario armada a mano, con el tipo y el nombre a la vista.
+--
+-- __El tipo entra aunque 'endMargin' no lo mire__, y es a propósito: los casos del
+-- Sprint existen para enseñar que el tipo dice @\"Race\"@ y aun así el margen es el
+-- corto. Con el tipo escondido en el helper no se vería.
+--
+-- La clave del gran premio no la mira ninguno de estos casos.
+scheduled :: T.Text -> T.Text -> UTCTime -> UTCTime -> Of1Session
+scheduled sType name = Of1Session sType name 1294
+
 -- | Las dos primeras sesiones de Bakú y los instantes que rodean a la primera,
 -- tomados del calendario real el 2026-09-15: P1 el 24 a las 08:30 UTC y P2 el mismo
 -- día a las 12:00.
@@ -2660,19 +2771,28 @@ openF1SessionArray =
 -- —una sesión de tipo vacío no existe—, así que tumbar la lista es lo correcto: el
 -- fallo sale del 'Handler.Live.Context' como «no se sabe», sin tocar la tabla.
 --
--- __Lleva el resto de campos obligatorios__, @date_start@ incluido: sin él fallaría
--- también por eso y el caso pasaría por el motivo equivocado.
+-- __Lleva el resto de campos obligatorios__, las dos horas incluidas: sin ellas
+-- fallaría también por eso y el caso pasaría por el motivo equivocado.
 openF1SessionNoType :: ByteString
 openF1SessionNoType =
   "[{\"session_key\":11369,\"session_name\":\"Race\",\"meeting_key\":1294,\
-  \\"date_start\":\"2026-09-13T13:00:00+00:00\"}]"
+  \\"date_start\":\"2026-09-13T13:00:00+00:00\",\
+  \\"date_end\":\"2026-09-13T15:00:00+00:00\"}]"
 
 -- | Y sin @date_start@, que es el campo del que cuelga la ventana entera: sin hora
 -- de arranque esa sesión no puede decidir nada, así que tampoco entra a medias.
 openF1SessionNoStart :: ByteString
 openF1SessionNoStart =
   "[{\"session_key\":11369,\"session_type\":\"Race\",\"session_name\":\"Race\",\
-  \\"meeting_key\":1294}]"
+  \\"meeting_key\":1294,\"date_end\":\"2026-09-13T15:00:00+00:00\"}]"
+
+-- | Y sin @date_end@, que es de lo que cuelga el estado deducido. Va aparte del
+-- anterior por lo mismo que aquél va aparte del de tipo: un fixture al que le falten
+-- dos campos obligatorios no dice cuál de los dos lo tumbó.
+openF1SessionNoEnd :: ByteString
+openF1SessionNoEnd =
+  "[{\"session_key\":11369,\"session_type\":\"Race\",\"session_name\":\"Race\",\
+  \\"meeting_key\":1294,\"date_start\":\"2026-09-13T13:00:00+00:00\"}]"
 
 -- | @GET \/meetings?meeting_key=1294@ __verbatim__, medido el mismo día. Diecisiete
 -- claves, de las que el tipo consume una.

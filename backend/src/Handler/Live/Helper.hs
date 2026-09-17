@@ -27,6 +27,8 @@ module Handler.Live.Helper
     -- * Cuándo merece la pena mirar el feed
   , feedWindowLead
   , feedWindowOpen
+  , endMargin
+  , derivedState
     -- * Transformaciones puras
   , isoInstant
   , assembleRows
@@ -144,11 +146,12 @@ instance FromJSON Of1Lap where
 
 -- | @/sessions@: de qué sesión habla OpenF1.
 --
--- __Se modelan tres de los quince campos.__ Circuito, país, año y si está cancelada
--- no los pide nadie. @meeting_key@ entra porque es lo único que permite preguntar
--- por el nombre del gran premio, que esta respuesta __no trae__.
+-- __Se modelan cinco de los quince campos.__ Circuito, país, año y si está
+-- cancelada no los pide nadie todavía. @meeting_key@ entra porque es lo único que
+-- permite preguntar por el nombre del gran premio, que esta respuesta __no trae__;
+-- y las dos horas, porque de ellas cuelgan la ventana del feed y el estado deducido.
 --
--- __Los tres van con @.:@__, al contrario que las banderas de 'Of1Result': allí el
+-- __Los cinco van con @.:@__, al contrario que las banderas de 'Of1Result': allí el
 -- default es semánticamente correcto —una bandera ausente es «no consta que
 -- abandonara»— y aquí no hay ninguno que lo sea. Una sesión sin tipo no es una
 -- sesión de tipo vacío. El fallo del decode degrada a «no se sabe» sin tocar la
@@ -165,6 +168,10 @@ data Of1Session = Of1Session
     -- 11369, el feed dio la sesión por empezada cuatro minutos después de ésta. Es
     -- lo que 'feedWindowOpen' usa para saber cuándo empezar a mirar, y por eso le
     -- resta un margen en vez de creérsela.
+  , osEnd     :: UTCTime
+    -- ^ Hora de fin __prevista__, y tampoco es la real: la misma carrera acabó
+    -- trece minutos antes. Es de lo que 'derivedState' deduce que una sesión ya
+    -- terminó, y por eso le suma un margen ('endMargin') en vez de creérsela.
   }
   deriving (Eq, Show)
 
@@ -175,6 +182,7 @@ instance FromJSON Of1Session where
       <*> o .: "session_name"
       <*> o .: "meeting_key"
       <*> o .: "date_start"
+      <*> o .: "date_end"
 
 -- | @/meetings@: el nombre del gran premio, que @\/sessions@ no publica.
 --
@@ -436,6 +444,66 @@ feedWindowOpen now starts finalisedAt
       listToMaybe (sortOn Down (filter (<= now) (map opensAt starts)))
     opensAt = addUTCTime (negate feedWindowLead)
     stillLive opened = maybe True (< opened) finalisedAt
+
+-- | Cuánto se espera __tras la hora de fin prevista__ antes de dar una sesión por
+-- acabada.
+--
+-- __Es el margen de la hora de fin, el simétrico de 'feedWindowLead'__, que lo es
+-- de la de arranque. Y hace falta por lo mismo: las horas del calendario son
+-- previstas y la carrera 11369 acabó trece minutos antes de la suya. Esperar cubre
+-- el otro lado —una sesión que se alarga— sin tener que adivinar cuánto.
+--
+-- __Sale de la duración prevista y no de una lista de constantes__, y eso es lo que
+-- lo hace resistir un calendario que estrene formatos: multiplicando la duración,
+-- los dos números que ya estaban decididos salen solos —una carrera de 120 min da
+-- las 3 h, unas prácticas de 60 dan los 45—, así que no hay que escribirlos ni
+-- mantenerlos sincronizados con nada.
+--
+-- __El factor lo elige el NOMBRE y no el tipo, y eso está medido:__ el Sprint tiene
+-- @session_type@ @\"Race\"@ igual que la carrera larga, así que por tipo se llevaría
+-- las 3 h siendo una sesión de 60 min — y en Singapur acaba a las 10:00 con la
+-- clasificación siguiente a las 13:00, o sea que la banda se pasaría las tres horas
+-- sin poder decir que acabó y al poder decirlo ya habría empezado otra.
+--
+-- __El suelo y el techo son cotas de cordura__, no reglas de dominio: acotan lo que
+-- pasaría con una duración absurda o negativa en el calendario. Hoy no muerde
+-- ninguno de los dos — las 45 sesiones publicadas van de 44 a 120 min—, y están
+-- para afinarse conforme avance la temporada.
+endMargin :: Text -> NominalDiffTime -> NominalDiffTime
+endMargin name planned =
+    min marginCeiling (max marginFloor (factor * planned))
+  where
+    factor
+      | T.toLower (T.strip name) == "race" = 1.5
+      | otherwise                          = 0.75
+
+-- | Lo menos que se espera, pase lo que pase con la duración publicada.
+marginFloor :: NominalDiffTime
+marginFloor = 30 * 60
+
+-- | Lo más que se espera. Por encima de esto, callar deja de informar.
+marginCeiling :: NominalDiffTime
+marginCeiling = 4 * 60 * 60
+
+-- | El estado que el calendario permite deducir en ese instante, si permite alguno.
+--
+-- __Solo deduce que una sesión ACABÓ, nunca que empezó ni que está rodando.__ Las
+-- horas previstas mienten justo en los dos bordes que harían falta para eso —la
+-- carrera 11369 arrancó cuatro minutos tarde y acabó trece pronto—, así que ahí no
+-- se dice nada. Lo que sí se puede afirmar sin cruzar ningún borde es que una sesión
+-- cuyo fin previsto quedó holgadamente atrás ya no está en marcha.
+--
+-- El 'Nothing' es «el calendario no da para decirlo», y quien llama lo junta con el
+-- «nadie lo publicó» en un solo hueco: los dos son «no se sabe».
+--
+-- Quien sirva esto tiene que marcarlo como 'Common.Types.Derived'; el tipo no lo
+-- hace por su cuenta porque el mismo 'SessionState' llega también oído del feed.
+derivedState :: UTCTime -> Of1Session -> Maybe SessionState
+derivedState now os
+  | now > addUTCTime margin (osEnd os) = Just SessionFinalised
+  | otherwise                          = Nothing
+  where
+    margin = endMargin (osName os) (diffUTCTime (osEnd os) (osStart os))
 
 -- | Un instante en la forma ISO 8601 que este proyecto emite, con segundos enteros.
 --
