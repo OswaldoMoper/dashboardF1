@@ -31,6 +31,7 @@ module Handler.Live.Helper
   , endMargin
   , derivedState
   , schedule
+  , upNext
     -- * Transformaciones puras
   , isoInstant
   , assembleRows
@@ -56,7 +57,8 @@ import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         LiveTable (..), LiveTimingRow (..),
                                         SessionClock (..), SessionInfo (..),
                                         SessionState (..), StateBasis (..),
-                                        StateReading (..), sessionStateFrom)
+                                        StateReading (..), UpNext (..),
+                                        sessionStateFrom)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
@@ -546,6 +548,53 @@ schedule sessions meetings = map toScheduled sessions
         , ssEnd       = osEnd os
         }
 
+-- | Qué viene después de la sesión que se está enseñando, en ese instante.
+--
+-- __Los cuatro casos salen de cuatro decisiones distintas y por eso no se
+-- simplifican:__
+--
+-- * __Rodando, la derecha calla__ ('Common.Types.NextSilent'): en carrera el ancho
+--   hace falta para lo que está pasando, y la siguiente sería el gran premio de
+--   dentro de quince días. Un estado que no se reconozca cuenta como rodando, por el
+--   criterio que 'sessionIsLive' ya aplica: lo desconocido sigue dando directo.
+-- * __Sin calendario, no se sabe__ ('Common.Types.NextUnknown'): es el estado con el
+--   que arranca el proceso, y dura lo que tarde la primera petición.
+-- * __Sin empezar, se cuenta a ELLA__ ('Common.Types.NextStartsIn'): con la parrilla
+--   ya publicada —el feed lo hace hasta cuarenta minutos antes—, lo que hace falta
+--   saber es cuándo arranca lo que se está mirando, no lo de después.
+-- * __Acabada o sin estado, se cuenta a la siguiente__ ('Common.Types.NextAfter').
+--
+-- __La siguiente es la de arranque más próximo entre las que aún no han arrancado__,
+-- y no la primera de la lista: el calendario llega ordenado, pero depender de ese
+-- orden ataría esto a una promesa de OpenF1 que nadie ha comprobado.
+--
+-- __La etiqueta es el gran premio, salvo dentro de su propio fin de semana__, donde
+-- repetirlo no diría nada nuevo —la sesión de la izquierda ya lo lleva— y el nombre
+-- de la sesión sí. Sin nombre de gran premio se cae al de la sesión, que siempre hay.
+upNext :: UTCTime -> Maybe SessionInfo -> [ScheduledSession] -> UpNext
+upNext now shown sessions
+  | null sessions       = NextUnknown
+  | stillRunning        = NextSilent
+  | otherwise           = maybe NextUnknown answer soonest
+  where
+    state = srState <$> (siState =<< shown)
+    stillRunning = maybe False sessionIsLive state && state /= Just SessionInactive
+
+    soonest = listToMaybe (sortOn ssStart (filter ((> now) . ssStart) sessions))
+
+    answer next
+      | state == Just SessionInactive = NextStartsIn (secondsTo next)
+      | otherwise                     = NextAfter (label next) (secondsTo next)
+
+    secondsTo next = max 0 (floor (diffUTCTime (ssStart next) now))
+
+    label next
+      | T.null (ssGrandPrix next)                = ssName next
+      | Just (ssGrandPrix next) == shownMeeting  = ssName next
+      | otherwise                                = ssGrandPrix next
+
+    shownMeeting = siMeeting <$> shown
+
 -- | Un instante en la forma ISO 8601 que este proyecto emite, con segundos enteros.
 --
 -- La usan el filtro del calendario de OpenF1 y la cabecera @X-Data-Fetched-At@. Son
@@ -606,10 +655,17 @@ data FeedVerdict
 --
 -- __Sin filas no hay tabla, se anuncie lo que se anuncie.__ La sesión que venga al
 -- lado no cambia el desenlace, así que ese caso se mira primero.
+--
+-- __Lo que viene después sale en 'Common.Types.NextUnknown' y no es un degradado:__
+-- depende del calendario, que este verdicto no tiene, y de «ahora», así que lo
+-- resuelve 'Handler.Live.Context.getLiveTiming' justo antes de servir. Ponerlo aquí
+-- lo dejaría envejecer dentro de la cache, que es el defecto que 'freezeClock'
+-- existe para tapar en el otro campo que depende del instante.
 feedVerdict :: UTCTime -> FeedLive -> FeedVerdict
 feedVerdict now live
   | null (flRows live) = FeedEmpty
-  | keepsGoing         = FeedServes (LiveTable session (feedRows (flRows live)))
+  | keepsGoing         =
+      FeedServes (LiveTable session (feedRows (flRows live)) NextUnknown)
   | otherwise          = FeedFinalised
   where
     session   = feedSession now <$> flSession live

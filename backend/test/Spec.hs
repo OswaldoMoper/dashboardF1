@@ -86,11 +86,11 @@ import           Common.Types                (DriverEntry (..),
                                               StatEntity (..), StateBasis (..),
                                               StateReading (..),
                                               TelemetryPoint (..),
-                                              TyreStint (..), WidgetConfig (..),
-                                              WidgetId (..), WidgetType (..),
-                                              noParams, sessionStateWord,
-                                              sessionTitle, stateLabel,
-                                              statusLabel)
+                                              TyreStint (..), UpNext (..),
+                                              WidgetConfig (..), WidgetId (..),
+                                              WidgetType (..), noParams,
+                                              sessionStateWord, sessionTitle,
+                                              stateLabel, statusLabel)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
 import           Data.ByteString             (ByteString)
@@ -128,7 +128,8 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               freezeClock, lapProgress,
                                               openf1Session, parseFeedInstant,
                                               parseRemaining, schedule,
-                                              sessionClock, sessionIsLive)
+                                              sessionClock, sessionIsLive,
+                                              upNext)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import qualified Handler.Telemetry.Context   as Telemetry
@@ -875,7 +876,7 @@ main = hspec $ do
   describe "feedVerdict" $ do
     it "con filas y la sesión en marcha, sirve el feed" $
       fmap (feedVerdict raceServedAt) (tryLive feedLiveFull)
-        `shouldBe` Right (FeedServes (LiveTable (Just raceSessionFixture) feedRowsFixture))
+        `shouldBe` Right (FeedServes (LiveTable (Just raceSessionFixture) feedRowsFixture NextUnknown))
 
     it "con filas pero la sesión finalizada, NO sirve el feed" $
       -- Es lo que cierra el §4 punto 37: el feed sigue devolviendo la clasificación
@@ -891,7 +892,7 @@ main = hspec $ do
 
     it "con filas y sin sesión, se sirve: la ausencia no es la señal contraria" $
       fmap (feedVerdict raceServedAt) (tryLive feedLiveWithoutSession)
-        `shouldBe` Right (FeedServes (LiveTable Nothing feedRowsFixture))
+        `shouldBe` Right (FeedServes (LiveTable Nothing feedRowsFixture NextUnknown))
 
   describe "freezeClock" $ do
     it "para el reloj sin borrarlo ni tocar nada más de la sesión" $
@@ -1061,6 +1062,71 @@ main = hspec $ do
              ]
              [])
         `shouldBe` [bakuP1, raceStartsAt]
+
+  -- Qué enseña la mitad derecha de la banda. Cada caso sale de una decisión distinta
+  -- y por eso hay uno por cada una, más los controles que impiden que pasen por el
+  -- motivo equivocado.
+  describe "upNext" $ do
+    it "sin calendario dice que aún no se sabe" $
+      -- El estado con el que arranca el proceso, y dura lo que tarde la primera
+      -- petición del calendario.
+      upNext bakuLongBefore (Just (stateOf SessionFinalised)) []
+        `shouldBe` NextUnknown
+
+    it "con la sesión rodando, calla y le deja el ancho" $
+      upNext bakuLongBefore (Just (stateOf SessionStarted)) bakuWeekend
+        `shouldBe` NextSilent
+
+    it "y un estado que no se reconoce cuenta como rodando" $
+      -- El mismo criterio que `sessionIsLive`: lo desconocido sigue dando directo,
+      -- así que tampoco es momento de hablar de la siguiente.
+      upNext bakuLongBefore (Just (stateOf (SessionUnknown "Warmup"))) bakuWeekend
+        `shouldBe` NextSilent
+
+    it "con la sesión aún sin empezar, cuenta a ELLA y sin etiqueta" $
+      -- El feed publica la parrilla hasta cuarenta minutos antes, así que este caso
+      -- se ve de verdad. Lo que hace falta saber entonces es cuándo arranca lo que
+      -- se está mirando, no lo de después — y nombrarlo sobraría: ya está al lado.
+      upNext bakuInLead (Just (stateOf SessionInactive)) bakuWeekend
+        `shouldBe` NextStartsIn (40 * 60)
+
+    it "acabada, cuenta a la siguiente y la nombra por su gran premio" $
+      -- Fuera del fin de semana la izquierda dice otro gran premio, así que el de la
+      -- derecha es información nueva.
+      upNext raceEndsAt (Just (stateOf SessionFinalised)) bakuWeekend
+        `shouldBe` NextAfter "Azerbaijan Grand Prix" (10 * 86400 + 17 * 3600 + 30 * 60)
+
+    it "pero DENTRO de su fin de semana la nombra por la sesión, no repitiendo el GP" $
+      -- Si la izquierda ya dice «Azerbaijan Grand Prix», repetirlo a la derecha no
+      -- diría nada que no estuviera en pantalla; el nombre de la sesión sí.
+      upNext
+        bakuDuringP1
+        (Just (sessionAt "Azerbaijan Grand Prix" SessionFinalised))
+        bakuWeekend
+        `shouldBe` NextAfter "Practice 2" (3 * 3600)
+
+    it "sin estado conocido también cuenta a la siguiente" $
+      -- Es el caso de OpenF1 en el borde, donde `derivedState` calla: no saber en qué
+      -- punto está no es saber que está rodando.
+      upNext raceEndsAt (Just (stateless "Spanish Grand Prix")) bakuWeekend
+        `shouldBe` NextAfter "Azerbaijan Grand Prix" (10 * 86400 + 17 * 3600 + 30 * 60)
+
+    it "coge la de arranque más próximo, no la primera de la lista" $
+      -- El control del orden: el calendario llega ordenado, pero depender de eso
+      -- ataría esto a una promesa de OpenF1 que nadie ha comprobado.
+      upNext bakuLongBefore (Just (stateOf SessionFinalised)) (reverse bakuWeekend)
+        `shouldBe` NextAfter "Azerbaijan Grand Prix" (90 * 60)
+
+    it "y descarta las que ya arrancaron" $
+      -- Con P1 ya empezada, la siguiente es P2 y no ella misma.
+      upNext bakuDuringP1 (Just (stateOf SessionFinalised)) bakuWeekend
+        `shouldBe` NextAfter "Azerbaijan Grand Prix" (3 * 3600)
+
+    it "sin nombre de gran premio se cae al de la sesión, que siempre hay" $
+      -- `/meetings` puede no haber contestado. Sin etiqueta la cuenta atrás no diría
+      -- a qué cuenta.
+      upNext bakuLongBefore (Just (stateOf SessionFinalised)) namelessWeekend
+        `shouldBe` NextAfter "Practice 1" (90 * 60)
 
   -- El margen de la hora de FIN, simétrico de `feedWindowLead`. Sale de multiplicar
   -- la duración prevista, así que los dos números que ya estaban decididos no se
@@ -2805,6 +2871,37 @@ bakuP2 = UTCTime (fromGregorian 2026 9 24) (12 * 3600)
 bakuP1End :: UTCTime
 bakuP1End = UTCTime (fromGregorian 2026 9 24) (9 * 3600 + 30 * 60)
 
+-- | El fin de semana de Bakú tal como el backend lo guarda: P1 y P2, las dos del
+-- gran premio de Azerbaiyán. __P2 va primero__ para que ningún caso de 'upNext'
+-- pueda pasar cogiendo la primera de la lista en vez de la más próxima.
+bakuWeekend :: [ScheduledSession]
+bakuWeekend =
+  [ ScheduledSession "Practice 2" 1295 "Azerbaijan Grand Prix" bakuP2 bakuP2End
+  , ScheduledSession "Practice 1" 1295 "Azerbaijan Grand Prix" bakuP1 bakuP1End
+  ]
+
+bakuP2End :: UTCTime
+bakuP2End = UTCTime (fromGregorian 2026 9 24) (13 * 3600)
+
+-- | El mismo, sin nombres de gran premio: lo que queda si @\/meetings@ no contesta.
+namelessWeekend :: [ScheduledSession]
+namelessWeekend = map (\s -> s {ssGrandPrix = ""}) bakuWeekend
+
+-- | Una sesión enseñándose con ese estado, oído. El gran premio es el de España,
+-- o sea __distinto__ del de las sesiones de 'bakuWeekend': así los casos que
+-- comparan los dos lados no pasan por coincidencia.
+stateOf :: SessionState -> SessionInfo
+stateOf = sessionAt "Spanish Grand Prix"
+
+-- | La misma, con el gran premio a la vista: hace falta para el caso que comprueba
+-- qué pasa cuando los dos lados hablan del MISMO gran premio.
+sessionAt :: T.Text -> SessionState -> SessionInfo
+sessionAt gp st = (stateless gp) {siState = Just (StateReading st Heard)}
+
+-- | Y una sin estado ninguno, que es lo que sirve OpenF1 en el borde.
+stateless :: T.Text -> SessionInfo
+stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing
+
 -- | 07:00 — cuarenta y cinco minutos __antes__ de que la ventana de P1 abra.
 bakuLongBefore :: UTCTime
 bakuLongBefore = UTCTime (fromGregorian 2026 9 24) (7 * 3600)
@@ -3250,13 +3347,13 @@ namedSession sType sName sMeeting =
 
 -- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
 liveTableFixture :: LiveTable
-liveTableFixture = LiveTable (Just raceSessionFixture) liveRowsFixture
+liveTableFixture = LiveTable (Just raceSessionFixture) liveRowsFixture NextUnknown
 
 -- | Lo que sirven los peldaños que no saben de qué sesión hablan — OpenF1 y el
 -- dato de ejemplo. __Es «no se sabe» y no una sesión vacía__, que es la distinción
 -- que motiva el 'Maybe' de 'Common.Types.liveSession'.
 namelessTableFixture :: LiveTable
-namelessTableFixture = LiveTable Nothing liveRowsFixture
+namelessTableFixture = LiveTable Nothing liveRowsFixture NextUnknown
 
 -- | Las 14:03:22 UTC del 2026-09-11 __con fracción de segundo__, que es lo que da
 -- 'getCurrentTime': 'fetchedAtText' tiene que tirarla.

@@ -39,7 +39,8 @@ import           App                    (Env (..), FeedWindow (..),
                                          ScheduledSession (..))
 import           Common.Origin          (Origin (..), Source (..))
 import           Common.Types           (DriverStatus (..), LiveTable (..),
-                                         LiveTimingRow (..), SessionInfo)
+                                         LiveTimingRow (..), SessionInfo,
+                                         UpNext (..))
 import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, modifyTVar', readTVarIO,
                                          writeTVar)
@@ -53,7 +54,8 @@ import qualified Handler.Feed.Manager   as Feed
 import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
                                          Of1Session (..), assembleRows,
                                          feedVerdict, feedWindowOpen,
-                                         freezeClock, openf1Session, schedule)
+                                         freezeClock, openf1Session, schedule,
+                                         upNext)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
@@ -106,13 +108,37 @@ getLiveTiming :: Env -> IO LiveResult
 getLiveTiming env = do
   now <- getCurrentTime
   window <- readTVarIO (envFeedWindow env)
-  if feedWindowOpen now (map ssStart (fwSessions window)) (fwFinalisedAt window)
-    then do
-      feed <-
-        try (Feed.fetchFeedLive (envConfig env))
-          :: IO (Either SomeException FeedLive)
-      either (const (fromCache env)) (fromFeed env) feed
-    else fromOpenF1 env
+  result <-
+    if feedWindowOpen now (map ssStart (fwSessions window)) (fwFinalisedAt window)
+      then do
+        feed <-
+          try (Feed.fetchFeedLive (envConfig env))
+            :: IO (Either SomeException FeedLive)
+        either (const (fromCache env)) (fromFeed env) feed
+      else fromOpenF1 env
+  withUpNext env result
+
+-- | Resuelve qué viene después, __lo último antes de servir__.
+--
+-- __Va aquí y no en cada peldaño__ por dos razones. La primera es que así lo tienen
+-- los cuatro, incluidos la cache y el dato de ejemplo: lo que viene después no
+-- depende de qué fuente trajo las filas. La segunda es que __depende de «ahora»__, y
+-- calcularlo antes de la foto del feed —que cuesta 16-23 s— serviría una cuenta
+-- atrás con esos segundos de retraso.
+--
+-- __Por eso el instante es propio y no el de la puerta.__ Es el mismo motivo por el
+-- que 'freezeClock' existe: un número que depende del reloj y se guarda, envejece.
+-- Aquí ni siquiera se guarda — se recalcula en cada respuesta.
+--
+-- __El calendario se relee__, y no se hereda el de la puerta: entre una cosa y otra
+-- puede haber pasado un 'noteFinalised' que lo haya refrescado.
+withUpNext :: Env -> LiveResult -> IO LiveResult
+withUpNext env result = do
+  now <- getCurrentTime
+  window <- readTVarIO (envFeedWindow env)
+  let table = lrTable result
+      next = upNext now (liveSession table) (fwSessions window)
+  pure result {lrTable = table {liveNext = next}}
 
 -- | Guarda cuándo se vio que el feed daba la sesión por finalizada, y vuelve a
 -- pedir el calendario.
@@ -222,7 +248,7 @@ fromOpenF1 env = do
     Right rows | not (null rows) -> do
       now <- getCurrentTime
       session <- fetchSessionOrNothing (envConfig env) now
-      serveFresh env now OpenF1 (LiveTable session rows)
+      serveFresh env now OpenF1 (LiveTable session rows NextUnknown)
     _                            -> fromCache env
 
 -- | Sirve lo que acaba de llegar y refresca la cache con su fuente.
@@ -250,7 +276,7 @@ fromCache env = do
     fromEntry (fetchedAt, source, table) =
       LiveResult Cached (Just source) (Just fetchedAt) (frozen table)
     frozen table = table { liveSession = freezeClock <$> liveSession table }
-    sample = LiveResult Sample Nothing Nothing (LiveTable Nothing dummy)
+    sample = LiveResult Sample Nothing Nothing (LiveTable Nothing dummy NextUnknown)
 
 -- | Fetch de los 5 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
 --

@@ -273,6 +273,36 @@ sessionTitle :: SessionInfo -> Text
 sessionTitle s =
   T.intercalate " · " (filter (not . T.null) [siMeeting s, siName s])
 
+-- | Qué viene después de la sesión que se está enseñando.
+--
+-- __Los cuatro casos no son un estado y tres excusas:__ cada uno dice algo distinto
+-- y la banda los pinta distinto. Fundirlos en un @Maybe@ juntaría «calla a
+-- propósito» con «todavía no lo sé», que es la distinción que este repositorio paga
+-- por conservar en 'LiveTable.liveSession' y en 'SessionInfo.siState'.
+--
+-- __Los segundos viajan resueltos al instante de responder__, no como una hora de
+-- arranque, por el mismo criterio que 'SessionClock': el navegador nunca compara su
+-- reloj con el del servidor, solo descuenta desde lo que recibió.
+--
+-- __La etiqueta viene armada y no en piezas.__ Elegir entre el gran premio y el
+-- nombre de la sesión depende de con qué se compare —la sesión que se enseña al
+-- lado—, y quien pinta no tiene por qué volver a decidirlo.
+data UpNext
+  = NextSilent
+    -- ^ La sesión de la izquierda está rodando: la derecha calla y le deja el ancho.
+  | NextUnknown
+    -- ^ Todavía no se sabe. Es el estado con el que arranca el proceso, antes de que
+    -- el calendario llegue.
+  | NextStartsIn Int
+    -- ^ La sesión de la izquierda aún no ha empezado, y lo que falta es para ella.
+    -- Sin etiqueta: ya está nombrada al lado.
+  | NextAfter Text Int
+    -- ^ La siguiente, con su etiqueta y los segundos que faltan.
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON UpNext
+instance FromJSON UpNext
+
 -- | Lo que sirve @GET \/api\/live@: la tabla y de qué sesión es.
 --
 -- __El dato de sesión envuelve las filas en vez de viajar en cabeceras__ porque es
@@ -290,6 +320,9 @@ data LiveTable = LiveTable
     -- ninguna. __Es «no se sabe» y no «sesión en blanco»__, que son distintos: una
     -- sesión con todos los campos vacíos afirmaría que el emisor los mandó así.
   , liveRows    :: [LiveTimingRow]
+  , liveNext    :: UpNext
+    -- ^ Qué viene después de 'liveSession', __ya resuelto al instante de
+    -- responder__.
   }
   deriving stock (Eq, Show, Generic)
 
