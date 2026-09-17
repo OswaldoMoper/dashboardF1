@@ -35,7 +35,8 @@
 -- que son dos preguntas ('Common.Origin')— y, el de la cache, __cuándo llegó__.
 module Handler.Live.Context where
 
-import           App                    (Env (..), FeedWindow (..))
+import           App                    (Env (..), FeedWindow (..),
+                                         ScheduledSession (..))
 import           Common.Origin          (Origin (..), Source (..))
 import           Common.Types           (DriverStatus (..), LiveTable (..),
                                          LiveTimingRow (..), SessionInfo)
@@ -43,14 +44,16 @@ import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, modifyTVar', readTVarIO,
                                          writeTVar)
 import           Control.Exception      (SomeException, try)
+import           Data.List              (nub)
 import           Data.Maybe             (listToMaybe)
-import           Data.Time.Clock        (UTCTime, getCurrentTime)
+import           Data.Time.Calendar     (toGregorian)
+import           Data.Time.Clock        (UTCTime, getCurrentTime, utctDay)
 import           Handler.Feed.Helper    (FeedLive (..))
 import qualified Handler.Feed.Manager   as Feed
 import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
                                          Of1Session (..), assembleRows,
                                          feedVerdict, feedWindowOpen,
-                                         freezeClock, openf1Session)
+                                         freezeClock, openf1Session, schedule)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 
@@ -103,7 +106,7 @@ getLiveTiming :: Env -> IO LiveResult
 getLiveTiming env = do
   now <- getCurrentTime
   window <- readTVarIO (envFeedWindow env)
-  if feedWindowOpen now (fwStarts window) (fwFinalisedAt window)
+  if feedWindowOpen now (map ssStart (fwSessions window)) (fwFinalisedAt window)
     then do
       feed <-
         try (Feed.fetchFeedLive (envConfig env))
@@ -128,12 +131,22 @@ noteFinalised env at = do
     modifyTVar' (envFeedWindow env) (\w -> w {fwFinalisedAt = Just at})
   refreshFeedWindow env
 
--- | Pide el calendario y guarda las horas de arranque.
+-- | Pide el calendario, le pone el nombre de cada gran premio y lo guarda.
 --
 -- __Un fallo no borra lo que había__, y la diferencia importa: OpenF1 devuelve
 -- @401@ durante una sesión, así que el momento en que más se le pregunta es aquel
 -- en que no contesta. Vaciar la lista por eso convertiría un calendario bueno en
 -- «no se sabe», que hace pagar la foto en cada refresco.
+--
+-- __Las dos peticiones caen juntas__, igual que las de 'fetchSessionInfo' y por la
+-- misma razón: que una conteste y la otra no es una avería, no un régimen, y guardar
+-- el calendario a medias sustituiría en silencio uno bueno por otro sin nombres.
+--
+-- __Los grandes premios se piden por año y no uno por sesión.__ El calendario trae
+-- nueve distintos, y nueve peticiones seguidas es justo lo que un servicio que
+-- limita por ritmo rechaza. Los años salen del propio calendario y no del reloj, que
+-- es lo que hace que esto siga valiendo en el cambio de año — el mismo cuidado que
+-- 'Handler.Live.Manager.fetchCalendar' tiene al no filtrar por año.
 --
 -- Al arrancar el proceso la lista está vacía, así que hasta que esto salga bien una
 -- vez se pregunta al feed siempre — el precio declarado de no perder el directo.
@@ -141,16 +154,26 @@ refreshFeedWindow :: Env -> IO ()
 refreshFeedWindow env = do
   now <- getCurrentTime
   result <-
-    try (Manager.fetchCalendar (envConfig env) now)
-      :: IO (Either SomeException [Of1Session])
+    try (fetchSchedule (envConfig env) now)
+      :: IO (Either SomeException [ScheduledSession])
   either
     (const (pure ()))
     (\sessions ->
        atomically $
-       modifyTVar'
-         (envFeedWindow env)
-         (\w -> w {fwStarts = map osStart sessions}))
+       modifyTVar' (envFeedWindow env) (\w -> w {fwSessions = sessions}))
     result
+
+-- | El calendario con sus nombres de gran premio, en las dos peticiones que hacen
+-- falta. Sin @try@: lo pone quien llama, que es quien sabe qué hacer con el fallo.
+fetchSchedule :: Config -> UTCTime -> IO [ScheduledSession]
+fetchSchedule cfg now = do
+  sessions <- Manager.fetchCalendar cfg now
+  meetings <- concat <$> mapM (Manager.fetchMeetings cfg) (years sessions)
+  pure (schedule sessions meetings)
+  where
+    -- Normalmente uno; dos solo en las semanas que cruzan el cambio de año.
+    years = nub . map (yearOf . osStart)
+    yearOf = (\(y, _, _) -> y) . toGregorian . utctDay
 
 -- | El peldaño del feed: despacha sobre lo que 'feedVerdict' decidió.
 --

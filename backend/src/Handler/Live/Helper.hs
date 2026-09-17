@@ -30,6 +30,7 @@ module Handler.Live.Helper
   , feedWindowOpen
   , endMargin
   , derivedState
+  , schedule
     -- * Transformaciones puras
   , isoInstant
   , assembleRows
@@ -50,6 +51,7 @@ module Handler.Live.Helper
   , classificationGaps
   ) where
 
+import           App                   (ScheduledSession (..))
 import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         LiveTable (..), LiveTimingRow (..),
                                         SessionClock (..), SessionInfo (..),
@@ -61,6 +63,7 @@ import           Data.Aeson.Types      (Parser)
 import           Data.Foldable         (toList)
 import           Data.Function         (on)
 import           Data.List             (find, groupBy, maximumBy, sortOn)
+import qualified Data.Map.Strict       as Map
 import           Data.Maybe            (fromMaybe, listToMaybe, mapMaybe)
 import           Data.Ord              (Down (..), comparing)
 import           Data.Text             (Text)
@@ -187,16 +190,20 @@ instance FromJSON Of1Session where
 
 -- | @/meetings@: el nombre del gran premio, que @\/sessions@ no publica.
 --
--- Un solo campo y aun así un tipo, porque es el borde del decode: el día que haga
--- falta el nombre oficial o el circuito se gana aquí sin tocar a quien llama.
-newtype Of1Meeting = Of1Meeting
-  { omName :: Text  -- ^ @\"Spanish Grand Prix\"@.
+-- __Lleva su clave desde que se piden todos los del año de una vez__: pedido por
+-- clave, quien llamaba ya sabía de cuál era; pedida la lista entera, la clave es lo
+-- único que permite juntar cada gran premio con sus sesiones.
+data Of1Meeting = Of1Meeting
+  { omKey  :: Int   -- ^ La misma clave que 'osMeeting', que es por donde se juntan.
+  , omName :: Text  -- ^ @\"Spanish Grand Prix\"@.
   }
   deriving (Eq, Show)
 
 instance FromJSON Of1Meeting where
   parseJSON = withObject "Of1Meeting" $ \o ->
-    Of1Meeting <$> o .: "meeting_name"
+    Of1Meeting
+      <$> o .: "meeting_key"
+      <*> o .: "meeting_name"
 
 -- | @/session_result@: clasificación de la sesión, una fila por piloto.
 --
@@ -512,6 +519,32 @@ derivedState now os
   | otherwise                          = Nothing
   where
     margin = endMargin (osName os) (diffUTCTime (osEnd os) (osStart os))
+
+-- | El calendario tal como el backend lo guarda: cada sesión con su gran premio.
+--
+-- __Junta por clave y no por orden__, porque las dos listas vienen de peticiones
+-- distintas: el calendario trae 45 sesiones de 9 grandes premios y @\/meetings@ trae
+-- los 27 del año, así que ni coinciden en largo ni en orden.
+--
+-- __Un gran premio que no esté en la lista deja el nombre en blanco, no tira la
+-- sesión__: sin él la sesión sigue sabiendo cómo se llama y cuándo es, que es lo que
+-- decide la ventana del feed. Es el mismo criterio con el que 'openf1Session' sirve
+-- la sesión sin gran premio.
+--
+-- __El orden de entrada se conserva__: quien busque «la siguiente» ordena por hora, y
+-- hacerlo aquí escondería esa decisión en una función que solo junta.
+schedule :: [Of1Session] -> [Of1Meeting] -> [ScheduledSession]
+schedule sessions meetings = map toScheduled sessions
+  where
+    names = Map.fromList [(omKey m, omName m) | m <- meetings]
+    toScheduled os =
+      ScheduledSession
+        { ssName      = osName os
+        , ssMeeting   = osMeeting os
+        , ssGrandPrix = Map.findWithDefault "" (osMeeting os) names
+        , ssStart     = osStart os
+        , ssEnd       = osEnd os
+        }
 
 -- | Un instante en la forma ISO 8601 que este proyecto emite, con segundos enteros.
 --

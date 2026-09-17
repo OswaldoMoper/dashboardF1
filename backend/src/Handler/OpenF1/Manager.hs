@@ -33,6 +33,15 @@ latestSession = "session_key" =: ("latest" :: Text)
 meetingKey :: Int -> Option 'Https
 meetingKey = ("meeting_key" =:)
 
+-- | Y también por año, que es como se piden todos los del calendario de una vez.
+--
+-- __Va con @('=:')@ y no con 'queryFlag'__, al contrario que 'endsAfter': aquí el
+-- filtro es una igualdad, así que el operador no forma parte del nombre y el @=@ que
+-- @req@ intercala es el que toca. Medido el 2026-09-17: @?year=2026@ contesta 200
+-- con los 27 grandes premios.
+meetingYear :: Integer -> Option 'Https
+meetingYear = ("year" =:)
+
 -- | Las sesiones que __aún no han terminado__ según el calendario, dado un instante
 -- en ISO 8601.
 --

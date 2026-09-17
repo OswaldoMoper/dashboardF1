@@ -48,6 +48,7 @@
 -- precisamente los campos opcionales, que viven en el decode.
 module Main (main) where
 
+import           App                         (ScheduledSession (..))
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, zeroLineY)
@@ -126,8 +127,8 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               feedWindowLead, feedWindowOpen,
                                               freezeClock, lapProgress,
                                               openf1Session, parseFeedInstant,
-                                              parseRemaining, sessionClock,
-                                              sessionIsLive)
+                                              parseRemaining, schedule,
+                                              sessionClock, sessionIsLive)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import qualified Handler.Telemetry.Context   as Telemetry
@@ -924,7 +925,7 @@ main = hspec $ do
       -- `/sessions` trae la clave del gran premio pero NO su nombre. Medido: lo más
       -- parecido que tiene son `location` y `country_name`, y ninguno es el nombre.
       tryOf1Meetings openF1MeetingArray
-        `shouldBe` Right [Of1Meeting "Spanish Grand Prix"]
+        `shouldBe` Right [Of1Meeting 1294 "Spanish Grand Prix"]
 
     it "una sesión sin tipo tumba la lista, y eso es lo que se quiere" $
       -- Al contrario que las banderas de `Of1Result`, aquí no hay default
@@ -947,6 +948,9 @@ main = hspec $ do
     it "y un gran premio sin nombre, igual" $
       tryOf1Meetings openF1MeetingNoName `shouldSatisfy` isLeft
 
+    it "ni sin clave, que es por donde se junta con sus sesiones" $
+      tryOf1Meetings openF1MeetingNoKey `shouldSatisfy` isLeft
+
     it "la hora de arranque llega con el desplazamiento que OpenF1 emite" $
       -- `date_start` viene como «…T13:00:00+00:00» y no con la Z, así que lo que se
       -- afirma es que el decode lee ese desplazamiento y no lo ignora.
@@ -961,7 +965,7 @@ main = hspec $ do
       openf1Session
         (addUTCTime (60 * 60) raceStartsAt)
         (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
-        (Just (Of1Meeting "Spanish Grand Prix"))
+        (Just (Of1Meeting 1294 "Spanish Grand Prix"))
         `shouldBe` SessionInfo
           { siType    = "Race"
           , siName    = "Race"
@@ -1011,6 +1015,52 @@ main = hspec $ do
           , siLaps    = Nothing
           , siClock   = Nothing
           }
+
+  -- Cómo el backend guarda el calendario: cada sesión con su gran premio, juntados
+  -- por clave porque vienen de dos peticiones distintas.
+  describe "schedule" $ do
+    it "le pone a cada sesión el nombre de SU gran premio, no el del primero" $
+      -- Hacen falta DOS grandes premios distintos y en orden cruzado respecto a las
+      -- sesiones: con uno solo, o con los dos en el mismo orden, juntar por clave y
+      -- coger el primero darían lo mismo y el caso pasaría sin afirmar nada.
+      map ssGrandPrix
+          (schedule
+             [ scheduledIn 1294 "Race"     "Race"       raceStartsAt raceEndsAt
+             , scheduledIn 1295 "Practice" "Practice 1" bakuP1       bakuP1End
+             ]
+             [ Of1Meeting 1295 "Azerbaijan Grand Prix"
+             , Of1Meeting 1294 "Spanish Grand Prix"
+             ])
+        `shouldBe` ["Spanish Grand Prix", "Azerbaijan Grand Prix"]
+
+    it "un gran premio que no está deja el nombre en blanco, y NO tira la sesión" $
+      -- Sin nombre la sesión sigue sabiendo cuándo es, que es lo que decide la
+      -- ventana del feed. Perderla entera por la etiqueta sería peor — el mismo
+      -- criterio con el que `openf1Session` sirve la sesión sin gran premio.
+      schedule [scheduled "Race" "Race" raceStartsAt raceEndsAt] []
+        `shouldBe` [ScheduledSession "Race" 1294 "" raceStartsAt raceEndsAt]
+
+    it "guarda el NOMBRE de la sesión y no su tipo" $
+      -- Es lo que distingue un Sprint de una carrera larga, que comparten
+      -- `session_type`, y de lo que cuelga el margen de `endMargin`.
+      map ssName
+          (schedule
+             [ scheduled "Race"       "Sprint"            sprintStartsAt sprintEndsAt
+             , scheduled "Qualifying" "Sprint Qualifying" sprintStartsAt sprintEndsAt
+             ]
+             [])
+        `shouldBe` ["Sprint", "Sprint Qualifying"]
+
+    it "conserva el orden de entrada" $
+      -- Ordenar por hora es decisión de quien busque «la siguiente»; hacerlo aquí la
+      -- escondería en una función que solo junta.
+      map ssStart
+          (schedule
+             [ scheduled "Practice" "Practice 1" bakuP1 bakuP1End
+             , scheduled "Race"     "Race"       raceStartsAt   raceEndsAt
+             ]
+             [])
+        `shouldBe` [bakuP1, raceStartsAt]
 
   -- El margen de la hora de FIN, simétrico de `feedWindowLead`. Sale de multiplicar
   -- la duración prevista, así que los dos números que ya estaban decididos no se
@@ -2726,9 +2776,18 @@ sprintEndsAt = UTCTime (fromGregorian 2026 10 10) (10 * 3600)
 -- Sprint existen para enseñar que el tipo dice @\"Race\"@ y aun así el margen es el
 -- corto. Con el tipo escondido en el helper no se vería.
 --
--- La clave del gran premio no la mira ninguno de estos casos.
+-- La clave del gran premio es la de España, que es la que no miran los casos del
+-- margen. Los de 'schedule' sí la miran y usan 'scheduledIn'.
 scheduled :: T.Text -> T.Text -> UTCTime -> UTCTime -> Of1Session
-scheduled sType name = Of1Session sType name 1294
+scheduled = scheduledIn 1294
+
+-- | La misma, con la clave del gran premio a la vista.
+--
+-- __Existe porque un helper que la fijara no podía expresar dos grandes premios__, y
+-- con uno solo el caso de 'schedule' que afirma «el suyo y no el del primero» pasaba
+-- por el motivo equivocado. Lo destapó la prueba al ponerse roja.
+scheduledIn :: Int -> T.Text -> T.Text -> UTCTime -> UTCTime -> Of1Session
+scheduledIn key sType name = Of1Session sType name key
 
 -- | Las dos primeras sesiones de Bakú y los instantes que rodean a la primera,
 -- tomados del calendario real el 2026-09-15: P1 el 24 a las 08:30 UTC y P2 el mismo
@@ -2741,6 +2800,10 @@ scheduled sType name = Of1Session sType name 1294
 bakuP1, bakuP2 :: UTCTime
 bakuP1 = UTCTime (fromGregorian 2026 9 24) (8 * 3600 + 30 * 60)
 bakuP2 = UTCTime (fromGregorian 2026 9 24) (12 * 3600)
+
+-- | Y la hora de fin prevista de P1: 09:30, o sea los 60 min que dura una práctica.
+bakuP1End :: UTCTime
+bakuP1End = UTCTime (fromGregorian 2026 9 24) (9 * 3600 + 30 * 60)
 
 -- | 07:00 — cuarenta y cinco minutos __antes__ de que la ventana de P1 abra.
 bakuLongBefore :: UTCTime
@@ -2833,9 +2896,16 @@ openF1MeetingArray =
   \\"date_end\":\"2026-09-13T15:00:00+00:00\",\"year\":2026,\
   \\"is_cancelled\":false}]"
 
--- | 'openF1MeetingArray' sin @meeting_name@, que es el único campo que el tipo lee.
+-- | 'openF1MeetingArray' sin @meeting_name@. __Lleva la clave__, que es el otro
+-- campo obligatorio: sin ella el caso pasaría por el motivo equivocado.
 openF1MeetingNoName :: ByteString
 openF1MeetingNoName = "[{\"meeting_key\":1294,\"location\":\"Madrid\"}]"
+
+-- | Y sin @meeting_key@, que es por donde cada gran premio se junta con sus
+-- sesiones. Desde que se piden todos los del año, sin clave no sirve de nada.
+openF1MeetingNoKey :: ByteString
+openF1MeetingNoKey =
+  "[{\"meeting_name\":\"Spanish Grand Prix\",\"location\":\"Madrid\"}]"
 
 -- | Recorte de @GET \/stints@ de OpenF1 (sesión 11353, 2026-08-25): dos stints de
 -- cada coche, __intercalados__ para que el orden de salida no pueda venir de

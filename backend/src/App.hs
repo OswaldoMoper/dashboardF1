@@ -21,21 +21,40 @@ import qualified Data.Map.Strict        as Map
 import           Data.Text              (Text)
 import           Data.Time.Clock        (UTCTime)
 
--- | Lo que se sabe sobre cuándo hay sesión que mirar.
+-- | Una sesión del calendario, con lo que el backend necesita de ella.
 --
--- __Las horas son las previstas por el calendario, no las reales__, y por eso quien
--- decide con ellas les resta un margen ('Handler.Live.Helper.feedWindowOpen'). Se
--- guardan como instantes y no como sesiones para que este módulo, que es infra, no
--- tenga que conocer los tipos crudos de una fuente.
+-- __Es un tipo de aquí y no el crudo de OpenF1__, que es lo que mantiene a este
+-- módulo —infra— sin conocer los tipos de una fuente. Antes se guardaban solo
+-- instantes por esa misma razón; dejó de bastar cuando hubo que poder decir __cuál__
+-- es la sesión siguiente y no solo cuándo empieza.
+--
+-- __Las horas son las previstas, no las reales.__ La de arranque llega tarde y la de
+-- fin llega pronto —cuatro minutos y trece en la carrera 11369—, así que quien
+-- decide con ellas les pone un margen en vez de creérselas
+-- ('Handler.Live.Helper.feedWindowOpen', 'Handler.Live.Helper.endMargin').
+--
+-- __El gran premio puede venir en blanco__: sale de una petición distinta a la del
+-- calendario, y sin él la sesión sigue sabiendo cómo se llama y cuándo es.
+data ScheduledSession = ScheduledSession
+  { ssName      :: Text
+    -- ^ @\"Practice 1\"@, @\"Race\"@, @\"Sprint\"@. __El nombre y no el tipo__: es
+    -- lo único que distingue un Sprint de una carrera larga, que comparten tipo.
+  , ssMeeting   :: Int     -- ^ Clave del gran premio, que es por donde se juntan.
+  , ssGrandPrix :: Text    -- ^ @\"Azerbaijan Grand Prix\"@, o vacío si no se supo.
+  , ssStart     :: UTCTime
+  , ssEnd       :: UTCTime
+  }
+  deriving (Eq, Show)
+
+-- | Lo que se sabe sobre cuándo hay sesión que mirar, y cuál es la siguiente.
 --
 -- __La lista vacía es «no se sabe» y hace preguntar__, no callar: no saber cuándo
 -- empieza la siguiente sesión no es saber que no hay ninguna. Es el estado con el
 -- que arranca el proceso y en el que se queda si OpenF1 no contesta — que es lo que
 -- hace durante una sesión, justo cuando más falta haría saberlo.
 data FeedWindow = FeedWindow
-  { fwStarts      :: [UTCTime]
-    -- ^ Horas de arranque previstas de las sesiones que aún no habían terminado
-    -- cuando se pidió el calendario.
+  { fwSessions    :: [ScheduledSession]
+    -- ^ Las sesiones que aún no habían terminado cuando se pidió el calendario.
   , fwFinalisedAt :: Maybe UTCTime
     -- ^ Cuándo se vio por última vez que el feed daba una sesión por finalizada.
     -- Es lo que cierra la ventana, en vez de una hora de fin: una carrera alargada
@@ -88,7 +107,8 @@ data Env = Env
     -- \"lista vacía\".
   , envFeedWindow      :: TVar FeedWindow
     -- ^ Lo que el backend sabe sobre __cuándo merece la pena pedirle la foto al
-    -- feed__, que cuesta 16-23 s y fuera de sesión no trae nada que servir.
+    -- feed__ —que cuesta 16-23 s y fuera de sesión no trae nada que servir— y
+    -- __cuál es la sesión siguiente__, que sale del mismo calendario.
     --
     -- No es una cache: no guarda una respuesta para volver a servirla, sino lo que
     -- hace falta para decidir si preguntar. De ahí que no caduque ni tenga

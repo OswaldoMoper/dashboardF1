@@ -16,7 +16,7 @@ import           Handler.Live.Helper    (Of1Interval, Of1Lap, Of1Meeting,
                                          Of1Position, Of1Result, Of1Session,
                                          isoInstant)
 import           Handler.OpenF1.Manager (endsAfter, fetchList, fetchListWith,
-                                         meetingKey)
+                                         meetingKey, meetingYear)
 
 -- Los cuatro reciben la 'Config' por lo mismo que 'fetchList': de ella sale el
 -- techo de duración del intento.
@@ -48,6 +48,19 @@ fetchSession cfg = fetchList cfg "sessions"
 -- 'fetchList'.
 fetchMeeting :: Config -> Int -> IO [Of1Meeting]
 fetchMeeting cfg key = fetchListWith cfg "meetings" (meetingKey key)
+
+-- | @/meetings?year=@: todos los grandes premios de un año, para nombrar el
+-- calendario entero.
+--
+-- __Una petición y no una por gran premio.__ El calendario trae 9 grandes premios
+-- distintos, y pedirlos de uno en uno son nueve peticiones seguidas contra un
+-- servicio que limita por ritmo. Medido el 2026-09-17: el año entero son 27 grandes
+-- premios en 20,5 KB y 0,63 s.
+--
+-- __Recibe el año por argumento__ y no lo saca del reloj, por lo mismo que
+-- 'fetchCalendar' recibe el instante: la URL es función de sus argumentos y nada más.
+fetchMeetings :: Config -> Integer -> IO [Of1Meeting]
+fetchMeetings cfg year = fetchListWith cfg "meetings" (meetingYear year)
 
 -- | El calendario: las sesiones que aún no han terminado a la hora dada.
 --
