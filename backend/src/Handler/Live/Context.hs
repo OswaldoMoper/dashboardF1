@@ -44,9 +44,12 @@ import           Common.Types           (DriverStatus (..), LiveTable (..),
 import           Config                 (Config)
 import           Control.Concurrent.STM (atomically, modifyTVar', readTVarIO,
                                          writeTVar)
-import           Control.Exception      (SomeException, try)
+import           Control.Exception      (SomeException, displayException, try)
 import           Data.List              (nub)
 import           Data.Maybe             (listToMaybe)
+import           Data.Text              (Text)
+import qualified Data.Text              as T
+import qualified Data.Text.IO           as TIO
 import           Data.Time.Calendar     (toGregorian)
 import           Data.Time.Clock        (UTCTime, getCurrentTime, utctDay)
 import           Handler.Feed.Helper    (FeedLive (..))
@@ -54,10 +57,12 @@ import qualified Handler.Feed.Manager   as Feed
 import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
                                          Of1Session (..), assembleRows,
                                          feedVerdict, feedWindowOpen,
-                                         freezeClock, openf1Session, schedule,
-                                         upNext)
+                                         fetchFailure, freezeClock,
+                                         openf1Session, schedule, upNext)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
+import           Outcome                (httpStatusOf)
+import           System.IO              (stderr)
 
 -- | La tabla de live timing con todo lo que hace falta para servirla: qué peldaño
 -- la produjo, de qué fuente salió y, solo cuando sale de la cache, cuándo llegó.
@@ -117,6 +122,26 @@ getLiveTiming env = do
         either (const (fromCache env)) (fromFeed env) feed
       else fromOpenF1 env
   withUpNext env result
+
+-- | Deja dicho en el log por qué no salió un fetch.
+--
+-- __Existe porque un @try@ que devuelve el respaldo convierte cuatro causas en una
+-- sola cara.__ Conexión rechazada, techo vencido, respuesta con otra forma y
+-- rechazo por ritmo salen todas como «sirvo lo guardado», y desde fuera no hay
+-- forma de saber cuál fue: hasta el 2026-09-17 la del ritmo hubo que deducirla
+-- midiendo la API por separado.
+--
+-- __Es el único efecto de esto__; qué dice la línea lo decide
+-- 'Handler.Live.Helper.fetchFailure', que es pura. Va a @stderr@ y no a @stdout@
+-- porque es un aviso y no la salida del programa — 'Main' imprime ahí su única
+-- línea, la del arranque.
+--
+-- __No atrapa nada ni cambia el desenlace:__ quien llama sigue decidiendo qué se
+-- sirve, y esto solo lo cuenta.
+noteFailure :: Text -> SomeException -> IO ()
+noteFailure what e =
+  TIO.hPutStrLn stderr $
+    fetchFailure what (fst <$> httpStatusOf e) (T.pack (displayException e))
 
 -- | Resuelve qué viene después, __lo último antes de servir__.
 --
@@ -183,7 +208,7 @@ refreshFeedWindow env = do
     try (fetchSchedule (envConfig env) now)
       :: IO (Either SomeException [ScheduledSession])
   either
-    (const (pure ()))
+    (noteFailure "el calendario")
     (\sessions ->
        atomically $
        modifyTVar' (envFeedWindow env) (\w -> w {fwSessions = sessions}))
@@ -249,7 +274,8 @@ fromOpenF1 env = do
       now <- getCurrentTime
       session <- fetchSessionOrNothing (envConfig env) now
       serveFresh env now OpenF1 (LiveTable session rows NextUnknown)
-    _                            -> fromCache env
+    Right _                      -> fromCache env
+    Left e                       -> noteFailure "las filas" e >> fromCache env
 
 -- | Sirve lo que acaba de llegar y refresca la cache con su fuente.
 --
@@ -315,12 +341,17 @@ fetchRows cfg = do
 -- fuera de carrera—; que @\/sessions@ conteste y @\/meetings@ no, o al revés, no es
 -- un régimen sino una avería. Partirlas serviría una sesión a medias sin que nadie
 -- la hubiera pedido así.
+--
+-- __Y por eso mismo la avería se cuenta__ ('noteFailure'): «no se sabe» es la
+-- respuesta correcta, pero callar por qué no lo es. Hasta el 2026-09-17 este
+-- 'Nothing' era la cara única de cuatro causas distintas, y averiguar cuál obligó a
+-- medir la API por fuera.
 fetchSessionOrNothing :: Config -> UTCTime -> IO (Maybe SessionInfo)
 fetchSessionOrNothing cfg now = do
   result <-
     try (fetchSessionInfo cfg now)
       :: IO (Either SomeException (Maybe SessionInfo))
-  pure (either (const Nothing) id result)
+  either (\e -> Nothing <$ noteFailure "el nombre de la sesión" e) pure result
 
 -- | @\/sessions@ y, con la clave que da, @\/meetings@.
 --
@@ -351,6 +382,10 @@ fetchSessionInfo cfg now = do
 -- __La lista vacía no vacía las columnas:__ 'Handler.Live.Helper.assembleRows' las
 -- rellena entonces desde la clasificación. Y la procedencia sigue siendo @Fresh@,
 -- porque lo que se sirve acaba de llegar.
+--
+-- __Es el único @try@ de este módulo que calla__, y por lo mismo que no es un fallo:
+-- hablaría en cada refresco de cuatro sesiones de cada cinco para contar lo previsto,
+-- y un log que avisa siempre deja de leerse.
 fetchIntervalsOrEmpty :: Config -> IO [Of1Interval]
 fetchIntervalsOrEmpty cfg = do
   result <-

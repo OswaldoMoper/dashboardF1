@@ -126,11 +126,11 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               endMargin, feedRows, feedSession,
                                               feedStatus, feedVerdict,
                                               feedWindowLead, feedWindowOpen,
-                                              freezeClock, lapProgress,
-                                              openf1Session, parseFeedInstant,
-                                              parseRemaining, schedule,
-                                              sessionClock, sessionIsLive,
-                                              upNext)
+                                              fetchFailure, freezeClock,
+                                              lapProgress, openf1Session,
+                                              parseFeedInstant, parseRemaining,
+                                              schedule, sessionClock,
+                                              sessionIsLive, upNext)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import qualified Handler.Telemetry.Context   as Telemetry
@@ -894,6 +894,36 @@ main = hspec $ do
     it "con filas y sin sesión, se sirve: la ausencia no es la señal contraria" $
       fmap (feedVerdict raceServedAt) (tryLive feedLiveWithoutSession)
         `shouldBe` Right (FeedServes (LiveTable Nothing feedRowsFixture NextUnknown))
+
+  -- Lo que el log dice cuando un fetch no sale. Hasta el 2026-09-17 no decía nada, y
+  -- el rechazo por ritmo de OpenF1 hubo que deducirlo midiendo la API por fuera.
+  describe "fetchFailure" $ do
+    it "nombra el 429, porque su número no dice qué hacer" $
+      -- No es la red ni el servicio caído: es haber preguntado de más. Es el único
+      -- status al que se le pone nombre.
+      fetchFailure "el nombre de la sesión" (Just 429) "lo que sea"
+        `shouldBe`
+          "[live] el nombre de la sesión: HTTP 429, límite de peticiones de la fuente"
+
+    it "los demás status van a secas, que para eso son códigos conocidos" $
+      fetchFailure "las filas" (Just 503) "lo que sea"
+        `shouldBe` "[live] las filas: HTTP 503"
+
+    it "sin status sirve el texto de la excepción, que es lo único que distingue" $
+      -- Conexión rechazada, techo vencido y un 200 con otra forma no tienen número
+      -- que las nombre; su texto sí las separa.
+      fetchFailure "el calendario" Nothing "ConnectionFailure: connect: does not exist"
+        `shouldBe`
+          "[live] el calendario: ConnectionFailure: connect: does not exist"
+
+    it "el prefijo y el nombre de lo que se pedía van siempre, haya status o no" $
+      -- Es lo que permite filtrar el log por área sin adivinar, y saber cuál de los
+      -- tres fetch calló sin leer el código.
+      map (T.isPrefixOf "[live] el calendario: ")
+          [ fetchFailure "el calendario" (Just 429) "x"
+          , fetchFailure "el calendario" Nothing "x"
+          ]
+        `shouldBe` [True, True]
 
   describe "freezeClock" $ do
     it "para el reloj sin borrarlo ni tocar nada más de la sesión" $

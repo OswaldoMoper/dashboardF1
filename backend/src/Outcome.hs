@@ -24,24 +24,25 @@ module Outcome
   ( Outcome (..)
   , Rejection (..)
   , rejectionFor
+  , httpStatusOf
   , classify
   , serve
   ) where
 
-import           Control.Exception          (SomeException, fromException)
-import           Control.Monad.Error.Class  (throwError)
-import           Data.Aeson                 (FromJSON (..), decodeStrict, encode,
-                                             object, withObject, (.:), (.=))
-import           Data.ByteString            (ByteString)
-import           Data.Text                  (Text)
-import qualified Data.Text                  as T
-import           Data.Text.Encoding         (decodeUtf8With)
-import           Data.Text.Encoding.Error   (lenientDecode)
-import qualified Network.HTTP.Client        as Client
-import           Network.HTTP.Req           (HttpException (..))
-import           Network.HTTP.Types         (hContentType, statusCode)
-import           Servant                    (Handler, ServerError (..), err400,
-                                             err404)
+import           Control.Exception         (SomeException, fromException)
+import           Control.Monad.Error.Class (throwError)
+import           Data.Aeson                (FromJSON (..), decodeStrict, encode,
+                                            object, withObject, (.:), (.=))
+import           Data.ByteString           (ByteString)
+import           Data.Text                 (Text)
+import qualified Data.Text                 as T
+import           Data.Text.Encoding        (decodeUtf8With)
+import           Data.Text.Encoding.Error  (lenientDecode)
+import qualified Network.HTTP.Client       as Client
+import           Network.HTTP.Req          (HttpException (..))
+import           Network.HTTP.Types        (hContentType, statusCode)
+import           Servant                   (Handler, ServerError (..), err400,
+                                            err404)
 
 -- | Por qué no hay nada que servir, con el texto que lo explica.
 --
@@ -116,8 +117,7 @@ detailOf body fallback =
   where
     nonEmpty text = if T.null (T.strip text) then fallback else text
 
--- | La excepción real de un no-2xx, clasificada. Delega en 'rejectionFor' en
--- cuanto ha conseguido extraer status y cuerpo.
+-- | El status y el cuerpo de un no-2xx, pelados de la excepción que los trae.
 --
 -- __La forma exacta está medida, no supuesta__ (2026-08-14).
 -- @req@ con 'Network.HTTP.Req.defaultHttpConfig' convierte un no-2xx en
@@ -128,24 +128,36 @@ detailOf body fallback =
 -- que guarda @http-client@—. Sin esa medición no se podía escribir esta función, y
 -- por eso hubo que tomarla antes de tocar el módulo.
 --
--- Todo lo demás devuelve 'Nothing' y degrada: 'Client.InvalidUrlException', los
--- otros 'Client.HttpExceptionContent' (conexión rechazada, timeout),
--- 'Network.HTTP.Req.JsonHttpException' (el servicio contestó @200@ con otra forma)
--- y cualquier excepción que no sea de @req@.
-classify :: SomeException -> Maybe Rejection
-classify e = do
+-- 'Nothing' para todo lo que no sea un no-2xx de @req@:
+-- 'Client.InvalidUrlException', los otros 'Client.HttpExceptionContent' (conexión
+-- rechazada, timeout), 'Network.HTTP.Req.JsonHttpException' (el servicio contestó
+-- @200@ con otra forma) y cualquier excepción ajena a @req@.
+--
+-- __Está expuesta porque el status interesa más allá del discriminador__: quien
+-- solo quiere decir en el log qué contestó la fuente necesita esto y no un
+-- 'Rejection', que se queda con dos códigos de los muchos que hay.
+httpStatusOf :: SomeException -> Maybe (Int, ByteString)
+httpStatusOf e = do
   VanillaHttpException vanilla <- fromException e
   Client.HttpExceptionRequest _ content <- Just vanilla
   Client.StatusCodeException response body <- Just content
-  rejectionFor (statusCode (Client.responseStatus response)) body
+  pure (statusCode (Client.responseStatus response), body)
+
+-- | La excepción real de un no-2xx, clasificada. Delega en 'rejectionFor' en
+-- cuanto 'httpStatusOf' ha conseguido extraer status y cuerpo.
+--
+-- Todo lo que 'httpStatusOf' no reconoce devuelve 'Nothing' y degrada, igual que
+-- los status que 'rejectionFor' no reclama.
+classify :: SomeException -> Maybe Rejection
+classify e = uncurry rejectionFor =<< httpStatusOf e
 
 -- | Traduce el 'Outcome' del @Context@ a la respuesta de Servant. Es __todo__ lo
 -- que el handler hace con él: quien decide si un fallo es del cliente es quien
 -- hizo la llamada y conoce el contrato, no la capa de interfaz. Mismo reparto que
 -- ya tenían los @resolveParams@ — el handler baja los 'Maybe' sin interpretarlos.
 serve :: Outcome a -> Handler a
-serve (Served a)   = pure a
-serve (Refused r)  = throwError (serverError r)
+serve (Served a)  = pure a
+serve (Refused r) = throwError (serverError r)
 
 -- | El 'ServerError' de cada rechazo, con el @detail@ del servicio dentro.
 --

@@ -32,6 +32,8 @@ module Handler.Live.Helper
   , derivedState
   , schedule
   , upNext
+    -- * Lo que se deja dicho cuando un fetch no sale
+  , fetchFailure
     -- * Transformaciones puras
   , isoInstant
   , assembleRows
@@ -744,6 +746,27 @@ latestByDriver drv ordf xs =
   [ maximumBy (comparing ordf) grp
   | grp <- groupBy ((==) `on` drv) (sortOn drv xs)
   ]
+
+-- | La línea que deja un fetch que no salió: qué se pedía y qué contestó.
+--
+-- __Recibe el status ya pelado y el texto de la excepción, no la excepción__, y eso
+-- es lo que la deja al alcance de la suite: fabricar un no-2xx de @req@ exige armar
+-- una respuesta de @http-client@ entera. Pelarlo es de 'Outcome.httpStatusOf', que
+-- es donde vive la medición de su forma.
+--
+-- __Sin status se sirve el texto de la excepción tal cual.__ Ahí caben la conexión
+-- rechazada, el techo vencido y un @200@ con otra forma, y ninguna de las tres tiene
+-- un número que las nombre; el texto de la excepción sí las distingue.
+--
+-- __El @429@ es el único que se nombra__, porque su número no dice qué hacer: no es
+-- la red ni el servicio caído, es que se preguntó de más. Los demás se sirven a
+-- secas, que para eso son códigos conocidos.
+fetchFailure :: Text -> Maybe Int -> Text -> Text
+fetchFailure what status detail =
+  "[live] " <> what <> ": " <> maybe detail describe status
+  where
+    describe 429  = "HTTP 429, límite de peticiones de la fuente"
+    describe code = "HTTP " <> T.pack (show code)
 
 -- | Formatea segundos de vuelta a @"M:SS.mmm"@ (p. ej. @89.345 → "1:29.345"@).
 formatLap :: Double -> Text
