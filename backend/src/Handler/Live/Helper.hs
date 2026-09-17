@@ -50,7 +50,8 @@ module Handler.Live.Helper
 import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         LiveTable (..), LiveTimingRow (..),
                                         SessionClock (..), SessionInfo (..),
-                                        SessionState (..), sessionStateFrom)
+                                        SessionState (..), StateBasis (..),
+                                        StateReading (..), sessionStateFrom)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
@@ -310,13 +311,16 @@ feedStatus raw =
 -- ausencia: el feed siempre dice algo, y lo que no se reconozca —la cadena vacía
 -- incluida— entra como desconocido con su texto dentro. El hueco del tipo es para
 -- quien no publica estado ninguno.
+--
+-- __Y siempre sale como 'Common.Types.Heard'__: por definición es lo que el feed
+-- dijo. Aquí no se deduce nada, ni cuando lo que dijo no se reconoce.
 feedSession :: UTCTime -> FeedSession -> SessionInfo
 feedSession now fs =
   SessionInfo
     { siType    = fsType fs
     , siName    = fsName fs
     , siMeeting = fsMeeting fs
-    , siState   = Just (sessionStateFrom (fsState fs))
+    , siState   = Just (StateReading (sessionStateFrom (fsState fs)) Heard)
     , siLaps    = lapProgress fs
     , siClock   = sessionClock now fs
     }
@@ -504,7 +508,7 @@ feedVerdict now live
     -- ausencia de la señal no es la señal contraria, que es el mismo criterio que
     -- 'sessionIsLive' aplica al desconocido. Los dos huecos se aplanan en uno
     -- porque se resuelven igual.
-    keepsGoing = maybe True sessionIsLive (siState =<< session)
+    keepsGoing = maybe True (sessionIsLive . srState) (siState =<< session)
 
 -- | La misma sesión con su reloj parado, para servirla desde la cache.
 --

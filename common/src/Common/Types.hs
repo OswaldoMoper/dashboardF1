@@ -101,9 +101,9 @@ data SessionState
 
 -- | El valor tal cual viaja, que para lo desconocido es lo que el feed dijo.
 sessionStateLabel :: SessionState -> Text
-sessionStateLabel SessionInactive   = "Inactive"
-sessionStateLabel SessionStarted    = "Started"
-sessionStateLabel SessionFinalised  = "Finalised"
+sessionStateLabel SessionInactive    = "Inactive"
+sessionStateLabel SessionStarted     = "Started"
+sessionStateLabel SessionFinalised   = "Finalised"
 sessionStateLabel (SessionUnknown t) = t
 
 -- | El estado a partir del valor del feed. __No falla:__ lo que no reconoce se
@@ -132,6 +132,66 @@ instance ToJSON SessionState where
 
 instance FromJSON SessionState where
   parseJSON = withText "SessionState" (pure . sessionStateFrom)
+
+-- | De dónde salió un estado.
+--
+-- __'Derived' no es un estado peor, es un estado que nadie dijo.__ Quien lo lee
+-- tiene que poder distinguirlo, porque el día que se repitan sesiones pasadas
+-- todas saldrían por el mismo sitio y sin esto se perdería en silencio la
+-- propiedad de que lo que viaja es lo que la fuente publicó.
+--
+-- Los dos constructores son nularios, así que viaja como cadena igual que
+-- 'DriverStatus'.
+data StateBasis
+  = Heard    -- ^ La fuente publicó el estado: es literalmente lo que dijo.
+  | Derived  -- ^ Nadie lo publicó; sale de la hora de fin del calendario.
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON StateBasis
+instance FromJSON StateBasis
+
+-- | El estado de una sesión y de dónde salió.
+--
+-- __Los dos juntos y no dos campos sueltos__, por el mismo criterio que
+-- 'LapProgress': son un solo hecho. Separarlos dejaría representable
+-- «procedencia sin estado», que nadie emite, y obligaría a cada lector a casar
+-- cuatro combinaciones en vez de dos.
+data StateReading = StateReading
+  { srState :: SessionState
+  , srBasis :: StateBasis
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON StateReading
+instance FromJSON StateReading
+
+-- | Lo que se lee de un estado, con la marca de lo deducido pegada detrás.
+--
+-- __El asterisco va solo en lo deducido__ y es lo único que distingue en pantalla
+-- un estado que la fuente dijo de uno que salió de una cuenta nuestra. Lo que
+-- significa no cabe en un carácter: lo dice el aviso que abre al pulsarlo.
+--
+-- __Lo desconocido no lleva marca__ aunque sea una palabra rara: llegó de la
+-- fuente, así que es tan oído como los otros tres.
+stateLabel :: StateReading -> Text
+stateLabel r = sessionStateWord (srState r) <> mark (srBasis r)
+  where
+    mark Heard   = ""
+    mark Derived = "*"
+
+-- | La palabra que se lee por cada estado.
+--
+-- __No es 'sessionStateLabel'__, que da el valor de cable y viaja tal cual. Ésta
+-- es prosa y va en el idioma de la página; aquélla es el dato.
+--
+-- __Lo que no se reconoce sale crudo__, con el texto que la fuente mandó: es para
+-- lo que 'SessionUnknown' lo guarda, y traducirlo sería inventar una palabra para
+-- algo que aún no sabemos qué es.
+sessionStateWord :: SessionState -> Text
+sessionStateWord SessionInactive    = "Por empezar"
+sessionStateWord SessionStarted     = "En marcha"
+sessionStateWord SessionFinalised   = "Finalizada"
+sessionStateWord (SessionUnknown t) = t
 
 -- | Por qué vuelta va la sesión y de cuántas.
 --
@@ -179,13 +239,16 @@ data SessionInfo = SessionInfo
   { siType    :: Text  -- ^ Tipo, tal cual lo nombra el feed (@\"Race\"@, @\"Qualifying\"@).
   , siName    :: Text  -- ^ Nombre de la sesión (@\"Race\"@, @\"Sprint Qualifying\"@).
   , siMeeting :: Text  -- ^ Gran premio (@\"Spanish Grand Prix\"@).
-  , siState   :: Maybe SessionState
-    -- ^ 'Nothing' cuando quien publica la sesión no publica su estado, que es el
-    -- caso de OpenF1: da las horas previstas y nada más. __Es «no se sabe» y no
-    -- «el emisor lo mandó vacío»__, por el mismo criterio que 'liveSession' un
-    -- nivel más arriba; y no se deduce de las horas porque está medido que
-    -- fallaría en los bordes — una carrera arrancó cuatro minutos después de su
-    -- hora prevista y acabó trece antes de la de fin.
+  , siState   :: Maybe StateReading
+    -- ^ 'Nothing' cuando no se sabe: ni la fuente lo publicó ni el calendario da
+    -- para deducirlo. __Es «no se sabe» y no «el emisor lo mandó vacío»__, por el
+    -- mismo criterio que 'liveSession' un nivel más arriba.
+    --
+    -- __Deducirlo tiene un borde que no se cruza.__ Está medido que las horas
+    -- previstas mienten justo ahí —una carrera arrancó cuatro minutos después de
+    -- la suya y acabó trece antes de la de fin—, así que solo se deduce cuando la
+    -- de fin quedó holgadamente atrás, y lo deducido viaja marcado
+    -- ('StateBasis').
   , siLaps    :: Maybe LapProgress
     -- ^ 'Nothing' fuera de carrera, que es el caso de cuatro de las cinco sesiones.
   , siClock   :: Maybe SessionClock

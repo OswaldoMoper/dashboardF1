@@ -77,17 +77,18 @@ import           Common.Types                (DriverEntry (..),
                                               DriverStatus (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
-                                              LapProgress (..),
-                                              LiveTable (..),
+                                              LapProgress (..), LiveTable (..),
                                               LiveTimingRow (..),
                                               SessionClock (..),
                                               SessionInfo (..),
-                                              SessionState (..), sessionTitle,
-                                              StatEntity (..),
+                                              SessionState (..),
+                                              StatEntity (..), StateBasis (..),
+                                              StateReading (..),
                                               TelemetryPoint (..),
-                                              TyreStint (..),
-                                              WidgetConfig (..), WidgetId (..),
-                                              WidgetType (..), noParams,
+                                              TyreStint (..), WidgetConfig (..),
+                                              WidgetId (..), WidgetType (..),
+                                              noParams, sessionStateWord,
+                                              sessionTitle, stateLabel,
                                               statusLabel)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
@@ -104,11 +105,11 @@ import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
 import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
-import           Handler.Historical.Helper   (Root, assembleConstructorStats,
-                                              assembleStats, parseNum)
 import           Handler.Feed.Helper         (FeedLive (..), FeedRow (..),
                                               FeedSession (..))
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
+import           Handler.Historical.Helper   (Root, assembleConstructorStats,
+                                              assembleStats, parseNum)
 import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               OriginHeaderName,
                                               SourceHeaderName, fetchedAtText,
@@ -128,16 +129,16 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               sessionClock, sessionIsLive)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
-import           Network.HTTP.Req            (queryParamToList)
 import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
 import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
+import           Network.HTTP.Req            (queryParamToList)
 import           Outcome                     (Rejection (..), rejectionFor)
 import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
 import           Test.Hspec
-import           Test.Hspec.QuickCheck     (prop)
-import           Test.QuickCheck           (Property, (.&&.), (===))
+import           Test.Hspec.QuickCheck       (prop)
+import           Test.QuickCheck             (Property, (.&&.), (===))
 
 main :: IO ()
 main = hspec $ do
@@ -760,7 +761,7 @@ main = hspec $ do
             { siType    = "Race"
             , siName    = "Race"
             , siMeeting = "Spanish Grand Prix"
-            , siState   = Just SessionStarted
+            , siState   = Just (StateReading SessionStarted Heard)
             , siLaps    = Just (LapProgress 12 57)
               -- Publicado a las 13:04:05.01 con 01:59:59 por delante y servido a
               -- las 13:34:05: han pasado 1799,99 s, o sea 1799 segundos enteros, y
@@ -781,7 +782,7 @@ main = hspec $ do
       -- valor lo pone nuestro backend y éste lo pone el feed, que puede estrenar un
       -- estado sin avisar. Guardarlo es lo que permite saber CUÁL llegó.
       fmap (siState . feedSession raceServedAt) (trySession feedSessionAborted)
-        `shouldBe` Right (Just (SessionUnknown "Aborted"))
+        `shouldBe` Right (Just (StateReading (SessionUnknown "Aborted") Heard))
 
     it "sin ningún campo decodifica igual, con todo en blanco" $
       -- Al contrario que `FeedRow`, aquí no hay campo del que dependan los demás.
@@ -794,7 +795,7 @@ main = hspec $ do
             { siType    = ""
             , siName    = ""
             , siMeeting = ""
-            , siState   = Just (SessionUnknown "")
+            , siState   = Just (StateReading (SessionUnknown "") Heard)
             , siLaps    = Nothing
             , siClock   = Nothing
             }
@@ -862,7 +863,7 @@ main = hspec $ do
       -- feed el estado llega siempre, así que su ausencia no se prueba aquí — se
       -- prueba donde nace, que es la fuente que no lo publica.
       map
-        (fmap (fmap sessionIsLive . siState . feedSession raceServedAt) . trySession)
+        (fmap (fmap (sessionIsLive . srState) . siState . feedSession raceServedAt) . trySession)
         [feedSessionRace, feedSessionQualy]
         `shouldBe` [Right (Just True), Right (Just False)]
 
@@ -1169,6 +1170,45 @@ main = hspec $ do
       -- OpenF1 sirve la sesión con el gran premio en blanco cuando no lo sabe
       -- (`openf1Session`), y entonces el título es el nombre a secas.
       sessionTitle (namedSession "Race" "Race" "") `shouldBe` "Race"
+
+  describe "sessionStateWord y stateLabel" $ do
+    it "da la palabra de los tres estados publicados" $
+      map sessionStateWord [SessionInactive, SessionStarted, SessionFinalised]
+        `shouldBe` ["Por empezar", "En marcha", "Finalizada"]
+
+    it "lo que no se reconoce sale crudo, con el texto que la fuente mandó" $
+      -- Es para lo que `SessionUnknown` guarda el texto: traducirlo sería inventar
+      -- una palabra para algo que aún no sabemos qué es. Y el texto NO se
+      -- normaliza, así que llega con las mayúsculas que trajo.
+      map sessionStateWord [SessionUnknown "Aborted", SessionUnknown ""]
+        `shouldBe` ["Aborted", ""]
+
+    it "no repite palabra entre estados distintos" $
+      -- Mismo criterio que `statusLabel`: dos estados con la misma palabra serían
+      -- indistinguibles en la banda.
+      let words' = map sessionStateWord
+                     [SessionInactive, SessionStarted, SessionFinalised]
+       in length (nub words') `shouldBe` length words'
+
+    it "el asterisco sale solo en lo deducido" $
+      map stateLabel
+          [ StateReading SessionFinalised Heard
+          , StateReading SessionFinalised Derived
+          ]
+        `shouldBe` ["Finalizada", "Finalizada*"]
+
+    it "lo desconocido no lleva marca: llegó de la fuente, así que es oído" $
+      -- El cuarto caso del estado y la marca de procedencia son preguntas
+      -- distintas. Un valor raro sigue siendo lo que el feed dijo.
+      stateLabel (StateReading (SessionUnknown "Aborted") Heard)
+        `shouldBe` "Aborted"
+
+    it "la marca es lo ÚNICO que distingue un estado oído de uno deducido" $
+      -- El control negativo de la afirmación de arriba: sin `srBasis` los dos
+      -- valores serían iguales, y es justo la propiedad que se perdería en
+      -- silencio al repetir sesiones pasadas.
+      StateReading SessionFinalised Heard
+        `shouldNotBe` StateReading SessionFinalised Derived
 
   -- La coherencia entre los dos respaldos de FastF1. No es cosmética: los dos
   -- widgets se miran a la vez, así que un coche que el de comparación pinta y el
@@ -2986,7 +3026,7 @@ raceSessionFixture =
     { siType    = "Race"
     , siName    = "Race"
     , siMeeting = "Spanish Grand Prix"
-    , siState   = Just SessionStarted
+    , siState   = Just (StateReading SessionStarted Heard)
     , siLaps    = Just (LapProgress 12 57)
     , siClock   = Just (SessionClock 5400 True)
     }
