@@ -302,7 +302,16 @@ body {
   font-size: var(--fs-sm);
 }
 
-.session-band__note--open {
+/* Se enseña de dos maneras y no se estorban: al pasar por encima queda a la vista
+   mientras el puntero siga ahí, y al pulsar queda fijo hasta que se vuelva a pulsar.
+
+   __Las dos hacen falta y no es redundancia.__ El hover solo existe en escritorio;
+   el pulsado vale en los dos sitios y es lo único que hay en un teléfono. El
+   selector de hermano adyacente funciona porque el aviso se monta justo detrás del
+   botón — si alguien mete algo en medio, deja de verse al pasar por encima y sigue
+   viéndose al pulsar. */
+.session-band__note--open,
+.session-band__state--derived:hover + .session-band__note {
   display: block;
 }
 

@@ -1402,13 +1402,21 @@ main = hspec $ do
           ]
         `shouldBe` ["6 d 19 h 25 min", "2 h 30 min 15 s", "4 min 50 s", "50 s"]
 
-    it "recorta las unidades de cola que valen cero" $
-      formatCountdown (6 * 86400) `shouldBe` "6 d"
+    it "se salta las magnitudes en cero y las tres siguen siendo tres" $
+      -- Los dos casos del 2026-09-17: un cero en medio gasta sitio
+      -- y una de las tres posiciones para decir que no hay nada que decir.
+      map formatCountdown
+          [ 3 * 86400 + 50 * 60 + 36
+          , 12 * 86400 + 30 * 60
+          ]
+        `shouldBe` ["3 d 50 min 36 s", "12 d 30 min"]
 
-    it "pero NO las de en medio, que dirían otra cosa" $
-      -- Saltarse la hora en cero diría «faltan seis días y veinticinco minutos», que
-      -- es una cantidad distinta.
-      formatCountdown (6 * 86400 + 25 * 60) `shouldBe` "6 d 0 h 25 min"
+    it "las tres pueden no ser contiguas, y se acepta a sabiendas" $
+      -- El precio de la regla de arriba. Sale de saltarse dos magnitudes seguidas.
+      formatCountdown (86400 + 1) `shouldBe` "1 d 1 s"
+
+    it "recorta también las de cola que valen cero" $
+      formatCountdown (6 * 86400) `shouldBe` "6 d"
 
     it "el cero se dice, no se calla" $
       -- En blanco se leería como que la cuenta atrás se rompió.

@@ -37,7 +37,6 @@ module Common.Format
   , formatCountdown
   ) where
 
-import           Data.List (dropWhileEnd)
 import           Data.Text (Text)
 import qualified Data.Text as T
 import           Numeric   (showFFloat)
@@ -124,11 +123,11 @@ data ClockForm
 -- __Las horas no se envuelven a las 24__: un valor de más de un día sale con la
 -- cuenta entera de horas, y el relleno de 'ClockPadded' es un mínimo y no un
 -- recorte.
--- | Cuánto falta para algo, en las __tres unidades mayores__ que no sean cero.
+-- | Cuánto falta para algo, en sus __tres magnitudes mayores que no valgan cero__.
 --
 -- @
 -- 6 d 19 h 25 min
--- 2 h 30 min 15 s
+-- 3 d 50 min 36 s     -- las horas valían cero y no ocupan sitio
 -- 4 min 50 s
 -- @
 --
@@ -137,31 +136,37 @@ data ClockForm
 -- puntos —@\"163:25:10\"@— nadie lee una semana. Por eso lleva las unidades escritas
 -- y no separadores.
 --
--- __Tres unidades y no todas__, porque la cuarta no cambia la decisión de nadie: a
--- seis días, los segundos son ruido; a cuatro minutos ya no hay días que enseñar y
--- los segundos entran solos.
+-- __Se salta las magnitudes que valen cero, estén donde estén__, y por eso son tres
+-- mayores __distintas de cero__ y no tres consecutivas: un @0 h@ en medio gasta
+-- sitio y una posición de las tres para decir que no hay nada que decir. El precio
+-- es que las tres que salen pueden no ser contiguas —@1 d 1 s@ es un valor
+-- posible—, y se acepta a sabiendas.
 --
--- __Las unidades de cola que valen cero se recortan__ —@6 d@ y no @6 d 0 h 0 min@—,
--- pero las de en medio no: @6 d 0 h 25 min@ sale entero, porque saltárselas diría
--- que faltan seis días y veinticinco minutos.
+-- __Tres y no todas__, porque la cuarta no cambia la decisión de nadie: a seis días
+-- los segundos son ruido; a cuatro minutos ya no hay días y los segundos entran
+-- solos.
+--
+-- __La unidad mayor es el día, no el mes.__ Medido el 2026-09-17 contra las tres
+-- fuentes: el hueco más grande del calendario que queda son 12 d 5 h, y ninguna
+-- publica todavía la temporada siguiente —OpenF1 da @404@ y Jolpica @total: 0@—, así
+-- que un mes no se alcanza. El día que alguna la publique, la espera invernal sí lo
+-- pasaría y habría que volver a decidirlo.
 --
 -- __Lo negativo es cero__, y el cero se dice @\"0 s\"@ y no en blanco: por el mismo
 -- criterio que 'formatClock', no hay forma de expresar «falta menos que nada», y una
 -- cadena vacía se leería como que la cuenta atrás se rompió.
 formatCountdown :: Int -> Text
 formatCountdown secs
-  | null fromTop = "0 s"
-  | otherwise    = T.unwords (concatMap piece shown)
+  | null nonZero = "0 s"
+  | otherwise    = T.unwords (concatMap piece (take 3 nonZero))
   where
     total              = max 0 secs
     (days, rest)       = total `divMod` 86400
     (hours, rest')     = rest `divMod` 3600
     (minutes, seconds) = rest' `divMod` 60
 
-    fromTop = dropWhile ((== 0) . fst)
+    nonZero = filter ((/= 0) . fst)
       [(days, "d"), (hours, "h"), (minutes, "min"), (seconds, "s")]
-
-    shown = dropWhileEnd ((== 0) . fst) (take 3 fromTop)
 
     piece (n, unit) = [T.pack (show n), unit]
 
