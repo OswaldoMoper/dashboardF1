@@ -424,8 +424,9 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
         layout deja de repetirla y la tabla ya no parpadea a «cargando» al volver.
       - **La banda no desaparece nunca**, ni sin sesión: el lienzo descuenta su alto, así que una banda
         intermitente movería las seis tarjetas arriba y abajo en cada refresco.
-      - **Lo que queda de este entregable** es el estado, la vuelta y el reloj — o sea todo lo que no es la
-        identidad de la sesión.
+      - **El estado se pinta desde el 2026-09-17**, con su marca de deducido y su aviso. **Lo que queda de
+        este entregable es la vuelta y el reloj**, que solo llegan del feed y por tanto solo se ven en un
+        fin de semana.
 - [ ] **La banda de sesión como pieza colocable** (2026-09-15): se ancla a un **borde** —arriba o abajo en
       horizontal, y los laterales con el texto en vertical—, se **mueve pero no se puede ocultar**, y vale
       tanto para el lienzo de escritorio como para la pantalla de teléfono, que todavía no existe. Hoy es un
@@ -437,23 +438,64 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       - **El aspecto ya es conmutable** desde el 2026-09-15 —tarjeta o barra de pared a pared, con un mando
         en la propia banda—, pero **la elección no sobrevive a recargar**: eso llega con los layouts
         guardables.
-- [ ] **El estado de la sesión cuando la fuente no lo publica** (2026-09-15): se dice el que **publica** la
-      fuente, y si no lo publica se **deduce del calendario**, pero solo cuando la hora de fin quedó
-      claramente atrás; en el borde no se dice nada. El margen depende del tipo: **45 min** en prácticas y
-      clasificación, **3 h** en carrera, que es la única que puede suspenderse largo.
+- [x] **El estado de la sesión cuando la fuente no lo publica** (2026-09-15, **hecho el 2026-09-17**): se
+      dice el que **publica** la fuente, y si no lo publica se **deduce del calendario**, pero solo cuando la
+      hora de fin quedó claramente atrás; en el borde no se dice nada.
       No contradice a la medición que descartó deducirlo de las horas —una carrera arrancó cuatro minutos
       tarde y acabó trece pronto—, porque esa medición habla justo del borde que aquí se evita.
-      - **Lo deducido viaja marcado** y se pinta distinto: «finalizada (prevista)» frente a la que se oyó de
-        la fuente. Sin la marca se perdería en silencio la propiedad de que lo que viaja es lo que la fuente
-        dijo, y al llegar la repetición de sesiones pasadas **todas** serían deducidas.
-- [ ] **Cuál es la próxima sesión y cuánto falta** (2026-09-15), en la banda. «No hay sesión» deja de ser un
-      estado: por defecto se enseña la última y, al lado, la siguiente con su cuenta atrás. El calendario ya
-      está en memoria en el backend desde el 2026-09-15 —lo usa la ventana del feed— pero **no se publica**,
-      así que el trabajo es sacarlo al cable y pintarlo.
+      - **El margen ya no es una lista de constantes por tipo**: sale de `duración prevista × factor`, y los
+        dos números que estaban decididos —3 h en carrera, 45 min en el resto— salen solos de `1,5 ×` y
+        `0,75 ×`. Lo cambió una medición: **el Sprint tiene `session_type` «Race»** y por tipo se habría
+        llevado 3 h siendo de 60 min. El factor lo elige el **nombre**. Suelo 30 min y techo 4 h.
+      - **Lo deducido viaja marcado** y se pinta distinto: `Finalizada*` atenuado, con un aviso que se abre
+        al pulsar **y** al pasar por encima — en un teléfono no hay puntero. Sin la marca se perdería en
+        silencio la propiedad de que lo que viaja es lo que la fuente dijo.
+      - **La palabra va en español** —`Por empezar` / `En marcha` / `Finalizada`— y el valor de cable no
+        cambia. Un estado que el feed estrene sale **crudo y sin marca**: llegó de la fuente.
+- [x] **Cuál es la próxima sesión y cuánto falta** (2026-09-15, **hecho el 2026-09-17**), en la banda. «No
+      hay sesión» deja de ser un estado: se enseña la última y, al lado, la siguiente con su cuenta atrás.
+      - **Son cuatro casos con nombre y no un valor ausente**: con la sesión rodando la derecha **calla** y
+        le deja el ancho; sin calendario dice que **aún no lo sabe**; con la sesión anunciada y sin empezar
+        cuenta a **ella misma** y sin nombrarla; y acabada, a la siguiente.
+      - **La etiqueta es el gran premio, salvo dentro de su propio fin de semana**, donde es el nombre de la
+        sesión: en Bakú las cinco comparten gran premio y circuito.
+      - **Los segundos viajan resueltos al instante de responder** y el navegador los descuenta, con un tic
+        de un segundo sobre el refresco de diez.
+      - **Queda vivo:** con un calendario no vacío y ninguna sesión futura —fin de temporada— dice «aún no
+        se sabe», que se leería como un cargando eterno. Sin decidir; no puede darse antes de diciembre.
 - [ ] **Las cifras de la banda tienen varias formas y se elige la que quepa** (2026-09-15): el reloj en tres
-      —`15:00`, `0:15:00` y `00:15:00`— y la vuelta en dos —`L 12/57` y `Vuelta 12 / 57`—. Manda el ancho
-      disponible, y la elección del usuario por encima de él. Las tres del reloj ya existen como función pura
-      con pruebas; falta quién elige. Lo que **recuerde** lo elegido llega con los layouts guardables.
+      —`15:00`, `0:15:00` y `00:15:00`—, la vuelta en dos —`L 12/57` y `Vuelta 12 / 57`— y, desde el
+      2026-09-17, **la cuenta atrás en tres** —lo que falta, la fecha y hora, o las dos cosas—. Manda el ancho
+      disponible, y la elección del usuario por encima de él. Las formas del reloj y una de la cuenta atrás
+      ya existen como funciones puras con pruebas; **falta quién elige, y se construye una sola vez para las
+      tres familias**. Lo que **recuerde** lo elegido llega con los layouts guardables.
+      - Lo que se pinta hoy es **lo que falta, en sus tres magnitudes mayores no nulas** (`3 d 50 min 36 s`),
+        que es la única forma que permite comprobar mirando que la cuenta atrás cuenta.
+- [ ] **El límite de peticiones de OpenF1, medido y absorbido** (2026-09-17). Corrige lo que la sesión 49 dio
+      por descartado: **OpenF1 limita por ritmo**. Medido, dos pasadas: 15 pares seguidos a ~4 pet/s dieron 2
+      buenas y **13 con `429`**; 10 GET a ~2 pet/s dieron uno. Se recupera en segundos y **su presupuesto no
+      está fijado**, así que el trabajo empieza por medirlo.
+      - **Explica dos cosas que estaban abiertas.** `fromOpenF1` pide 5 GET para las filas y **después** 2
+        para nombrar la sesión, así que son esos dos los que se comen el rechazo: la banda se queda sin
+        título y la cache guarda una tabla sin sesión. Verificado en pantalla: cuando la izquierda
+        desaparece, **la derecha se mantiene**. Y el §4 punto 42 —la segunda petición cae a la cache en
+        0,15 s— encaja con un `429`, que vuelve rápido, y no con un techo vencido.
+      - Las salidas son reordenar los 7 GET, espaciarlos, reintentar, o cachear lo que no cambia por sesión.
+- [ ] **La página entera en un idioma, con detección** (2026-09-17). Hoy está mezclada: la cabecera de Live
+      Timing dice `Pos / Driver / Team / Gap / Interval / Last Lap / Estado` en la misma fila. Medido: **≈48
+      cadenas visibles en 5 módulos** de `frontend/` más `common`, y `frontend.cabal` **sin ninguna
+      dependencia** de internacionalización. Español por defecto, y detectar de dónde miran la página.
+      - **Pide su propio §0 y empieza por el mecanismo**, que es lo único sin medir: leer `navigator.language`
+        exige una dependencia nueva o un `foreign import javascript`, o sea **código ciego**.
+      - `Common.Types.sessionStateWord` es la semilla: nació en `common`, pura y con prueba.
+- [ ] **El circuito en la banda** (2026-09-17). Pedido para la sesión que se enseña, y **bloqueado por una
+      medición**: `/sessions` de OpenF1 lo publica (`circuit_short_name`), pero **el feed no** —`FeedSession`
+      trae tipo, nombre, gran premio, estado, vueltas y reloj—. Ponerlo solo por el lado de OpenF1 lo haría
+      desaparecer justo en directo, que es cuando más se mira.
+      - **Lo que hay que medir:** si el circuito viaja en algún tema del feed que hoy no se decodifica. Las
+        dos grabaciones lo contestan sin salir a la red.
+      - **Ojo a los campos de sitio de OpenF1, que se contradicen**: medido el 2026-09-17,
+        `circuit_short_name = "Kuala Lumpur"` con `country_name = "Bahrain"`.
 - [x] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
       si trae filas **de una sesión en marcha**, son el directo; si no trae ninguna, se cae a OpenF1; y si
       **falla**, se sirve desde la cache sin intentar OpenF1, para que un feed roto durante una sesión no
