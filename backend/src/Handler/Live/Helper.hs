@@ -6,8 +6,9 @@
 -- * __OpenF1__ entrega series temporales por endpoint (@/position@, @/intervals@,
 --   @/laps@), así que aquí se reducen a la última entrada por piloto y se ensambla
 --   la tabla ('assembleRows'); y entrega en otros dos (@/sessions@, @/meetings@) de
---   qué sesión habla, que es un mapeo directo ('openf1Session'). Los tipos crudos de
---   esos endpoints viven en este módulo.
+--   qué sesión habla, que es un mapeo directo salvo el estado, que no publica y se
+--   deduce de sus horas ('openf1Session', 'derivedState'). Los tipos crudos de esos
+--   endpoints viven en este módulo.
 -- * __El feed__ entrega la tabla ya armada por el microservicio, así que el mapeo es
 --   el estado y el orden ('feedRows'). Su tipo crudo es de la fuente y vive en
 --   'Handler.Feed.Helper'.
@@ -335,24 +336,31 @@ feedSession now fs =
 
 -- | La sesión que OpenF1 describe, traducida a 'SessionInfo'.
 --
--- __Los tres huecos son lo que OpenF1 no publica, y ninguno es un fallo:__ no tiene
--- estado —solo horas previstas—, no cuenta vueltas y no emite reloj. Deducir el
--- estado de las horas está descartado por medición: la carrera 11369 arrancó cuatro
--- minutos después de la suya y acabó trece antes de la de fin, así que la deducción
--- miente justo en los bordes, que es donde se la consultaría.
+-- __Las vueltas y el reloj siguen vacíos, y no es un fallo:__ OpenF1 no los publica.
 --
--- __No recibe el instante__, al contrario que 'feedSession': aquí no hay ningún
--- campo que dependa de «ahora», porque el único que dependía era el reloj.
+-- __El estado ya no.__ OpenF1 tampoco lo publica, pero sus horas previstas dan para
+-- afirmar una cosa sin cruzar ningún borde —que una sesión cuyo fin quedó
+-- holgadamente atrás ya terminó—, y eso es lo que 'derivedState' decide. Sigue sin
+-- deducirse nada en el borde, que es lo que la medición de la 11369 descartó: allí
+-- el hueco se mantiene.
+--
+-- __Y sale marcado como 'Common.Types.Derived'__, que es lo único que lo distingue
+-- del mismo estado oído del feed. Sin la marca, el día que se repitan sesiones
+-- pasadas todas serían deducidas sin que nadie pudiera notarlo.
+--
+-- __Recibe el instante__, al contrario que antes: desde que deduce, «en qué punto
+-- está» depende de cuándo se pregunte. Quien llama pasa el mismo que va a servir,
+-- para que la sesión y las filas hablen del mismo momento.
 --
 -- __Sin gran premio la sesión se sirve igual, con el nombre en blanco__: el tipo y
 -- el nombre siguen diciendo de qué se habla, y sale de otra petición.
-openf1Session :: Of1Session -> Maybe Of1Meeting -> SessionInfo
-openf1Session os meeting =
+openf1Session :: UTCTime -> Of1Session -> Maybe Of1Meeting -> SessionInfo
+openf1Session now os meeting =
   SessionInfo
     { siType    = osType os
     , siName    = osName os
     , siMeeting = maybe "" omName meeting
-    , siState   = Nothing
+    , siState   = flip StateReading Derived <$> derivedState now os
     , siLaps    = Nothing
     , siClock   = Nothing
     }

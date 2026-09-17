@@ -955,9 +955,11 @@ main = hspec $ do
 
   describe "openf1Session" $ do
     it "sirve tipo, nombre y gran premio, y deja vacío lo que OpenF1 no publica" $
-      -- Los tres huecos no son un degradado: OpenF1 no tiene estado —solo horas
-      -- previstas—, no cuenta vueltas y no emite reloj.
+      -- Las vueltas y el reloj no son un degradado: OpenF1 no los emite. El estado
+      -- queda vacío aquí porque se pregunta con la sesión rodando, que es justo el
+      -- borde en el que no se deduce nada.
       openf1Session
+        (addUTCTime (60 * 60) raceStartsAt)
         (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
         (Just (Of1Meeting "Spanish Grand Prix"))
         `shouldBe` SessionInfo
@@ -969,21 +971,36 @@ main = hspec $ do
           , siClock   = Nothing
           }
 
-    it "su estado es «no se sabe», que es el primer sitio donde eso existe" $
-      -- Éste es el primer productor de `siState` en `Nothing`, y por eso el caso no
-      -- se pudo escribir al abrir el hueco en el tipo: por el feed el estado llega
-      -- siempre, aunque sea la cadena vacía como desconocido.
-      --
-      -- Y no se deduce de las horas, que sí están en la mano: medido sobre la
-      -- carrera 11369, arrancó cuatro minutos después de su `date_start` y acabó
-      -- trece antes de su `date_end`, así que la deducción miente en los bordes.
-      siState (openf1Session (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt) Nothing)
-        `shouldBe` Nothing
+    it "pasado el margen sí dice que acabó, y lo dice MARCADO como deducido" $
+      -- La marca es lo único que separa esto de un `Finalised` oído del feed. Sin
+      -- ella, el día que se repitan sesiones pasadas todas serían deducidas y nadie
+      -- podría notarlo.
+      siState
+        (openf1Session
+           (addUTCTime (4 * 3600) raceEndsAt)
+           (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
+           Nothing)
+        `shouldBe` Just (StateReading SessionFinalised Derived)
+
+    it "y en el borde sigue siendo «no se sabe», que es donde la medición manda" $
+      -- Medido sobre la carrera 11369: arrancó cuatro minutos después de su
+      -- `date_start` y acabó trece antes de su `date_end`, así que la deducción
+      -- miente justo ahí. El hueco del tipo se conserva para ese tramo.
+      map
+        (\t ->
+           siState
+             (openf1Session
+                t
+                (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
+                Nothing))
+        [raceStartsAt, raceEndsAt, addUTCTime (3 * 3600) raceEndsAt]
+        `shouldBe` [Nothing, Nothing, Nothing]
 
     it "sin gran premio la sesión se sirve igual, con el nombre en blanco" $
       -- `/meetings` puede devolver el arreglo vacío. El tipo y el nombre siguen
       -- diciendo de qué se habla, así que perder la sesión entera sería peor.
       openf1Session
+        (addUTCTime (30 * 60) raceStartsAt)
         (Of1Session "Qualifying" "Qualifying" 1294 raceStartsAt raceEndsAt)
         Nothing
         `shouldBe` SessionInfo

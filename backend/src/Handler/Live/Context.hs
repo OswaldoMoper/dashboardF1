@@ -6,7 +6,10 @@
 --
 -- __Las dos fuentes dicen de qué sesión hablan, y no dicen lo mismo.__ El feed la
 -- anuncia entera; OpenF1 da el tipo, el nombre y el gran premio, y __no publica
--- estado, ni vuelta, ni reloj__, así que los tres salen vacíos. El único que sigue
+-- vuelta ni reloj__, así que esos dos salen vacíos. El estado sí lo sirve, pero
+-- __deducido de sus horas previstas y marcado como tal__
+-- ('Handler.Live.Helper.derivedState'): solo cuando la de fin quedó holgadamente
+-- atrás, que es la única afirmación que esas horas sostienen. El único que sigue
 -- sirviendo la tabla sin sesión es el respaldo estático, que no salió de ninguna —
 -- y eso es «no se sabe», distinto de una sesión en blanco. La cache la conserva,
 -- porque la guardó junto a sus filas.
@@ -184,14 +187,18 @@ fromFeed env live = do
 -- __La sesión que sale es la suya y no la del feed.__ Aunque el feed acabe de
 -- anunciar una, no se hereda: OpenF1 pide siempre @session_key=latest@, y que su
 -- «última» y la que el feed anuncia sean la misma no se puede comprobar desde aquí.
+--
+-- __El instante se toma una vez y sirve para las dos cosas__, igual que en
+-- 'fromFeed': deducir el estado de la sesión y sellar la cache. Tomarlo dos veces
+-- dejaría guardado un estado que habla de un momento distinto al de su sello.
 fromOpenF1 :: Env -> IO LiveResult
 fromOpenF1 env = do
   result <-
     try (fetchRows (envConfig env)) :: IO (Either SomeException [LiveTimingRow])
   case result of
     Right rows | not (null rows) -> do
-      session <- fetchSessionOrNothing (envConfig env)
       now <- getCurrentTime
+      session <- fetchSessionOrNothing (envConfig env) now
       serveFresh env now OpenF1 (LiveTable session rows)
     _                            -> fromCache env
 
@@ -259,10 +266,11 @@ fetchRows cfg = do
 -- fuera de carrera—; que @\/sessions@ conteste y @\/meetings@ no, o al revés, no es
 -- un régimen sino una avería. Partirlas serviría una sesión a medias sin que nadie
 -- la hubiera pedido así.
-fetchSessionOrNothing :: Config -> IO (Maybe SessionInfo)
-fetchSessionOrNothing cfg = do
+fetchSessionOrNothing :: Config -> UTCTime -> IO (Maybe SessionInfo)
+fetchSessionOrNothing cfg now = do
   result <-
-    try (fetchSessionInfo cfg) :: IO (Either SomeException (Maybe SessionInfo))
+    try (fetchSessionInfo cfg now)
+      :: IO (Either SomeException (Maybe SessionInfo))
   pure (either (const Nothing) id result)
 
 -- | @\/sessions@ y, con la clave que da, @\/meetings@.
@@ -273,14 +281,14 @@ fetchSessionOrNothing cfg = do
 --
 -- El gran premio va aparte porque @\/sessions@ __no publica su nombre__: solo su
 -- clave. Que su lista venga vacía deja la sesión sin gran premio, no sin sesión.
-fetchSessionInfo :: Config -> IO (Maybe SessionInfo)
-fetchSessionInfo cfg = do
+fetchSessionInfo :: Config -> UTCTime -> IO (Maybe SessionInfo)
+fetchSessionInfo cfg now = do
   sessions <- Manager.fetchSession cfg
   case sessions of
     []      -> pure Nothing
     (s : _) -> do
       meetings <- Manager.fetchMeeting cfg (osMeeting s)
-      pure (Just (openf1Session s (listToMaybe meetings)))
+      pure (Just (openf1Session now s (listToMaybe meetings)))
 
 -- | @\/intervals@ con su propio @try@: una lista vacía si el GET no sale, en vez de
 -- propagar y tirar los otros cuatro.
