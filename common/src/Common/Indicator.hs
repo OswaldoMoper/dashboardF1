@@ -14,15 +14,19 @@
 --
 -- __El color y el parpadeo dicen cosas distintas, y por eso son dos señales.__
 -- El color es la procedencia del dato que hay en pantalla y nunca miente sobre
--- ella; el parpadeo es «esto se está actualizando ahora mismo», y por eso lo llevan
--- los dos estados en que eso es cierto —dato fresco y dato reciente, ambos con su
--- último refresco volviendo—. Un refresco fallido sobre dato guardado o de ejemplo
--- no cambia el punto: vive en el tooltip.
+-- ella; el parpadeo es «esto es la carrera, ahora mismo», y por eso solo lo
+-- lleva el dato fresco cuyo último refresco volvió. Un refresco fallido sobre
+-- dato guardado o de ejemplo no cambia el punto: vive en el tooltip.
 --
--- __Lo que separa a esos dos es el color y no el movimiento__, y es a propósito: la
--- página se actualiza igual en los dos casos, y lo que cambia es de dónde salió la
--- respuesta. Apagar el parpadeo de uno diría que la página se ha parado, que es
--- falso.
+-- __El parpadeo afirma algo sobre la SESIÓN y no sobre el refresco__, y de ahí que no
+-- lo herede lo reciente: que la página siga pidiendo cada pocos segundos no convierte
+-- en directo la clasificación final de una sesión acabada.
+--
+-- __Deuda conocida, y es de 'Common.Origin.Fresh' y no de este módulo__ (2026-09-18):
+-- fuera de sesión el dato se sirve igualmente como fresco, así que el punto parpadea
+-- y el tooltip dice «en vivo» sobre una sesión que terminó. El indicador no puede
+-- saberlo hoy porque no recibe el estado de la sesión, aunque su único consumidor
+-- —'Widgets.LiveTiming'— sí lo tenga en la mano.
 --
 -- __El parpadeo no se apaga con @prefers-reduced-motion@__, solo se alarga
 -- (1 s → 3 s, en la hoja de estilos). No es decoración: es la única señal de que
@@ -94,7 +98,7 @@ indicatorFrom p = Indicator
 -- 'Common.Origin.Cached' no se desdobla porque su fallo lo cuenta el tooltip
 -- (2026-09-12).
 --
--- Solo los dos primeros parpadean, y el parpadeo lo pone la hoja de estilos: aquí se
+-- Solo el primero parpadea, y el parpadeo lo pone la hoja de estilos: aquí se
 -- decide __cuándo__, no cómo.
 indicatorClass :: Indicator -> Text
 indicatorClass i = "widget__badge widget__badge--" <> modifier

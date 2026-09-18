@@ -732,13 +732,17 @@ body {
   background: var(--c-accent);
 }
 
-/* Reciente: sale de lo guardado porque aún vale, no porque nada conteste. La
-   página sigue refrescando, así que parpadea como `live`; lo que lo separa es un
-   punto más apagado, que es el mismo recurso con el que `saved` se distingue. */
+/* Reciente: sale de lo guardado porque aún vale, no porque nada conteste. Quieto y
+   a medio apagar, en su propio escalón entre el 100 % de `stalled` y el 35 % de
+   `saved`, para que la escala siga leyéndose de más a menos fiable.
+
+   NO parpadea, y ésa es la decisión: el parpadeo de `live` dice «esto está pasando
+   ahora», que es una afirmación sobre la SESIÓN y no sobre el refresco. Fuera de
+   sesión lo que se lee es la clasificación final de la anterior, así que ahí ningún
+   punto debería moverse — hoy `live` sí lo hace, y eso es deuda anotada. */
 .widget__badge--recent::before {
   background: var(--c-accent);
   opacity: 0.7;
-  animation: badge-blink 1s ease-in-out infinite;
 }
 
 /* Guardado: el dato fue cierto, la duda es cuándo. Con o sin fallo de refresco
@@ -768,8 +772,7 @@ body {
    decoración — es la única señal de que lo que se lee está pasando ahora, y
    apagarla dejaría dos estados distintos pintados igual. */
 @media (prefers-reduced-motion: reduce) {
-  .widget__badge--live::before,
-  .widget__badge--recent::before {
+  .widget__badge--live::before {
     animation-duration: 3s;
   }
 }

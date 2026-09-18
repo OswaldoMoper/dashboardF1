@@ -2201,9 +2201,8 @@ main = hspec $ do
 
     -- La mitad del reparto que no se ve mirando: la clase `--live` es de UN estado,
     -- y de los doce posibles. Escrito así, un estado nuevo que se colara en ella
-    -- rompe el caso sin que nadie tenga que acordarse. Que `--recent` parpadee
-    -- también es decisión de la hoja de estilos y no de aquí: lo que esto afirma es
-    -- quién lleva la clase, no quién se mueve.
+    -- rompe el caso sin que nadie tenga que acordarse. Y es la única que se mueve:
+    -- el parpadeo afirma que hay sesión rodando, no que la página esté pidiendo.
     it "solo el dato fresco con el refresco volviendo lleva la clase del directo" $
       filter ((== "widget__badge widget__badge--live") . indicatorClass) everyIndicator
         `shouldBe` [shownAs (Just Fresh) Nothing False]
