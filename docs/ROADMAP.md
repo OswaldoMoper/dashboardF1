@@ -471,16 +471,57 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       tres familias**. Lo que **recuerde** lo elegido llega con los layouts guardables.
       - Lo que se pinta hoy es **lo que falta, en sus tres magnitudes mayores no nulas** (`3 d 50 min 36 s`),
         que es la única forma que permite comprobar mirando que la cuenta atrás cuenta.
-- [ ] **El límite de peticiones de OpenF1, medido y absorbido** (2026-09-17). Corrige lo que la sesión 49 dio
-      por descartado: **OpenF1 limita por ritmo**. Medido, dos pasadas: 15 pares seguidos a ~4 pet/s dieron 2
-      buenas y **13 con `429`**; 10 GET a ~2 pet/s dieron uno. Se recupera en segundos y **su presupuesto no
-      está fijado**, así que el trabajo empieza por medirlo.
-      - **Explica dos cosas que estaban abiertas.** `fromOpenF1` pide 5 GET para las filas y **después** 2
-        para nombrar la sesión, así que son esos dos los que se comen el rechazo: la banda se queda sin
-        título y la cache guarda una tabla sin sesión. Verificado en pantalla: cuando la izquierda
-        desaparece, **la derecha se mantiene**. Y el §4 punto 42 —la segunda petición cae a la cache en
-        0,15 s— encaja con un `429`, que vuelve rápido, y no con un techo vencido.
-      - Las salidas son reordenar los 7 GET, espaciarlos, reintentar, o cachear lo que no cambia por sesión.
+- [x] **El límite de peticiones de OpenF1, medido y absorbido** (2026-09-17, **hecho el 2026-09-18**). La banda
+      se quedaba sin título y volvía, en ciclos, y la causa era aritmética: **la página gastaba 42 peticiones
+      por minuto contra un presupuesto de 30**, y el presupuesto es de la máquina, no de la pestaña.
+      - **El presupuesto no se infiere: lo publica el servicio** en su propio rechazo —`429` con
+        `retry-after: 60` y el cuerpo «Max 30 requests/minute»—. Medido contra él: una ráfaga de 30 entra
+        entera y la 31 se rechaza; a ≈19/min pasan 12 de 12; con el patrón real de la página, 7 GET cada
+        10 s, se rechazan **12 de 84** en dos minutos; con 7 GET cada 15 s, **0 de 84** en tres.
+      - **Corrige cómo se había explicado el defecto.** No son las dos peticiones que nombran la sesión las
+        que se comen el rechazo: la cuota se acaba **donde pilla** —los 12 rechazos cayeron sobre las siete
+        posiciones—. La banda solo pierde el título en el corte concreto en que entran las cinco filas y no
+        las dos del nombre, porque entonces se guarda una tabla sin sesión; en los demás cortes cae la
+        tabla entera y se sirve de lo guardado, que conserva el nombre.
+      - **Lo construido, en este orden:** el rechazo deja rastro en el log; el nombre del gran premio se
+        pregunta una vez por gran premio y se recuerda, de 7 peticiones a 6; un cuarto sello de
+        procedencia, `recent`, para lo guardado que se sirve porque aún vale y no porque la fuente calle;
+        y un freno **solo a OpenF1**: si lo guardado tiene menos de 15 s no se vuelve a bajar.
+      - **El freno produce 20 s, no 15**, y es aritmética de la página: pregunta cada 10 s y el freno solo
+        puede saltarse preguntas enteras, así que OpenF1 se consulta cada 20 s y el gasto queda en **18
+        por minuto**. Cualquier valor entre 11 y 20 da lo mismo.
+      - **El directo no se frena**: con una sesión rodando sirve el feed, que es propio y no tiene
+        presupuesto, y OpenF1 contesta `401`. Los 20 s solo afectan a la clasificación de una sesión
+        terminada, que no cambia.
+      - **El reloj de la sesión se pone al día** al servir lo reciente —se descuenta lo transcurrido— salvo
+        con la sesión detenida, donde descontar inventaría que el tiempo corre.
+      - **Descartado:** espaciar desde la página, porque dos pestañas vuelven a rebasar el techo y el freno
+        del backend es común a todas; y reconfirmar menos a menudo de qué sesión se habla, que compra
+        margen a cambio de enterarse tarde de un cambio de sesión cuando el margen ya sobra.
+      - **Queda vivo:** dos peticiones que lleguen a la vez antes de que la primera guarde salen las dos a
+        la red. Con 18 por minuto de gasto no rebasan el techo, pero el freno no las junta.
+- [ ] **La etiqueta `Live` deja de decir «en vivo» fuera de sesión** (2026-09-18). Sin sesión rodando lo que se
+      lee es la clasificación final de la anterior, y aun así se sirve como fresca: el punto parpadea y el
+      aviso dice «en vivo: se actualiza cada 10 s». Las dos cosas son falsas, y ese es el estado normal
+      entre grandes premios.
+      - **El parpadeo afirma algo sobre la sesión, no sobre el refresco.** Fuera de sesión la etiqueta
+        debería ir apagada: sin parpadear y atenuada.
+      - Lo que falta es un dato, no una forma de conseguirlo: el indicador no recibe el estado de la
+        sesión, pero su único consumidor, la tarjeta de Live Timing, lo tiene en la mano. El predicado que
+        decide si una sesión rueda vive hoy en el backend y tendría que mudarse a `common`.
+      - **Qué dice el aviso fuera de sesión está por decidir.**
+- [ ] **La banda conserva el último título bueno, y lo avisa** (2026-09-18). Es el arreglo del síntoma que se
+      dejó a propósito para después del de la causa, para poder comprobar si la causa bastaba sola.
+      - **Primero hay que decidir si sigue haciendo falta.** Con el freno el gasto queda por debajo del
+        techo, pero una petición suelta aún puede fallar por otra causa y dejar la tabla sin nombre; con
+        qué frecuencia pasa no está medido.
+- [ ] **Una sola copia del directo, refrescada por el backend** (2026-09-18). Hoy cada pregunta de la página
+      puede bajar a la red, y el freno limita cuántas lo hacen; con un reloj propio en el backend el gasto
+      dejaría de depender de cuántas pantallas miren, y dos peticiones simultáneas no podrían salir las dos.
+      - **Lo construido para el freno no se tira:** el nombre recordado y el sello `recent` siguen valiendo,
+        y el hueco del freno se convertiría en el periodo del reloj.
+      - **Pide su propio diseño antes de código**: si el backend pide aunque nadie mire, qué ve la página
+        antes del primer refresco, y cómo convive con la ventana del feed.
 - [ ] **La página entera en un idioma, con detección** (2026-09-17). Hoy está mezclada: la cabecera de Live
       Timing dice `Pos / Driver / Team / Gap / Interval / Last Lap / Estado` en la misma fila. Medido: **≈48
       cadenas visibles en 5 módulos** de `frontend/` más `common`, y `frontend.cabal` **sin ninguna
