@@ -44,16 +44,35 @@ module Common.Origin
 import           Data.Text (Text)
 import qualified Data.Text as T
 
--- | Cuál de los tres peldaños de la escalera sirvió el dato.
+-- | Qué sirvió el dato.
 --
--- El orden de los constructores es el de la escalera, de mejor a peor, y no es
--- decorativo: el 'Ord' derivado permite quedarse con el peor de varios sin escribir
--- la comparación, que es lo que necesitará una página cuyos widgets no comparten
--- procedencia.
+-- __No son los peldaños de la escalera, y dejaron de serlo el 2026-09-18:__ lo
+-- guardado tiene dos lecturas —servirlo porque aún vale o servirlo porque no hubo
+-- otra— y el peldaño es el mismo. Lo que este tipo dice es __por qué__ se sirvió eso,
+-- que es lo que decide si hay algo que avisar.
+--
+-- El orden de los constructores es de mejor a peor, y no es decorativo: el 'Ord'
+-- derivado permite quedarse con el peor de varios sin escribir la comparación, que es
+-- lo que necesitará una página cuyos widgets no comparten procedencia.
 data Origin
   = -- | Recién traído de la fuente. El único que 'originNotice' no redacta, que
     -- desde el 2026-09-11 (d) no es lo mismo que no anunciarse.
     Fresh
+  | -- | Lo guardado, servido __porque aún vale__ y no porque nadie contestara: el
+    -- backend decidió no volver a preguntar tan pronto.
+    --
+    -- __Existe para que 'Cached' siga significando una sola cosa.__ Desde que el
+    -- backend se frena a sí mismo para caber en el presupuesto de la fuente
+    -- (2026-09-17: OpenF1 acepta 30 peticiones por minuto), la mayoría de las
+    -- respuestas salen de lo guardado sin que nada haya fallado. Servirlas como
+    -- 'Cached' haría que su aviso —«la fuente no responde ahora mismo»— fuese falso
+    -- la mayor parte del tiempo, y con él la única señal de fallo que tiene la
+    -- página.
+    --
+    -- __Va aquí y no al final por el 'Ord', que es la escalera de mejor a peor:__
+    -- un dato de hace segundos que nadie quiso repetir es peor que uno recién
+    -- traído y mejor que uno que se sirve porque no hubo otra.
+    Recent
   | -- | La última respuesta buena guardada. El dato fue cierto; la duda es cuándo.
     Cached
   | -- | El respaldo estático. Nunca fue cierto, y es el que obliga a avisar.
@@ -71,9 +90,10 @@ originHeader = "X-Data-Origin"
 
 -- | Cabecera con el instante en que se trajo el dato, en ISO 8601.
 --
--- Solo tiene sentido acompañando a 'Cached' —de un dato fresco la hora es «ahora» y
--- de uno inventado no hay hora—, y por eso es una cabecera aparte y no un campo de
--- 'Origin': el tipo no tendría qué poner en dos de sus tres casos.
+-- Solo tiene sentido acompañando a los dos que salen de lo guardado, 'Recent' y
+-- 'Cached' —de un dato fresco la hora es «ahora» y de uno inventado no hay hora—, y
+-- por eso es una cabecera aparte y no un campo de 'Origin': el tipo no tendría qué
+-- poner en los otros dos casos.
 fetchedAtHeader :: Text
 fetchedAtHeader = "X-Data-Fetched-At"
 
@@ -81,6 +101,7 @@ fetchedAtHeader = "X-Data-Fetched-At"
 -- protocolo, no un texto para leer — el que se lee lo da 'originNotice'.
 originLabel :: Origin -> Text
 originLabel Fresh  = "fresh"
+originLabel Recent = "recent"
 originLabel Cached = "cached"
 originLabel Sample = "sample"
 
@@ -100,6 +121,7 @@ originFrom :: Text -> Maybe Origin
 originFrom raw =
   case T.toLower (T.strip raw) of
     "fresh"  -> Just Fresh
+    "recent" -> Just Recent
     "cached" -> Just Cached
     "sample" -> Just Sample
     _        -> Nothing
@@ -122,12 +144,19 @@ originFrom raw =
 -- dato en fresco.
 originNotice :: Origin -> Maybe Text -> Maybe Text
 originNotice Fresh _ = Nothing
+originNotice Recent at = Just (withInstant at "Dato reciente: no se ha vuelto a preguntar")
 originNotice Cached at =
-  Just (maybe base (\t -> base <> " (" <> t <> ")") (nonBlank =<< at))
-  where
-    base = "Dato guardado: la fuente no responde ahora mismo"
+  Just (withInstant at "Dato guardado: la fuente no responde ahora mismo")
 originNotice Sample _ =
   Just "Datos de ejemplo: la fuente nunca ha respondido"
+
+-- | El aviso con la hora entre paréntesis si la hay.
+--
+-- __Lo comparten los dos que salen de lo guardado__, porque el paréntesis es del
+-- hecho de estar guardado y no del motivo: escribirlo dos veces dejaría que uno
+-- cambiara de forma sin el otro.
+withInstant :: Maybe Text -> Text -> Text
+withInstant at base = maybe base (\t -> base <> " (" <> t <> ")") (nonBlank =<< at)
 
 -- | De qué fuente salió el dato.
 --

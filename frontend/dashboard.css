@@ -705,7 +705,7 @@ body {
 /* El punto, compartido por el aviso de estado y el indicador de procedencia: la
    forma es la misma y solo cambia quién pone el color. En `.status` lo pone el
    texto (`currentColor`), porque ahí el texto YA lleva el color del estado; en
-   `.widget__badge` el texto no cambia nunca, así que el color va en las cinco
+   `.widget__badge` el texto no cambia nunca, así que el color va en las seis
    reglas de debajo. De ahí que estén debajo y no arriba con el widget: misma
    especificidad, y gana la última. */
 .status::before,
@@ -730,6 +730,15 @@ body {
    separa es justo el movimiento, y por eso el movimiento no puede apagarse. */
 .widget__badge--stalled::before {
   background: var(--c-accent);
+}
+
+/* Reciente: sale de lo guardado porque aún vale, no porque nada conteste. La
+   página sigue refrescando, así que parpadea como `live`; lo que lo separa es un
+   punto más apagado, que es el mismo recurso con el que `saved` se distingue. */
+.widget__badge--recent::before {
+  background: var(--c-accent);
+  opacity: 0.7;
+  animation: badge-blink 1s ease-in-out infinite;
 }
 
 /* Guardado: el dato fue cierto, la duda es cuándo. Con o sin fallo de refresco
@@ -759,7 +768,8 @@ body {
    decoración — es la única señal de que lo que se lee está pasando ahora, y
    apagarla dejaría dos estados distintos pintados igual. */
 @media (prefers-reduced-motion: reduce) {
-  .widget__badge--live::before {
+  .widget__badge--live::before,
+  .widget__badge--recent::before {
     animation-duration: 3s;
   }
 }

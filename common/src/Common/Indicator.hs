@@ -14,9 +14,15 @@
 --
 -- __El color y el parpadeo dicen cosas distintas, y por eso son dos señales.__
 -- El color es la procedencia del dato que hay en pantalla y nunca miente sobre
--- ella; el parpadeo es «esto es la carrera, ahora mismo», y por eso solo lo
--- lleva el dato fresco cuyo último refresco volvió. Un refresco fallido sobre
--- dato guardado o de ejemplo no cambia el punto: vive en el tooltip.
+-- ella; el parpadeo es «esto se está actualizando ahora mismo», y por eso lo llevan
+-- los dos estados en que eso es cierto —dato fresco y dato reciente, ambos con su
+-- último refresco volviendo—. Un refresco fallido sobre dato guardado o de ejemplo
+-- no cambia el punto: vive en el tooltip.
+--
+-- __Lo que separa a esos dos es el color y no el movimiento__, y es a propósito: la
+-- página se actualiza igual en los dos casos, y lo que cambia es de dónde salió la
+-- respuesta. Apagar el parpadeo de uno diría que la página se ha parado, que es
+-- falso.
 --
 -- __El parpadeo no se apaga con @prefers-reduced-motion@__, solo se alarga
 -- (1 s → 3 s, en la hoja de estilos). No es decoración: es la única señal de que
@@ -30,8 +36,8 @@ module Common.Indicator
   , fetchedAtLabel
   ) where
 
-import           Common.Origin  (Origin (..), Source, Sourced (..), originNotice,
-                                 sourceName)
+import           Common.Origin  (Origin (..), Source, Sourced (..),
+                                 originNotice, sourceName)
 import           Common.Refresh (Poll (..), liveRefreshSeconds)
 import           Data.Char      (isDigit)
 import           Data.Maybe     (fromMaybe, isJust)
@@ -78,11 +84,17 @@ indicatorFrom p = Indicator
 -- | Clase de la etiqueta, bloque y modificador.
 --
 -- __El modificador va siempre__, al revés que el de 'Widgets.LiveTiming.rowClass'
--- (2026-08-27, donde lo normal no lleva marca): aquí los cinco estados son
--- igual de dignos de señalar, y el modificador ausente sería un sexto estado sin
--- color.
+-- (2026-08-27, donde lo normal no lleva marca): aquí los estados son todos
+-- igual de dignos de señalar, y el modificador ausente sería uno más sin color.
 --
--- Solo el primero parpadea, y el parpadeo lo pone la hoja de estilos: aquí se
+-- __Los modificadores son seis y las procedencias cuatro__, porque no hay biyección:
+-- 'Common.Origin.Fresh' y 'Common.Origin.Recent' se separan en dos modificadores
+-- cada uno según si el último refresco volvió, y los dos que no volvieron caen en el
+-- mismo — un dato que no se ha podido recargar se lee igual venga de donde venga.
+-- 'Common.Origin.Cached' no se desdobla porque su fallo lo cuenta el tooltip
+-- (2026-09-12).
+--
+-- Solo los dos primeros parpadean, y el parpadeo lo pone la hoja de estilos: aquí se
 -- decide __cuándo__, no cómo.
 indicatorClass :: Indicator -> Text
 indicatorClass i = "widget__badge widget__badge--" <> modifier
@@ -91,6 +103,8 @@ indicatorClass i = "widget__badge widget__badge--" <> modifier
       case (indOrigin i, indFailed i) of
         (Just Fresh,  False) -> "live"
         (Just Fresh,  True)  -> "stalled"
+        (Just Recent, False) -> "recent"
+        (Just Recent, True)  -> "stalled"
         (Just Cached, _)     -> "saved"
         (Just Sample, _)     -> "sample"
         (Nothing,     _)     -> "unknown"

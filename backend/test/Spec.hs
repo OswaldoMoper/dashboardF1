@@ -1946,15 +1946,19 @@ main = hspec $ do
 
   describe "Common.Origin" $ do
     it "cada procedencia tiene su valor de cabecera, y son distintos entre sí" $
-      map originLabel [minBound .. maxBound] `shouldBe` ["fresh", "cached", "sample"]
+      -- El orden es el del `Ord`, que es la escalera de mejor a peor: `recent` va
+      -- entre las dos porque un dato que nadie quiso repetir es peor que uno recién
+      -- traído y mejor que uno servido porque no hubo otra.
+      map originLabel [minBound .. maxBound]
+        `shouldBe` ["fresh", "recent", "cached", "sample"]
 
     it "lee el valor tal cual lo emite el backend" $
-      map originFrom ["fresh", "cached", "sample"]
-        `shouldBe` [Just Fresh, Just Cached, Just Sample]
+      map originFrom ["fresh", "recent", "cached", "sample"]
+        `shouldBe` [Just Fresh, Just Recent, Just Cached, Just Sample]
 
     it "tolera espacios y mayúsculas de por medio" $
-      map originFrom ["  CACHED ", "Sample", "FrEsH"]
-        `shouldBe` [Just Cached, Just Sample, Just Fresh]
+      map originFrom ["  CACHED ", "Sample", "FrEsH", " ReCeNt"]
+        `shouldBe` [Just Cached, Just Sample, Just Fresh, Just Recent]
 
     it "no adivina: lo que no reconoce es Nothing" $
       map originFrom ["", "   ", "live", "cache", "dummy"]
@@ -1968,6 +1972,21 @@ main = hspec $ do
       originNotice Cached (Just "14:32")
         `shouldBe` Just "Dato guardado: la fuente no responde ahora mismo (14:32)"
 
+    it "el reciente NO dice que la fuente no responda, que es de lo que se trata" $
+      -- Es la razón de existir del cuarto valor: con el backend frenándose a sí
+      -- mismo, «la fuente no responde» sería falso la mayor parte del tiempo, y con
+      -- él la única señal de fallo que tiene la página.
+      originNotice Recent (Just "14:32")
+        `shouldBe` Just "Dato reciente: no se ha vuelto a preguntar (14:32)"
+
+    it "el reciente sin hora también avisa, y sin paréntesis vacío" $
+      -- Mismo trato que el guardado, y del mismo sitio: el paréntesis es del hecho
+      -- de estar guardado, no del motivo.
+      [originNotice Recent Nothing, originNotice Recent (Just "  ")]
+        `shouldBe` [ Just "Dato reciente: no se ha vuelto a preguntar"
+                   , Just "Dato reciente: no se ha vuelto a preguntar"
+                   ]
+
     it "el dato guardado sin hora sigue avisando, y sin paréntesis vacío" $
       [originNotice Cached Nothing, originNotice Cached (Just "  ")]
         `shouldBe` [ Just "Dato guardado: la fuente no responde ahora mismo"
@@ -1980,8 +1999,8 @@ main = hspec $ do
                    , Just "Datos de ejemplo: la fuente nunca ha respondido"
                    ]
 
-    prop "originFrom es inversa de originLabel para las tres" originRoundTrips
-    prop "solo Fresh calla; los otros dos avisan siempre" onlyFreshIsSilent
+    prop "originFrom es inversa de originLabel para todas" originRoundTrips
+    prop "solo Fresh calla; los otros tres avisan siempre" onlyFreshIsSilent
 
   -- El segundo eje del módulo, y va aparte porque es una pregunta distinta: el
   -- peldaño dice qué sirvió el dato y la fuente de dónde salió. Las dos fuentes son
@@ -2150,25 +2169,42 @@ main = hspec $ do
       indicatorFrom (pollIdle :: Poll (Sourced [Int]))
         `shouldBe` Indicator False Nothing Nothing Nothing False
 
-    it "los cinco estados del punto, cada uno con su modificador" $
+    it "los seis estados del punto, cada uno con su modificador" $
       map indicatorClass
         [ shownAs (Just Fresh)  Nothing             False
         , shownAs (Just Fresh)  Nothing             True
+        , shownAs (Just Recent) (Just fetchedAtIso) False
         , shownAs (Just Cached) (Just fetchedAtIso) False
         , shownAs (Just Sample) Nothing             False
         , shownAs Nothing       Nothing             False
         ]
         `shouldBe` [ "widget__badge widget__badge--live"
                    , "widget__badge widget__badge--stalled"
+                   , "widget__badge widget__badge--recent"
                    , "widget__badge widget__badge--saved"
                    , "widget__badge widget__badge--sample"
                    , "widget__badge widget__badge--unknown"
                    ]
 
-    -- La mitad del reparto que no se ve mirando: el parpadeo es de UN estado, y
-    -- de los nueve posibles. Escrito así, un estado nuevo que se colara en la
-    -- clase `--live` rompe el caso sin que nadie tenga que acordarse.
-    it "solo el dato fresco con el refresco volviendo pide parpadeo" $
+    -- Seis modificadores para cuatro procedencias, porque no hay biyección: un dato
+    -- reciente cuyo refresco no volvió se lee igual que uno fresco en la misma
+    -- situación, así que los dos caen en `--stalled`. Es lo que impide que el punto
+    -- siga afirmando que la página se está actualizando cuando ya no lo hace.
+    it "un refresco fallido lleva al mismo punto venga de fresco o de reciente" $
+      map indicatorClass
+        [ shownAs (Just Fresh)  Nothing             True
+        , shownAs (Just Recent) (Just fetchedAtIso) True
+        ]
+        `shouldBe` [ "widget__badge widget__badge--stalled"
+                   , "widget__badge widget__badge--stalled"
+                   ]
+
+    -- La mitad del reparto que no se ve mirando: la clase `--live` es de UN estado,
+    -- y de los doce posibles. Escrito así, un estado nuevo que se colara en ella
+    -- rompe el caso sin que nadie tenga que acordarse. Que `--recent` parpadee
+    -- también es decisión de la hoja de estilos y no de aquí: lo que esto afirma es
+    -- quién lleva la clase, no quién se mueve.
+    it "solo el dato fresco con el refresco volviendo lleva la clase del directo" $
       filter ((== "widget__badge widget__badge--live") . indicatorClass) everyIndicator
         `shouldBe` [shownAs (Just Fresh) Nothing False]
 
@@ -2194,6 +2230,19 @@ main = hspec $ do
     it "el dato guardado lleva la hora ya legible, y no el instante tal cual viaja" $
       indicatorTooltip (shownAs (Just Cached) (Just fetchedAtIso) False)
         `shouldBe` "Dato guardado: la fuente no responde ahora mismo (14:03 UTC)"
+
+    it "el reciente lleva su hora y NO acusa a la fuente de no responder" $
+      -- El motivo entero de que el cuarto sello exista: cuando el backend se frena a
+      -- sí mismo, el aviso del guardado sería falso la mayor parte del tiempo.
+      indicatorTooltip (shownAs (Just Recent) (Just fetchedAtIso) False)
+        `shouldBe` "Dato reciente: no se ha vuelto a preguntar (14:03 UTC)"
+
+    it "reciente y fallo también son dos hechos, y se componen igual" $
+      -- Compone por el mismo camino que el guardado: `indicatorTooltip` no nombra a
+      -- ninguno de los dos, los deja caer en su rama común.
+      indicatorTooltip (shownAs (Just Recent) (Just fetchedAtIso) True)
+        `shouldBe` "Dato reciente: no se ha vuelto a preguntar (14:03 UTC). \
+                   \No se pudo recargar: se muestra la tabla anterior"
 
     it "guardado y fallo son dos hechos, y el tooltip los dice los dos" $
       indicatorTooltip (shownAs (Just Cached) (Just fetchedAtIso) True)
@@ -2443,6 +2492,7 @@ shownFrom source origin fetched failed =
 everyIndicator :: [Indicator]
 everyIndicator =
   [ shownAs (Just Fresh)  Nothing             failed | failed <- [False, True] ]
+    <> [ shownAs (Just Recent) (Just fetchedAtIso) failed | failed <- [False, True] ]
     <> [ shownAs (Just Cached) (Just fetchedAtIso) failed | failed <- [False, True] ]
     <> [ shownAs (Just Sample) Nothing             failed | failed <- [False, True] ]
     <> [ shownAs Nothing       Nothing             failed | failed <- [False, True] ]
@@ -3533,23 +3583,24 @@ clockFormsMeet n =
     secs = 3600 + (n `mod` 86400)
 
 -- | Lo que hace utilizable la cabecera: lo que el backend escribe es exactamente lo
--- que el widget recupera. Los casos de arriba lo comprueban sobre las tres
--- etiquetas de hoy; esto lo ata al __tipo__, así que un constructor nuevo cuya
--- etiqueta se olvide en 'originFrom' rompe aquí y no en producción.
+-- que el widget recupera. Los casos de arriba lo comprueban sobre las etiquetas de
+-- hoy; esto lo ata al __tipo__, así que un constructor nuevo cuya etiqueta se olvide
+-- en 'originFrom' rompe aquí y no en producción.
 --
 -- El 'Origin' se genera desde un 'Int' con @mod@ en vez de declarar un 'Arbitrary',
--- que es el patrón que ya usan 'neverScientific' y 'snapIsIdempotent'. El @3@ es el
--- número de constructores; si crecen, el módulo tiene 'Bounded' y este @3@ se queda
--- corto en silencio — de ahí que el primer caso del @describe@ recorra
--- @[minBound .. maxBound]@ y no una lista escrita a mano.
+-- que es el patrón que ya usan 'neverScientific' y 'snapIsIdempotent'. __El número
+-- de constructores sale del propio tipo__ y no de un literal: hasta el 2026-09-18
+-- era un @3@ escrito a mano, con su propio aviso de que se quedaría corto en
+-- silencio, y el cuarto constructor lo cumplió.
 originRoundTrips :: Int -> Property
 originRoundTrips n = originFrom (originLabel origin) === Just origin
   where
-    origin = toEnum (n `mod` 3)
+    origins = [minBound .. maxBound] :: [Origin]
+    origin = origins !! (n `mod` length origins)
 
--- | El número de fuentes sale del propio tipo y no de un literal, al revés que el
--- @3@ de 'originRoundTrips': si mañana hay una tercera, la propiedad la cubre sin
--- que nadie se acuerde de tocar el módulo.
+-- | El número de fuentes sale del propio tipo y no de un literal, igual que en
+-- 'originRoundTrips': si mañana hay una tercera, la propiedad la cubre sin que nadie
+-- se acuerde de tocar el módulo.
 sourceRoundTrips :: Int -> Property
 sourceRoundTrips n = sourceFrom (sourceLabel source) === Just source
   where
@@ -3563,7 +3614,8 @@ sourceRoundTrips n = sourceFrom (sourceLabel source) === Just source
 onlyFreshIsSilent :: Int -> Maybe String -> Property
 onlyFreshIsSilent n at = silent === (origin == Fresh)
   where
-    origin = toEnum (n `mod` 3)
+    origins = [minBound .. maxBound] :: [Origin]
+    origin = origins !! (n `mod` length origins)
     silent =
       case originNotice origin (T.pack <$> at) of
         Nothing -> True
