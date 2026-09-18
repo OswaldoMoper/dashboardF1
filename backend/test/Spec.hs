@@ -98,6 +98,7 @@ import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import           Data.Either                 (isLeft)
 import           Data.List                   (nub)
+import qualified Data.Map.Strict             as Map
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Text                   as T
 import           Data.Time.Calendar          (fromGregorian)
@@ -127,10 +128,11 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               feedStatus, feedVerdict,
                                               feedWindowLead, feedWindowOpen,
                                               fetchFailure, freezeClock,
-                                              lapProgress, openf1Session,
-                                              parseFeedInstant, parseRemaining,
-                                              schedule, sessionClock,
-                                              sessionIsLive, upNext)
+                                              lapProgress, meetingNames,
+                                              openf1Session, parseFeedInstant,
+                                              parseRemaining, schedule,
+                                              sessionClock, sessionIsLive,
+                                              upNext)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import qualified Handler.Telemetry.Context   as Telemetry
@@ -997,7 +999,7 @@ main = hspec $ do
       openf1Session
         (addUTCTime (60 * 60) raceStartsAt)
         (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
-        (Just (Of1Meeting 1294 "Spanish Grand Prix"))
+        "Spanish Grand Prix"
         `shouldBe` SessionInfo
           { siType    = "Race"
           , siName    = "Race"
@@ -1015,7 +1017,7 @@ main = hspec $ do
         (openf1Session
            (addUTCTime (4 * 3600) raceEndsAt)
            (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
-           Nothing)
+           "")
         `shouldBe` Just (StateReading SessionFinalised Derived)
 
     it "y en el borde sigue siendo «no se sabe», que es donde la medición manda" $
@@ -1028,17 +1030,18 @@ main = hspec $ do
              (openf1Session
                 t
                 (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
-                Nothing))
+                ""))
         [raceStartsAt, raceEndsAt, addUTCTime (3 * 3600) raceEndsAt]
         `shouldBe` [Nothing, Nothing, Nothing]
 
     it "sin gran premio la sesión se sirve igual, con el nombre en blanco" $
-      -- `/meetings` puede devolver el arreglo vacío. El tipo y el nombre siguen
-      -- diciendo de qué se habla, así que perder la sesión entera sería peor.
+      -- `/meetings` puede devolver el arreglo vacío, y desde el 2026-09-18 la caja
+      -- del `Env` puede no tener la clave. El tipo y el nombre siguen diciendo de
+      -- qué se habla, así que perder la sesión entera sería peor.
       openf1Session
         (addUTCTime (30 * 60) raceStartsAt)
         (Of1Session "Qualifying" "Qualifying" 1294 raceStartsAt raceEndsAt)
-        Nothing
+        ""
         `shouldBe` SessionInfo
           { siType    = "Qualifying"
           , siName    = "Qualifying"
@@ -1093,6 +1096,32 @@ main = hspec $ do
              ]
              [])
         `shouldBe` [bakuP1, raceStartsAt]
+
+  -- El índice que `schedule` usa para juntar y que el `Env` guarda para no volver a
+  -- preguntar. Tiene DOS consumidores, y de ahí que exista aparte: escrito en los dos
+  -- sitios, uno podría resolver distinto del otro.
+  describe "meetingNames" $ do
+    it "indexa por clave, que es por donde se busca en los dos consumidores" $
+      meetingNames
+        [ Of1Meeting 1295 "Azerbaijan Grand Prix"
+        , Of1Meeting 1294 "Spanish Grand Prix"
+        ]
+        `shouldBe` Map.fromList
+          [(1294, "Spanish Grand Prix"), (1295, "Azerbaijan Grand Prix")]
+
+    it "sin grandes premios da el índice vacío, que es «no se sabe ninguno»" $
+      -- Es lo que hay al arrancar el proceso, y lo que hace que se pregunte.
+      meetingNames [] `shouldBe` Map.empty
+
+    it "es el MISMO índice que schedule usa para juntar" $
+      -- Lo que ancla que sacarlo de `schedule` no cambió a quién nombra cada sesión:
+      -- el nombre que sale del calendario y el que sale de la caja son uno.
+      map ssGrandPrix
+          (schedule
+             [scheduled "Race" "Race" raceStartsAt raceEndsAt]
+             [Of1Meeting 1294 "Spanish Grand Prix"])
+        `shouldBe` [Map.findWithDefault "" 1294
+                      (meetingNames [Of1Meeting 1294 "Spanish Grand Prix"])]
 
   -- Qué enseña la mitad derecha de la banda. Cada caso sale de una decisión distinta
   -- y por eso hay uno por cada una, más los controles que impiden que pasen por el

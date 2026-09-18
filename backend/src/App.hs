@@ -113,6 +113,28 @@ data Env = Env
     -- No es una cache: no guarda una respuesta para volver a servirla, sino lo que
     -- hace falta para decidir si preguntar. De ahí que no caduque ni tenga
     -- respaldo — su valor vacío significa «se pregunta», no «se sirve el dummy».
+  , envMeetingNames    :: TVar (Map Int Text)
+    -- ^ El nombre de cada gran premio __por su clave__, para no volver a
+    -- preguntarlo.
+    --
+    -- __No es una cache de respaldo sino un ahorro de peticiones__, y esa es la
+    -- diferencia con las seis de arriba: aquí no se guarda una respuesta para
+    -- servirla cuando la fuente calle, sino un dato que __no cambia__ para no tener
+    -- que pedirlo otra vez. Un gran premio no se renombra a mitad de fin de semana.
+    --
+    -- Lo justifica un presupuesto medido el 2026-09-17: OpenF1 acepta __30
+    -- peticiones por minuto__ y las dice él mismo en su rechazo, mientras que un
+    -- refresco de @\/api\/live@ costaba siete. Ésta era una de las siete, y se pagaba
+    -- cada diez segundos para traducir una clave al mismo nombre.
+    --
+    -- __Nace llena y casi nunca falla__: el calendario ya pide los grandes premios
+    -- del año entero de una sola vez ('Handler.Live.Context.fetchSchedule'), así que
+    -- desde el primer calendario bueno están los 27. La preguntita de una clave
+    -- suelta queda para la sesión que ya no está en el calendario — el calendario
+    -- solo guarda lo que no ha terminado, y OpenF1 sirve como actual __la última__.
+    --
+    -- __Un nombre en blanco no entra__, o el fallo se volvería permanente: no
+    -- saberlo hoy no es saber que no lo tiene.
   , envDriversCache    :: TVar (Map Text [DriverEntry])
     -- ^ Última parrilla buena de @/api/drivers@ __por sesión__ (respaldo si el
     -- microservicio FastF1 no responde).
@@ -135,6 +157,7 @@ mkEnv cfg = do
   telemetryCache <- newTVarIO Map.empty
   comparisonCache <- newTVarIO Map.empty
   feedWindow <- newTVarIO (FeedWindow [] Nothing)
+  meetingNames <- newTVarIO Map.empty
   driversCache <- newTVarIO Map.empty
   pure
     Env
@@ -145,5 +168,6 @@ mkEnv cfg = do
       , envTelemetryCache  = telemetryCache
       , envComparisonCache = comparisonCache
       , envFeedWindow      = feedWindow
+      , envMeetingNames    = meetingNames
       , envDriversCache    = driversCache
       }

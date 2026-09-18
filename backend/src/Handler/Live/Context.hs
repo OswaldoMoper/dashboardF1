@@ -46,6 +46,8 @@ import           Control.Concurrent.STM (atomically, modifyTVar', readTVarIO,
                                          writeTVar)
 import           Control.Exception      (SomeException, displayException, try)
 import           Data.List              (nub)
+import           Data.Map.Strict        (Map)
+import qualified Data.Map.Strict        as Map
 import           Data.Maybe             (listToMaybe)
 import           Data.Text              (Text)
 import qualified Data.Text              as T
@@ -55,9 +57,10 @@ import           Data.Time.Clock        (UTCTime, getCurrentTime, utctDay)
 import           Handler.Feed.Helper    (FeedLive (..))
 import qualified Handler.Feed.Manager   as Feed
 import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
-                                         Of1Session (..), assembleRows,
-                                         feedVerdict, feedWindowOpen,
-                                         fetchFailure, freezeClock,
+                                         Of1Meeting (..), Of1Session (..),
+                                         assembleRows, feedVerdict,
+                                         feedWindowOpen, fetchFailure,
+                                         freezeClock, meetingNames,
                                          openf1Session, schedule, upNext)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
@@ -189,9 +192,10 @@ noteFinalised env at = do
 -- en que no contesta. Vaciar la lista por eso convertiría un calendario bueno en
 -- «no se sabe», que hace pagar la foto en cada refresco.
 --
--- __Las dos peticiones caen juntas__, igual que las de 'fetchSessionInfo' y por la
--- misma razón: que una conteste y la otra no es una avería, no un régimen, y guardar
--- el calendario a medias sustituiría en silencio uno bueno por otro sin nombres.
+-- __Las dos peticiones caen juntas__, igual que las de 'fetchSessionOrNothing' y por
+-- la misma razón: que una conteste y la otra no es una avería, no un régimen, y
+-- guardar el calendario a medias sustituiría en silencio uno bueno por otro sin
+-- nombres.
 --
 -- __Los grandes premios se piden por año y no uno por sesión.__ El calendario trae
 -- nueve distintos, y nueve peticiones seguidas es justo lo que un servicio que
@@ -201,26 +205,38 @@ noteFinalised env at = do
 --
 -- Al arrancar el proceso la lista está vacía, así que hasta que esto salga bien una
 -- vez se pregunta al feed siempre — el precio declarado de no perder el directo.
+--
+-- __De la misma respuesta salen los nombres de gran premio__ que 'grandPrixName'
+-- después no tendrá que pedir: los 27 del año ya vienen dentro, así que aprovecharlos
+-- no cuesta ninguna petición más. Las dos escrituras van en una sola transacción
+-- porque son el mismo hecho — un calendario nuevo con los nombres que lo acompañan—,
+-- y a medias dejarían un calendario que nombra sesiones que la otra caja no conoce.
 refreshFeedWindow :: Env -> IO ()
 refreshFeedWindow env = do
   now <- getCurrentTime
   result <-
     try (fetchSchedule (envConfig env) now)
-      :: IO (Either SomeException [ScheduledSession])
+      :: IO (Either SomeException ([ScheduledSession], Map Int Text))
   either
     (noteFailure "el calendario")
-    (\sessions ->
-       atomically $
-       modifyTVar' (envFeedWindow env) (\w -> w {fwSessions = sessions}))
+    (\(sessions, names) ->
+       atomically $ do
+         modifyTVar' (envFeedWindow env) (\w -> w {fwSessions = sessions})
+         modifyTVar' (envMeetingNames env) (Map.union names))
     result
 
 -- | El calendario con sus nombres de gran premio, en las dos peticiones que hacen
 -- falta. Sin @try@: lo pone quien llama, que es quien sabe qué hacer con el fallo.
-fetchSchedule :: Config -> UTCTime -> IO [ScheduledSession]
+--
+-- __Devuelve los nombres aparte y no solo dentro del calendario__, porque las
+-- sesiones que trae son las que aún no han terminado y los nombres valen para
+-- cualquiera — incluida la que OpenF1 sirve como actual, que fuera de fin de semana
+-- ya no está en esa lista.
+fetchSchedule :: Config -> UTCTime -> IO ([ScheduledSession], Map Int Text)
 fetchSchedule cfg now = do
   sessions <- Manager.fetchCalendar cfg now
   meetings <- concat <$> mapM (Manager.fetchMeetings cfg) (years sessions)
-  pure (schedule sessions meetings)
+  pure (schedule sessions meetings, meetingNames meetings)
   where
     -- Normalmente uno; dos solo en las semanas que cruzan el cambio de año.
     years = nub . map (yearOf . osStart)
@@ -249,14 +265,18 @@ fromFeed env live = do
     FeedEmpty        -> fromOpenF1 env
     FeedFinalised    -> noteFinalised env now >> fromOpenF1 env
 
--- | El peldaño de OpenF1: los siete GET y el ensamblado, con la cache detrás.
+-- | El peldaño de OpenF1: los seis GET y el ensamblado, con la cache detrás.
+--
+-- __Seis y no siete desde el 2026-09-18__: el nombre del gran premio sale de la caja
+-- del 'Env' ('grandPrixName') y solo cuesta una petición la primera vez que se ve esa
+-- clave. Fueron siete hasta que el presupuesto de OpenF1 se midió.
 --
 -- La condición de éxito es __traer filas__ y no solo no fallar: una lista vacía es
 -- una sesión sin parrilla publicada, y servirla dejaría la tabla en blanco teniendo
 -- una anterior buena guardada.
 --
--- __La sesión se pide solo si hay filas que nombrar__, y después de tenerlas: dos
--- peticiones por una tabla que se va a descartar no las paga nadie.
+-- __La sesión se pide solo si hay filas que nombrar__, y después de tenerlas: una
+-- petición por una tabla que se va a descartar no la paga nadie.
 --
 -- __La sesión que sale es la suya y no la del feed.__ Aunque el feed acabe de
 -- anunciar una, no se hereda: OpenF1 pide siempre @session_key=latest@, y que su
@@ -272,7 +292,7 @@ fromOpenF1 env = do
   case result of
     Right rows | not (null rows) -> do
       now <- getCurrentTime
-      session <- fetchSessionOrNothing (envConfig env) now
+      session <- fetchSessionOrNothing env now
       serveFresh env now OpenF1 (LiveTable session rows NextUnknown)
     Right _                      -> fromCache env
     Left e                       -> noteFailure "las filas" e >> fromCache env
@@ -329,46 +349,79 @@ fetchRows cfg = do
   results   <- Manager.fetchResults cfg
   pure (assembleRows drivers positions intervals laps results)
 
--- | Las dos peticiones que nombran la sesión, con su propio @try@: «no se sabe» si
--- no salen, en vez de propagar y tirar una tabla que ya está en la mano.
+-- | Lo que nombra la sesión, con su propio @try@: «no se sabe» si no sale, en vez de
+-- propagar y tirar una tabla que ya está en la mano.
 --
 -- __Mismo criterio que 'fetchIntervalsOrEmpty'__ y por la misma razón: una tabla sin
 -- nombre sigue siendo la tabla, y perderla por la celda de la cabecera es peor que
 -- enseñarla sin ella.
 --
--- __Pero las dos caen juntas, y ahí se aparta de él.__ La excepción de
--- @\/intervals@ existe porque su fallo es el __caso normal__ —el endpoint no existe
--- fuera de carrera—; que @\/sessions@ conteste y @\/meetings@ no, o al revés, no es
--- un régimen sino una avería. Partirlas serviría una sesión a medias sin que nadie
--- la hubiera pedido así.
+-- __Pero aquí un fallo es una avería y allí es el régimen, y ahí se aparta de él.__
+-- La excepción de @\/intervals@ existe porque su fallo es el __caso normal__ —el
+-- endpoint no existe fuera de carrera—; que @\/sessions@ no conteste, o que no
+-- conteste la petición del gran premio que a veces la acompaña, no es un régimen.
+-- Por eso el 'try' es uno solo y cubre las dos: una sesión a medias no la ha pedido
+-- nadie.
 --
 -- __Y por eso mismo la avería se cuenta__ ('noteFailure'): «no se sabe» es la
 -- respuesta correcta, pero callar por qué no lo es. Hasta el 2026-09-17 este
 -- 'Nothing' era la cara única de cuatro causas distintas, y averiguar cuál obligó a
 -- medir la API por fuera.
-fetchSessionOrNothing :: Config -> UTCTime -> IO (Maybe SessionInfo)
-fetchSessionOrNothing cfg now = do
+fetchSessionOrNothing :: Env -> UTCTime -> IO (Maybe SessionInfo)
+fetchSessionOrNothing env now = do
   result <-
-    try (fetchSessionInfo cfg now)
+    try (fetchSessionInfo env now)
       :: IO (Either SomeException (Maybe SessionInfo))
   either (\e -> Nothing <$ noteFailure "el nombre de la sesión" e) pure result
 
--- | @\/sessions@ y, con la clave que da, @\/meetings@.
+-- | @\/sessions@ y, si hace falta, el nombre del gran premio que su clave designa.
 --
 -- __El arreglo vacío es «no se sabe» y no un fallo:__ OpenF1 responde con una lista,
 -- y sin ninguna sesión dentro no hay nada que nombrar. Se lee la primera casando la
 -- lista y no con 'Prelude.head', que sobre algo que llega de la red no se justifica.
 --
 -- El gran premio va aparte porque @\/sessions@ __no publica su nombre__: solo su
--- clave. Que su lista venga vacía deja la sesión sin gran premio, no sin sesión.
-fetchSessionInfo :: Config -> UTCTime -> IO (Maybe SessionInfo)
-fetchSessionInfo cfg now = do
-  sessions <- Manager.fetchSession cfg
+-- clave. Que no se sepa deja la sesión sin gran premio, no sin sesión.
+--
+-- __Deja de ser fija en dos peticiones__ (2026-09-18): la segunda solo sale si el
+-- nombre no se sabía ya, y en régimen normal nunca sale.
+fetchSessionInfo :: Env -> UTCTime -> IO (Maybe SessionInfo)
+fetchSessionInfo env now = do
+  sessions <- Manager.fetchSession (envConfig env)
   case sessions of
     []      -> pure Nothing
     (s : _) -> do
-      meetings <- Manager.fetchMeeting cfg (osMeeting s)
-      pure (Just (openf1Session now s (listToMaybe meetings)))
+      grandPrix <- grandPrixName env (osMeeting s)
+      pure (Just (openf1Session now s grandPrix))
+
+-- | El nombre de un gran premio, preguntándolo __solo si no se sabía__.
+--
+-- __Es el ahorro que baja el refresco de siete peticiones a seis__, y lo justifica
+-- que el dato no caduca: un gran premio no se renombra a mitad de fin de semana, así
+-- que pedirlo cada diez segundos era pagar por la misma respuesta. El presupuesto de
+-- OpenF1 —30 peticiones por minuto, medido el 2026-09-17— es lo que convierte ese
+-- desperdicio en un defecto y no en una ineficiencia.
+--
+-- __Lo que se pregunta no se guarda si vino en blanco.__ @\/meetings@ puede devolver
+-- el arreglo vacío, y guardar esa cadena convertiría un fallo de un momento en uno
+-- permanente: no saberlo hoy no es saber que no lo tiene.
+--
+-- __Un fallo de la petición no se atrapa aquí__ sino en 'fetchSessionOrNothing', que
+-- es quien decide que una sesión sin nombre sigue siendo una sesión.
+grandPrixName :: Env -> Int -> IO Text
+grandPrixName env key = do
+  known <- readTVarIO (envMeetingNames env)
+  case Map.lookup key known of
+    Just name -> pure name
+    Nothing   -> do
+      meetings <- Manager.fetchMeeting (envConfig env) key
+      let name = maybe "" omName (listToMaybe meetings)
+      if T.null name
+        then pure name
+        else do
+          atomically $
+            modifyTVar' (envMeetingNames env) (Map.insert key name)
+          pure name
 
 -- | @\/intervals@ con su propio @try@: una lista vacía si el GET no sale, en vez de
 -- propagar y tirar los otros cuatro.

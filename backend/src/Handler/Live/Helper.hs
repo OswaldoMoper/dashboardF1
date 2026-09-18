@@ -30,6 +30,7 @@ module Handler.Live.Helper
   , feedWindowOpen
   , endMargin
   , derivedState
+  , meetingNames
   , schedule
   , upNext
     -- * Lo que se deja dicho cuando un fetch no sale
@@ -365,12 +366,18 @@ feedSession now fs =
 --
 -- __Sin gran premio la sesión se sirve igual, con el nombre en blanco__: el tipo y
 -- el nombre siguen diciendo de qué se habla, y sale de otra petición.
-openf1Session :: UTCTime -> Of1Session -> Maybe Of1Meeting -> SessionInfo
-openf1Session now os meeting =
+--
+-- __Recibe el nombre y no el 'Of1Meeting' del que salía__, porque desde el
+-- 2026-09-18 quien lo trae puede ser la caja del 'App.Env' y no una respuesta: ahí
+-- no hay ningún 'Of1Meeting' que enseñar, y fabricar uno para pasarlo sería inventar
+-- una respuesta que nadie dio. La ausencia se dice con la cadena vacía, que es como
+-- ya la dicen 'App.ScheduledSession' y 'Common.Types.siMeeting'.
+openf1Session :: UTCTime -> Of1Session -> Text -> SessionInfo
+openf1Session now os grandPrix =
   SessionInfo
     { siType    = osType os
     , siName    = osName os
-    , siMeeting = maybe "" omName meeting
+    , siMeeting = grandPrix
     , siState   = flip StateReading Derived <$> derivedState now os
     , siLaps    = Nothing
     , siClock   = Nothing
@@ -540,7 +547,7 @@ derivedState now os
 schedule :: [Of1Session] -> [Of1Meeting] -> [ScheduledSession]
 schedule sessions meetings = map toScheduled sessions
   where
-    names = Map.fromList [(omKey m, omName m) | m <- meetings]
+    names = meetingNames meetings
     toScheduled os =
       ScheduledSession
         { ssName      = osName os
@@ -549,6 +556,20 @@ schedule sessions meetings = map toScheduled sessions
         , ssStart     = osStart os
         , ssEnd       = osEnd os
         }
+
+-- | El nombre de cada gran premio indexado por su clave, que es como llega de
+-- @\/meetings@ y como se busca en todas partes.
+--
+-- __Vive aparte de 'schedule' porque tiene dos consumidores y no uno__: aquél junta
+-- el calendario, y la caja del 'App.Env' que evita volver a preguntar guarda
+-- exactamente esta forma. Escribir el @fromList@ en los dos sitios dejaría que uno
+-- decidiera algo distinto del otro ante claves repetidas.
+--
+-- __Una clave repetida se queda con el último__, que es lo que hace 'Map.fromList'.
+-- No se ha visto en el dato real —OpenF1 publica un objeto por gran premio— y lo que
+-- importa es que los dos consumidores resuelvan igual, no cuál de los dos gane.
+meetingNames :: [Of1Meeting] -> Map.Map Int Text
+meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 
 -- | Qué viene después de la sesión que se está enseñando, en ese instante.
 --

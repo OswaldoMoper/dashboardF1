@@ -43,9 +43,13 @@ fetchSession cfg = fetchList cfg "sessions"
 
 -- | @/meetings@: el gran premio al que pertenece una sesión.
 --
--- __Es el único de los siete que no se pide por la sesión en curso__, sino por la
+-- __Es el único GET de Live que no se pide por la sesión en curso__, sino por la
 -- clave que 'fetchSession' acaba de dar; de ahí que use 'fetchListWith' en vez de
 -- 'fetchList'.
+--
+-- __Y desde el 2026-09-18 es también el único que no sale en cada refresco:__
+-- 'Handler.Live.Context.grandPrixName' lo llama solo ante una clave que no conoce,
+-- porque el nombre de un gran premio no cambia.
 fetchMeeting :: Config -> Int -> IO [Of1Meeting]
 fetchMeeting cfg key = fetchListWith cfg "meetings" (meetingKey key)
 
