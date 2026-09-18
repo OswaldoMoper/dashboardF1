@@ -121,17 +121,18 @@ import           Handler.Live.Context        (LiveResult (..))
 import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               Of1Lap, Of1Meeting (..),
                                               Of1Position, Of1Result (..),
-                                              Of1Session (..), assembleRows,
-                                              classificationGaps,
+                                              Of1Session (..), advanceClock,
+                                              assembleRows, classificationGaps,
                                               classificationTime, derivedState,
                                               endMargin, feedRows, feedSession,
                                               feedStatus, feedVerdict,
                                               feedWindowLead, feedWindowOpen,
                                               fetchFailure, freezeClock,
                                               lapProgress, meetingNames,
-                                              openf1Session, parseFeedInstant,
-                                              parseRemaining, schedule,
-                                              sessionClock, sessionIsLive,
+                                              openf1MinGap, openf1Session,
+                                              parseFeedInstant, parseRemaining,
+                                              schedule, sessionClock,
+                                              sessionIsLive, stillRecent,
                                               upNext)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
@@ -945,6 +946,58 @@ main = hspec $ do
       -- Es lo que pasa al servir desde la cache algo que ya salió de ella.
       (freezeClock . freezeClock) raceSessionFixture
         `shouldBe` freezeClock raceSessionFixture
+
+  -- El freno a OpenF1. Su número sale del presupuesto que el propio servicio publica
+  -- en su rechazo —30 peticiones por minuto—, y lo que se ancla aquí es la cuenta,
+  -- no solo el número: cambiar el hueco o el ritmo de la página tiene que seguir
+  -- cabiendo.
+  describe "openf1MinGap y stillRecent" $ do
+    it "con la página a su ritmo, OpenF1 se consulta cada 20 s y el gasto cabe" $
+      -- La página solo pregunta en múltiplos de su periodo, así que el freno se
+      -- salta preguntas enteras: la primera que llega con lo guardado ya viejo es la
+      -- que baja. Seis peticiones por bajada.
+      let poll      = liveRefreshSeconds
+          gap       = ceiling openf1MinGap :: Int
+          period    = until (>= gap) (+ poll) poll
+          perMinute = 6 * 60 `div` period
+       in (period, perMinute, perMinute <= 30) `shouldBe` (20, 18, True)
+
+    it "lo guardado vale mientras no haya pasado el hueco, y el borde ya no" $
+      map (\s -> stillRecent (addUTCTime s raceStartsAt) raceStartsAt) [0, 10, 14.9, 15, 20]
+        `shouldBe` [True, True, True, False, False]
+
+    it "un instante del futuro no vale: el reloj que retrocede hace preguntar" $
+      -- Darlo por reciente dejaría de preguntar durante todo lo que el reloj haya
+      -- retrocedido; preguntar es lo que se hacía antes del freno.
+      stillRecent raceStartsAt (addUTCTime 5 raceStartsAt) `shouldBe` False
+
+  -- La simétrica de `freezeClock`: aquél para el reloj porque la fuente no contestó;
+  -- éste lo pone al día porque no hacía falta preguntar y se sabe cuánto ha pasado.
+  describe "advanceClock" $ do
+    it "descuenta lo transcurrido de un reloj que anda" $
+      advanceClock 12 raceSessionFixture
+        `shouldBe` raceSessionFixture { siClock = Just (SessionClock 5388 True) }
+
+    it "con la sesión detenida no descuenta nada: bandera roja" $
+      -- El feed publica el reloj parado; descontarle inventaría que el tiempo corre.
+      let stopped = raceSessionFixture { siClock = Just (SessionClock 5400 False) }
+       in advanceClock 12 stopped `shouldBe` stopped
+
+    it "no baja de cero" $
+      advanceClock 12 (raceSessionFixture { siClock = Just (SessionClock 5 True) })
+        `shouldBe` raceSessionFixture { siClock = Just (SessionClock 0 True) }
+
+    it "sin reloj no inventa uno, y un transcurrido negativo no suma tiempo" $
+      [ advanceClock 12 (raceSessionFixture { siClock = Nothing })
+      , advanceClock (-30) raceSessionFixture
+      ]
+        `shouldBe` [raceSessionFixture { siClock = Nothing }, raceSessionFixture]
+
+    it "cuenta segundos enteros, sin redondear hacia arriba" $
+      -- El restante se publica en segundos; restar 13 por 12,9 s adelantaría el
+      -- reloj respecto al de la fuente.
+      advanceClock 12.9 raceSessionFixture
+        `shouldBe` raceSessionFixture { siClock = Just (SessionClock 5388 True) }
 
   -- La otra fuente que sabe de qué sesión habla. Los fixtures son las respuestas
   -- REALES medidas el 2026-09-15, no formas inventadas: lo que se prueba incluye que
@@ -2061,6 +2114,13 @@ main = hspec $ do
       headersOf
         (withOrigin (LiveResult Cached (Just OpenF1) (Just fetchInstant) liveTableFixture))
         `shouldBe` (Header "cached", Header "2026-09-11T14:03:22Z", Header "openf1")
+
+    it "el reciente viaja como lo guardado, pero con su propio sello" $
+      -- Lo que el cuarto sello cambia en el cable es solo la primera cabecera: el
+      -- instante y la fuente son los de lo guardado, porque es lo guardado.
+      headersOf
+        (withOrigin (LiveResult Recent (Just OpenF1) (Just fetchInstant) liveTableFixture))
+        `shouldBe` (Header "recent", Header "2026-09-11T14:03:22Z", Header "openf1")
 
     it "el dato de ejemplo no lleva instante ni fuente, porque no tuvo ninguno" $
       headersOf (withOrigin (LiveResult Sample Nothing Nothing namelessTableFixture))

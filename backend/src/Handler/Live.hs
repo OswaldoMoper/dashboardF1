@@ -55,8 +55,9 @@ liveHandler env = withOrigin <$> liftIO (Context.getLiveTiming env)
 -- | Pone la procedencia en cabeceras.
 --
 -- @X-Data-Origin@ va siempre; las otras dos __faltan__ cuando el @Context@ no las
--- tiene: el instante solo lo hay al servir desde la cache, y la fuente solo si el
--- dato salió de alguna —el respaldo estático no—. Es pura para que la suite pueda
+-- tiene: el instante solo lo hay al servir de lo guardado —porque aún vale o porque
+-- la fuente no contestó—, y la fuente solo si el dato salió de alguna —el respaldo
+-- estático no—. Es pura para que la suite pueda
 -- comprobar qué cabeceras salen en cada peldaño sin levantar red.
 withOrigin :: LiveResult -> LiveResponse
 withOrigin result =

@@ -66,7 +66,9 @@ data Env = Env
   { envConfig          :: Config
   , envLiveCache       :: TVar (Maybe (UTCTime, Source, LiveTable))
     -- ^ Última respuesta buena de @/api/live@, __el instante en que llegó y de
-    -- qué fuente salió__ (respaldo si ninguna de las dos contesta).
+    -- qué fuente salió__ (respaldo si ninguna de las dos contesta, y freno: si aún
+    -- es reciente, no se vuelve a bajar a OpenF1 —
+    -- 'Handler.Live.Context.fromOpenF1'—).
     --
     -- El instante es lo que deja a 'Handler.Live' emitir @X-Data-Fetched-At@
     -- cuando sirve desde aquí ('Common.Origin.Cached'). Va en la misma caja y no

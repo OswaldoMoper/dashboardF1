@@ -45,6 +45,9 @@ module Handler.Live.Helper
   , sessionClock
   , sessionIsLive
   , freezeClock
+  , openf1MinGap
+  , stillRecent
+  , advanceClock
   , lapProgress
   , parseRemaining
   , parseFeedInstant
@@ -713,6 +716,54 @@ freezeClock :: SessionInfo -> SessionInfo
 freezeClock info = info { siClock = stop <$> siClock info }
   where
     stop clock = clock { scRunning = False }
+
+-- | Cuánto tiene que haber pasado desde la última bajada a OpenF1 para volver a
+-- hacerla.
+--
+-- __Lo decide el presupuesto de OpenF1, que lo publica él mismo__: su rechazo dice
+-- «Max 30 requests/minute» (medido el 2026-09-17). Cada bajada son seis peticiones, y
+-- la página pregunta cada 'Common.Refresh.liveRefreshSeconds' —diez—, así que sin
+-- freno salían 36 por minuto. Con éste, la página solo puede saltarse preguntas
+-- enteras: pregunta a los 0, 10, 20… y a los 10 lo guardado aún vale, así que
+-- __OpenF1 se consulta cada 20 s__ y el gasto queda en 18 por minuto. Cualquier valor
+-- entre 11 y 20 da lo mismo; por debajo de 10 el freno no frena.
+--
+-- __Solo frena a OpenF1, y por eso no ralentiza el directo__: con una sesión rodando
+-- sirve el feed, que es nuestro y no tiene presupuesto, y OpenF1 contesta @401@. Los
+-- 20 s solo afectan a la clasificación de una sesión que ya terminó, que no cambia.
+openf1MinGap :: NominalDiffTime
+openf1MinGap = 15
+
+-- | Si lo guardado en un instante aún vale en otro para no volver a preguntar a
+-- OpenF1.
+--
+-- __Un instante del futuro no vale__, aunque la resta dé menos que el hueco: solo
+-- puede salir de un reloj del sistema que ha retrocedido, y darlo por reciente dejaría
+-- de preguntar durante todo lo que retrocedió. Ante la duda se pregunta, que es el
+-- comportamiento de antes del freno.
+stillRecent :: UTCTime -> UTCTime -> Bool
+stillRecent now fetchedAt = elapsed >= 0 && elapsed < openf1MinGap
+  where
+    elapsed = diffUTCTime now fetchedAt
+
+-- | La misma sesión con su reloj puesto al día, para servirla desde lo guardado
+-- __cuando aún vale__.
+--
+-- __Es la simétrica de 'freezeClock'__ y la diferencia es el motivo: aquél sirve lo
+-- guardado porque la fuente no contestó, y parar el reloj dice la verdad —ese número
+-- es de antes—; éste lo sirve porque no hacía falta preguntar, y el número se puede
+-- __calcular__: si quedaban 15:00 y han pasado 12 s, quedan 14:48.
+--
+-- __Solo descuenta si el reloj andaba.__ Con la sesión detenida —bandera roja— el
+-- feed publica el reloj parado, y descontarle tiempo inventaría que corre. Y nunca
+-- baja de cero, que no significa nada.
+advanceClock :: NominalDiffTime -> SessionInfo -> SessionInfo
+advanceClock elapsed info = info { siClock = advance <$> siClock info }
+  where
+    advance clock
+      | scRunning clock =
+          clock { scRemaining = max 0 (scRemaining clock - floor (max 0 elapsed)) }
+      | otherwise = clock
 
 -- | Segundos de un @\"HH:MM:SS\"@ del feed, o @\"MM:SS\"@.
 --

@@ -31,8 +31,13 @@
 -- sesión por finalizada, dice cuándo se cierra. Con la ventana cerrada la escalera
 -- arranca directamente en OpenF1 y el refresco deja de pagar la foto.
 --
+-- __Y a OpenF1 no se baja dos veces seguidas__ ('fromOpenF1'): acepta 30 peticiones
+-- por minuto, y si lo guardado aún es reciente se sirve eso. El feed no tiene freno,
+-- porque es nuestro.
+--
 -- Cada peldaño devuelve además __de dónde salió el dato__ —el peldaño y la fuente,
--- que son dos preguntas ('Common.Origin')— y, el de la cache, __cuándo llegó__.
+-- que son dos preguntas ('Common.Origin')— y, lo que sale de lo guardado, __cuándo
+-- llegó__.
 module Handler.Live.Context where
 
 import           App                    (Env (..), FeedWindow (..),
@@ -53,15 +58,17 @@ import           Data.Text              (Text)
 import qualified Data.Text              as T
 import qualified Data.Text.IO           as TIO
 import           Data.Time.Calendar     (toGregorian)
-import           Data.Time.Clock        (UTCTime, getCurrentTime, utctDay)
+import           Data.Time.Clock        (UTCTime, diffUTCTime, getCurrentTime,
+                                         utctDay)
 import           Handler.Feed.Helper    (FeedLive (..))
 import qualified Handler.Feed.Manager   as Feed
 import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
                                          Of1Meeting (..), Of1Session (..),
-                                         assembleRows, feedVerdict,
-                                         feedWindowOpen, fetchFailure,
-                                         freezeClock, meetingNames,
-                                         openf1Session, schedule, upNext)
+                                         advanceClock, assembleRows,
+                                         feedVerdict, feedWindowOpen,
+                                         fetchFailure, freezeClock,
+                                         meetingNames, openf1Session, schedule,
+                                         stillRecent, upNext)
 import qualified Handler.Live.Manager   as Manager
 import qualified Handler.OpenF1.Manager as OpenF1
 import           Outcome                (httpStatusOf)
@@ -265,7 +272,40 @@ fromFeed env live = do
     FeedEmpty        -> fromOpenF1 env
     FeedFinalised    -> noteFinalised env now >> fromOpenF1 env
 
--- | El peldaño de OpenF1: los seis GET y el ensamblado, con la cache detrás.
+-- | El peldaño de OpenF1, __con freno__: si lo guardado aún vale, se sirve sin salir
+-- a la red; si no, se pregunta ('askOpenF1').
+--
+-- __Existe porque OpenF1 acepta 30 peticiones por minuto__ (lo dice en su propio
+-- rechazo, medido el 2026-09-17) y la página, sin él, gastaba 36. Cuánto tiene que
+-- valer lo guardado lo decide 'Handler.Live.Helper.openf1MinGap', con la cuenta
+-- escrita.
+--
+-- __Frena solo aquí, y no en toda la escalera__: el feed es nuestro microservicio y no
+-- tiene presupuesto, así que el directo sigue refrescándose al ritmo de la página. A
+-- OpenF1 solo se baja sin sesión rodando.
+--
+-- __Lo que se sirve lleva su propio sello__, 'Common.Origin.Recent', y no el de la
+-- cache: el aviso de ésta dice que la fuente no responde, y aquí nada ha fallado. Va
+-- con su fuente y su instante, como lo guardado, y con el reloj de la sesión __puesto
+-- al día__ ('Handler.Live.Helper.advanceClock') en vez de parado: se sabe cuánto ha
+-- pasado.
+--
+-- __Vale lo guardado venga de la fuente que venga__: si lo último bueno fue del feed,
+-- es mejor dato que el que traería OpenF1, y la fuente viaja con él.
+fromOpenF1 :: Env -> IO LiveResult
+fromOpenF1 env = do
+  now <- getCurrentTime
+  cached <- readTVarIO (envLiveCache env)
+  case cached of
+    Just (fetchedAt, source, table)
+      | stillRecent now fetchedAt ->
+          pure (LiveResult Recent (Just source) (Just fetchedAt) (caughtUp now fetchedAt table))
+    _ -> askOpenF1 env
+  where
+    caughtUp now fetchedAt table =
+      table { liveSession = advanceClock (diffUTCTime now fetchedAt) <$> liveSession table }
+
+-- | La bajada a OpenF1: los seis GET y el ensamblado, con la cache detrás.
 --
 -- __Seis y no siete desde el 2026-09-18__: el nombre del gran premio sale de la caja
 -- del 'Env' ('grandPrixName') y solo cuesta una petición la primera vez que se ve esa
@@ -285,8 +325,8 @@ fromFeed env live = do
 -- __El instante se toma una vez y sirve para las dos cosas__, igual que en
 -- 'fromFeed': deducir el estado de la sesión y sellar la cache. Tomarlo dos veces
 -- dejaría guardado un estado que habla de un momento distinto al de su sello.
-fromOpenF1 :: Env -> IO LiveResult
-fromOpenF1 env = do
+askOpenF1 :: Env -> IO LiveResult
+askOpenF1 env = do
   result <-
     try (fetchRows (envConfig env)) :: IO (Either SomeException [LiveTimingRow])
   case result of

@@ -64,8 +64,10 @@ canRequest = not . pollInFlight
 --
 -- Cada refresco que llegue a OpenF1 son seis GET, y OpenF1 acepta __30 peticiones
 -- por minuto__ — lo dice él mismo en su rechazo, medido el 2026-09-17—. A este
--- periodo salen 36, así que el techo se rebasa y quien tiene que respetarlo es el
--- backend: este número es de la página y no sabe cuántas páginas hay.
+-- periodo saldrían 36, y __quien respeta el techo es el backend y no este número__,
+-- que es de la página y no sabe cuántas páginas hay: el backend no vuelve a bajar a
+-- OpenF1 si lo que guardó aún vale, y así la consulta cada 20 s. El directo, que
+-- sirve el feed y no tiene techo, sigue a este ritmo.
 -- Va en segundos enteros y no en @NominalDiffTime@ para que @common@ no dependa de
 -- @time@; el widget lo convierte con 'fromIntegral'.
 liveRefreshSeconds :: Int
