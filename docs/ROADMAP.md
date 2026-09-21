@@ -500,21 +500,37 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
         margen a cambio de enterarse tarde de un cambio de sesión cuando el margen ya sobra.
       - **Queda vivo:** dos peticiones que lleguen a la vez antes de que la primera guarde salen las dos a
         la red. Con 18 por minuto de gasto no rebasan el techo, pero el freno no las junta.
-- [ ] **La etiqueta `Live` deja de decir «en vivo» fuera de sesión** (2026-09-18). Sin sesión rodando lo que se
-      lee es la clasificación final de la anterior, y aun así se sirve como fresca: el punto parpadea y el
-      aviso dice «en vivo: se actualiza cada 10 s». Las dos cosas son falsas, y ese es el estado normal
-      entre grandes premios.
-      - **El parpadeo afirma algo sobre la sesión, no sobre el refresco.** Fuera de sesión la etiqueta
-        debería ir apagada: sin parpadear y atenuada.
-      - Lo que falta es un dato, no una forma de conseguirlo: el indicador no recibe el estado de la
-        sesión, pero su único consumidor, la tarjeta de Live Timing, lo tiene en la mano. El predicado que
-        decide si una sesión rueda vive hoy en el backend y tendría que mudarse a `common`.
-      - **Qué dice el aviso fuera de sesión está por decidir.**
+- [x] **La etiqueta `Live` deja de decir «en vivo» fuera de sesión** (2026-09-18, **hecho el 2026-09-21**).
+      Sin sesión rodando lo que se lee es la clasificación final de la anterior; el punto parpadeaba y el
+      aviso decía «en vivo: se actualiza cada 10 s», y las dos cosas eran falsas en el estado normal entre
+      grandes premios. Ahora el punto va **quieto y a medio apagar**, y el aviso dice **«Sin sesión en
+      marcha: se actualiza cada 10 s»** — el periodo se conserva porque es el de la página y sí es cierto.
+      - **El parpadeo afirma algo sobre la sesión, no sobre el refresco**, así que si hay sesión rodando es
+        una tercera pregunta y entra en el indicador por argumento, sin deducirse de la procedencia.
+      - **El criterio de «rodando» es uno solo para toda la aplicación**: `Common.Types.sessionInProgress`,
+        que enciende con la sesión en marcha y con un estado que el feed estrene, y apaga con la finalizada,
+        la anunciada sin empezar y la que no trae estado. Lo comparte con la mitad derecha de la banda, que
+        ya decidía lo mismo por su cuenta.
+      - **El punto apagado lo llevan los dos sellos de refresco bueno, `fresh` y `recent`, y eso salió de
+        medir**: fuera de sesión el freno hace que la respuesta llegue con uno y con otro un ciclo sí y otro
+        no, así que un punto por sello habría dejado un latido de diez segundos. Los sellos que avisan de un
+        fallo —guardado, de ejemplo, refresco caído— **no** se apagan: taparlos sería esconder lo único que
+        el punto existe para decir.
+      - **El aviso de lo reciente sí conserva el suyo**, con su hora: el punto se ve sin querer y tiene que
+        estar quieto, y el aviso solo sale al apuntarlo.
 - [ ] **La banda conserva el último título bueno, y lo avisa** (2026-09-18). Es el arreglo del síntoma que se
       dejó a propósito para después del de la causa, para poder comprobar si la causa bastaba sola.
-      - **Primero hay que decidir si sigue haciendo falta.** Con el freno el gasto queda por debajo del
-        techo, pero una petición suelta aún puede fallar por otra causa y dejar la tabla sin nombre; con
-        qué frecuencia pasa no está medido.
+      - **La causa arreglada NO basta, y está medido** (2026-09-21): 30 respuestas a `/api/live` en cinco
+        minutos fuera de sesión dan 14 bajadas reales, y **una de las catorce llega sin sesión** — un 7,1 %.
+        A unas tres bajadas por minuto eso es un hueco cada cinco minutos, que se ve mirando la pantalla.
+      - **El mecanismo hace que el hueco no sea de un ciclo:** la cache guarda la tabla entera, sesión
+        incluida y a propósito, así que una bajada sin sesión deja lo guardado sin nombre hasta la
+        siguiente buena.
+      - **Sin medir, y decide el diseño del aviso:** cuánto dura ese hueco en la práctica. Si dura lo que
+        predice el mecanismo, el aviso tiene que poder decir de cuándo es el título que conserva; si se
+        recupera al ciclo siguiente, basta con marcarlo.
+      - **Y le falta su aspecto**, que es lo visible y se decide antes de escribir: qué marca lleva el
+        título conservado, qué dice y dónde.
 - [ ] **Una sola copia del directo, refrescada por el backend** (2026-09-18). Hoy cada pregunta de la página
       puede bajar a la red, y el freno limita cuántas lo hacen; con un reloj propio en el backend el gasto
       dejaría de depender de cuántas pantallas miren, y dos peticiones simultáneas no podrían salir las dos.
