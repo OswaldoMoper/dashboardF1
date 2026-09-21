@@ -23,7 +23,7 @@
 -- contrario de lo que se creyó al montar esta escalera: durante horas devuelve la
 -- clasificación final como si fuera de ahora, y solo más tarde se queda sin filas.
 -- Por eso quién baja a OpenF1 lo decide el __estado de la sesión__
--- ('Handler.Live.Helper.sessionIsLive') y no que el feed conteste.
+-- ('Common.Types.sessionIsLive') y no que el feed conteste.
 --
 -- __Y antes de nada se mira si toca preguntarle__ ('Handler.Live.Helper.feedWindowOpen'):
 -- la foto cuesta 16-23 s y fuera de sesión no trae nada que servir, así que el

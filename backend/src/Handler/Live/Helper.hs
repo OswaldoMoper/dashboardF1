@@ -43,7 +43,6 @@ module Handler.Live.Helper
   , feedSession
   , openf1Session
   , sessionClock
-  , sessionIsLive
   , freezeClock
   , openf1MinGap
   , stillRecent
@@ -64,7 +63,7 @@ import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         SessionClock (..), SessionInfo (..),
                                         SessionState (..), StateBasis (..),
                                         StateReading (..), UpNext (..),
-                                        sessionStateFrom)
+                                        sessionIsLive, sessionStateFrom)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
@@ -582,7 +581,8 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 -- * __Rodando, la derecha calla__ ('Common.Types.NextSilent'): en carrera el ancho
 --   hace falta para lo que está pasando, y la siguiente sería el gran premio de
 --   dentro de quince días. Un estado que no se reconozca cuenta como rodando, por el
---   criterio que 'sessionIsLive' ya aplica: lo desconocido sigue dando directo.
+--   criterio que 'Common.Types.sessionIsLive' ya aplica: lo desconocido sigue dando
+--   directo.
 -- * __Sin calendario, no se sabe__ ('Common.Types.NextUnknown'): es el estado con el
 --   que arranca el proceso, y dura lo que tarde la primera petición.
 -- * __Sin empezar, se cuenta a ELLA__ ('Common.Types.NextStartsIn'): con la parrilla
@@ -628,33 +628,6 @@ upNext now shown sessions
 isoInstant :: UTCTime -> Text
 isoInstant = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
 
--- | Si una sesión en ese estado sigue dando directo.
---
--- __El feed no deja de contestar cuando la sesión acaba__, y eso está medido: tras
--- la bandera siguió publicando 9 min 20 s y después latió cada 15 s
--- indefinidamente, devolviendo la clasificación final como si fuera de ahora
--- (2026-09-13 (b)). O sea que «¿hay directo?» no se puede deducir de que el feed
--- conteste.
---
--- __Lo que sí deja de publicar, más tarde, son las filas__, y entonces la tabla
--- vacía basta para bajar a OpenF1 sin este predicado. Medido a los dos lados: el
--- feed servía la clasificación final el mismo día de la carrera y el siguiente, y a
--- los dos días ya no. O sea que la ventana que este predicado cubre es la de
--- __después de la bandera y antes de que el feed se vacíe__ — que es exactamente el
--- rato en que alguien está mirando la pantalla.
---
--- __'Common.Types.SessionFinalised' es la única señal, y es única de verdad:__ sale
--- exactamente una vez en las dos sesiones grabadas, mientras que «terminada» cicla
--- por segmento —tres veces en una clasificación— y «empezada» con ella
--- (2026-09-13 (c)).
---
--- __Lo que no se reconoce sigue dando directo__, igual que en 'feedStatus': un
--- estado nuevo del feed no es una sesión acabada, y tratarlo como tal escondería la
--- única fuente que publica durante una carrera.
-sessionIsLive :: SessionState -> Bool
-sessionIsLive SessionFinalised = False
-sessionIsLive _                = True
-
 -- | Qué se puede hacer con lo que el feed acaba de entregar.
 --
 -- __Los dos motivos de no servirlo van separados y no fundidos en un 'Nothing'__,
@@ -697,8 +670,8 @@ feedVerdict now live
     session   = feedSession now <$> flSession live
     -- Sin sesión que lo desmienta se sirve, y sin estado dentro de ella también: la
     -- ausencia de la señal no es la señal contraria, que es el mismo criterio que
-    -- 'sessionIsLive' aplica al desconocido. Los dos huecos se aplanan en uno
-    -- porque se resuelven igual.
+    -- 'Common.Types.sessionIsLive' aplica al desconocido. Los dos huecos se aplanan
+    -- en uno porque se resuelven igual.
     keepsGoing = maybe True (sessionIsLive . srState) (siState =<< session)
 
 -- | La misma sesión con su reloj parado, para servirla desde la cache.

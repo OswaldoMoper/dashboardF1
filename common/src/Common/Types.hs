@@ -134,6 +134,32 @@ instance ToJSON SessionState where
 instance FromJSON SessionState where
   parseJSON = withText "SessionState" (pure . sessionStateFrom)
 
+-- | Si una sesión en ese estado sigue dando directo.
+--
+-- __El feed no deja de contestar cuando la sesión acaba__, y eso está medido: tras
+-- la bandera siguió publicando 9 min 20 s y después latió cada 15 s
+-- indefinidamente, devolviendo la clasificación final como si fuera de ahora
+-- (2026-09-13 (b)). O sea que «¿hay directo?» no se puede deducir de que el feed
+-- conteste.
+--
+-- __Lo que sí deja de publicar, más tarde, son las filas__, y entonces la tabla
+-- vacía basta para bajar a OpenF1 sin este predicado. Medido a los dos lados: el
+-- feed servía la clasificación final el mismo día de la carrera y el siguiente, y a
+-- los dos días ya no. O sea que la ventana que este predicado cubre es la de
+-- __después de la bandera y antes de que el feed se vacíe__ — que es exactamente el
+-- rato en que alguien está mirando la pantalla.
+--
+-- __'SessionFinalised' es la única señal, y es única de verdad:__ sale exactamente
+-- una vez en las dos sesiones grabadas, mientras que «terminada» cicla por segmento
+-- —tres veces en una clasificación— y «empezada» con ella (2026-09-13 (c)).
+--
+-- __Lo que no se reconoce sigue dando directo:__ un estado nuevo del feed no es una
+-- sesión acabada, y tratarlo como tal escondería la única fuente que publica durante
+-- una carrera.
+sessionIsLive :: SessionState -> Bool
+sessionIsLive SessionFinalised = False
+sessionIsLive _                = True
+
 -- | De dónde salió un estado.
 --
 -- __'Derived' no es un estado peor, es un estado que nadie dijo.__ Quien lo lee

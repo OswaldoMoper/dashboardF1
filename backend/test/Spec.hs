@@ -89,8 +89,9 @@ import           Common.Types                (DriverEntry (..),
                                               TyreStint (..), UpNext (..),
                                               WidgetConfig (..), WidgetId (..),
                                               WidgetType (..), noParams,
-                                              sessionStateWord, sessionTitle,
-                                              stateLabel, statusLabel, tickDown,
+                                              sessionIsLive, sessionStateWord,
+                                              sessionTitle, stateLabel,
+                                              statusLabel, tickDown,
                                               upNextLabel)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
@@ -132,8 +133,7 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               openf1MinGap, openf1Session,
                                               parseFeedInstant, parseRemaining,
                                               schedule, sessionClock,
-                                              sessionIsLive, stillRecent,
-                                              upNext)
+                                              stillRecent, upNext)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import qualified Handler.Telemetry.Context   as Telemetry
