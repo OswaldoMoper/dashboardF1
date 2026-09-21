@@ -28,7 +28,7 @@ module Pages.Dashboard where
 
 import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
-import           Common.Refresh     (Poll (..))
+import           Common.Shown       (Poll (..))
 import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
                                      StateBasis (..), StateReading (..),
                                      UpNext (..), WidgetConfig (..),

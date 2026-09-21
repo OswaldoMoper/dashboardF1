@@ -55,9 +55,6 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
 import           Common.Format               (ClockForm (..), formatClock,
                                               formatCountdown, formatFixed,
                                               formatTrimmed, noData)
-import           Common.Indicator            (Indicator (..), fetchedAtLabel,
-                                              indicatorClass, indicatorFrom,
-                                              indicatorTooltip)
 import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
                                               gridDivisions, minWidthFor,
                                               overlaps, slotStyle, snapTo,
@@ -69,11 +66,14 @@ import           Common.Origin               (Origin (..), Source (..),
                                               sourceFrom, sourceHeader,
                                               sourceLabel, sourceName,
                                               sourcedFrom, sourcedHeaders)
-import           Common.Refresh              (Poll (..), PollEvent (..),
-                                              canRequest, liveRefreshSeconds,
-                                              pollIdle, pollStep)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
+import           Common.Shown                (Indicator (..), Poll (..),
+                                              PollEvent (..), canRequest,
+                                              fetchedAtLabel, indicatorClass,
+                                              indicatorFrom, indicatorTooltip,
+                                              liveRefreshSeconds, pollIdle,
+                                              pollStep)
 import           Common.Types                (DriverEntry (..),
                                               DriverStatus (..),
                                               HistoricalStat (..),
@@ -2162,7 +2162,7 @@ main = hspec $ do
   -- Lo que puede salir mal en un reloj que pide solo —dos peticiones a la vez, una
   -- tabla que se borra por un fallo puntual— vive aquí y no en 'Widgets.LiveTiming',
   -- que es ciego.
-  describe "Common.Refresh" $ do
+  describe "Common.Shown (refresco)" $ do
     it "arranca sin nada en vuelo, nada que enseñar y ningún fallo" $
       (pollIdle :: Poll Int) `shouldBe` Poll False Nothing False
 
@@ -2236,13 +2236,13 @@ main = hspec $ do
        in sourcedFrom onlyRequested ()
             `shouldBe` Sourced (Just Cached) (Just Feed) (Just "2026-09-11T14:03:22Z") ()
 
-  -- El indicador cruza las dos preguntas que 'Common.Origin' y 'Common.Refresh'
+  -- El indicador cruza las dos preguntas que 'Common.Origin' y el refresco
   -- responden por separado —de dónde salió lo que se ve, y si lo último que se
   -- pidió volvió—, y es el único sitio donde se cruzan. Lo que aquí se prueba es
   -- el reparto: el color dice la procedencia y el parpadeo dice «ahora mismo»,
   -- así que un fallo NO puede cambiar el color, y «en vivo» SÍ tiene que dejar
   -- de decirse.
-  describe "Common.Indicator" $ do
+  describe "Common.Shown (indicador)" $ do
     it "recoge la procedencia, la fuente, el instante y el fallo de lo que se está enseñando" $
       indicatorFrom True
         (Poll False (Just (Sourced (Just Cached) (Just OpenF1) (Just fetchedAtIso) [1 :: Int])) True)
@@ -2254,7 +2254,7 @@ main = hspec $ do
 
     it "la sesión rodando entra por argumento y no sale del refresco" $
       -- El mismo `Poll` con las dos respuestas: nada de lo que el refresco trae lo
-      -- decide, que es lo que permite que `Common.Indicator` no conozca el dominio.
+      -- decide, que es lo que permite que `Common.Shown` no conozca el dominio.
       map (`indicatorFrom` (pollIdle :: Poll (Sourced [Int]))) [True, False]
         `shouldBe` [ Indicator False Nothing Nothing Nothing False True
                    , Indicator False Nothing Nothing Nothing False False

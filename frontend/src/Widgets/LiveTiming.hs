@@ -28,19 +28,19 @@
 -- y lo nuevo no la reabre.
 module Widgets.LiveTiming where
 
-import           Client            (fetchJsonSourced)
-import           Common.Indicator  (Indicator, indicatorClass, indicatorFrom,
-                                    indicatorTooltip)
-import           Common.Origin     (Sourced (..))
-import           Common.Refresh    (Poll (..), PollEvent (..), canRequest,
-                                    liveRefreshSeconds, pollIdle, pollStep)
-import           Common.Route      (livePath)
-import           Common.Types      (DriverStatus (..), LiveTable (..),
-                                    LiveTimingRow (..), SessionInfo (..),
-                                    StateReading (..), sessionInProgress,
-                                    statusLabel)
-import           Data.Text         (Text)
-import qualified Data.Text         as T
+import           Client        (fetchJsonSourced)
+import           Common.Origin (Sourced (..))
+import           Common.Route  (livePath)
+import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
+                                canRequest, indicatorClass, indicatorFrom,
+                                indicatorTooltip, liveRefreshSeconds, pollIdle,
+                                pollStep)
+import           Common.Types  (DriverStatus (..), LiveTable (..),
+                                LiveTimingRow (..), SessionInfo (..),
+                                StateReading (..), sessionInProgress,
+                                statusLabel)
+import           Data.Text     (Text)
+import qualified Data.Text     as T
 import           Reflex.Dom
 
 -- | Qué enseña la tarjeta. 'Failed' (no 'Error') para no chocar con
@@ -91,7 +91,7 @@ stateOf p = siState =<< sessionOf p
 -- procedencia y el último intento salen del refresco, y si hay carrera sale de la
 -- sesión que la tabla trae al lado.
 --
--- __Es este módulo quien lo junta y no 'Common.Indicator'__, que no conoce el
+-- __Es este módulo quien lo junta y no 'Common.Shown'__, que no conoce el
 -- dominio: allí la sesión rodando entra como un 'Bool' y aquí es donde está el
 -- 'Common.Types.LiveTable' del que sacarlo.
 indicatorOf :: Poll (Sourced LiveTable) -> Indicator
@@ -103,7 +103,7 @@ indicatorOf p = indicatorFrom (sessionInProgress (srState <$> stateOf p)) p
 -- __Se refresca solo cada 'liveRefreshSeconds'__ (2026-09-11 (c)), con un reloj que
 -- __salta el tic__ si la petición anterior no ha vuelto: nunca hay dos en vuelo, y
 -- una respuesta vieja no puede pisar a una nueva. Cuándo pedir y qué conservar si
--- falla es 'Common.Refresh', pura y con suite; aquí solo se cablea al reloj y a la
+-- falla es 'Common.Shown', pura y con suite; aquí solo se cablea al reloj y a la
 -- petición. La URL es relativa ('Common.Route.livePath'), o sea misma-origen: el
 -- backend sirve el bundle y la API en el mismo puerto.
 --

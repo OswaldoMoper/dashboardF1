@@ -1,16 +1,22 @@
--- | El indicador __@● Live@__ de una tarjeta: qué color lleva su punto, si
--- parpadea y qué dice su tooltip.
+-- | Qué se enseña de un dato que se refresca solo: cuándo volver a pedirlo, qué
+-- dejar en pantalla mientras, y qué dice de sí mismo el indicador __@● Live@__ que
+-- lo acompaña.
 --
--- Es la parte con decisiones del indicador de procedencia (2026-09-11 (d)),
--- sacada del widget para que no sea ciega: 'Widgets.LiveTiming' solo cablea el
--- resultado a una clase y a un atributo @title@. Mismo criterio que
--- 'Common.Refresh' —lo puro y sin Reflex va a @common@, que es lo único con
--- suite— y misma razón: el paquete @frontend@ no se prueba.
+-- Es la parte con decisiones del refresco periódico de 'Widgets.LiveTiming', sacada
+-- del widget para que no sea ciega: el widget solo cablea un reloj, la respuesta de
+-- la petición y el resultado a una clase y a un atributo @title@. Es el criterio del
+-- 2026-08-04 —lo puro y sin Reflex va a @common@, que es lo único con suite—, el
+-- mismo que trajo 'Common.Format', 'Common.Layout' y 'Common.Origin'.
 --
--- __Une "Common.Origin" y "Common.Refresh" sin que ninguno de los dos dependa
--- del otro.__ La procedencia dice de dónde salió lo que se ve; el refresco dice
--- si lo último que se intentó llegó. Son preguntas independientes —de ahí que
--- los dos módulos lo sean— y el indicador es el único sitio donde se cruzan.
+-- __El indicador depende del refresco y no al revés.__ Qué punto pintar sale de si
+-- el último intento volvió, que es 'Poll', y el periodo que dice el tooltip sale de
+-- 'liveRefreshSeconds'; el refresco no necesita nada del indicador para decidir
+-- cuándo pedir.
+--
+-- __El reloj salta el tic si hay una petición en vuelo__ (2026-09-11 (c)), y por eso
+-- el estado sabe si la hay. Con un reloj que pidiera pasara lo que pasara, una
+-- fuente lenta —OpenF1 ha tardado 37–49 s en contestar— acumularía peticiones, y una
+-- respuesta vieja podría llegar después de una nueva y hacer retroceder la tabla.
 --
 -- __El color y el parpadeo dicen cosas distintas, y por eso son dos señales.__
 -- El color es la procedencia del dato que hay en pantalla y nunca miente sobre
@@ -35,29 +41,87 @@
 -- (1 s → 3 s, en la hoja de estilos). No es decoración: es la única señal de que
 -- lo que se lee está pasando ahora, y apagarla dejaría dos estados distintos
 -- pintados igual.
-module Common.Indicator
-  ( Indicator (..)
+module Common.Shown
+  ( Poll (..)
+  , PollEvent (..)
+  , pollIdle
+  , pollStep
+  , canRequest
+  , liveRefreshSeconds
+  , Indicator (..)
   , indicatorFrom
   , indicatorClass
   , indicatorTooltip
   , fetchedAtLabel
   ) where
 
-import           Common.Origin  (Origin (..), Source, Sourced (..),
-                                 originNotice, sourceName)
-import           Common.Refresh (Poll (..), liveRefreshSeconds)
-import           Data.Char      (isDigit)
-import           Data.Maybe     (fromMaybe, isJust)
-import           Data.Text      (Text)
-import qualified Data.Text      as T
+import           Common.Origin (Origin (..), Source, Sourced (..), originNotice,
+                                sourceName)
+import           Data.Char     (isDigit)
+import           Data.Maybe    (fromMaybe, isJust)
+import           Data.Text     (Text)
+import qualified Data.Text     as T
+
+-- | Estado de un dato que se pide periódicamente.
+data Poll a = Poll
+  { pollInFlight   :: Bool
+    -- ^ Hay una petición enviada cuya respuesta no ha llegado.
+  , pollShown      :: Maybe a
+    -- ^ Lo último que llegó bien; 'Nothing' hasta la primera respuesta buena.
+  , pollLastFailed :: Bool
+    -- ^ La última respuesta fue un fallo. __No borra 'pollShown'.__
+  }
+  deriving stock (Eq, Show)
+
+-- | Lo que le pasa al dato: se pide, o llega la respuesta ('Nothing' si falló).
+data PollEvent a
+  = Sent
+  | Arrived (Maybe a)
+  deriving stock (Eq, Show)
+
+-- | Antes de la primera petición: nada en vuelo, nada que enseñar, ningún fallo.
+pollIdle :: Poll a
+pollIdle = Poll {pollInFlight = False, pollShown = Nothing, pollLastFailed = False}
+
+-- | El estado tras un evento.
+--
+-- __Un fallo conserva lo que se enseñaba__ (2026-09-11 (c)): con refresco, un fallo
+-- puntual a media sesión borraría la tabla, y sustituir datos por un error es
+-- peor que enseñar los anteriores sabiendo que lo son — que 'pollLastFailed' lo
+-- sepa es lo que evita que conservarlos equivalga a mentir. Es el mismo criterio
+-- que el @step@ de 'Widgets.Comparison'.
+pollStep :: PollEvent a -> Poll a -> Poll a
+pollStep Sent p =
+  p {pollInFlight = True}
+pollStep (Arrived (Just x)) p =
+  p {pollInFlight = False, pollShown = Just x, pollLastFailed = False}
+pollStep (Arrived Nothing) p =
+  p {pollInFlight = False, pollLastFailed = True}
+
+-- | Si un tic del reloj puede lanzar otra petición: solo sin ninguna en vuelo.
+canRequest :: Poll a -> Bool
+canRequest = not . pollInFlight
+
+-- | Cada cuántos segundos se refresca Live Timing (2026-09-11 (c)).
+--
+-- Cada refresco que llegue a OpenF1 son seis GET, y OpenF1 acepta __30 peticiones
+-- por minuto__ — lo dice él mismo en su rechazo, medido el 2026-09-17—. A este
+-- periodo saldrían 36, y __quien respeta el techo es el backend y no este número__,
+-- que es de la página y no sabe cuántas páginas hay: el backend no vuelve a bajar a
+-- OpenF1 si lo que guardó aún vale, y así la consulta cada 20 s. El directo, que
+-- sirve el feed y no tiene techo, sigue a este ritmo.
+-- Va en segundos enteros y no en @NominalDiffTime@ para que @common@ no dependa de
+-- @time@; el widget lo convierte con 'fromIntegral'.
+liveRefreshSeconds :: Int
+liveRefreshSeconds = 10
 
 -- | Lo que el indicador necesita saber para pintarse.
 --
 -- __'indOrigin', 'indSource' e 'indFetched' solo significan algo con 'indShown' a
 -- 'True'__: son la procedencia de lo que hay en pantalla, y sin pantalla no hay
 -- procedencia. El único constructor legítimo es 'indicatorFrom', que mantiene
--- esa relación; el récord es plano por la misma razón que 'Common.Refresh.Poll'
--- lo es, y no para poder construirlo a mano.
+-- esa relación; el récord es plano por la misma razón que 'Poll' lo es, y no para
+-- poder construirlo a mano.
 --
 -- 'indShown' no cambia ningún color —sin dato la procedencia es desconocida, que
 -- ya es gris— pero sí el tooltip: «se muestra la tabla anterior» es falso cuando
@@ -85,9 +149,9 @@ data Indicator = Indicator
 -- | El indicador que corresponde al estado del refresco y al de la sesión.
 --
 -- __Si la sesión rueda entra por argumento y no se saca del 'Poll'__, que es lo que
--- mantiene este módulo genérico en @a@ y sin conocer el dominio: quien llama tiene
--- la tabla y sabe proyectarla ('Widgets.LiveTiming.stateOf'), y aquí solo se decide
--- qué pintar con la respuesta.
+-- mantiene esto genérico en @a@ y sin conocer el dominio: quien llama tiene la tabla
+-- y sabe proyectarla ('Widgets.LiveTiming.stateOf'), y aquí solo se decide qué
+-- pintar con la respuesta.
 indicatorFrom :: Bool -> Poll (Sourced a) -> Indicator
 indicatorFrom running p = Indicator
   { indShown   = isJust (pollShown p)

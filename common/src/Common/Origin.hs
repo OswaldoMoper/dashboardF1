@@ -110,7 +110,7 @@ originLabel Sample = "sample"
 -- __La ausencia y lo irreconocible no son lo mismo, y aun así se tratan igual:__
 -- 'Nothing'. Un valor que no se reconoce podría venir de un backend más nuevo que el
 -- bundle, y adivinar sería peor que no saber; quien llama decide qué hacer con la
--- duda, y desde el 2026-09-12 esa decisión la toma 'Common.Indicator': __decirla__,
+-- duda, y desde el 2026-09-12 esa decisión la toma 'Common.Shown': __decirla__,
 -- con el punto gris y «Procedencia desconocida». Callar dejó de ser una salida
 -- cuando el indicador pasó a estar siempre en pantalla — lo que se elige ya no es
 -- si se pinta algo, sino qué se pinta cuando no se sabe.
@@ -134,7 +134,7 @@ originFrom raw =
 -- 'Common.Types.statusLabel' (2026-08-26): lo que aparece siempre deja de leerse, y
 -- el caso normal no es una excepción que señalar. El indicador de 2026-09-11 (d) lo
 -- revoca — con refresco de verdad, que el dato sea fresco __es__ la señal, la de que
--- lo que se lee está pasando ahora —, pero esa la pinta 'Common.Indicator' con su
+-- lo que se lee está pasando ahora —, pero esa la pinta 'Common.Shown' con su
 -- propio texto y su parpadeo, y no una frase de este módulo.
 --
 -- La hora es argumento y no campo de 'Origin' porque solo 'Cached' la tiene, y llega

@@ -695,7 +695,7 @@ freezeClock info = info { siClock = stop <$> siClock info }
 --
 -- __Lo decide el presupuesto de OpenF1, que lo publica él mismo__: su rechazo dice
 -- «Max 30 requests/minute» (medido el 2026-09-17). Cada bajada son seis peticiones, y
--- la página pregunta cada 'Common.Refresh.liveRefreshSeconds' —diez—, así que sin
+-- la página pregunta cada 'Common.Shown.liveRefreshSeconds' —diez—, así que sin
 -- freno salían 36 por minuto. Con éste, la página solo puede saltarse preguntas
 -- enteras: pregunta a los 0, 10, 20… y a los 10 lo guardado aún vale, así que
 -- __OpenF1 se consulta cada 20 s__ y el gasto queda en 18 por minuto. Cualquier valor
