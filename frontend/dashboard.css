@@ -705,7 +705,7 @@ body {
 /* El punto, compartido por el aviso de estado y el indicador de procedencia: la
    forma es la misma y solo cambia quién pone el color. En `.status` lo pone el
    texto (`currentColor`), porque ahí el texto YA lleva el color del estado; en
-   `.widget__badge` el texto no cambia nunca, así que el color va en las seis
+   `.widget__badge` el texto no cambia nunca, así que el color va en las siete
    reglas de debajo. De ahí que estén debajo y no arriba con el widget: misma
    especificidad, y gana la última. */
 .status::before,
@@ -737,12 +737,28 @@ body {
    `saved`, para que la escala siga leyéndose de más a menos fiable.
 
    NO parpadea, y ésa es la decisión: el parpadeo de `live` dice «esto está pasando
-   ahora», que es una afirmación sobre la SESIÓN y no sobre el refresco. Fuera de
-   sesión lo que se lee es la clasificación final de la anterior, así que ahí ningún
-   punto debería moverse — hoy `live` sí lo hace, y eso es deuda anotada. */
+   ahora», que es una afirmación sobre la SESIÓN y no sobre el refresco. Este punto
+   solo se ve CON sesión rodando; sin ella lo sustituye `idle`. */
 .widget__badge--recent::before {
   background: var(--c-accent);
   opacity: 0.7;
+}
+
+/* Sin sesión rodando: la página sigue preguntando, pero lo que se lee es la
+   clasificación final de la última sesión y no hay nada pasando. Quieto, y a medio
+   camino entre `recent` y `saved` para que la escala siga yendo de más a menos
+   fiable.
+
+   Lo llevan los DOS sellos de refresco bueno, `fresh` y `recent`, y ése es el
+   motivo de que exista un escalón propio en vez de reusar uno: fuera de sesión el
+   backend se frena, así que la respuesta llega con uno y con otro un ciclo sí y otro
+   no. Con un punto por sello, el punto latiría cada diez segundos.
+
+   Los que sí son un fallo —`saved`, `sample`, `stalled`— no caen aquí: pintarlos
+   como el estado normal escondería lo único que este punto existe para avisar. */
+.widget__badge--idle::before {
+  background: var(--c-accent);
+  opacity: 0.5;
 }
 
 /* Guardado: el dato fue cierto, la duda es cuándo. Con o sin fallo de refresco

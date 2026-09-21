@@ -22,11 +22,14 @@
 -- lo herede lo reciente: que la página siga pidiendo cada pocos segundos no convierte
 -- en directo la clasificación final de una sesión acabada.
 --
--- __Deuda conocida, y es de 'Common.Origin.Fresh' y no de este módulo__ (2026-09-18):
--- fuera de sesión el dato se sirve igualmente como fresco, así que el punto parpadea
--- y el tooltip dice «en vivo» sobre una sesión que terminó. El indicador no puede
--- saberlo hoy porque no recibe el estado de la sesión, aunque su único consumidor
--- —'Widgets.LiveTiming'— sí lo tenga en la mano.
+-- __Si hay sesión rodando es la tercera pregunta, y no se deduce de las otras dos__
+-- (2026-09-21). Fuera de sesión el backend sirve la clasificación final de la última
+-- con el sello 'Common.Origin.Fresh', y el sello no miente —el dato acaba de
+-- llegar—: lo que mentiría es el punto del directo. Por eso entra por argumento en
+-- vez de adivinarse desde la procedencia, y por eso los dos sellos de refresco
+-- bueno —'Common.Origin.Fresh' y 'Common.Origin.Recent'— caen sin ella en el mismo
+-- apagado. Fuera de sesión el backend se frena, así que la respuesta llega con uno
+-- y con otro un ciclo sí y otro no; con un punto por sello, el punto latiría.
 --
 -- __El parpadeo no se apaga con @prefers-reduced-motion@__, solo se alarga
 -- (1 s → 3 s, en la hoja de estilos). No es decoración: es la única señal de que
@@ -72,17 +75,27 @@ data Indicator = Indicator
     -- ^ El instante tal cual viajó en la cabecera, sin formatear.
   , indFailed  :: Bool
     -- ^ El último refresco no volvió.
+  , indRunning :: Bool
+    -- ^ Consta que hay una sesión en curso. __No sale de los otros campos__: un
+    -- dato recién traído fuera de sesión sigue siendo fresco, y el sello no dice
+    -- nada de si hay carrera.
   }
   deriving stock (Eq, Show)
 
--- | El indicador que corresponde al estado del refresco.
-indicatorFrom :: Poll (Sourced a) -> Indicator
-indicatorFrom p = Indicator
+-- | El indicador que corresponde al estado del refresco y al de la sesión.
+--
+-- __Si la sesión rueda entra por argumento y no se saca del 'Poll'__, que es lo que
+-- mantiene este módulo genérico en @a@ y sin conocer el dominio: quien llama tiene
+-- la tabla y sabe proyectarla ('Widgets.LiveTiming.stateOf'), y aquí solo se decide
+-- qué pintar con la respuesta.
+indicatorFrom :: Bool -> Poll (Sourced a) -> Indicator
+indicatorFrom running p = Indicator
   { indShown   = isJust (pollShown p)
   , indOrigin  = srcOrigin =<< pollShown p
   , indSource  = srcSource =<< pollShown p
   , indFetched = srcFetchedAt =<< pollShown p
   , indFailed  = pollLastFailed p
+  , indRunning = running
   }
 
 -- | Clase de la etiqueta, bloque y modificador.
@@ -91,27 +104,36 @@ indicatorFrom p = Indicator
 -- (2026-08-27, donde lo normal no lleva marca): aquí los estados son todos
 -- igual de dignos de señalar, y el modificador ausente sería uno más sin color.
 --
--- __Los modificadores son seis y las procedencias cuatro__, porque no hay biyección:
--- 'Common.Origin.Fresh' y 'Common.Origin.Recent' se separan en dos modificadores
--- cada uno según si el último refresco volvió, y los dos que no volvieron caen en el
--- mismo — un dato que no se ha podido recargar se lee igual venga de donde venga.
+-- __Los modificadores son siete y las procedencias cuatro__, porque no hay
+-- biyección: 'Common.Origin.Fresh' y 'Common.Origin.Recent' se separan según si el
+-- último refresco volvió, y los dos que no volvieron caen en el mismo — un dato que
+-- no se ha podido recargar se lee igual venga de donde venga.
 -- 'Common.Origin.Cached' no se desdobla porque su fallo lo cuenta el tooltip
 -- (2026-09-12).
 --
--- Solo el primero parpadea, y el parpadeo lo pone la hoja de estilos: aquí se
+-- __Sin sesión rodando los dos de refresco bueno caen juntos en el apagado__, que es
+-- el séptimo. Los que sí son un fallo —guardado, de ejemplo, refresco caído— no lo
+-- cruzan: pintarlos como el estado normal escondería lo único que el punto existe
+-- para avisar.
+--
+-- Solo el del directo parpadea, y el parpadeo lo pone la hoja de estilos: aquí se
 -- decide __cuándo__, no cómo.
 indicatorClass :: Indicator -> Text
 indicatorClass i = "widget__badge widget__badge--" <> modifier
   where
     modifier =
       case (indOrigin i, indFailed i) of
-        (Just Fresh,  False) -> "live"
+        (Just Fresh,  False) -> withSession "live"
         (Just Fresh,  True)  -> "stalled"
-        (Just Recent, False) -> "recent"
+        (Just Recent, False) -> withSession "recent"
         (Just Recent, True)  -> "stalled"
         (Just Cached, _)     -> "saved"
         (Just Sample, _)     -> "sample"
         (Nothing,     _)     -> "unknown"
+
+    withSession m
+      | indRunning i = m
+      | otherwise    = "idle"
 
 -- | El texto del tooltip. __Nunca vacío__: la etiqueta dice siempre @Live@, así
 -- que todo lo que la explica vive aquí.
@@ -122,8 +144,14 @@ indicatorClass i = "widget__badge widget__badge--" <> modifier
 -- los de 'originNotice' tal cual, sin redactarlos otra vez: una segunda
 -- redacción de lo mismo envejece mal.
 --
--- El dato fresco es la excepción: si su refresco falló, «en vivo» ya no es
--- cierto, así que no se compone — se sustituye.
+-- El dato fresco es la excepción, y por dos motivos: si su refresco falló o si no
+-- hay sesión rodando, «en vivo» ya no es cierto, así que no se compone — se
+-- sustituye.
+--
+-- __Lo reciente conserva el suyo aunque comparta punto con el fresco fuera de
+-- sesión.__ El punto es lo que se ve sin querer y tiene que estar quieto; el aviso
+-- solo aparece al apuntarlo, y ahí decir de cuándo es el dato y por qué salió de lo
+-- guardado vale más que repetir que no hay carrera.
 --
 -- __La fuente va delante y como etiqueta__, separada por @·@ y no por un punto: es
 -- lo primero que se lee y no alarga la cadena de frases, que en el peor caso ya son
@@ -133,7 +161,8 @@ indicatorTooltip i = maybe body (\s -> sourceName s <> " · " <> body) (indSourc
   where
     body =
       case (indOrigin i, indFailed i) of
-        (Just Fresh, False) -> liveNotice
+        (Just Fresh, False) | indRunning i -> liveNotice
+                            | otherwise    -> idleNotice
         (Just Fresh, True)  -> retryFailedNotice
         (origin, failed)    -> withFailure failed (noticeOf origin)
 
@@ -146,10 +175,24 @@ indicatorTooltip i = maybe body (\s -> sourceName s <> " · " <> body) (indSourc
     withFailure True t | indShown i = t <> ". " <> retryFailedNotice
     withFailure _    t = t
 
--- | El periodo sale de 'liveRefreshSeconds' y no de un número escrito aquí: si
--- el refresco cambia de ritmo, el tooltip no puede quedarse diciendo el viejo.
+-- | Lo que pasa cuando el refresco está volviendo bien, con la cabeza que cambia
+-- delante.
+--
+-- __El periodo sale de 'liveRefreshSeconds' y no de un número escrito aquí__: si el
+-- refresco cambia de ritmo, el tooltip no puede quedarse diciendo el viejo. Y va una
+-- sola vez porque lo dicen los dos avisos: lo único que los separa es la cabeza.
+refreshedEvery :: Text -> Text
+refreshedEvery lead =
+  lead <> ": se actualiza cada " <> T.pack (show liveRefreshSeconds) <> " s"
+
 liveNotice :: Text
-liveNotice = "En vivo: se actualiza cada " <> T.pack (show liveRefreshSeconds) <> " s"
+liveNotice = refreshedEvery "En vivo"
+
+-- | __El periodo sigue siendo cierto sin sesión__, y por eso no se calla: la página
+-- pregunta al mismo ritmo pase lo que pase; quien se frena por detrás es el backend,
+-- y eso no lo decide este lado.
+idleNotice :: Text
+idleNotice = refreshedEvery "Sin sesión en marcha"
 
 retryFailedNotice :: Text
 retryFailedNotice = "No se pudo recargar: se muestra la tabla anterior"

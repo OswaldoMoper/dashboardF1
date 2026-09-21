@@ -15,9 +15,9 @@
 --
 -- __Lo que se enseña y de dónde salió son dos cosas, y las pintan dos sitios.__ La
 -- tabla sale de 'liveStateOf', que mira solo si hay filas; el indicador @● Live@
--- de la cabecera sale de 'Common.Indicator', que mira la procedencia y el último
--- refresco. Por eso un fallo puntual no borra la tabla —la conserva desde el
--- 2026-09-11 (c)— y aun así se ve: lo dice el indicador, no el cuerpo.
+-- de la cabecera sale de 'indicatorOf', que cruza la procedencia, el último refresco
+-- y si hay sesión rodando. Por eso un fallo puntual no borra la tabla —la conserva
+-- desde el 2026-09-11 (c)— y aun así se ve: lo dice el indicador, no el cuerpo.
 --
 -- __La columna de estado se añade al final a propósito__ (2026-08-27). La hoja
 -- alinea las columnas numéricas de esta tabla por @nth-child(1,4,5,6)@ —las
@@ -37,7 +37,8 @@ import           Common.Refresh    (Poll (..), PollEvent (..), canRequest,
 import           Common.Route      (livePath)
 import           Common.Types      (DriverStatus (..), LiveTable (..),
                                     LiveTimingRow (..), SessionInfo (..),
-                                    StateReading, statusLabel)
+                                    StateReading (..), sessionInProgress,
+                                    statusLabel)
 import           Data.Text         (Text)
 import qualified Data.Text         as T
 import           Reflex.Dom
@@ -86,6 +87,16 @@ sessionOf p = liveSession . srcValue =<< pollShown p
 stateOf :: Poll (Sourced LiveTable) -> Maybe StateReading
 stateOf p = siState =<< sessionOf p
 
+-- | El indicador de la cabecera a partir de lo que ya hay en la mano: la
+-- procedencia y el último intento salen del refresco, y si hay carrera sale de la
+-- sesión que la tabla trae al lado.
+--
+-- __Es este módulo quien lo junta y no 'Common.Indicator'__, que no conoce el
+-- dominio: allí la sesión rodando entra como un 'Bool' y aquí es donde está el
+-- 'Common.Types.LiveTable' del que sacarlo.
+indicatorOf :: Poll (Sourced LiveTable) -> Indicator
+indicatorOf p = indicatorFrom (sessionInProgress (srState <$> stateOf p)) p
+
 -- | El refresco de @\/api\/live@: lo monta la página __una vez__ y lo reparte entre
 -- quienes lo pintan.
 --
@@ -114,7 +125,7 @@ liveTimingWidget :: MonadWidget t m => Dynamic t (Poll (Sourced LiveTable)) -> m
 liveTimingWidget poll = divClass "widget widget--live-timing" $ do
   divClass "widget__head" $ do
     el "h2" $ text "Live Timing"
-    liveBadge (indicatorFrom <$> poll)
+    liveBadge (indicatorOf <$> poll)
   state <- holdUniqDyn (liveStateOf <$> poll)
   dyn_ (renderState <$> state)
   where

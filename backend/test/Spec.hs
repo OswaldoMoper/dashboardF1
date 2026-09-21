@@ -2244,15 +2244,23 @@ main = hspec $ do
   -- de decirse.
   describe "Common.Indicator" $ do
     it "recoge la procedencia, la fuente, el instante y el fallo de lo que se está enseñando" $
-      indicatorFrom
+      indicatorFrom True
         (Poll False (Just (Sourced (Just Cached) (Just OpenF1) (Just fetchedAtIso) [1 :: Int])) True)
-        `shouldBe` Indicator True (Just Cached) (Just OpenF1) (Just fetchedAtIso) True
+        `shouldBe` Indicator True (Just Cached) (Just OpenF1) (Just fetchedAtIso) True True
 
     it "antes de la primera respuesta no hay nada que enseñar ni procedencia" $
-      indicatorFrom (pollIdle :: Poll (Sourced [Int]))
-        `shouldBe` Indicator False Nothing Nothing Nothing False
+      indicatorFrom False (pollIdle :: Poll (Sourced [Int]))
+        `shouldBe` Indicator False Nothing Nothing Nothing False False
 
-    it "los seis estados del punto, cada uno con su modificador" $
+    it "la sesión rodando entra por argumento y no sale del refresco" $
+      -- El mismo `Poll` con las dos respuestas: nada de lo que el refresco trae lo
+      -- decide, que es lo que permite que `Common.Indicator` no conozca el dominio.
+      map (`indicatorFrom` (pollIdle :: Poll (Sourced [Int]))) [True, False]
+        `shouldBe` [ Indicator False Nothing Nothing Nothing False True
+                   , Indicator False Nothing Nothing Nothing False False
+                   ]
+
+    it "con la sesión rodando, los seis estados del punto con su modificador" $
       map indicatorClass
         [ shownAs (Just Fresh)  Nothing             False
         , shownAs (Just Fresh)  Nothing             True
@@ -2264,6 +2272,36 @@ main = hspec $ do
         `shouldBe` [ "widget__badge widget__badge--live"
                    , "widget__badge widget__badge--stalled"
                    , "widget__badge widget__badge--recent"
+                   , "widget__badge widget__badge--saved"
+                   , "widget__badge widget__badge--sample"
+                   , "widget__badge widget__badge--unknown"
+                   ]
+
+    -- El séptimo modificador, y el motivo de que sea uno y no dos: fuera de sesión
+    -- el backend se frena, así que la respuesta llega `fresh` y `recent` un ciclo sí
+    -- y otro no. Si cada sello conservara su punto, el punto latiría cada diez
+    -- segundos, que es el movimiento que este modificador existe para quitar.
+    it "sin sesión, los dos sellos de refresco bueno caen en el mismo punto apagado" $
+      map (indicatorClass . offAir)
+        [ shownAs (Just Fresh)  Nothing             False
+        , shownAs (Just Recent) (Just fetchedAtIso) False
+        ]
+        `shouldBe` [ "widget__badge widget__badge--idle"
+                   , "widget__badge widget__badge--idle"
+                   ]
+
+    -- La otra mitad de la decisión, y la que impide que apagar tape un fallo: sin
+    -- sesión, lo que salió mal se sigue pintando como lo que salió mal.
+    it "sin sesión, los puntos que avisan de un fallo no se apagan" $
+      map (indicatorClass . offAir)
+        [ shownAs (Just Fresh)  Nothing             True
+        , shownAs (Just Recent) (Just fetchedAtIso) True
+        , shownAs (Just Cached) (Just fetchedAtIso) False
+        , shownAs (Just Sample) Nothing             False
+        , shownAs Nothing       Nothing             False
+        ]
+        `shouldBe` [ "widget__badge widget__badge--stalled"
+                   , "widget__badge widget__badge--stalled"
                    , "widget__badge widget__badge--saved"
                    , "widget__badge widget__badge--sample"
                    , "widget__badge widget__badge--unknown"
@@ -2282,13 +2320,22 @@ main = hspec $ do
                    , "widget__badge widget__badge--stalled"
                    ]
 
-    -- La mitad del reparto que no se ve mirando: la clase `--live` es de UN estado,
-    -- y de los doce posibles. Escrito así, un estado nuevo que se colara en ella
-    -- rompe el caso sin que nadie tenga que acordarse. Y es la única que se mueve:
-    -- el parpadeo afirma que hay sesión rodando, no que la página esté pidiendo.
-    it "solo el dato fresco con el refresco volviendo lleva la clase del directo" $
+    -- La mitad del reparto que no se ve mirando: la clase `--live` es de UN estado
+    -- de todos los que `everyIndicator` enumera. Escrito así, un estado nuevo que se
+    -- colara en ella rompe el caso sin que nadie tenga que acordarse. Y es la única
+    -- que se mueve: el parpadeo afirma que hay sesión rodando y que el refresco está
+    -- volviendo, o sea las dos cosas a la vez.
+    it "solo el dato fresco, con el refresco volviendo y la sesión rodando, lleva la clase del directo" $
       filter ((== "widget__badge widget__badge--live") . indicatorClass) everyIndicator
         `shouldBe` [shownAs (Just Fresh) Nothing False]
+
+    -- El mismo barrido para el apagado, que es lo que impide que se lo coma un
+    -- estado más: son exactamente dos y los dos son sin sesión.
+    it "solo los dos sellos de refresco bueno sin sesión llevan la clase del apagado" $
+      filter ((== "widget__badge widget__badge--idle") . indicatorClass) everyIndicator
+        `shouldBe` [ offAir (shownAs (Just Fresh)  Nothing             False)
+                   , offAir (shownAs (Just Recent) (Just fetchedAtIso) False)
+                   ]
 
     it "un refresco fallido no cambia el punto del dato guardado ni el del de ejemplo" $
       map indicatorClass
@@ -2308,6 +2355,25 @@ main = hspec $ do
     it "el dato fresco que no se pudo recargar sustituye su aviso, no lo acumula" $
       indicatorTooltip (shownAs (Just Fresh) Nothing True)
         `shouldBe` "No se pudo recargar: se muestra la tabla anterior"
+
+    -- Fuera de sesión «en vivo» es falso y el periodo no: la página pregunta igual,
+    -- y quien se frena por detrás es el backend. Por eso lo que cambia es la cabeza
+    -- de la frase y no el número, que sigue saliendo de `liveRefreshSeconds`.
+    it "sin sesión, el dato fresco dice que no hay sesión y conserva el periodo" $
+      indicatorTooltip (offAir (shownAs (Just Fresh) Nothing False))
+        `shouldBe` ("Sin sesión en marcha: se actualiza cada "
+                      <> T.pack (show liveRefreshSeconds) <> " s")
+
+    -- El punto es el mismo que el del fresco sin sesión y el aviso NO: el punto se
+    -- ve sin querer y tiene que estar quieto; el aviso solo sale al apuntarlo, y ahí
+    -- decir de cuándo es el dato vale más que repetir que no hay carrera.
+    it "sin sesión, el reciente comparte punto con el fresco pero conserva su aviso" $
+      ( indicatorClass (offAir (shownAs (Just Recent) (Just fetchedAtIso) False))
+      , indicatorTooltip (offAir (shownAs (Just Recent) (Just fetchedAtIso) False))
+      )
+        `shouldBe` ( "widget__badge widget__badge--idle"
+                   , "Dato reciente: no se ha vuelto a preguntar (14:03 UTC)"
+                   )
 
     it "el dato guardado lleva la hora ya legible, y no el instante tal cual viaja" $
       indicatorTooltip (shownAs (Just Cached) (Just fetchedAtIso) False)
@@ -2348,7 +2414,7 @@ main = hspec $ do
     -- indicador sepa si hay tabla: el cuerpo de la tarjeta ya pinta su «Error al
     -- cargar», y prometer «se muestra la tabla anterior» sin tabla es mentir.
     it "sin nada en pantalla, el fallo no promete una tabla anterior" $
-      indicatorTooltip (Indicator False Nothing Nothing Nothing True)
+      indicatorTooltip ((shownAs Nothing Nothing True) {indShown = False})
         `shouldBe` "Procedencia desconocida"
 
     it "un instante ilegible deja el tooltip sin hora, pero sigue avisando" $
@@ -2546,6 +2612,10 @@ fetchedAtIso = "2026-09-11T14:03:22Z"
 -- | Indicador de una tarjeta __con algo en pantalla y sin fuente__, que es el caso
 -- normal. El que no tiene nada se escribe entero, porque es la excepción y conviene
 -- que se lea como tal; los que llevan fuente usan 'shownFrom'.
+--
+-- __Trae la sesión rodando__, que es lo que hace significativos los modificadores
+-- del directo. El caso contrario se escribe con 'offAir' encima, para que cada caso
+-- enseñe qué es lo que cambia.
 shownAs :: Maybe Origin -> Maybe T.Text -> Bool -> Indicator
 shownAs origin fetched failed =
   Indicator
@@ -2554,15 +2624,30 @@ shownAs origin fetched failed =
     , indSource  = Nothing
     , indFetched = fetched
     , indFailed  = failed
+    , indRunning = True
     }
 
 shownFrom :: Source -> Maybe Origin -> Maybe T.Text -> Bool -> Indicator
 shownFrom source origin fetched failed =
   (shownAs origin fetched failed) {indSource = Just source}
 
--- | Los diez estados que el __punto__ distingue: las cuatro procedencias (contando
--- la desconocida) por si el último refresco volvió o no, más los dos de antes de la
--- primera respuesta.
+-- | El mismo indicador sin sesión rodando, que es el estado normal entre grandes
+-- premios.
+offAir :: Indicator -> Indicator
+offAir i = i {indRunning = False}
+
+-- | Todos los estados que el __punto__ distingue: las cuatro procedencias (contando
+-- la desconocida) y el hueco de antes de la primera respuesta, cada uno por si el
+-- último refresco volvió o no, y todo ello por si hay sesión rodando.
+--
+-- __El total no se escribe aquí a propósito.__ Un número en la prosa envejece al
+-- añadir una dimensión y sigue cuadrando consigo mismo: los casos preguntan por la
+-- lista, no por su tamaño.
+--
+-- __La sesión rodando dobla la lista aunque no todas las ramas la miren__, y ahí
+-- está su utilidad: un caso que pregunte «¿cuántos de TODOS llevan la clase del
+-- directo?» solo puede contestar bien si los que no deberían llevarla también están
+-- dentro.
 --
 -- __La fuente no entra en la lista__, y no por olvido: 'indicatorClass' no la lee, y
 -- meterla duplicaría cada estado sin añadir ninguno. Que no la lea lo afirma su
@@ -2572,13 +2657,17 @@ shownFrom source origin fetched failed =
 -- de enumerar los que se espera que lo hagan, que es lo que deja fuera al estado
 -- que alguien añada mañana.
 everyIndicator :: [Indicator]
-everyIndicator =
-  [ shownAs (Just Fresh)  Nothing             failed | failed <- [False, True] ]
-    <> [ shownAs (Just Recent) (Just fetchedAtIso) failed | failed <- [False, True] ]
-    <> [ shownAs (Just Cached) (Just fetchedAtIso) failed | failed <- [False, True] ]
-    <> [ shownAs (Just Sample) Nothing             failed | failed <- [False, True] ]
-    <> [ shownAs Nothing       Nothing             failed | failed <- [False, True] ]
-    <> [ Indicator False Nothing Nothing Nothing failed  | failed <- [False, True] ]
+everyIndicator = concatMap bothWays withSession
+  where
+    bothWays i = [i, offAir i]
+
+    withSession =
+      [ shownAs (Just Fresh)  Nothing             failed | failed <- [False, True] ]
+        <> [ shownAs (Just Recent) (Just fetchedAtIso) failed | failed <- [False, True] ]
+        <> [ shownAs (Just Cached) (Just fetchedAtIso) failed | failed <- [False, True] ]
+        <> [ shownAs (Just Sample) Nothing             failed | failed <- [False, True] ]
+        <> [ shownAs Nothing       Nothing             failed | failed <- [False, True] ]
+        <> [ (shownAs Nothing Nothing failed) {indShown = False} | failed <- [False, True] ]
 
 -- | Decodifica un fixture y aplana la clasificación de pilotos. Un fixture que no
 -- decodifica es un error del test, no un fallo del código bajo prueba: por eso
