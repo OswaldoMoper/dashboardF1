@@ -89,9 +89,9 @@ import           Common.Types                (DriverEntry (..),
                                               TyreStint (..), UpNext (..),
                                               WidgetConfig (..), WidgetId (..),
                                               WidgetType (..), noParams,
-                                              sessionIsLive, sessionStateWord,
-                                              sessionTitle, stateLabel,
-                                              statusLabel, tickDown,
+                                              sessionInProgress, sessionIsLive,
+                                              sessionStateWord, sessionTitle,
+                                              stateLabel, statusLabel, tickDown,
                                               upNextLabel)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
@@ -873,6 +873,29 @@ main = hspec $ do
         (fmap (fmap (sessionIsLive . srState) . siState . feedSession raceServedAt) . trySession)
         [feedSessionRace, feedSessionQualy]
         `shouldBe` [Right (Just True), Right (Just False)]
+
+  describe "sessionInProgress" $ do
+    it "solo consta que hay carrera con la sesión en marcha o en un estado nuevo" $
+      -- La tabla entera de una vez. Son cinco valores para seis situaciones: el
+      -- estado ausente y la sesión ausente llegan por el mismo `Nothing`, que es
+      -- justo lo que el aplanado hace inalcanzable por separado.
+      map sessionInProgress
+          [ Just SessionStarted
+          , Just (SessionUnknown "Aborted")
+          , Just SessionInactive
+          , Just SessionFinalised
+          , Nothing
+          ]
+        `shouldBe` [True, True, False, False, False]
+
+    it "y sobre la grabación real, la sesión que rodaba enciende y la acabada no" $
+      -- Contra los fixtures, por lo mismo que el caso equivalente de
+      -- `sessionIsLive`: lo que se afirma es que el estado REAL atraviesa el decode
+      -- y el mapeo con el sentido correcto.
+      map
+        (fmap (sessionInProgress . fmap srState . siState . feedSession raceServedAt) . trySession)
+        [feedSessionRace, feedSessionQualy]
+        `shouldBe` [Right True, Right False]
 
   -- La decisión entera de la escalera sobre el feed, sin levantar red. Vive en el
   -- `Helper` para que estas tres ramas existan: el `Context` solo despacha sobre

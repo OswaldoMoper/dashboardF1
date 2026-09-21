@@ -160,6 +160,30 @@ sessionIsLive :: SessionState -> Bool
 sessionIsLive SessionFinalised = False
 sessionIsLive _                = True
 
+-- | Si consta que hay una sesión en curso ahora mismo.
+--
+-- __No es la negación de 'sessionIsLive', y la diferencia son los dos huecos.__
+-- Aquél contesta «¿lo que el feed sirve sigue siendo el directo?» y ante la duda
+-- dice que sí, porque callar escondería la única fuente que publica durante una
+-- carrera. Éste contesta «¿hay carrera?» y ante la duda dice que no: __hace falta
+-- que conste__, no basta con que no conste lo contrario.
+--
+-- De ahí que el 'Nothing' —ni sesión, ni estado dentro de ella— apague. Es el
+-- criterio contrario al que aplica la escalera del feed sobre el mismo hueco, y son
+-- dos preguntas distintas sobre el mismo dato.
+--
+-- __'SessionInactive' apaga aunque sea una sesión viva:__ el feed publica la
+-- parrilla hasta cuarenta minutos antes de empezar, así que anunciada y en marcha
+-- son cosas distintas y solo la segunda está pasando.
+--
+-- __Lo desconocido enciende__, compuesto de 'sessionIsLive' en vez de repetido: un
+-- estado nuevo del feed llega durante una sesión, no después.
+sessionInProgress :: Maybe SessionState -> Bool
+sessionInProgress = maybe False inProgress
+  where
+    inProgress SessionInactive = False
+    inProgress s               = sessionIsLive s
+
 -- | De dónde salió un estado.
 --
 -- __'Derived' no es un estado peor, es un estado que nadie dijo.__ Quien lo lee

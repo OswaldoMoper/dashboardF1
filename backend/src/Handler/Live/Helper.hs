@@ -63,7 +63,8 @@ import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         SessionClock (..), SessionInfo (..),
                                         SessionState (..), StateBasis (..),
                                         StateReading (..), UpNext (..),
-                                        sessionIsLive, sessionStateFrom)
+                                        sessionInProgress, sessionIsLive,
+                                        sessionStateFrom)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
@@ -580,9 +581,9 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 --
 -- * __Rodando, la derecha calla__ ('Common.Types.NextSilent'): en carrera el ancho
 --   hace falta para lo que está pasando, y la siguiente sería el gran premio de
---   dentro de quince días. Un estado que no se reconozca cuenta como rodando, por el
---   criterio que 'Common.Types.sessionIsLive' ya aplica: lo desconocido sigue dando
---   directo.
+--   dentro de quince días. Qué cuenta como rodando lo decide
+--   'Common.Types.sessionInProgress', que es el mismo criterio que enciende la
+--   etiqueta del directo en la página.
 -- * __Sin calendario, no se sabe__ ('Common.Types.NextUnknown'): es el estado con el
 --   que arranca el proceso, y dura lo que tarde la primera petición.
 -- * __Sin empezar, se cuenta a ELLA__ ('Common.Types.NextStartsIn'): con la parrilla
@@ -599,12 +600,11 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 -- de la sesión sí. Sin nombre de gran premio se cae al de la sesión, que siempre hay.
 upNext :: UTCTime -> Maybe SessionInfo -> [ScheduledSession] -> UpNext
 upNext now shown sessions
-  | null sessions       = NextUnknown
-  | stillRunning        = NextSilent
-  | otherwise           = maybe NextUnknown answer soonest
+  | null sessions            = NextUnknown
+  | sessionInProgress state  = NextSilent
+  | otherwise                = maybe NextUnknown answer soonest
   where
     state = srState <$> (siState =<< shown)
-    stillRunning = maybe False sessionIsLive state && state /= Just SessionInactive
 
     soonest = listToMaybe (sortOn ssStart (filter ((> now) . ssStart) sessions))
 
