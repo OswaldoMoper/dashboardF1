@@ -30,17 +30,17 @@ import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
 import           Common.Refresh     (Poll (..))
 import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
-                                     SessionInfo (..), StateBasis (..),
-                                     StateReading (..), UpNext (..),
-                                     WidgetConfig (..), WidgetId (..),
-                                     WidgetType (..), derivedNote, noParams,
-                                     sessionTitle, stateLabel, tickDown,
-                                     upNextLabel)
+                                     StateBasis (..), StateReading (..),
+                                     UpNext (..), WidgetConfig (..),
+                                     WidgetId (..), WidgetType (..),
+                                     derivedNote, noParams, sessionTitle,
+                                     stateLabel, tickDown, upNextLabel)
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
 import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
-import           Widgets.LiveTiming (livePoll, liveTimingWidget)
+import           Widgets.LiveTiming (livePoll, liveTimingWidget, sessionOf,
+                                     stateOf)
 import           Widgets.Telemetry  (telemetryWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
@@ -233,23 +233,6 @@ countdown served = do
   tick  <- tickLossyFromPostBuildTime 1
   foldDyn ($) NextUnknown $
     leftmost [const <$> updated fresh, tickDown <$ tick]
-
--- | De qué sesión son las filas que se están enseñando, si se sabe.
---
--- Los dos 'Nothing' que atraviesa significan cosas distintas y aquí se juntan a
--- propósito: no haber recibido nada todavía y haber recibido una tabla que no
--- nombra su sesión se ven igual en la banda, porque en los dos casos no hay sesión
--- que enseñar. Es el contrapunto de 'Widgets.LiveTiming.liveStateOf', que se queda
--- con las filas y descarta esto.
-sessionOf :: Poll (Sourced LiveTable) -> Maybe SessionInfo
-sessionOf p = liveSession . srcValue =<< pollShown p
-
--- | En qué punto está esa sesión, si alguien lo dijo o el calendario lo permitió
--- deducir. Atraviesa los mismos dos 'Nothing' que 'sessionOf' y uno más —el de la
--- sesión que no trae estado—, y los tres se pintan igual porque los tres son «no se
--- sabe».
-stateOf :: Poll (Sourced LiveTable) -> Maybe StateReading
-stateOf p = siState =<< sessionOf p
 
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
 -- lienzo, con el estilo que calcula 'slotStyle'.

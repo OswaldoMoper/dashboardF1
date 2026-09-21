@@ -36,7 +36,8 @@ import           Common.Refresh    (Poll (..), PollEvent (..), canRequest,
                                     liveRefreshSeconds, pollIdle, pollStep)
 import           Common.Route      (livePath)
 import           Common.Types      (DriverStatus (..), LiveTable (..),
-                                    LiveTimingRow (..), statusLabel)
+                                    LiveTimingRow (..), SessionInfo (..),
+                                    StateReading, statusLabel)
 import           Data.Text         (Text)
 import qualified Data.Text         as T
 import           Reflex.Dom
@@ -67,6 +68,23 @@ liveStateOf p =
     Nothing
       | pollLastFailed p -> Failed
       | otherwise        -> Loading
+
+-- | De qué sesión son las filas que se están enseñando, si se sabe.
+--
+-- Los dos 'Nothing' que atraviesa significan cosas distintas y aquí se juntan a
+-- propósito: no haber recibido nada todavía y haber recibido una tabla que no
+-- nombra su sesión se ven igual en la banda, porque en los dos casos no hay sesión
+-- que enseñar. Es el contrapunto de 'liveStateOf', que se queda con las filas y
+-- descarta esto.
+sessionOf :: Poll (Sourced LiveTable) -> Maybe SessionInfo
+sessionOf p = liveSession . srcValue =<< pollShown p
+
+-- | En qué punto está esa sesión, si alguien lo dijo o el calendario lo permitió
+-- deducir. Atraviesa los mismos dos 'Nothing' que 'sessionOf' y uno más —el de la
+-- sesión que no trae estado—, y los tres se pintan igual porque los tres son «no se
+-- sabe».
+stateOf :: Poll (Sourced LiveTable) -> Maybe StateReading
+stateOf p = siState =<< sessionOf p
 
 -- | El refresco de @\/api\/live@: lo monta la página __una vez__ y lo reparte entre
 -- quienes lo pintan.
