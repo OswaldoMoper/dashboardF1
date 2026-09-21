@@ -58,8 +58,8 @@
       Es lo que la Fase 2 construyó de verdad y por eso se conserva, pero una **lista plana** no tiene
       dónde guardar la colocación, y el requisito real —cada widget con su posición y su tamaño
       propios— nunca llegó a ningún documento. De esta línea salieron encadenadas la rejilla
-      `auto-fit`, el «el orden es la colocación» del 2026-09-01 (c) y el `resize` de la
-      sesión 33. La forma correcta se decide el 2026-09-03 y los requisitos que
+      `auto-fit`, el «el orden es la colocación» del 2026-09-01 (c) y el `resize: both` del
+      2026-09-02. La forma correcta se decide el 2026-09-03 y los requisitos que
       faltaban quedan escritos en la **Fase 6**.
 - Reflex:
   - `Dynamic t Layout` para la pantalla actual.
@@ -232,7 +232,7 @@ esta fase decida cuál es. El entregable de las varias instancias es el consumid
 estaba esperando.
 
 **El diseño del 2026-09-01 son tres decisiones, y solo dos siguen en pie.** La identidad
-del widget y la forma de `WidgetParams` quedan **firmes** y el código de la sesión 33 las ejercita. La
+del widget y la forma de `WidgetParams` quedan **firmes** y el código del 2026-09-02 las ejercita. La
 tercera —qué guarda `Layout`, que concluía que no cambiaba— **queda superada el 2026-09-03**: se apoyaba
 en la lista plana de la L56, y la lista plana era la premisa incompleta. Ver la ampliación de abajo.
 
@@ -526,8 +526,9 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       Timing dice `Pos / Driver / Team / Gap / Interval / Last Lap / Estado` en la misma fila. Medido: **≈48
       cadenas visibles en 5 módulos** de `frontend/` más `common`, y `frontend.cabal` **sin ninguna
       dependencia** de internacionalización. Español por defecto, y detectar de dónde miran la página.
-      - **Pide su propio §0 y empieza por el mecanismo**, que es lo único sin medir: leer `navigator.language`
-        exige una dependencia nueva o un `foreign import javascript`, o sea **código ciego**.
+      - **Se decide entero antes de escribir código, y se empieza por el mecanismo**, que es lo único sin
+        medir: leer `navigator.language` exige una dependencia nueva o un `foreign import javascript`,
+        o sea **código ciego**.
       - `Common.Types.sessionStateWord` es la semilla: nació en `common`, pura y con prueba.
 - [ ] **El circuito en la banda** (2026-09-17). Pedido para la sesión que se enseña, y **bloqueado por una
       medición**: `/sessions` de OpenF1 lo publica (`circuit_short_name`), pero **el feed no** —`FeedSession`
@@ -586,20 +587,20 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       `Common.Route` ya acepta— con `noParams` (entrada (b)).
 - [ ] **Lienzo libre**: posición y tamaño propios por widget, en enteros de 1/120, con huecos vacíos
       permitidos (2026-09-03). Sustituye a la rejilla `auto-fit` como mecanismo de colocación.
-      **Los cuatro campos están puestos desde la sesión 35**, y los dos layouts fijos llevan ya sus
+      **Los cuatro campos están puestos desde el 2026-09-04**, y los dos layouts fijos llevan ya sus
       coordenadas; falta el render, que es quien las lee.
 - [ ] Widgets movibles y redimensionables. **Reescrito el 2026-09-03**: mover y redimensionar son los dos
       lo mismo —cambiar las coordenadas de ese widget— y no dos entregables de coste distinto. Ni reordenar
       la lista ni `resize: both`, que quedan superados.
 - [ ] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
       que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
-      desde la sesión 35**, con el imán apagado como caso normal y no como error; falta el arrastre.
+      desde el 2026-09-04**, con el imán apagado como caso normal y no como error; falta el arrastre.
 - [ ] **Ancho mínimo por widget**, en `Common.Layout.minWidthFor` y no en el código de cada uno
       (2026-09-04 (b)), por debajo del cual el lienzo no deja encoger; el alto solo con mínimo de título y
-      control (2026-09-03 (d)). **Los siete números están escritos desde la sesión 35, y siguen siendo a
+      control (2026-09-03 (d)). **Los siete números están escritos desde el 2026-09-04, y siguen siendo a
       ojo** hasta medirlos en navegador.
 - [ ] **La marca de «aquí no cabe»**, sobre `Common.Layout.fitsAt`: nada se recoloca solo, y lo que no cabe
-      se avisa (2026-09-04 (c)). El predicado existe desde la sesión 35; falta pintarla.
+      se avisa (2026-09-04 (c)). El predicado existe desde ese mismo día; falta pintarla.
 - [ ] **Recomposición por zonas** en los seis widgets: identidad envuelve, cifras mantienen línea, y se
       escala donde no cabe. **A lo ancho no debe existir barra**, salvo el último recurso de la barra de
       **página** cuando ni el mínimo del widget más ancho quepa (2026-09-03 (d), ampliado el 2026-09-04 (c)).

@@ -883,8 +883,8 @@ main = hspec $ do
         `shouldBe` Right (FeedServes (LiveTable (Just raceSessionFixture) feedRowsFixture NextUnknown))
 
     it "con filas pero la sesión finalizada, NO sirve el feed" $
-      -- Es lo que cierra el §4 punto 37: el feed sigue devolviendo la clasificación
-      -- final durante horas, y servirla como `fresh` es afirmar que es de ahora.
+      -- El feed sigue devolviendo la clasificación final durante horas, y servirla
+      -- como `fresh` es afirmar que es de ahora.
       fmap (feedVerdict raceServedAt) (tryLive feedLiveFinalised)
         `shouldBe` Right FeedFinalised
 
@@ -2966,7 +2966,7 @@ feedLiveRowsAbsent :: ByteString
 feedLiveRowsAbsent = "{\"session\":" <> feedSessionRace <> "}"
 
 -- Una sesión ya finalizada que aun así llega con su tabla: es lo que el feed sirvió
--- durante horas tras la bandera, y lo que hace falta para ejercitar el §4 punto 37.
+-- durante horas tras la bandera, y lo que hace falta para ejercitar ese caso.
 -- El estado sale de la clasificación 11365 y es el REAL; medidos sobre la grabación
 -- de la carrera, los cuatro mensajes de `SessionInfo` dan `Inactive`, `Started`,
 -- `Finalised` y `Finalised` — o sea que el campo repite, y por eso lo que se lee es
