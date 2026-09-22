@@ -12,6 +12,8 @@ import           Handler.Live.Context     (liveClock, refreshFeedWindow)
 import           Handler.Live.Helper      (isoInstant)
 import           Network.Wai.Handler.Warp (run)
 import           Server                   (app)
+import           System.IO                (BufferMode (..), hSetBuffering,
+                                           stdout)
 
 -- El calendario se pide una vez al arrancar, y después solo cuando el feed da una
 -- sesión por finalizada. No puede tumbar el arranque: si OpenF1 no contesta —lo que
@@ -20,8 +22,13 @@ import           Server                   (app)
 --
 -- El reloj del directo arranca en reposo y no baja hasta que alguien pregunte, así
 -- que un backend levantado y sin nadie delante no gasta presupuesto.
+-- La salida va por línea y no por bloques: con @stdout@ a una tubería —que es como
+-- se recoge el log— GHC la bufferiza en bloques de kilobytes, así que la línea de
+-- arranque no aparece hasta que el proceso termina. @stderr@ no lo necesita porque
+-- nace sin búfer, que es por lo que los avisos sí salían.
 main :: IO ()
 main = do
+  hSetBuffering stdout LineBuffering
   cfg <- loadConfig
   env <- mkEnv cfg
   refreshFeedWindow env
