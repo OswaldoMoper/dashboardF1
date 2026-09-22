@@ -148,10 +148,16 @@ getLiveTiming env = do
 --
 -- __No atrapa nada ni cambia el desenlace:__ quien llama sigue decidiendo qué se
 -- sirve, y esto solo lo cuenta.
+--
+-- __El reloj se lee aquí y no lo recibe el llamador__, que es la excepción al «el
+-- instante se toma una vez»: en el camino del fallo no hay nada más que fechar —no
+-- se sella cache ni se resuelve reloj de sesión—, así que una segunda lectura no
+-- puede contradecir a ninguna.
 noteFailure :: Text -> SomeException -> IO ()
-noteFailure what e =
+noteFailure what e = do
+  now <- getCurrentTime
   TIO.hPutStrLn stderr $
-    fetchFailure what (fst <$> httpStatusOf e) (T.pack (displayException e))
+    fetchFailure now what (fst <$> httpStatusOf e) (T.pack (displayException e))
 
 -- | Resuelve qué viene después, __lo último antes de servir__.
 --

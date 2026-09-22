@@ -4,7 +4,10 @@ module Main where
 
 import           App                      (mkEnv)
 import           Config                   (Config (..), loadConfig)
+import qualified Data.Text                as T
+import           Data.Time.Clock          (getCurrentTime)
 import           Handler.Live.Context     (refreshFeedWindow)
+import           Handler.Live.Helper      (isoInstant)
 import           Network.Wai.Handler.Warp (run)
 import           Server                   (app)
 
@@ -17,5 +20,10 @@ main = do
   cfg <- loadConfig
   env <- mkEnv cfg
   refreshFeedWindow env
-  putStrLn $ "F1 Dashboard backend en http://localhost:" <> show (cfgPort cfg) <> "/"
+  now <- getCurrentTime
+  putStrLn $
+    T.unpack (isoInstant now)
+      <> " F1 Dashboard backend en http://localhost:"
+      <> show (cfgPort cfg)
+      <> "/"
   run (cfgPort cfg) (app env)

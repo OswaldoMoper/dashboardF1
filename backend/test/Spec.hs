@@ -131,11 +131,11 @@ import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
                                               feedStatus, feedVerdict,
                                               feedWindowLead, feedWindowOpen,
                                               fetchFailure, freezeClock,
-                                              lapProgress, meetingNames,
-                                              openf1MinGap, openf1Session,
-                                              parseFeedInstant, parseRemaining,
-                                              schedule, sessionClock,
-                                              stillRecent, upNext)
+                                              isoInstant, lapProgress,
+                                              meetingNames, openf1MinGap,
+                                              openf1Session, parseFeedInstant,
+                                              parseRemaining, schedule,
+                                              sessionClock, stillRecent, upNext)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import qualified Handler.Telemetry.Context   as Telemetry
@@ -929,29 +929,49 @@ main = hspec $ do
     it "nombra el 429, porque su número no dice qué hacer" $
       -- No es la red ni el servicio caído: es haber preguntado de más. Es el único
       -- status al que se le pone nombre.
-      fetchFailure "el nombre de la sesión" (Just 429) "lo que sea"
+      fetchFailure fetchInstant "el nombre de la sesión" (Just 429) "lo que sea"
         `shouldBe`
-          "[live] el nombre de la sesión: HTTP 429, límite de peticiones de la fuente"
+          "2026-09-11T14:03:22Z [live] el nombre de la sesión: \
+          \HTTP 429, límite de peticiones de la fuente"
 
     it "los demás status van a secas, que para eso son códigos conocidos" $
-      fetchFailure "las filas" (Just 503) "lo que sea"
-        `shouldBe` "[live] las filas: HTTP 503"
+      fetchFailure fetchInstant "las filas" (Just 503) "lo que sea"
+        `shouldBe` "2026-09-11T14:03:22Z [live] las filas: HTTP 503"
 
     it "sin status sirve el texto de la excepción, que es lo único que distingue" $
       -- Conexión rechazada, techo vencido y un 200 con otra forma no tienen número
       -- que las nombre; su texto sí las separa.
-      fetchFailure "el calendario" Nothing "ConnectionFailure: connect: does not exist"
+      fetchFailure fetchInstant "el calendario" Nothing
+        "ConnectionFailure: connect: does not exist"
         `shouldBe`
-          "[live] el calendario: ConnectionFailure: connect: does not exist"
+          "2026-09-11T14:03:22Z [live] el calendario: \
+          \ConnectionFailure: connect: does not exist"
 
     it "el prefijo y el nombre de lo que se pedía van siempre, haya status o no" $
       -- Es lo que permite filtrar el log por área sin adivinar, y saber cuál de los
       -- tres fetch calló sin leer el código.
-      map (T.isPrefixOf "[live] el calendario: ")
-          [ fetchFailure "el calendario" (Just 429) "x"
-          , fetchFailure "el calendario" Nothing "x"
+      map (T.isInfixOf "[live] el calendario: ")
+          [ fetchFailure fetchInstant "el calendario" (Just 429) "x"
+          , fetchFailure fetchInstant "el calendario" Nothing "x"
           ]
         `shouldBe` [True, True]
+
+    it "abre con el instante en la misma forma que la cabecera, sin fracción" $
+      -- Es lo que deja cruzar el log con las respuestas medidas desde fuera: dos
+      -- instrumentos solo se confirman si pueden probar que miraron la misma
+      -- ventana. 'fetchInstant' trae fracción de segundo a propósito.
+      map (T.take 20)
+          [ fetchFailure fetchInstant "las filas" (Just 429) "x"
+          , fetchFailure fetchInstant "el calendario" Nothing "x"
+          ]
+        `shouldBe` ["2026-09-11T14:03:22Z ", "2026-09-11T14:03:22Z "]
+
+    it "la marca del log y la de la cabecera salen de la misma forma" $
+      -- Si divergieran, cruzar los dos instrumentos exigiría convertir, y una
+      -- conversión a mano es justo donde se cuela el error que no se ve releyendo.
+      T.isPrefixOf (isoInstant fetchInstant)
+        (fetchFailure fetchInstant "las filas" (Just 503) "x")
+        `shouldBe` True
 
   describe "freezeClock" $ do
     it "para el reloj sin borrarlo ni tocar nada más de la sesión" $
