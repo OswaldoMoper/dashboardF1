@@ -46,6 +46,10 @@ module Handler.Live.Helper
   , freezeClock
   , openf1MinGap
   , stillRecent
+  , ClockVerdict (..)
+  , openf1ClockPeriod
+  , openf1ClockIdle
+  , clockVerdict
   , advanceClock
   , lapProgress
   , parseRemaining
@@ -718,6 +722,59 @@ stillRecent :: UTCTime -> UTCTime -> Bool
 stillRecent now fetchedAt = elapsed >= 0 && elapsed < openf1MinGap
   where
     elapsed = diffUTCTime now fetchedAt
+
+-- | Cada cuánto baja a OpenF1 el reloj que refresca el directo.
+--
+-- __No es 'openf1MinGap' aunque cubra el mismo hueco__, y confundirlos gastaría de
+-- más: aquél es un mínimo que filtra las preguntas de la página —que llegan cada
+-- 'Common.Shown.liveRefreshSeconds'—, así que con 15 la bajada cae cada 20. Éste es
+-- el intervalo en sí, así que 15 darían 15. Medido el 2026-09-22: a 20 s el gasto
+-- son 18 peticiones por minuto, que es exactamente el de hoy con una pantalla,
+-- contra un presupuesto de 30 que OpenF1 publica en su propio rechazo.
+openf1ClockPeriod :: NominalDiffTime
+openf1ClockPeriod = 20
+
+-- | Cuánto aguanta el reloj sin que nadie pregunte antes de pararse.
+--
+-- __Son dos periodos y no un número propio__: significa «la página dejó de
+-- preguntar», y la página pregunta más a menudo que el periodo, así que dos vueltas
+-- enteras en blanco no se explican por el ritmo de nadie que siga mirando.
+openf1ClockIdle :: NominalDiffTime
+openf1ClockIdle = 2 * openf1ClockPeriod
+
+-- | Por qué el reloj no baja en este tic, o que sí.
+--
+-- __Los motivos van separados y no fundidos en un 'Bool'__, por lo mismo que
+-- 'FeedVerdict': el hilo hace lo mismo con los tres —no bajar—, pero el que no baja
+-- por reposo y el que no baja por haber sesión son sucesos distintos, y un día habrá
+-- que poder contarlos por separado sin reabrir esto.
+data ClockVerdict
+  = ClockAsks      -- ^ Toca bajar: hay quien mira y OpenF1 es quien sirve.
+  | ClockFeedOpen  -- ^ Hay sesión: manda el feed y OpenF1 contestaría @401@.
+  | ClockIdle      -- ^ Nadie ha preguntado en 'openf1ClockIdle'.
+  deriving (Eq, Show)
+
+-- | Si el reloj baja a OpenF1 en este tic, y si no, por qué.
+--
+-- Recibe si la ventana del feed está abierta ('feedWindowOpen') y cuándo preguntó
+-- alguien por última vez a @\/api\/live@; @Nothing@ es «nunca», que es el estado con
+-- el que arranca el proceso.
+--
+-- __La ventana del feed gana al reposo__, y el orden no es arbitrario: con sesión
+-- rodando no se baja ni habiendo quien mire, así que preguntarse por los lectores
+-- ahí sería contestar una pregunta que no decide nada.
+--
+-- __Un instante del futuro cuenta como lector.__ Solo puede salir de un reloj del
+-- sistema que ha retrocedido, y darlo por viejo pararía el reloj con la página
+-- abierta delante — que es el fallo caro. 'stillRecent' resuelve su duda al otro
+-- lado por el mismo criterio: ante la duda, no dejar de servir dato de ahora.
+clockVerdict :: UTCTime -> Bool -> Maybe UTCTime -> ClockVerdict
+clockVerdict now feedOpen lastAsked
+  | feedOpen                  = ClockFeedOpen
+  | maybe True idle lastAsked = ClockIdle
+  | otherwise                 = ClockAsks
+  where
+    idle at = diffUTCTime now at >= openf1ClockIdle
 
 -- | La misma sesión con su reloj puesto al día, para servirla desde lo guardado
 -- __cuando aún vale__.

@@ -121,18 +121,21 @@ import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
                                               SourceHeaderName, fetchedAtText,
                                               withOrigin)
 import           Handler.Live.Context        (LiveResult (..))
-import           Handler.Live.Helper         (FeedVerdict (..), Of1Interval,
+import           Handler.Live.Helper         (ClockVerdict (..),
+                                              FeedVerdict (..), Of1Interval,
                                               Of1Lap, Of1Meeting (..),
                                               Of1Position, Of1Result (..),
                                               Of1Session (..), advanceClock,
                                               assembleRows, classificationGaps,
-                                              classificationTime, derivedState,
-                                              endMargin, feedRows, feedSession,
-                                              feedStatus, feedVerdict,
-                                              feedWindowLead, feedWindowOpen,
-                                              fetchFailure, freezeClock,
-                                              isoInstant, lapProgress,
-                                              meetingNames, openf1MinGap,
+                                              classificationTime, clockVerdict,
+                                              derivedState, endMargin, feedRows,
+                                              feedSession, feedStatus,
+                                              feedVerdict, feedWindowLead,
+                                              feedWindowOpen, fetchFailure,
+                                              freezeClock, isoInstant,
+                                              lapProgress, meetingNames,
+                                              openf1ClockIdle,
+                                              openf1ClockPeriod, openf1MinGap,
                                               openf1Session, parseFeedInstant,
                                               parseRemaining, schedule,
                                               sessionClock, stillRecent, upNext)
@@ -929,6 +932,10 @@ main = hspec $ do
     it "nombra el 429, porque su número no dice qué hacer" $
       -- No es la red ni el servicio caído: es haber preguntado de más. Es el único
       -- status al que se le pone nombre.
+      --
+      -- 'fetchInstant' trae fracción de segundo, que es lo que da getCurrentTime;
+      -- que el esperado no la lleve es lo que afirma que la marca la tira. Va aquí
+      -- y no en un caso propio porque comparar la línea entera ya lo cubre.
       fetchFailure fetchInstant "el nombre de la sesión" (Just 429) "lo que sea"
         `shouldBe`
           "2026-09-11T14:03:22Z [live] el nombre de la sesión: \
@@ -956,22 +963,54 @@ main = hspec $ do
           ]
         `shouldBe` [True, True]
 
-    it "abre con el instante en la misma forma que la cabecera, sin fracción" $
-      -- Es lo que deja cruzar el log con las respuestas medidas desde fuera: dos
-      -- instrumentos solo se confirman si pueden probar que miraron la misma
-      -- ventana. 'fetchInstant' trae fracción de segundo a propósito.
-      map (T.take 20)
-          [ fetchFailure fetchInstant "las filas" (Just 429) "x"
-          , fetchFailure fetchInstant "el calendario" Nothing "x"
-          ]
-        `shouldBe` ["2026-09-11T14:03:22Z ", "2026-09-11T14:03:22Z "]
-
     it "la marca del log y la de la cabecera salen de la misma forma" $
       -- Si divergieran, cruzar los dos instrumentos exigiría convertir, y una
       -- conversión a mano es justo donde se cuela el error que no se ve releyendo.
       T.isPrefixOf (isoInstant fetchInstant)
         (fetchFailure fetchInstant "las filas" (Just 503) "x")
         `shouldBe` True
+
+  describe "clockVerdict" $ do
+    it "en frío no baja: nadie ha preguntado nunca" $
+      -- Es el estado con el que arranca el proceso, y es lo que hace que un backend
+      -- levantado y sin mirar cueste cero, como hoy.
+      clockVerdict raceStartsAt False Nothing `shouldBe` ClockIdle
+
+    it "con lector reciente y sin sesión, baja" $
+      clockVerdict (addUTCTime 10 raceStartsAt) False (Just raceStartsAt)
+        `shouldBe` ClockAsks
+
+    it "la ventana del feed gana al lector: con sesión no se baja ni habiendo quien mire" $
+      -- Ahí OpenF1 contesta 401 y el feed sirve el directo, así que preguntar sería
+      -- gasto en balde.
+      clockVerdict (addUTCTime 1 raceStartsAt) True (Just raceStartsAt)
+        `shouldBe` ClockFeedOpen
+
+    it "la ventana del feed gana también al reposo, y por eso el motivo es el suyo" $
+      -- Los dos dirían «no bajes»; lo que se comprueba es cuál se reporta, porque
+      -- son sucesos distintos y un día habrá que contarlos por separado.
+      clockVerdict (addUTCTime 3600 raceStartsAt) True (Just raceStartsAt)
+        `shouldBe` ClockFeedOpen
+
+    it "el borde del reposo: justo antes baja, justo en el umbral ya no" $
+      -- Dos periodos son 40 s. A los 39,9 todavía hay lector; a los 40 exactos, no.
+      map (\s -> clockVerdict (addUTCTime s raceStartsAt) False (Just raceStartsAt))
+          [0, 20, 39.9, 40, 60]
+        `shouldBe` [ClockAsks, ClockAsks, ClockAsks, ClockIdle, ClockIdle]
+
+    it "un instante del futuro cuenta como lector, no como reposo" $
+      -- Solo sale de un reloj del sistema que ha retrocedido. Darlo por viejo
+      -- pararía el reloj con la página abierta delante, que es el fallo caro.
+      clockVerdict raceStartsAt False (Just (addUTCTime 300 raceStartsAt))
+        `shouldBe` ClockAsks
+
+    it "el umbral de reposo son dos periodos, y sale del periodo" $
+      -- Si alguien cambia el periodo, el umbral tiene que moverse con él: son el
+      -- mismo número dicho dos veces, no dos números que mantener sincronizados.
+      openf1ClockIdle `shouldBe` 2 * openf1ClockPeriod
+
+    prop "con la ventana del feed abierta nunca baja, mire quien mire"
+      neverAsksInsideFeedWindow
 
   describe "freezeClock" $ do
     it "para el reloj sin borrarlo ni tocar nada más de la sesión" $
@@ -2610,6 +2649,22 @@ staysInsideViewBox xs = all inside (deltaPoints xs)
   where
     inside (x, y) =
       x >= 0 && x <= chartWidth && y >= chartPad && y <= chartHeight - chartPad
+
+-- | Con la ventana del feed abierta el veredicto no depende de nada más: ni de
+-- cuándo preguntó el último lector, ni de si preguntó alguna vez.
+--
+-- Es el invariante que protege el presupuesto durante una carrera, que es cuando
+-- OpenF1 contesta @401@ y cada bajada sería gasto en balde. Los casos de ejemplo
+-- fijan dos instantes; esto recorre los pares que a nadie se le ocurriría escribir,
+-- incluidos los que ponen al lector en el futuro.
+neverAsksInsideFeedWindow :: Int -> Maybe Int -> Bool
+neverAsksInsideFeedWindow nowOffset askedOffset =
+  clockVerdict now True lastAsked == ClockFeedOpen
+  where
+    now       = secondsFromRaceStart nowOffset
+    lastAsked = secondsFromRaceStart <$> askedOffset
+
+    secondsFromRaceStart s = addUTCTime (fromIntegral s) raceStartsAt
 
 -- | El invariante que hace usable al imán, y el que no se ve mirando: pegar algo
 -- ya pegado no lo mueve. Sin él, arrastrar dos veces desplazaría el widget sin
