@@ -1070,23 +1070,25 @@ main = hspec $ do
   -- no solo el número: cambiar el hueco o el ritmo de la página tiene que seguir
   -- cabiendo.
   describe "openf1MinGap y stillRecent" $ do
-    it "con la página a su ritmo, OpenF1 se consulta cada 20 s y el gasto cabe" $
-      -- La página solo pregunta en múltiplos de su periodo, así que el freno se
-      -- salta preguntas enteras: la primera que llega con lo guardado ya viejo es la
-      -- que baja. Seis peticiones por bajada.
+    it "con la caja vacía y la fuente rechazando, el gasto cabe en el presupuesto" $
+      -- Es el único camino en que el endpoint sale a la red. Sin freno, cada
+      -- pregunta de la página reintenta: seis por minuto, de 1 a 5 peticiones cada
+      -- una, hasta 30 por minuto con una sola pantalla. Con freno, la página solo
+      -- puede saltarse preguntas enteras, así que los intentos caen cada 20 s.
       let poll      = liveRefreshSeconds
           gap       = ceiling openf1MinGap :: Int
           period    = until (>= gap) (+ poll) poll
-          perMinute = 6 * 60 `div` period
-       in (period, perMinute, perMinute <= 30) `shouldBe` (20, 18, True)
+          tries     = 60 `div` period
+          worstCase = 5 * tries
+       in (period, tries, worstCase <= 30) `shouldBe` (20, 3, True)
 
-    it "lo guardado vale mientras no haya pasado el hueco, y el borde ya no" $
+    it "el intento vale mientras no haya pasado el hueco, y el borde ya no" $
       map (\s -> stillRecent (addUTCTime s raceStartsAt) raceStartsAt) [0, 10, 14.9, 15, 20]
         `shouldBe` [True, True, True, False, False]
 
-    it "un instante del futuro no vale: el reloj que retrocede hace preguntar" $
-      -- Darlo por reciente dejaría de preguntar durante todo lo que el reloj haya
-      -- retrocedido; preguntar es lo que se hacía antes del freno.
+    it "un instante del futuro no vale: el reloj que retrocede deja intentarlo" $
+      -- Darlo por reciente dejaría de intentarlo durante todo lo que el reloj haya
+      -- retrocedido, y la pantalla se quedaría sin su oportunidad de tener dato.
       stillRecent raceStartsAt (addUTCTime 5 raceStartsAt) `shouldBe` False
 
   -- La simétrica de `freezeClock`: aquél para el reloj porque la fuente no contestó;

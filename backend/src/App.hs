@@ -156,6 +156,16 @@ data Env = Env
     -- nadie delante gastaría presupuesto todo el día.
     --
     -- Lo escribe cada petición y lo lee solo el reloj, así que no compite con nadie.
+  , envLiveTried       :: TVar (Maybe UTCTime)
+    -- ^ Cuándo se __intentó__ por última vez llenar la caja vacía, salga bien o mal.
+    --
+    -- __Va aparte de 'envLiveCache' porque son dos hechos distintos__, y confundirlos
+    -- fue el defecto: aquélla guarda el último __acierto__, así que un rechazo de la
+    -- fuente no la movía, el freno que la consultaba se soltaba, y cada petición
+    -- volvía a salir a la red — justo cuando el presupuesto ya estaba agotado.
+    --
+    -- __Solo la mira la bajada en frío__ ('Handler.Live.Context.warmUp'): con la caja
+    -- llena nadie baja desde el endpoint, y el reloj tiene su propio ritmo.
   , envLiveGate        :: MVar ()
     -- ^ El cerrojo de la bajada en frío: con la caja vacía, __solo una petición sale
     -- a la red__ y las demás esperan a que la llene.
@@ -191,6 +201,7 @@ mkEnv cfg = do
   meetingNames <- newTVarIO Map.empty
   driversCache <- newTVarIO Map.empty
   liveAsked <- newTVarIO Nothing
+  liveTried <- newTVarIO Nothing
   liveGate <- newMVar ()
   pure
     Env
@@ -203,6 +214,7 @@ mkEnv cfg = do
       , envFeedWindow      = feedWindow
       , envMeetingNames    = meetingNames
       , envLiveAsked       = liveAsked
+      , envLiveTried       = liveTried
       , envLiveGate        = liveGate
       , envDriversCache    = driversCache
       }

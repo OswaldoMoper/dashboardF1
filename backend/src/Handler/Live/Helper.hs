@@ -697,30 +697,34 @@ freezeClock info = info { siClock = stop <$> siClock info }
   where
     stop clock = clock { scRunning = False }
 
--- | Cuánto tiene que haber pasado desde la última bajada a OpenF1 para volver a
--- hacerla.
+-- | Cuánto tiene que haber pasado desde el último __intento__ de llenar la caja
+-- vacía para volver a intentarlo.
 --
 -- __Lo decide el presupuesto de OpenF1, que lo publica él mismo__: su rechazo dice
--- «Max 30 requests/minute» (medido el 2026-09-17). Cada bajada son seis peticiones, y
--- la página pregunta cada 'Common.Shown.liveRefreshSeconds' —diez—, así que sin
--- freno salían 36 por minuto. Con éste, la página solo puede saltarse preguntas
--- enteras: pregunta a los 0, 10, 20… y a los 10 lo guardado aún vale, así que
--- __OpenF1 se consulta cada 20 s__ y el gasto queda en 18 por minuto. Cualquier valor
--- entre 11 y 20 da lo mismo; por debajo de 10 el freno no frena.
+-- «Max 30 requests/minute» (medido el 2026-09-17). Con la caja vacía y la fuente
+-- rechazando, una página pidiendo cada 'Common.Shown.liveRefreshSeconds' —diez—
+-- reintenta seis veces por minuto, y cada intento fallido cuesta entre una y cinco
+-- peticiones, porque 'Handler.Live.Context.fetchRows' aborta en el primer GET que
+-- revienta. Son de 6 a 30 por minuto (medido el 2026-09-22): el presupuesto entero
+-- en el peor caso, con una sola pantalla.
 --
--- __Solo frena a OpenF1, y por eso no ralentiza el directo__: con una sesión rodando
--- sirve el feed, que es nuestro y no tiene presupuesto, y OpenF1 contesta @401@. Los
--- 20 s solo afectan a la clasificación de una sesión que ya terminó, que no cambia.
+-- __Frena solo la bajada en frío__ ('Handler.Live.Context.warmUp'), que es la única
+-- que sale del endpoint: con la caja llena se sirve lo guardado, y de refrescarla se
+-- encarga el reloj a su propio ritmo ('openf1ClockPeriod'). De reintentar tras un
+-- rechazo se encarga también él, en su siguiente tic.
+--
+-- Cualquier valor entre 11 y 20 da lo mismo frente a una página de diez segundos; por
+-- debajo de 10 no frena nada.
 openf1MinGap :: NominalDiffTime
 openf1MinGap = 15
 
--- | Si lo guardado en un instante aún vale en otro para no volver a preguntar a
--- OpenF1.
+-- | Si un intento hecho en un instante es aún lo bastante reciente en otro como para
+-- no repetirlo.
 --
 -- __Un instante del futuro no vale__, aunque la resta dé menos que el hueco: solo
 -- puede salir de un reloj del sistema que ha retrocedido, y darlo por reciente dejaría
--- de preguntar durante todo lo que retrocedió. Ante la duda se pregunta, que es el
--- comportamiento de antes del freno.
+-- de intentarlo durante todo lo que retrocedió. Ante la duda se intenta, que es lo que
+-- deja a la pantalla una oportunidad de tener dato.
 stillRecent :: UTCTime -> UTCTime -> Bool
 stillRecent now fetchedAt = elapsed >= 0 && elapsed < openf1MinGap
   where

@@ -72,7 +72,8 @@ import           Handler.Live.Helper     (ClockVerdict (..), FeedVerdict (..),
                                           feedWindowOpen, fetchFailure,
                                           freezeClock, meetingNames,
                                           openf1ClockPeriod, openf1Session,
-                                          schedule, servedFromBox, upNext)
+                                          schedule, servedFromBox, stillRecent,
+                                          upNext)
 import qualified Handler.Live.Manager    as Manager
 import qualified Handler.OpenF1.Manager  as OpenF1
 import           Outcome                 (httpStatusOf)
@@ -327,10 +328,29 @@ serveBox (fetchedAt, source, table) = do
 --
 -- __Volver a mirar dentro del cerrojo no es defensa de más, es el punto__: sin esa
 -- segunda mirada el cerrojo solo ordenaría las bajadas en vez de evitarlas.
+--
+-- __Y el freno cuenta desde el intento, no desde el acierto__
+-- ('App.envLiveTried'). Un rechazo de la fuente no llena la caja, así que un freno
+-- anclado a lo guardado se suelta justo cuando el presupuesto ya está agotado y cada
+-- petición vuelve a salir: medido el 2026-09-22, de 6 a 30 peticiones por minuto con
+-- una sola página. Con el instante del intento, una bajada fallida frena igual que
+-- una buena, y de reintentar se encarga el reloj en su siguiente tic.
+--
+-- __No cambia lo que se ve__: un intento fallido ya servía el dato de ejemplo, y
+-- frenado se sirve el mismo. Lo que cambia es cuántas veces se paga por él.
 warmUp :: Env -> IO LiveResult
 warmUp env = withMVar (envLiveGate env) $ \_ -> do
   cached <- readTVarIO (envLiveCache env)
-  maybe (askOpenF1 env) serveBox cached
+  case cached of
+    Just entry -> serveBox entry
+    Nothing    -> do
+      now <- getCurrentTime
+      tried <- readTVarIO (envLiveTried env)
+      if maybe False (stillRecent now) tried
+        then fromCache env
+        else do
+          atomically $ writeTVar (envLiveTried env) (Just now)
+          askOpenF1 env
 
 -- | El reloj del directo: refresca la caja por su cuenta, para que el gasto a OpenF1
 -- deje de depender de cuántas pantallas miren.
