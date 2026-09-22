@@ -518,19 +518,26 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
         el punto existe para decir.
       - **El aviso de lo reciente sí conserva el suyo**, con su hora: el punto se ve sin querer y tiene que
         estar quieto, y el aviso solo sale al apuntarlo.
-- [ ] **La banda conserva el último título bueno, y lo avisa** (2026-09-18). Es el arreglo del síntoma que se
-      dejó a propósito para después del de la causa, para poder comprobar si la causa bastaba sola.
-      - **La causa arreglada NO basta, y está medido** (2026-09-21): 30 respuestas a `/api/live` en cinco
-        minutos fuera de sesión dan 14 bajadas reales, y **una de las catorce llega sin sesión** — un 7,1 %.
-        A unas tres bajadas por minuto eso es un hueco cada cinco minutos, que se ve mirando la pantalla.
-      - **El mecanismo hace que el hueco no sea de un ciclo:** la cache guarda la tabla entera, sesión
-        incluida y a propósito, así que una bajada sin sesión deja lo guardado sin nombre hasta la
-        siguiente buena.
-      - **Sin medir, y decide el diseño del aviso:** cuánto dura ese hueco en la práctica. Si dura lo que
-        predice el mecanismo, el aviso tiene que poder decir de cuándo es el título que conserva; si se
-        recupera al ciclo siguiente, basta con marcarlo.
-      - **Y le falta su aspecto**, que es lo visible y se decide antes de escribir: qué marca lleva el
-        título conservado, qué dice y dónde.
+- [x] **La banda conserva el último título bueno, y lo avisa** (2026-09-18, **hecho el 2026-09-22**). La banda
+      enseña la última sesión que llegó con nombre, y no la de la última respuesta: una respuesta correcta
+      puede no nombrar su sesión, y vaciar la banda por eso es peor que enseñar la anterior diciendo de
+      cuándo es.
+      - **El hueco está medido de punta a punta** (2026-09-22): dura **19 segundos y son ocho respuestas
+        consecutivas** sin sesión, y la causa la publica el propio servicio de datos al rechazar la petición
+        del nombre por ritmo. Deja de ser inferencia.
+      - **Y la frecuencia baja al remedirla:** dos huecos en **121 bajadas reales**, un **1,7 %**. La cifra
+        anterior salía de dividir una observación única por catorce.
+      - **La marca se cuenta y no se suma**, sobre el estado: una marca es un estado previsto por el
+        calendario, dos es una sesión conservada, y cuando concurren manda la segunda. Sin estado las dos
+        salen solas, para que el aviso tenga dónde colgarse. Quién responde al dedo lo decide **si hay
+        aviso** y no qué estado es.
+      - **El aviso dice la edad del nombre, no la del corte**, y la cuenta la página con el mismo tic de un
+        segundo que la cuenta atrás: el instante que viaja en las respuestas del hueco es el de la bajada
+        mala, así que fecharlo con él diría un número exacto sobre el hecho equivocado.
+      - **Falta verlo en pantalla, y no se puede forzar:** el caso conservado aparece en el 1,7 % de las
+        bajadas y dura 19 segundos, así que provocarlo exigiría agotar a propósito el presupuesto de la
+        fuente. Lo cubierto sin mirar son nueve casos de prueba: las cuatro combinaciones de marca, la marca
+        sola sin estado, y las cuatro formas del aviso incluidos el cero y el corte largo.
 - [ ] **Una sola copia del directo, refrescada por el backend** (2026-09-18). Hoy cada pregunta de la página
       puede bajar a la red, y el freno limita cuántas lo hacen; con un reloj propio en el backend el gasto
       dejaría de depender de cuántas pantallas miren, y dos peticiones simultáneas no podrían salir las dos.
