@@ -48,6 +48,9 @@ module Common.Shown
   , pollStep
   , canRequest
   , liveRefreshSeconds
+  , Kept (..)
+  , keptNothing
+  , keepLast
   , Indicator (..)
   , indicatorFrom
   , indicatorClass
@@ -114,6 +117,33 @@ canRequest = not . pollInFlight
 -- @time@; el widget lo convierte con 'fromIntegral'.
 liveRefreshSeconds :: Int
 liveRefreshSeconds = 10
+
+-- | Lo último que se supo de algo que la respuesta a veces no trae, y si es de
+-- ahora o de antes.
+--
+-- __'keptStale' solo puede ser 'True' con algo en 'keptValue'__: lo que nunca llegó
+-- no se conserva, se espera.
+data Kept a = Kept
+  { keptValue :: Maybe a
+  , keptStale :: Bool
+  }
+  deriving stock (Eq, Show)
+
+-- | Antes de la primera llegada buena: nada que enseñar y nada que marcar.
+keptNothing :: Kept a
+keptNothing = Kept {keptValue = Nothing, keptStale = False}
+
+-- | Lo conservado tras una llegada, que puede no traer el dato.
+--
+-- __Una llegada vacía no es un fallo, y por eso no lo decide 'pollStep'__: la
+-- respuesta llegó entera y con su sello, y lo que falta es un campo de dentro.
+-- Quien llama proyecta ese campo y esto decide qué queda en pantalla.
+--
+-- __Es idempotente en los dos casos__, que es lo que permite cablearlo a un
+-- refresco que cambia dos veces por ciclo —al pedir y al llegar— sin filtrar antes.
+keepLast :: Maybe a -> Kept a -> Kept a
+keepLast (Just x) _ = Kept {keptValue = Just x, keptStale = False}
+keepLast Nothing  k = k {keptStale = isJust (keptValue k)}
 
 -- | Lo que el indicador necesita saber para pintarse.
 --

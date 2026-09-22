@@ -68,12 +68,13 @@ import           Common.Origin               (Origin (..), Source (..),
                                               sourcedFrom, sourcedHeaders)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
-import           Common.Shown                (Indicator (..), Poll (..),
-                                              PollEvent (..), canRequest,
-                                              fetchedAtLabel, indicatorClass,
-                                              indicatorFrom, indicatorTooltip,
-                                              liveRefreshSeconds, pollIdle,
-                                              pollStep)
+import           Common.Shown                (Indicator (..), Kept (..),
+                                              Poll (..), PollEvent (..),
+                                              canRequest, fetchedAtLabel,
+                                              indicatorClass, indicatorFrom,
+                                              indicatorTooltip, keepLast,
+                                              keptNothing, liveRefreshSeconds,
+                                              pollIdle, pollStep)
 import           Common.Types                (DriverEntry (..),
                                               DriverStatus (..),
                                               HistoricalStat (..),
@@ -2191,6 +2192,44 @@ main = hspec $ do
     it "una respuesta buena tras un fallo limpia el fallo" $
       pollStep (Arrived (Just (3 :: Int))) (Poll True (Just 1) True)
         `shouldBe` Poll False (Just 3) False
+
+  -- Una respuesta 200 que no nombra su sesión no es un fallo, así que 'pollStep' no
+  -- la conserva: la tabla llega entera y lo que falta es un campo de dentro. Lo que
+  -- aquí se prueba es qué queda en pantalla cuando eso pasa, y que se pueda cablear
+  -- a un refresco que cambia dos veces por ciclo sin filtrar antes.
+  describe "Common.Shown (lo conservado)" $ do
+    it "antes de la primera llegada buena no hay nada que enseñar ni que marcar" $
+      (keptNothing :: Kept Int) `shouldBe` Kept Nothing False
+
+    it "una llegada con dato sustituye y deja de marcar" $
+      keepLast (Just (2 :: Int)) (Kept (Just 1) True) `shouldBe` Kept (Just 2) False
+
+    it "una llegada sin dato conserva lo anterior y lo marca" $
+      keepLast Nothing (Kept (Just (1 :: Int)) False) `shouldBe` Kept (Just 1) True
+
+    it "una llegada sin dato sobre un vacío no marca el vacío" $
+      keepLast Nothing (keptNothing :: Kept Int) `shouldBe` Kept Nothing False
+
+    it "dos llegadas vacías seguidas conservan la última buena, no la penúltima" $
+      let good = keepLast (Just (7 :: Int)) (Kept (Just 1) False)
+       in keepLast Nothing (keepLast Nothing good) `shouldBe` Kept (Just 7) True
+
+    it "repetir la misma llegada con dato no cambia lo conservado" $
+      let once = keepLast (Just (5 :: Int)) keptNothing
+       in keepLast (Just 5) once `shouldBe` once
+
+    it "repetir una llegada sin dato no cambia lo conservado" $
+      let once = keepLast Nothing (Kept (Just (5 :: Int)) False)
+       in keepLast Nothing once `shouldBe` once
+
+    -- El título y el estado de la banda salen del MISMO campo, así que conservar la
+    -- sesión entera cuesta lo mismo que conservar solo el nombre y arregla las dos
+    -- mitades a la vez. Este caso es lo que lo afirma.
+    it "lo conservado arrastra el estado que va dentro de la sesión" $
+      let shown = keepLast (Just (stateOf SessionFinalised)) keptNothing
+          gap   = keepLast Nothing shown
+       in (siState =<< keptValue gap, keptStale gap)
+            `shouldBe` (Just (StateReading SessionFinalised Heard), True)
 
   describe "sourcedFrom" $ do
     it "lee la procedencia y el instante de sus cabeceras, recortando" $
