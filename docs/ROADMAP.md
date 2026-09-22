@@ -538,13 +538,35 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
         bajadas y dura 19 segundos, así que provocarlo exigiría agotar a propósito el presupuesto de la
         fuente. Lo cubierto sin mirar son nueve casos de prueba: las cuatro combinaciones de marca, la marca
         sola sin estado, y las cuatro formas del aviso incluidos el cero y el corte largo.
-- [ ] **Una sola copia del directo, refrescada por el backend** (2026-09-18). Hoy cada pregunta de la página
-      puede bajar a la red, y el freno limita cuántas lo hacen; con un reloj propio en el backend el gasto
-      dejaría de depender de cuántas pantallas miren, y dos peticiones simultáneas no podrían salir las dos.
-      - **Lo construido para el freno no se tira:** el nombre recordado y el sello `recent` siguen valiendo,
-        y el hueco del freno se convertiría en el periodo del reloj.
-      - **Pide su propio diseño antes de código**: si el backend pide aunque nadie mire, qué ve la página
-        antes del primer refresco, y cómo convive con la ventana del feed.
+- [x] **Una sola copia del directo, refrescada por el backend** (2026-09-18, **hecho el 2026-09-22**). El
+      endpoint ya no baja a la red: lee una caja que refresca un reloj propio, así que el gasto lo fija el
+      periodo del reloj y no cuántas pantallas miren.
+      - **El problema estaba medido antes de tocar nada** (2026-09-22): con el endpoint bajando, los intentos
+        por minuto eran **3,10 con una pantalla, 7,01 con dos y 11,55 con tres**, contra un presupuesto de
+        **30 peticiones por minuto** que la fuente publica en su propio rechazo. Crecía casi lineal.
+      - **Y con la misma medición salió un defecto que no estaba en ningún documento:** el freno estaba
+        anclado al último **acierto**, así que un rechazo por ritmo no lo movía, se soltaba, y cada petición
+        volvía a salir — se realimentaba justo cuando el presupuesto ya estaba agotado. En la serie de tres
+        pantallas, **46 de 81 respuestas** eran bajadas fallidas.
+      - **Lo entregado, remedido con el reloj puesto:** **cero** bajadas del endpoint con una, dos y tres
+        pantallas (30, 60 y 90 respuestas), y **cero rechazos** en el log sobre la misma ventana.
+      - **Lo que cuesta el reloj, medido aparte porque es otra pregunta:** 15 huecos entre bajadas dan una
+        mediana de **23 s** y un ritmo de **2,48 bajadas por minuto**, o sea **14,9 peticiones por minuto**,
+        la mitad del presupuesto. El ciclo es «esperar el periodo **más** lo que tarde la bajada», no una
+        bajada cada periodo, y de ahí que salga por debajo de lo presupuestado.
+      - **El reloj se para cuando nadie mira**, para que un backend levantado y sin pantalla delante cueste
+        cero, como costaba antes; se apaga durante una sesión, donde manda el feed y la fuente rechaza; y se
+        reinicia solo dejando línea, porque un hilo de fondo muerto congelaría la caja en silencio.
+      - **La caja vieja se cuenta sola en pantalla:** pasados dos periodos, la respuesta deja de llamarse
+        reciente. Es el mismo aviso que ya salía cuando la fuente no contesta, y cubre los tres caminos que
+        dejan la caja vieja — el reposo, el reloj muerto y el rechazo.
+      - **Contrapartida aceptada a sabiendas** (2026-09-22): una bajada lenta empuja la caja por encima del
+        umbral y el aviso sale unos diez segundos. Medido: **1 de 15 huecos**, o sea el **1,4 % de las
+        respuestas**, y cuando sale dice la verdad. Subir el umbral lo taparía a cambio de que un reloj
+        realmente muerto tardase un minuto en delatarse, que es justo para lo que el aviso existe.
+      - **Lo construido para el freno no se tiró:** el nombre recordado sigue, el sello de lo reciente pasa a
+        ser el de todas las respuestas servidas de la caja, y el hueco del freno quedó como el mínimo entre
+        dos intentos de llenar una caja vacía.
 - [ ] **La página entera en un idioma, con detección** (2026-09-17). Hoy está mezclada: la cabecera de Live
       Timing dice `Pos / Driver / Team / Gap / Interval / Last Lap / Estado` en la misma fila. Medido: **≈48
       cadenas visibles en 5 módulos** de `frontend/` más `common`, y `frontend.cabal` **sin ninguna
