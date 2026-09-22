@@ -105,7 +105,8 @@ import qualified Data.Map.Strict             as Map
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Text                   as T
 import           Data.Time.Calendar          (fromGregorian)
-import           Data.Time.Clock             (UTCTime (..), addUTCTime)
+import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
+                                              addUTCTime)
 import           GHC.TypeLits                (symbolVal)
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
@@ -138,7 +139,8 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               openf1ClockPeriod, openf1MinGap,
                                               openf1Session, parseFeedInstant,
                                               parseRemaining, schedule,
-                                              sessionClock, stillRecent, upNext)
+                                              servedFromBox, sessionClock,
+                                              stillRecent, upNext)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import qualified Handler.Telemetry.Context   as Telemetry
@@ -1011,6 +1013,38 @@ main = hspec $ do
 
     prop "con la ventana del feed abierta nunca baja, mire quien mire"
       neverAsksInsideFeedWindow
+
+  describe "servedFromBox" $ do
+    it "el borde del umbral: hasta los 40 s es reciente, desde ahí ya no" $
+      -- Los 40 s solo se alcanzan con el reloj parado por reposo, muerto, o bajando
+      -- contra un rechazo. Los tres son «no se ha vuelto a saber», y ése es el sello
+      -- que la página ya sabe enseñar.
+      map (fst . servedFromBox' raceStartsAt) [0, 20, 39.9, 40, 600]
+        `shouldBe` [Recent, Recent, Recent, Cached, Cached]
+
+    it "un instante del futuro cae en cached, no en reciente" $
+      -- Solo sale de un reloj del sistema que ha retrocedido, y ahí no se puede
+      -- afirmar que el dato sea de ahora.
+      fst (servedFromBox' raceStartsAt (-300)) `shouldBe` Cached
+
+    it "nunca devuelve fresh, porque aquí nadie ha salido a la red" $
+      -- 'Fresh' afirma una bajada hecha en esta misma petición. Servir desde la caja
+      -- no lo es, por reciente que sea. Se siembran las dos ramas a propósito: con
+      -- solo las recientes, la aserción pasaría con la rama vieja rota.
+      map (fst . servedFromBox' raceStartsAt) [0, 5, 19, 41, 3600]
+        `shouldNotContain` [Fresh]
+
+    it "el sello y el reloj de la sesión salen acordes, y por eso salen juntos" $
+      -- Es lo que justifica devolver los dos de una sola función: separarlos dejaría
+      -- escribir la combinación imposible, un sello que dice «de ahora» sobre un
+      -- reloj parado. A los 12 s el restante baja de 5400 a 5388 y el reloj sigue
+      -- andando; a los 41 se para y el número se queda donde estaba, diciendo cuánto
+      -- quedaba cuando se supo.
+      map (boxClock . servedFromBox' raceStartsAt) [12, 41]
+        `shouldBe`
+          [ (Recent, Just (SessionClock 5388 True))
+          , (Cached, Just (SessionClock 5400 False))
+          ]
 
   describe "freezeClock" $ do
     it "para el reloj sin borrarlo ni tocar nada más de la sesión" $
@@ -3855,6 +3889,18 @@ namedSession sType sName sMeeting =
 -- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
 liveTableFixture :: LiveTable
 liveTableFixture = LiveTable (Just raceSessionFixture) liveRowsFixture NextUnknown
+
+-- | 'servedFromBox' sobre 'liveTableFixture', guardada en el instante dado y servida
+-- tantos segundos después. Lo que varía entre casos es la edad, y es lo único que
+-- queda a la vista.
+servedFromBox' :: UTCTime -> NominalDiffTime -> (Origin, LiveTable)
+servedFromBox' storedAt age =
+  servedFromBox (addUTCTime age storedAt) storedAt liveTableFixture
+
+-- | El sello y el reloj de la sesión de lo servido, que son las dos mitades de la
+-- misma decisión.
+boxClock :: (Origin, LiveTable) -> (Origin, Maybe SessionClock)
+boxClock (origin, table) = (origin, siClock =<< liveSession table)
 
 -- | Lo que sirven los peldaños que no saben de qué sesión hablan — OpenF1 y el
 -- dato de ejemplo. __Es «no se sabe» y no una sesión vacía__, que es la distinción

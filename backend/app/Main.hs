@@ -4,9 +4,11 @@ module Main where
 
 import           App                      (mkEnv)
 import           Config                   (Config (..), loadConfig)
+import           Control.Concurrent       (forkIO)
+import           Control.Monad            (void)
 import qualified Data.Text                as T
 import           Data.Time.Clock          (getCurrentTime)
-import           Handler.Live.Context     (refreshFeedWindow)
+import           Handler.Live.Context     (liveClock, refreshFeedWindow)
 import           Handler.Live.Helper      (isoInstant)
 import           Network.Wai.Handler.Warp (run)
 import           Server                   (app)
@@ -15,11 +17,15 @@ import           Server                   (app)
 -- sesión por finalizada. No puede tumbar el arranque: si OpenF1 no contesta —lo que
 -- hace durante una sesión— el proceso levanta igual y pregunta al feed siempre,
 -- hasta que un refresco posterior salga bien.
+--
+-- El reloj del directo arranca en reposo y no baja hasta que alguien pregunte, así
+-- que un backend levantado y sin nadie delante no gasta presupuesto.
 main :: IO ()
 main = do
   cfg <- loadConfig
   env <- mkEnv cfg
   refreshFeedWindow env
+  void (forkIO (liveClock env))
   now <- getCurrentTime
   putStrLn $
     T.unpack (isoInstant now)

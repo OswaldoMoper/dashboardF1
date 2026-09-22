@@ -49,7 +49,9 @@ module Handler.Live.Helper
   , ClockVerdict (..)
   , openf1ClockPeriod
   , openf1ClockIdle
+  , openf1BoxStale
   , clockVerdict
+  , servedFromBox
   , advanceClock
   , lapProgress
   , parseRemaining
@@ -62,6 +64,7 @@ module Handler.Live.Helper
   ) where
 
 import           App                   (ScheduledSession (..))
+import           Common.Origin         (Origin (..))
 import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         LiveTable (..), LiveTimingRow (..),
                                         SessionClock (..), SessionInfo (..),
@@ -775,6 +778,43 @@ clockVerdict now feedOpen lastAsked
   | otherwise                 = ClockAsks
   where
     idle at = diffUTCTime now at >= openf1ClockIdle
+
+-- | Cuánto puede tener lo guardado antes de que la respuesta deje de llamarlo
+-- reciente.
+--
+-- __Son dos periodos por margen, no por significado__: con el reloj vivo la caja no
+-- pasa de uno, así que un umbral de un periodo saltaría en el borde de lo normal y el
+-- sello parpadearía sin que pasara nada malo. A los dos, lo que salta es que algo va
+-- mal de verdad — el reloj parado por reposo, muerto, o bajando contra un rechazo.
+--
+-- Coincide en número con 'openf1ClockIdle' y no en sentido: aquél cuenta periodos sin
+-- __lector__ y éste periodos sin __refresco__.
+openf1BoxStale :: NominalDiffTime
+openf1BoxStale = 2 * openf1ClockPeriod
+
+-- | Lo guardado listo para servir: qué sello le toca por su edad, y la tabla con el
+-- reloj de la sesión acorde con ese sello.
+--
+-- __El sello y el reloj son la misma decisión y por eso salen juntos.__ 'Recent'
+-- significa que nadie ha tenido que preguntar, así que el restante se puede
+-- __calcular__ ('advanceClock'); 'Cached' significa que la fuente no está
+-- contestando, y entonces el número es de antes y el reloj se para ('freezeClock').
+-- Separarlos dejaría escribir la combinación imposible: un sello que dice «de ahora»
+-- sobre un reloj parado.
+--
+-- __Un instante del futuro cae en 'Cached'__. Solo sale de un reloj del sistema que
+-- ha retrocedido, y ahí no se puede afirmar que el dato sea reciente: lo honesto es
+-- el sello que dice que no se ha vuelto a saber.
+--
+-- __Nunca devuelve 'Fresh'__, y no es un olvido: 'Fresh' afirma una bajada hecha en
+-- esta misma petición, y aquí no ha salido nadie a la red.
+servedFromBox :: UTCTime -> UTCTime -> LiveTable -> (Origin, LiveTable)
+servedFromBox now fetchedAt table
+  | age >= 0 && age < openf1BoxStale = (Recent, withSession (advanceClock age))
+  | otherwise                        = (Cached, withSession freezeClock)
+  where
+    age = diffUTCTime now fetchedAt
+    withSession f = table { liveSession = f <$> liveSession table }
 
 -- | La misma sesión con su reloj puesto al día, para servirla desde lo guardado
 -- __cuando aún vale__.

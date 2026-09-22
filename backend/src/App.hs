@@ -10,16 +10,17 @@
 -- externos aterrizan aquí conforme lleguen.
 module App where
 
-import           Common.Origin          (Source)
-import           Common.Types           (DriverEntry, HistoricalStat,
-                                         LapComparison, LiveTable,
-                                         TelemetryPoint, TyreStint)
-import           Config                 (Config)
-import           Control.Concurrent.STM (TVar, newTVarIO)
-import           Data.Map.Strict        (Map)
-import qualified Data.Map.Strict        as Map
-import           Data.Text              (Text)
-import           Data.Time.Clock        (UTCTime)
+import           Common.Origin           (Source)
+import           Common.Types            (DriverEntry, HistoricalStat,
+                                          LapComparison, LiveTable,
+                                          TelemetryPoint, TyreStint)
+import           Config                  (Config)
+import           Control.Concurrent.MVar (MVar, newMVar)
+import           Control.Concurrent.STM  (TVar, newTVarIO)
+import           Data.Map.Strict         (Map)
+import qualified Data.Map.Strict         as Map
+import           Data.Text               (Text)
+import           Data.Time.Clock         (UTCTime)
 
 -- | Una sesión del calendario, con lo que el backend necesita de ella.
 --
@@ -66,9 +67,17 @@ data Env = Env
   { envConfig          :: Config
   , envLiveCache       :: TVar (Maybe (UTCTime, Source, LiveTable))
     -- ^ Última respuesta buena de @/api/live@, __el instante en que llegó y de
-    -- qué fuente salió__ (respaldo si ninguna de las dos contesta, y freno: si aún
-    -- es reciente, no se vuelve a bajar a OpenF1 —
-    -- 'Handler.Live.Context.fromOpenF1'—).
+    -- qué fuente salió__.
+    --
+    -- __Es lo que sirve el endpoint, no un respaldo__: desde que la refresca un reloj
+    -- propio ('Handler.Live.Context.liveClock'), quien pregunta la lee y no baja, y
+    -- por eso el gasto a OpenF1 dejó de depender de cuántas pantallas miren. Sale a
+    -- la red solo con la caja vacía.
+    --
+    -- __Su edad decide el sello__ ('Handler.Live.Helper.servedFromBox'), y ahí es
+    -- donde el reposo, un reloj muerto y un rechazo de la fuente se cuentan solos:
+    -- los tres dejan la caja vieja, y vieja se sirve con el sello que dice que no se
+    -- ha vuelto a saber.
     --
     -- El instante es lo que deja a 'Handler.Live' emitir @X-Data-Fetched-At@
     -- cuando sirve desde aquí ('Common.Origin.Cached'). Va en la misma caja y no
@@ -137,6 +146,26 @@ data Env = Env
     --
     -- __Un nombre en blanco no entra__, o el fallo se volvería permanente: no
     -- saberlo hoy no es saber que no lo tiene.
+  , envLiveAsked       :: TVar (Maybe UTCTime)
+    -- ^ Cuándo preguntó alguien por última vez a @/api\/live@. @Nothing@ es «nunca»,
+    -- y es el estado con el que arranca el proceso.
+    --
+    -- __No es una cache ni un freno sino la señal de que hay quien mira__, y de eso
+    -- depende que el reloj del directo baje o se pare
+    -- ('Handler.Live.Helper.clockVerdict'). Sin ella, un backend levantado y sin
+    -- nadie delante gastaría presupuesto todo el día.
+    --
+    -- Lo escribe cada petición y lo lee solo el reloj, así que no compite con nadie.
+  , envLiveGate        :: MVar ()
+    -- ^ El cerrojo de la bajada en frío: con la caja vacía, __solo una petición sale
+    -- a la red__ y las demás esperan a que la llene.
+    --
+    -- Es lo que impide que dos peticiones que llegan a la vez paguen las dos, que era
+    -- lo que quedaba vivo del defecto de las dos llamadas simultáneas. Quien espera
+    -- vuelve a mirar la caja al entrar: si otro la llenó, la sirve en vez de bajar.
+    --
+    -- __Solo cubre el camino en frío.__ Con la caja llena nadie baja desde el
+    -- endpoint, así que no hay nada que serializar.
   , envDriversCache    :: TVar (Map Text [DriverEntry])
     -- ^ Última parrilla buena de @/api/drivers@ __por sesión__ (respaldo si el
     -- microservicio FastF1 no responde).
@@ -161,6 +190,8 @@ mkEnv cfg = do
   feedWindow <- newTVarIO (FeedWindow [] Nothing)
   meetingNames <- newTVarIO Map.empty
   driversCache <- newTVarIO Map.empty
+  liveAsked <- newTVarIO Nothing
+  liveGate <- newMVar ()
   pure
     Env
       { envConfig          = cfg
@@ -171,5 +202,7 @@ mkEnv cfg = do
       , envComparisonCache = comparisonCache
       , envFeedWindow      = feedWindow
       , envMeetingNames    = meetingNames
+      , envLiveAsked       = liveAsked
+      , envLiveGate        = liveGate
       , envDriversCache    = driversCache
       }

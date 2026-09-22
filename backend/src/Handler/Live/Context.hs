@@ -31,48 +31,52 @@
 -- sesión por finalizada, dice cuándo se cierra. Con la ventana cerrada la escalera
 -- arranca directamente en OpenF1 y el refresco deja de pagar la foto.
 --
--- __Y a OpenF1 no se baja dos veces seguidas__ ('fromOpenF1'): acepta 30 peticiones
--- por minuto, y si lo guardado aún es reciente se sirve eso. El feed no tiene freno,
--- porque es nuestro.
+-- __Y a OpenF1 no baja quien pregunta, sino un reloj propio__ ('liveClock'): acepta
+-- 30 peticiones por minuto, y con el endpoint bajando el gasto crecía con cada
+-- pantalla. El endpoint solo lee la caja, y únicamente sale a la red cuando está
+-- vacía. El feed no tiene reloj, porque es nuestro y no tiene presupuesto.
 --
 -- Cada peldaño devuelve además __de dónde salió el dato__ —el peldaño y la fuente,
 -- que son dos preguntas ('Common.Origin')— y, lo que sale de lo guardado, __cuándo
 -- llegó__.
 module Handler.Live.Context where
 
-import           App                    (Env (..), FeedWindow (..),
-                                         ScheduledSession (..))
-import           Common.Origin          (Origin (..), Source (..))
-import           Common.Types           (DriverStatus (..), LiveTable (..),
-                                         LiveTimingRow (..), SessionInfo,
-                                         UpNext (..))
-import           Config                 (Config)
-import           Control.Concurrent.STM (atomically, modifyTVar', readTVarIO,
-                                         writeTVar)
-import           Control.Exception      (SomeException, displayException, try)
-import           Data.List              (nub)
-import           Data.Map.Strict        (Map)
-import qualified Data.Map.Strict        as Map
-import           Data.Maybe             (listToMaybe)
-import           Data.Text              (Text)
-import qualified Data.Text              as T
-import qualified Data.Text.IO           as TIO
-import           Data.Time.Calendar     (toGregorian)
-import           Data.Time.Clock        (UTCTime, diffUTCTime, getCurrentTime,
-                                         utctDay)
-import           Handler.Feed.Helper    (FeedLive (..))
-import qualified Handler.Feed.Manager   as Feed
-import           Handler.Live.Helper    (FeedVerdict (..), Of1Interval,
-                                         Of1Meeting (..), Of1Session (..),
-                                         advanceClock, assembleRows,
-                                         feedVerdict, feedWindowOpen,
-                                         fetchFailure, freezeClock,
-                                         meetingNames, openf1Session, schedule,
-                                         stillRecent, upNext)
-import qualified Handler.Live.Manager   as Manager
-import qualified Handler.OpenF1.Manager as OpenF1
-import           Outcome                (httpStatusOf)
-import           System.IO              (stderr)
+import           App                     (Env (..), FeedWindow (..),
+                                          ScheduledSession (..))
+import           Common.Origin           (Origin (..), Source (..))
+import           Common.Types            (DriverStatus (..), LiveTable (..),
+                                          LiveTimingRow (..), SessionInfo,
+                                          UpNext (..))
+import           Config                  (Config)
+import           Control.Concurrent      (threadDelay)
+import           Control.Concurrent.MVar (withMVar)
+import           Control.Concurrent.STM  (atomically, modifyTVar', readTVarIO,
+                                          writeTVar)
+import           Control.Exception       (SomeException, displayException, try)
+import           Control.Monad           (forever, void)
+import           Data.List               (nub)
+import           Data.Map.Strict         (Map)
+import qualified Data.Map.Strict         as Map
+import           Data.Maybe              (listToMaybe)
+import           Data.Text               (Text)
+import qualified Data.Text               as T
+import qualified Data.Text.IO            as TIO
+import           Data.Time.Calendar      (toGregorian)
+import           Data.Time.Clock         (UTCTime, getCurrentTime, utctDay)
+import           Handler.Feed.Helper     (FeedLive (..))
+import qualified Handler.Feed.Manager    as Feed
+import           Handler.Live.Helper     (ClockVerdict (..), FeedVerdict (..),
+                                          Of1Interval, Of1Meeting (..),
+                                          Of1Session (..), assembleRows,
+                                          clockVerdict, feedVerdict,
+                                          feedWindowOpen, fetchFailure,
+                                          freezeClock, meetingNames,
+                                          openf1ClockPeriod, openf1Session,
+                                          schedule, servedFromBox, upNext)
+import qualified Handler.Live.Manager    as Manager
+import qualified Handler.OpenF1.Manager  as OpenF1
+import           Outcome                 (httpStatusOf)
+import           System.IO               (stderr)
 
 -- | La tabla de live timing con todo lo que hace falta para servirla: qué peldaño
 -- la produjo, de qué fuente salió y, solo cuando sale de la cache, cuándo llegó.
@@ -122,6 +126,7 @@ data LiveResult = LiveResult
 getLiveTiming :: Env -> IO LiveResult
 getLiveTiming env = do
   now <- getCurrentTime
+  atomically $ writeTVar (envLiveAsked env) (Just now)
   window <- readTVarIO (envFeedWindow env)
   result <-
     if feedWindowOpen now (map ssStart (fwSessions window)) (fwFinalisedAt window)
@@ -278,38 +283,100 @@ fromFeed env live = do
     FeedEmpty        -> fromOpenF1 env
     FeedFinalised    -> noteFinalised env now >> fromOpenF1 env
 
--- | El peldaño de OpenF1, __con freno__: si lo guardado aún vale, se sirve sin salir
--- a la red; si no, se pregunta ('askOpenF1').
+-- | El peldaño de OpenF1: __lee la caja y no baja__, salvo que esté vacía.
 --
--- __Existe porque OpenF1 acepta 30 peticiones por minuto__ (lo dice en su propio
--- rechazo, medido el 2026-09-17) y la página, sin él, gastaba 36. Cuánto tiene que
--- valer lo guardado lo decide 'Handler.Live.Helper.openf1MinGap', con la cuenta
--- escrita.
+-- __Quien baja es el reloj__ ('liveClock'), y ahí está el motivo de todo esto: OpenF1
+-- acepta 30 peticiones por minuto —lo dice en su propio rechazo— y con el endpoint
+-- bajando el gasto crecía con cada pantalla, hasta 11,55 intentos por minuto con
+-- tres (medido el 2026-09-22). Con el reloj, el gasto lo fija
+-- 'Handler.Live.Helper.openf1ClockPeriod' y nadie más lo mueve.
 --
--- __Frena solo aquí, y no en toda la escalera__: el feed es nuestro microservicio y no
--- tiene presupuesto, así que el directo sigue refrescándose al ritmo de la página. A
--- OpenF1 solo se baja sin sesión rodando.
+-- __Toca solo a OpenF1, y no a toda la escalera__: el feed es nuestro microservicio y
+-- no tiene presupuesto, así que el directo sigue refrescándose al ritmo de la página.
+-- A OpenF1 solo se baja sin sesión rodando.
 --
--- __Lo que se sirve lleva su propio sello__, 'Common.Origin.Recent', y no el de la
--- cache: el aviso de ésta dice que la fuente no responde, y aquí nada ha fallado. Va
--- con su fuente y su instante, como lo guardado, y con el reloj de la sesión __puesto
--- al día__ ('Handler.Live.Helper.advanceClock') en vez de parado: se sabe cuánto ha
--- pasado.
+-- __El sello lo pone la edad de lo guardado__, no este peldaño
+-- ('Handler.Live.Helper.servedFromBox'): 'Common.Origin.Recent' mientras el reloj lo
+-- mantenga al día, 'Common.Origin.Cached' cuando se pasa de
+-- 'Handler.Live.Helper.openf1BoxStale', que es lo que deja al reposo, al reloj muerto
+-- y al rechazo de la fuente contarse solos en pantalla.
 --
 -- __Vale lo guardado venga de la fuente que venga__: si lo último bueno fue del feed,
 -- es mejor dato que el que traería OpenF1, y la fuente viaja con él.
 fromOpenF1 :: Env -> IO LiveResult
 fromOpenF1 env = do
-  now <- getCurrentTime
   cached <- readTVarIO (envLiveCache env)
-  case cached of
-    Just (fetchedAt, source, table)
-      | stillRecent now fetchedAt ->
-          pure (LiveResult Recent (Just source) (Just fetchedAt) (caughtUp now fetchedAt table))
-    _ -> askOpenF1 env
+  maybe (warmUp env) serveBox cached
+
+-- | Lo guardado, con el sello y el reloj que le toquen por su edad.
+--
+-- Qué sello y qué reloj no se decide aquí: lo decide
+-- 'Handler.Live.Helper.servedFromBox', que es pura y tiene sus casos. Esto solo lee
+-- el reloj del sistema y arma la respuesta.
+serveBox :: (UTCTime, Source, LiveTable) -> IO LiveResult
+serveBox (fetchedAt, source, table) = do
+  now <- getCurrentTime
+  let (origin, served) = servedFromBox now fetchedAt table
+  pure (LiveResult origin (Just source) (Just fetchedAt) served)
+
+-- | La única bajada que sigue saliendo del endpoint: la de la caja vacía.
+--
+-- __Se entra de uno en uno__ ('App.envLiveGate'). Dos peticiones que lleguen a la vez
+-- con la caja vacía salían las dos y la segunda caía al respaldo; ahora la segunda
+-- espera y, al entrar, vuelve a mirar: si la primera la llenó, la sirve sin pagar.
+--
+-- __Volver a mirar dentro del cerrojo no es defensa de más, es el punto__: sin esa
+-- segunda mirada el cerrojo solo ordenaría las bajadas en vez de evitarlas.
+warmUp :: Env -> IO LiveResult
+warmUp env = withMVar (envLiveGate env) $ \_ -> do
+  cached <- readTVarIO (envLiveCache env)
+  maybe (askOpenF1 env) serveBox cached
+
+-- | El reloj del directo: refresca la caja por su cuenta, para que el gasto a OpenF1
+-- deje de depender de cuántas pantallas miren.
+--
+-- __Es lo que convierte un gasto proporcional a los clientes en uno constante.__
+-- Medido el 2026-09-22 con el endpoint bajando: 3,10 intentos por minuto con una
+-- pantalla, 7,01 con dos y 11,55 con tres, contra un presupuesto de 30 peticiones
+-- por minuto que OpenF1 publica en su propio rechazo. Con el reloj, el número es el
+-- del periodo y ya no lo mueve nadie más.
+--
+-- __Qué hacer en cada tic no se decide aquí__: lo decide
+-- 'Handler.Live.Helper.clockVerdict', que es pura y tiene sus casos. Esto pone los
+-- efectos — el respiro, leer las dos cajas y bajar.
+--
+-- __El respiro va antes del primer tic y fuera del @try@__, y las dos cosas a
+-- propósito. Antes, porque al arrancar la caja está vacía y llenarla es del endpoint
+-- (la primera petición, con su cerrojo); fuera, porque un tic que revienta tiene que
+-- esperar igual que uno que sale bien, o un fallo permanente daría vueltas sin freno.
+--
+-- __Un tic que sale bien no deja línea__: serían tres por minuto para siempre. Del
+-- fallo de la bajada ya se encarga 'askOpenF1' vía 'noteFailure'; lo que esto añade
+-- es la línea del tic que revienta entero, que sin ella mataría el hilo en silencio y
+-- dejaría la caja congelada sin que nada lo dijera.
+liveClock :: Env -> IO ()
+liveClock env = forever $ do
+  threadDelay tickDelay
+  outcome <- try (tick env) :: IO (Either SomeException ())
+  either (noteFailure "el reloj del directo") pure outcome
   where
-    caughtUp now fetchedAt table =
-      table { liveSession = advanceClock (diffUTCTime now fetchedAt) <$> liveSession table }
+    tickDelay = round (realToFrac openf1ClockPeriod * 1e6 :: Double)
+
+-- | Un tic: mirar si toca bajar y, si toca, bajar.
+--
+-- El resultado de la bajada se tira porque lo que importa es su efecto — dejar la
+-- caja al día—, y de servirla se encarga quien pregunte después.
+tick :: Env -> IO ()
+tick env = do
+  now <- getCurrentTime
+  window <- readTVarIO (envFeedWindow env)
+  asked <- readTVarIO (envLiveAsked env)
+  let feedOpen =
+        feedWindowOpen now (map ssStart (fwSessions window)) (fwFinalisedAt window)
+  case clockVerdict now feedOpen asked of
+    ClockAsks     -> void (askOpenF1 env)
+    ClockFeedOpen -> pure ()
+    ClockIdle     -> pure ()
 
 -- | La bajada a OpenF1: los seis GET y el ensamblado, con la cache detrás.
 --
