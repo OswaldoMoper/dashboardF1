@@ -28,19 +28,20 @@ module Pages.Dashboard where
 
 import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
-import           Common.Shown       (Poll (..))
+import           Common.Shown       (Kept (..), Poll (..), keepLast,
+                                     keptNothing)
 import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
-                                     StateBasis (..), StateReading (..),
+                                     SessionInfo (..), StateReading (..),
                                      UpNext (..), WidgetConfig (..),
-                                     WidgetId (..), WidgetType (..),
-                                     derivedNote, noParams, sessionTitle,
-                                     stateLabel, tickDown, upNextLabel)
+                                     WidgetId (..), WidgetType (..), bandNote,
+                                     bandStateLabel, isDerived, noParams,
+                                     sessionTitle, tickDown, upNextLabel)
+import           Data.Maybe         (isJust)
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
 import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
-import           Widgets.LiveTiming (livePoll, liveTimingWidget, sessionOf,
-                                     stateOf)
+import           Widgets.LiveTiming (livePoll, liveTimingWidget, sessionOf)
 import           Widgets.Telemetry  (telemetryWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
@@ -141,20 +142,41 @@ dashboardHeader openDyn =
 -- es por eso: la clase del contenedor depende de un 'Event' que nace dentro de él.
 -- El estado __no sobrevive a recargar__; recordarlo llega con los layouts
 -- guardables y no antes.
+--
+-- __La sesión que enseña no es la de la última respuesta, sino la última que vino
+-- con nombre__ ('Common.Shown.keepLast'): una respuesta @200@ puede llegar sin
+-- nombrar su sesión —medido el 2026-09-22: un @429@ al pedirlo, y ocho respuestas
+-- seguidas sin él— y vaciar la banda por eso es peor que enseñar la anterior
+-- diciendo de cuándo es.
+--
+-- __Un tic de un segundo para los dos relojes de la banda__, y no uno cada uno: la
+-- cuenta atrás y la edad de lo conservado bajan y suben al mismo ritmo, así que
+-- compartirlo evita que se desincronicen entre sí.
 sessionBand :: MonadWidget t m
             => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> m ()
 sessionBand openDyn poll = mdo
-  title   <- holdUniqDyn (maybe "" sessionTitle . sessionOf <$> poll)
-  reading <- holdUniqDyn (stateOf <$> poll)
-  next    <- countdown (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
+  tick    <- tickLossyFromPostBuildTime 1
+  let arrived = sessionOf <$> ffilter landed (updated poll)
+  kept    <- foldDyn keepLast keptNothing arrived
+  age     <- sessionAge tick arrived
+  title   <- holdUniqDyn (maybe "" sessionTitle . keptValue <$> kept)
+  reading <- holdUniqDyn ((\k -> siState =<< keptValue k) <$> kept)
+  next    <- countdown tick (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
   asCard  <- toggle True lookClick
   lookClick <- elDynClass "div" (bandClass <$> openDyn <*> asCard) $ do
     dynText title
-    sessionState reading
+    sessionState reading (keptStale <$> kept) age
     elClass "span" "session-band__next" $ dynText (upNextLabel <$> next)
     lookSwitch asCard
   pure ()
   where
+    -- Qué cuenta como una respuesta que llegó con algo dentro, y son dos descartes.
+    -- __El envío no cuenta__: el estado del refresco cambia dos veces por ciclo y
+    -- solo la segunda trae respuesta. __Y el fallo tampoco__: de él ya se encarga
+    -- 'Common.Shown.pollStep' conservando la tabla, y tratarlo como una llegada
+    -- pondría la edad a cero afirmando que el nombre es de ahora.
+    landed p = not (pollInFlight p) && not (pollLastFailed p)
+
     bandClass open card =
       T.unwords $
         ["session-band", lookClass card]
@@ -176,37 +198,62 @@ sessionBand openDyn poll = mdo
       | card      = "Ver como barra"
       | otherwise = "Ver como tarjeta"
 
--- | En qué punto está la sesión, con la marca de lo deducido y su aviso.
+-- | En qué punto está la sesión, con la marca que la califica y su aviso.
 --
 -- __Todo el DOM se monta una vez y solo cambian clases y texto__, sin 'dyn_'. Es
 -- deliberado: el aviso guarda si está abierto, y re-montar lo cerraría cada vez que
 -- cambiara el estado. De paso es lo único de Reflex que se puede escribir sin verlo
 -- compilar y seguir estando seguro de lo que hace.
 --
--- __El botón es la etiqueta entera y no solo el asterisco.__ Un carácter es un
+-- __El botón es la etiqueta entera y no solo los asteriscos.__ Un carácter es un
 -- blanco de un par de milímetros en un teléfono, que es justo donde el aviso solo
 -- puede abrirse pulsando.
 --
--- __Sin estado no hay elemento con texto__, pero el hueco se monta igual: la banda
--- tiene alto fijo y el lienzo lo descuenta, así que lo que aparece y desaparece
--- mueve las tarjetas.
-sessionState :: MonadWidget t m => Dynamic t (Maybe StateReading) -> m ()
-sessionState reading = do
+-- __Sin estado no hay palabra, pero el hueco se monta igual__: la banda tiene alto
+-- fijo y el lienzo lo descuenta, así que lo que aparece y desaparece mueve las
+-- tarjetas. Sobre una sesión conservada sin estado, los dos asteriscos salen solos
+-- y son el ancla del aviso.
+--
+-- __Quién responde al dedo lo decide si hay aviso y no qué estado es__: con dos
+-- marcas posibles, preguntar por una de ellas dejaría la otra inerte.
+sessionState :: MonadWidget t m
+             => Dynamic t (Maybe StateReading)
+             -> Dynamic t Bool
+             -> Dynamic t Int
+             -> m ()
+sessionState reading stale age = do
+  note <- holdUniqDyn (bandNote <$> ageWhenStale <*> (isDerived <$> reading))
   (markEl, _) <-
-    elDynClass' "button" (stateClass <$> reading) $
-      dynText (maybe "" stateLabel <$> reading)
+    elDynClass' "button" (stateClass <$> note) $
+      dynText (bandStateLabel <$> stale <*> reading)
   noteOpen <- toggle False (domEvent Click markEl)
-  elDynClass "span" (noteClass <$> noteOpen <*> reading) $ text derivedNote
+  elDynClass "span" (noteClass <$> noteOpen <*> note) $ dynText note
   where
-    stateClass r = T.unwords $
-      ["session-band__state"] <> ["session-band__state--derived" | isDerived r]
+    -- La edad solo se dice de lo conservado: sobre lo que acaba de llegar sería
+    -- cierta y no significaría nada.
+    ageWhenStale = (\s n -> if s then Just n else Nothing) <$> stale <*> age
 
-    -- El aviso solo puede estar abierto sobre un estado deducido: sobre uno oído no
-    -- hay nada que aclarar, y el botón queda inerte desde la hoja.
-    noteClass open r = T.unwords $
-      ["session-band__note"] <> ["session-band__note--open" | open && isDerived r]
+    stateClass n = T.unwords $
+      ["session-band__state"] <> ["session-band__state--noted" | hasNote n]
 
-    isDerived = maybe False ((== Derived) . srBasis)
+    noteClass open n = T.unwords $
+      ["session-band__note"] <> ["session-band__note--open" | open && hasNote n]
+
+    hasNote = not . T.null
+
+-- | Cuántos segundos hace que llegó una respuesta que nombraba su sesión.
+--
+-- __Es la edad del nombre que se está leyendo, no la del corte__: se pone a cero
+-- con cada llegada que trae sesión, así que en régimen normal oscila entre cero y
+-- el periodo de la página, y durante un hueco sigue subiendo desde ahí.
+--
+-- __Una llegada gana al tic si caen en el mismo frame__, por el mismo criterio que
+-- 'countdown': lo que acaba de llegar manda sobre lo que el navegador contó.
+sessionAge :: MonadWidget t m
+           => Event t TickInfo -> Event t (Maybe SessionInfo) -> m (Dynamic t Int)
+sessionAge tick arrived =
+  foldDyn ($) 0 $
+    leftmost [const 0 <$ ffilter isJust arrived, (+ 1) <$ tick]
 
 -- | La cuenta atrás que llega en la respuesta, descontada en el navegador.
 --
@@ -227,10 +274,13 @@ sessionState reading = do
 -- __Una respuesta gana al tic si caen en el mismo frame__ ('leftmost' con el valor
 -- servido delante): lo que el backend resolvió manda sobre lo que el navegador
 -- descontó.
-countdown :: MonadWidget t m => Dynamic t UpNext -> m (Dynamic t UpNext)
-countdown served = do
+--
+-- __El tic entra por argumento y no se crea aquí__: es el mismo que cuenta la edad
+-- de lo conservado, y dos relojes de un segundo se separarían con el tiempo.
+countdown :: MonadWidget t m
+          => Event t TickInfo -> Dynamic t UpNext -> m (Dynamic t UpNext)
+countdown tick served = do
   fresh <- holdUniqDyn served
-  tick  <- tickLossyFromPostBuildTime 1
   foldDyn ($) NextUnknown $
     leftmost [const <$> updated fresh, tickDown <$ tick]
 

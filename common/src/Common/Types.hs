@@ -4,6 +4,7 @@ module Common.Types where
 
 import           Common.Format (formatCountdown)
 import           Data.Aeson    (FromJSON (..), ToJSON (..), withText)
+import           Data.Maybe    (catMaybes)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           GHC.Generics  (Generic)
@@ -216,19 +217,44 @@ data StateReading = StateReading
 instance ToJSON StateReading
 instance FromJSON StateReading
 
--- | Lo que se lee de un estado, con la marca de lo deducido pegada detrás.
+-- | Lo que se lee en el sitio del estado: la palabra, si se sabe, con su marca.
 --
--- __El asterisco va solo en lo deducido__ y es lo único que distingue en pantalla
--- un estado que la fuente dijo de uno que salió de una cuenta nuestra. Lo que
--- significa no cabe en un carácter: lo dice el aviso que abre al pulsarlo.
+-- __La marca se cuenta y no se suma__: un asterisco es un estado deducido y dos es
+-- una sesión conservada, y cuando concurren manda la segunda. Lo que significa cada
+-- una no cabe en un carácter: lo dice 'bandNote'.
 --
--- __Lo desconocido no lleva marca__ aunque sea una palabra rara: llegó de la
--- fuente, así que es tan oído como los otros tres.
-stateLabel :: StateReading -> Text
-stateLabel r = sessionStateWord (srState r) <> mark (srBasis r)
+-- __Sin palabra la marca sale sola__, para que el aviso siempre tenga dónde
+-- colgarse: una sesión conservada puede no traer estado.
+--
+-- __Lo desconocido no lleva marca de deducido__ aunque sea una palabra rara: llegó
+-- de la fuente, así que es tan oído como los otros tres.
+bandStateLabel :: Bool -> Maybe StateReading -> Text
+bandStateLabel kept reading = word <> mark
   where
-    mark Heard   = ""
-    mark Derived = "*"
+    word = maybe "" (sessionStateWord . srState) reading
+    mark
+      | kept                = "**"
+      | isDerived reading   = "*"
+      | otherwise           = ""
+
+-- | Qué aclara la marca. __Cadena vacía cuando no hay nada que aclarar__, y eso es
+-- lo que deja el botón inerte.
+--
+-- Recibe la edad en segundos cuando lo que se enseña es conservado, y si el estado
+-- salió del calendario. __Los dos hechos se componen__ porque con dos asteriscos el
+-- de lo deducido deja de verse, y esto es el único sitio donde puede decirse.
+bandNote :: Maybe Int -> Bool -> Text
+bandNote age derived =
+  T.intercalate ". " (catMaybes [keptPart, derivedPart])
+  where
+    keptPart = (\n -> "Sesión de hace " <> formatCountdown n) <$> age
+    derivedPart
+      | derived   = Just derivedNote
+      | otherwise = Nothing
+
+-- | Si un estado salió de la hora de fin del calendario y no de la fuente.
+isDerived :: Maybe StateReading -> Bool
+isDerived = maybe False ((== Derived) . srBasis)
 
 -- | La palabra que se lee por cada estado.
 --
@@ -385,14 +411,13 @@ tickDown (NextStartsIn n) = NextStartsIn (max 0 (n - 1))
 tickDown (NextAfter l n)  = NextAfter l (max 0 (n - 1))
 tickDown other            = other
 
--- | Qué significa el asterisco de un estado deducido.
+-- | Qué significa un asterisco.
 --
 -- Vive aquí y no en el widget por el criterio de 'statusLabel', y __se enseña al
--- pulsar y no al pasar por encima__: en un teléfono no hay hover, así que un aviso
--- que solo apareciera ahí no existiría en la mitad de las pantallas.
+-- pulsar y al pasar por encima__: en un teléfono no hay hover, así que un aviso que
+-- solo apareciera ahí no existiría en la mitad de las pantallas.
 derivedNote :: Text
-derivedNote =
-  "Estado previsto por el calendario: la fuente no lo publica"
+derivedNote = "Estado previsto por el calendario"
 
 -- | Lo que sirve @GET \/api\/live@: la tabla y de qué sesión es.
 --

@@ -276,17 +276,17 @@ body {
   pointer-events: none;
 }
 
-/* Lo deducido se ve atenuado y SÍ se puede pulsar. El asterisco lo pone el texto
-   (`Common.Types.stateLabel`), no esta regla: quien lo lee es también quien lo
-   prueba, y una marca de CSS no la alcanza ninguna suite. */
-.session-band__state--derived {
+/* Lo que lleva aviso se ve atenuado y SÍ se puede pulsar. Los asteriscos los pone
+   el texto (`Common.Types.bandStateLabel`), no esta regla: quien los lee es también
+   quien los prueba, y una marca de CSS no la alcanza ninguna suite. */
+.session-band__state--noted {
   color: var(--c-muted);
   cursor: pointer;
   pointer-events: auto;
 }
 
-/* El aviso del asterisco. Se abre al PULSAR y no al pasar por encima, porque en un
-   teléfono no hay hover; de ahí que no sea el `title` del navegador. */
+/* El aviso de los asteriscos. No es el `title` del navegador porque en un teléfono
+   no hay hover, y ahí pulsar es la única forma de abrirlo. */
 .session-band__note {
   display: none;
   position: absolute;
@@ -311,7 +311,7 @@ body {
    botón — si alguien mete algo en medio, deja de verse al pasar por encima y sigue
    viéndose al pulsar. */
 .session-band__note--open,
-.session-band__state--derived:hover + .session-band__note {
+.session-band__state--noted:hover + .session-band__note {
   display: block;
 }
 

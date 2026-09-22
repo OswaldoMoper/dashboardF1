@@ -89,10 +89,11 @@ import           Common.Types                (DriverEntry (..),
                                               TelemetryPoint (..),
                                               TyreStint (..), UpNext (..),
                                               WidgetConfig (..), WidgetId (..),
-                                              WidgetType (..), noParams,
+                                              WidgetType (..), bandNote,
+                                              bandStateLabel, noParams,
                                               sessionInProgress, sessionIsLive,
                                               sessionStateWord, sessionTitle,
-                                              stateLabel, statusLabel, tickDown,
+                                              statusLabel, tickDown,
                                               upNextLabel)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
@@ -1593,7 +1594,7 @@ main = hspec $ do
       -- función no lo inventa.
       iterate tickDown (NextStartsIn 2) !! 5 `shouldBe` NextStartsIn 0
 
-  describe "sessionStateWord y stateLabel" $ do
+  describe "sessionStateWord y bandStateLabel" $ do
     it "da la palabra de los tres estados publicados" $
       map sessionStateWord [SessionInactive, SessionStarted, SessionFinalised]
         `shouldBe` ["Por empezar", "En marcha", "Finalizada"]
@@ -1613,7 +1614,7 @@ main = hspec $ do
        in length (nub words') `shouldBe` length words'
 
     it "el asterisco sale solo en lo deducido" $
-      map stateLabel
+      map (bandStateLabel False . Just)
           [ StateReading SessionFinalised Heard
           , StateReading SessionFinalised Derived
           ]
@@ -1622,8 +1623,23 @@ main = hspec $ do
     it "lo desconocido no lleva marca: llegó de la fuente, así que es oído" $
       -- El cuarto caso del estado y la marca de procedencia son preguntas
       -- distintas. Un valor raro sigue siendo lo que el feed dijo.
-      stateLabel (StateReading (SessionUnknown "Aborted") Heard)
+      bandStateLabel False (Just (StateReading (SessionUnknown "Aborted") Heard))
         `shouldBe` "Aborted"
+
+    it "los dos asteriscos de lo conservado mandan sobre el uno de lo deducido" $
+      -- No se suman: tres asteriscos no significan nada, y de las dos cosas la que
+      -- decide si el dato es de ahora es que sea conservado.
+      map (`bandStateLabel` Just (StateReading SessionFinalised Derived))
+          [False, True]
+        `shouldBe` ["Finalizada*", "Finalizada**"]
+
+    it "una sesión conservada sin estado deja los dos asteriscos solos" $
+      -- Es lo que le da ancla al aviso: sin ellos, el caso que esto arregla sería
+      -- el único que no se avisa.
+      bandStateLabel True Nothing `shouldBe` "**"
+
+    it "sin estado y sin conservar no hay nada que leer" $
+      bandStateLabel False Nothing `shouldBe` ""
 
     it "la marca es lo ÚNICO que distingue un estado oído de uno deducido" $
       -- El control negativo de la afirmación de arriba: sin `srBasis` los dos
@@ -1631,6 +1647,35 @@ main = hspec $ do
       -- silencio al repetir sesiones pasadas.
       StateReading SessionFinalised Heard
         `shouldNotBe` StateReading SessionFinalised Derived
+
+  -- Lo que las marcas no caben en decir. Con dos asteriscos el de lo deducido deja
+  -- de verse, así que este texto es el único sitio donde esa segunda mitad puede
+  -- decirse, y de ahí que se componga en vez de elegir.
+  describe "bandNote" $ do
+    it "sin nada que aclarar es la cadena vacía, que es lo que deja el botón inerte" $
+      bandNote Nothing False `shouldBe` ""
+
+    it "de lo conservado dice de cuándo es, y nada más" $
+      bandNote (Just 12) False `shouldBe` "Sesión de hace 12 s"
+
+    it "de lo deducido dice de dónde salió el estado" $
+      bandNote Nothing True `shouldBe` "Estado previsto por el calendario"
+
+    it "cuando concurren, las dos frases y en ese orden" $
+      -- La edad va delante porque es la que cambia: leerla al final obligaría a
+      -- recorrer una frase fija cada segundo para ver el número.
+      bandNote (Just 12) True
+        `shouldBe` "Sesión de hace 12 s. Estado previsto por el calendario"
+
+    it "un corte largo se lee en minutos, sin decidirlo aquí" $
+      -- Sale de `formatCountdown`, el mismo que la cuenta atrás: un segundo formato
+      -- para el mismo hecho divergiría del otro.
+      bandNote (Just 95) False `shouldBe` "Sesión de hace 1 min 35 s"
+
+    it "el cero se dice y no se calla" $
+      -- Callar se leería como que el aviso se rompió, que es el mismo criterio con
+      -- el que `formatCountdown` decide no devolver blanco.
+      bandNote (Just 0) False `shouldBe` "Sesión de hace 0 s"
 
   -- La coherencia entre los dos respaldos de FastF1. No es cosmética: los dos
   -- widgets se miran a la vez, así que un coche que el de comparación pinta y el
