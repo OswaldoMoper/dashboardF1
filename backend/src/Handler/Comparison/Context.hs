@@ -54,20 +54,24 @@ import           Outcome                    (Outcome (..), classify)
 -- reintroducir a sabiendas el bug que esa decisión arregló, con el mismo agravante
 -- de silencio (una petición de dos coches recibiría la comparación de otros dos
 -- presentada como suya).
+--
+-- Un parámetro escrito pero vacío se rechaza antes de salir a la red y sin tocar
+-- la cache.
 getComparison :: Env -> Maybe Text -> Maybe Text -> IO (Outcome LapComparison)
-getComparison env session drivers = do
-  let key@(sessionKey, driversKey) = resolveParams session drivers
-  result <-
-    try (fetchLapComparison (envConfig env) sessionKey driversKey)
-      :: IO (Either SomeException LapComparison)
-  case result of
-    Right comparison | not (null (lcDelta comparison)) -> do
-      atomically (modifyTVar' (envComparisonCache env) (Map.insert key comparison))
-      pure (Served comparison)
-    Left e | Just rejection <- classify e -> pure (Refused rejection)
-    _ -> do
-      cached <- readTVarIO (envComparisonCache env)
-      pure (Served (lookupCached key cached))
+getComparison env session drivers = case resolveParams session drivers of
+  Left rejection -> pure (Refused rejection)
+  Right key@(sessionKey, driversKey) -> do
+    result <-
+      try (fetchLapComparison (envConfig env) sessionKey driversKey)
+        :: IO (Either SomeException LapComparison)
+    case result of
+      Right comparison | not (null (lcDelta comparison)) -> do
+        atomically (modifyTVar' (envComparisonCache env) (Map.insert key comparison))
+        pure (Served comparison)
+      Left e | Just rejection <- classify e -> pure (Refused rejection)
+      _ -> do
+        cached <- readTVarIO (envComparisonCache env)
+        pure (Served (lookupCached key cached))
 
 -- | Respaldo para una clave: la última respuesta buena de __esa__ combinación, o
 -- el dummy. Nunca la de otra clave (espejo de

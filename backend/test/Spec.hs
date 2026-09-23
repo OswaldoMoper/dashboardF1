@@ -237,11 +237,17 @@ main = hspec $ do
 
   describe "Telemetry.resolveParams" $ do
     it "sin parámetros aplica los defaults, que es el comportamiento previo a que existieran" $
-      Telemetry.resolveParams Nothing Nothing `shouldBe` ("latest", "all")
+      Telemetry.resolveParams Nothing Nothing `shouldBe` Right ("latest", "all")
 
     it "respeta el parámetro presente y deja el ausente en su defecto" $ do
-      Telemetry.resolveParams (Just "2026-13-R") Nothing `shouldBe` ("2026-13-R", "all")
-      Telemetry.resolveParams Nothing (Just "1,4") `shouldBe` ("latest", "1,4")
+      Telemetry.resolveParams (Just "2026-13-R") Nothing `shouldBe` Right ("2026-13-R", "all")
+      Telemetry.resolveParams Nothing (Just "1,4") `shouldBe` Right ("latest", "1,4")
+
+    it "rechaza un parámetro escrito pero vacío con su motivo, aunque el otro sea bueno" $ do
+      Telemetry.resolveParams (Just "") Nothing
+        `shouldBe` Left (BadRequest "session está vacío: omítelo para usar la sesión por defecto")
+      Telemetry.resolveParams (Just "2026-13-R") (Just "")
+        `shouldBe` Left (BadRequest "driver está vacío: omítelo para pedir todos los coches")
 
   describe "assembleComparison" $ do
     it "mapea las siete claves del objeto conservando el orden de la serie del delta" $
@@ -287,11 +293,17 @@ main = hspec $ do
 
   describe "Comparison.resolveParams" $ do
     it "sin parámetros compara los dos coches del dummy, en números y no en acrónimos" $
-      Comparison.resolveParams Nothing Nothing `shouldBe` ("latest", "1,16")
+      Comparison.resolveParams Nothing Nothing `shouldBe` Right ("latest", "1,16")
 
     it "respeta el parámetro presente y deja el ausente en su defecto" $ do
-      Comparison.resolveParams (Just "2026-13-Q") Nothing `shouldBe` ("2026-13-Q", "1,16")
-      Comparison.resolveParams Nothing (Just "44,63") `shouldBe` ("latest", "44,63")
+      Comparison.resolveParams (Just "2026-13-Q") Nothing `shouldBe` Right ("2026-13-Q", "1,16")
+      Comparison.resolveParams Nothing (Just "44,63") `shouldBe` Right ("latest", "44,63")
+
+    it "rechaza un parámetro escrito pero vacío con su motivo, aunque el otro sea bueno" $ do
+      Comparison.resolveParams (Just "") (Just "44,63")
+        `shouldBe` Left (BadRequest "session está vacío: omítelo para usar la sesión por defecto")
+      Comparison.resolveParams Nothing (Just "")
+        `shouldBe` Left (BadRequest "drivers está vacío: omítelo para comparar los coches por defecto")
 
   describe "Outcome.rejectionFor" $ do
     -- La parte pura del discriminador 400/503. Los cuerpos son los que el
@@ -361,10 +373,17 @@ main = hspec $ do
 
   describe "Drivers.resolveParams" $ do
     it "sin parámetro consulta la última carrera, como los otros dos endpoints" $
-      Drivers.resolveParams Nothing `shouldBe` "latest"
+      Drivers.resolveParams Nothing `shouldBe` Right "latest"
 
     it "respeta la sesión presente" $
-      Drivers.resolveParams (Just "2026-13-Q") `shouldBe` "2026-13-Q"
+      Drivers.resolveParams (Just "2026-13-Q") `shouldBe` Right "2026-13-Q"
+
+    it "rechaza la sesión escrita pero vacía con su motivo" $
+      Drivers.resolveParams (Just "")
+        `shouldBe` Left (BadRequest "session está vacío: omítelo para usar la sesión por defecto")
+
+    it "solo la cadena vacía es vacía: un valor de espacios pasa tal cual" $
+      Drivers.resolveParams (Just " ") `shouldBe` Right " "
 
   describe "driversPathFor" $ do
     it "sin sesión da el path desnudo, que es el caso normal del widget" $

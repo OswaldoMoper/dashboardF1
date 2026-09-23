@@ -54,20 +54,24 @@ import           Outcome                 (Outcome (..), classify)
 -- da @400@ (la @session_key@ tiene otra forma) y @?session=2026-99-R@ da @404@ (se
 -- escribió bien y esa sesión no se disputó). Ésa es exactamente la separación que
 -- 'Outcome.Rejection' mantiene en dos constructores.
+--
+-- Un parámetro escrito pero vacío se rechaza antes de salir a la red y sin tocar
+-- la cache.
 getDrivers :: Env -> Maybe Text -> IO (Outcome [DriverEntry])
-getDrivers env session = do
-  let key = resolveParams session
-  result <-
-    try (fetchDriverGrid (envConfig env) key)
-      :: IO (Either SomeException [DriverEntry])
-  case result of
-    Right grid | not (null grid) -> do
-      atomically (modifyTVar' (envDriversCache env) (Map.insert key grid))
-      pure (Served grid)
-    Left e | Just rejection <- classify e -> pure (Refused rejection)
-    _ -> do
-      cached <- readTVarIO (envDriversCache env)
-      pure (Served (lookupCached key cached))
+getDrivers env session = case resolveParams session of
+  Left rejection -> pure (Refused rejection)
+  Right key -> do
+    result <-
+      try (fetchDriverGrid (envConfig env) key)
+        :: IO (Either SomeException [DriverEntry])
+    case result of
+      Right grid | not (null grid) -> do
+        atomically (modifyTVar' (envDriversCache env) (Map.insert key grid))
+        pure (Served grid)
+      Left e | Just rejection <- classify e -> pure (Refused rejection)
+      _ -> do
+        cached <- readTVarIO (envDriversCache env)
+        pure (Served (lookupCached key cached))
 
 -- | Respaldo para una clave: la última parrilla buena de __esa__ sesión, o el
 -- dummy. Nunca la de otra sesión (espejo de

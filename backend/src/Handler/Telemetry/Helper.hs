@@ -30,10 +30,12 @@ module Handler.Telemetry.Helper
   , resolveParams
   ) where
 
-import           Common.Types (TelemetryPoint (..))
-import           Data.Aeson   (FromJSON (..), withObject, (.:), (.:?))
-import           Data.Maybe   (fromMaybe, mapMaybe)
-import           Data.Text    (Text)
+import           Common.Types          (TelemetryPoint (..))
+import           Data.Aeson            (FromJSON (..), withObject, (.:), (.:?))
+import           Data.Maybe            (mapMaybe)
+import           Data.Text             (Text)
+import           Handler.FastF1.Helper (queryParam, sessionParam)
+import           Outcome               (Rejection)
 
 -- | Una muestra tal como la emite el microservicio. Los cuatro canales de coche
 -- son 'Maybe' porque el servicio los publica como @null@ cuando FastF1 no los
@@ -100,6 +102,9 @@ defaultDrivers = "all"
 -- una sola vez: cachear bajo la clave sin resolver haría que
 -- @?session=latest@ y la ausencia de parámetro ocuparan dos entradas distintas
 -- con el mismo contenido.
-resolveParams :: Maybe Text -> Maybe Text -> (Text, Text)
+--
+-- Un parámetro escrito pero vacío se rechaza ('Handler.FastF1.Helper.queryParam').
+resolveParams :: Maybe Text -> Maybe Text -> Either Rejection (Text, Text)
 resolveParams session driver =
-  (fromMaybe defaultSession session, fromMaybe defaultDrivers driver)
+  (,) <$> sessionParam defaultSession session
+      <*> queryParam "driver" "pedir todos los coches" defaultDrivers driver

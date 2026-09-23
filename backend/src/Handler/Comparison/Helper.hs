@@ -44,10 +44,12 @@ module Handler.Comparison.Helper
   , resolveParams
   ) where
 
-import           Common.Types (LapComparison (..))
-import           Data.Aeson   (FromJSON (..), withObject, (.!=), (.:), (.:?))
-import           Data.Maybe   (fromMaybe)
-import           Data.Text    (Text)
+import           Common.Types          (LapComparison (..))
+import           Data.Aeson            (FromJSON (..), withObject, (.!=), (.:),
+                                        (.:?))
+import           Data.Text             (Text)
+import           Handler.FastF1.Helper (queryParam, sessionParam)
+import           Outcome               (Rejection)
 
 -- | La comparación tal como la emite el microservicio. Los tiempos llegan ya
 -- formateados (@\"1:29.345\"@) porque formatear es trabajo del servicio Python y
@@ -117,6 +119,9 @@ defaultDrivers = "1,16"
 -- devuelve es también la __clave de cache__, resuelta una sola vez para que
 -- @?session=latest@ y la ausencia del parámetro no ocupen dos entradas con el
 -- mismo contenido.
-resolveParams :: Maybe Text -> Maybe Text -> (Text, Text)
+--
+-- Un parámetro escrito pero vacío se rechaza ('Handler.FastF1.Helper.queryParam').
+resolveParams :: Maybe Text -> Maybe Text -> Either Rejection (Text, Text)
 resolveParams session drivers =
-  (fromMaybe defaultSession session, fromMaybe defaultDrivers drivers)
+  (,) <$> sessionParam defaultSession session
+      <*> queryParam "drivers" "comparar los coches por defecto" defaultDrivers drivers

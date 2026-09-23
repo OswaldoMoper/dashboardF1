@@ -56,27 +56,23 @@ import           Outcome                   (Outcome (..), classify)
 -- forma— más el @Right@ con la lista vacía, que aquí es una sesión sin telemetría
 -- publicada y se degrada.
 --
--- __El límite de lo que esta rama alcanza está medido__ (2026-08-17): @?session=@ o
--- @?driver=@ __vacíos__ no llegan a ser el @400@ del negocio, porque
--- 'resolveParams' recibe @Just ""@ y no 'Nothing', y la URL resultante no existe
--- como ruta en FastAPI. Sale un @404@ con el @detail@ genérico de Starlette
--- (@\"Not Found\"@) en vez del @\"sesión no resoluble …\"@ del servicio. No es de
--- esta área —las tres se comportan igual— y por eso no se arregla aquí
--- (2026-08-17).
+-- Un parámetro escrito pero vacío se rechaza antes de salir a la red y sin tocar
+-- la cache.
 getTelemetry :: Env -> Maybe Text -> Maybe Text -> IO (Outcome [TelemetryPoint])
-getTelemetry env session driver = do
-  let key@(sessionKey, driverKey) = resolveParams session driver
-  result <-
-    try (fetchPoints (envConfig env) sessionKey driverKey)
-      :: IO (Either SomeException [TelemetryPoint])
-  case result of
-    Right points | not (null points) -> do
-      atomically (modifyTVar' (envTelemetryCache env) (Map.insert key points))
-      pure (Served points)
-    Left e | Just rejection <- classify e -> pure (Refused rejection)
-    _ -> do
-      cached <- readTVarIO (envTelemetryCache env)
-      pure (Served (lookupCached key cached))
+getTelemetry env session driver = case resolveParams session driver of
+  Left rejection -> pure (Refused rejection)
+  Right key@(sessionKey, driverKey) -> do
+    result <-
+      try (fetchPoints (envConfig env) sessionKey driverKey)
+        :: IO (Either SomeException [TelemetryPoint])
+    case result of
+      Right points | not (null points) -> do
+        atomically (modifyTVar' (envTelemetryCache env) (Map.insert key points))
+        pure (Served points)
+      Left e | Just rejection <- classify e -> pure (Refused rejection)
+      _ -> do
+        cached <- readTVarIO (envTelemetryCache env)
+        pure (Served (lookupCached key cached))
 
 -- | Respaldo para una clave: la última respuesta buena de __esa__ combinación, o
 -- el dummy. Nunca la de otra clave.
