@@ -189,9 +189,25 @@
             check_port "$tport" microservicio TELEMETRY_PORT
             [ -z "$busy" ] || exit 2
 
+            # Each process goes through its own filter, so `$!` stays the real PID.
+            # Only the microservice lines get a time; the backend writes its own.
+            prefix() {
+              local tag="$1" stamp="$2" line now
+              export TZ=UTC0
+              while IFS= read -r line || [ -n "$line" ]; do
+                if [ -n "$stamp" ]; then
+                  printf -v now '%(%Y-%m-%dT%H:%M:%SZ)T' -1
+                  printf '%-7s | %s %s\n' "$tag" "$now" "$line"
+                else
+                  printf '%-7s | %s\n' "$tag" "$line"
+                fi
+              done
+            }
+
             echo "microservicio FastF1 → :$tport   (cache: $cache)"
-            FASTF1_CACHE="$cache" \
-              ${self'.packages.telemetry}/bin/telemetry-service --port "$tport" &
+            FASTF1_CACHE="$cache" PYTHONUNBUFFERED=1 \
+              ${self'.packages.telemetry}/bin/telemetry-service --port "$tport" \
+              > >(prefix fastf1 stamp) 2>&1 &
             tpid=$!
             pids=("$tpid")
 
@@ -233,7 +249,8 @@
             PORT="$port" \
             TELEMETRY_PORT="$tport" \
             STATIC_DIR="${self'.packages.frontend}" \
-              ${self'.packages.backend}/bin/backend &
+              ${self'.packages.backend}/bin/backend \
+              > >(prefix backend "") 2>&1 &
             bpid=$!
             pids+=("$bpid")
 
