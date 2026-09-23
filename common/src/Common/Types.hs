@@ -559,30 +559,18 @@ instance ToJSON StatEntity
 instance FromJSON StatEntity
 
 -- | Estadística histórica de un piloto o de un constructor: __una fila por
--- entidad__, con una columna por métrica.
+-- entidad__, con una columna por métrica (2026-08-24).
 --
--- La identidad va __estructurada__ (código + nombre + apellido) en vez de una sola
--- etiqueta: el consumidor elige qué mostrar sin poder reconstruir el código a partir
--- del nombre. Decidido el 2026-07-28.
+-- La identidad va estructurada —código, nombre y apellido— y quien consume elige
+-- qué enseñar (2026-07-28).
 --
--- 'hsEntity' marca de qué clasificación viene la fila
--- (2026-07-29). Para un constructor la convención es @hsCode@ = @constructorId@
--- (p. ej. @"red_bull"@), @hsFamilyName@ = @name@ (@"Red Bull"@) y @hsGivenName@
--- vacío. Sigue siendo la marca que permite __partir__ la lista heterogénea que
--- sirve @\/api\/historical@ en las dos tablas que el widget pinta.
+-- 'hsEntity' dice de qué clasificación es la fila, y es lo que permite partir la
+-- lista que sirve @\/api\/historical@ (2026-07-29). Para un constructor,
+-- @hsCode@ = @constructorId@ (p. ej. @"red_bull"@), @hsFamilyName@ = @name@
+-- (@"Red Bull"@) y @hsGivenName@ vacío.
 --
--- __La métrica está en las columnas y no en los datos__, que es el cambio de
--- 2026-08-24: hasta entonces el tipo era @(entidad, identidad, valor, unidad)@ y
--- cada entidad producía __dos__ filas —una de puntos y otra de victorias—, así que
--- un piloto salía en dos renglones de la tabla.
---
--- 'hsWins' admite ausencia y 'hsPoints' no, y el reparto no es defensivo sino
--- estructural. Con una fila por métrica, un @wins@ que no parseaba se descartaba
--- __solo a sí mismo__ y la fila de puntos sobrevivía; con una fila por entidad esa
--- salida no existe, y la alternativa a @Maybe@ sería descartar __la entidad
--- entera__ o inventar un cero que Jolpica no publicó. Que @wins@ pueda faltar es
--- un caso previsto del decode desde el 2026-07-30, no una
--- observación: medido el 2026-08-24, Jolpica lo publica para las 34 entidades.
+-- 'hsWins' puede faltar y 'hsPoints' no: un @wins@ ilegible no tira la entidad
+-- entera (2026-08-24).
 data HistoricalStat = HistoricalStat
   { hsEntity     :: StatEntity  -- ^ Piloto o constructor.
   , hsCode       :: Text    -- ^ Acrónimo del piloto (p. ej. @"VER"@).
