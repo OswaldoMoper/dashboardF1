@@ -193,6 +193,8 @@ data Of1Session = Of1Session
     -- ^ Hora de fin __prevista__, y tampoco es la real: la misma carrera acabó
     -- trece minutos antes. Es de lo que 'derivedState' deduce que una sesión ya
     -- terminó, y por eso le suma un margen ('endMargin') en vez de creérsela.
+  , osCircuit :: Maybe Text
+    -- ^ @circuit_short_name@ (@\"Madring\"@). Sin él la sesión entra igual.
   }
   deriving (Eq, Show)
 
@@ -204,6 +206,7 @@ instance FromJSON Of1Session where
       <*> o .: "meeting_key"
       <*> o .: "date_start"
       <*> o .: "date_end"
+      <*> o .:? "circuit_short_name"
 
 -- | @/meetings@: el nombre del gran premio, que @\/sessions@ no publica.
 --
@@ -351,6 +354,7 @@ feedSession now fs =
     { siType    = fsType fs
     , siName    = fsName fs
     , siMeeting = fsMeeting fs
+    , siCircuit = fsCircuit fs
     , siState   = Just (StateReading (sessionStateFrom (fsState fs)) Heard)
     , siLaps    = lapProgress fs
     , siClock   = sessionClock now fs
@@ -388,6 +392,7 @@ openf1Session now os grandPrix =
     { siType    = osType os
     , siName    = osName os
     , siMeeting = grandPrix
+    , siCircuit = osCircuit os
     , siState   = flip StateReading Derived <$> derivedState now os
     , siLaps    = Nothing
     , siClock   = Nothing

@@ -101,6 +101,7 @@ data FeedSession = FeedSession
   { fsType           :: Text
   , fsName           :: Text
   , fsMeeting        :: Text
+  , fsCircuit        :: Maybe Text
   , fsState          :: Text
   , fsCurrentLap     :: Maybe Int
   , fsTotalLaps      :: Maybe Int
@@ -116,6 +117,7 @@ instance FromJSON FeedSession where
       <$> o .:? "siType"           .!= ""
       <*> o .:? "siName"           .!= ""
       <*> o .:? "siMeeting"        .!= ""
+      <*> o .:? "siCircuit"
       <*> o .:? "siState"          .!= ""
       <*> o .:? "siCurrentLap"
       <*> o .:? "siTotalLaps"

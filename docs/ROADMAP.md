@@ -575,14 +575,14 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
         medir: leer `navigator.language` exige una dependencia nueva o un `foreign import javascript`,
         o sea **código ciego**.
       - `Common.Types.sessionStateWord` es la semilla: nació en `common`, pura y con prueba.
-- [ ] **El circuito en la banda** (2026-09-17). Pedido para la sesión que se enseña, y **bloqueado por una
-      medición**: `/sessions` de OpenF1 lo publica (`circuit_short_name`), pero **el feed no** —`FeedSession`
-      trae tipo, nombre, gran premio, estado, vueltas y reloj—. Ponerlo solo por el lado de OpenF1 lo haría
-      desaparecer justo en directo, que es cuando más se mira.
-      - **Lo que hay que medir:** si el circuito viaja en algún tema del feed que hoy no se decodifica. Las
-        dos grabaciones lo contestan sin salir a la red.
-      - **Ojo a los campos de sitio de OpenF1, que se contradicen**: medido el 2026-09-17,
-        `circuit_short_name = "Kuala Lumpur"` con `country_name = "Bahrain"`.
+- [x] **El circuito en la banda** (2026-09-17, **hecho el 2026-09-23**). El título dice «gran premio ·
+      circuito · sesión» (`Common.Types.sessionTitle`). Del feed sale de `SessionInfo.Meeting.Circuit.ShortName`,
+      el mismo tema que da el gran premio; de OpenF1, de `circuit_short_name` en `/sessions`. Así no aparece y
+      desaparece según la fuente.
+      - **Medido:** las dos fuentes dicen «Madring» para Madrid, y OpenF1 lo trae en las 131 sesiones de 2026.
+      - **Los campos de sitio de OpenF1 no se contradicen:** `circuit_short_name = "Kuala Lumpur"` con
+        `country_name = "Bahrain"` es el Gran Premio de Baréin disputado en Malasia (`meeting_official_name`:
+        «FORMULA 1 GULF AIR BAHRAIN GRAND PRIX IN MALAYSIA 2026»).
 - [x] **El feed oficial como fuente del directo, por delante de OpenF1 en la escalera** (2026-09-12):
       si trae filas **de una sesión en marcha**, son el directo; si no trae ninguna, se cae a OpenF1; y si
       **falla**, se sirve desde la cache sin intentar OpenF1, para que un feed roto durante una sesión no

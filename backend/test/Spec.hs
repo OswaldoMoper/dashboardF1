@@ -797,13 +797,14 @@ main = hspec $ do
   -- dos grabaciones —la carrera 11369 y la clasificación 11365—, no una forma
   -- inventada. Es lo que evita probar contra lo que creemos que el feed manda.
   describe "FeedSession y feedSession" $ do
-    it "mapea la sesión de una carrera, con sus vueltas y su reloj" $
+    it "mapea la sesión de una carrera, con su circuito, sus vueltas y su reloj" $
       fmap (feedSession raceServedAt) (trySession feedSessionRace)
         `shouldBe` Right
           SessionInfo
             { siType    = "Race"
             , siName    = "Race"
             , siMeeting = "Spanish Grand Prix"
+            , siCircuit = Just "Madring"
             , siState   = Just (StateReading SessionStarted Heard)
             , siLaps    = Just (LapProgress 12 57)
               -- Publicado a las 13:04:05.01 con 01:59:59 por delante y servido a
@@ -838,6 +839,7 @@ main = hspec $ do
             { siType    = ""
             , siName    = ""
             , siMeeting = ""
+            , siCircuit = Nothing
             , siState   = Just (StateReading (SessionUnknown "") Heard)
             , siLaps    = Nothing
             , siClock   = Nothing
@@ -1153,9 +1155,16 @@ main = hspec $ do
   -- el decode ignore los campos que no modela, y eso solo lo ancla la respuesta
   -- entera.
   describe "Of1Session y Of1Meeting" $ do
-    it "decodifica /sessions e ignora las doce claves que no modela" $
+    it "decodifica /sessions e ignora las nueve claves que no modela" $
       tryOf1Sessions openF1SessionArray
-        `shouldBe` Right [Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt]
+        `shouldBe` Right
+          [Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt (Just "Madring")]
+
+    it "una sesión sin circuito entra igual, sin circuito" $
+      -- Medido el 2026-09-23: las 131 sesiones de 2026 lo traen. Si un día falta,
+      -- perder la sesión entera por él sería peor que enseñarla sin circuito.
+      fmap (map osCircuit) (tryOf1Sessions openF1SessionNoCircuit)
+        `shouldBe` Right [Nothing]
 
     it "decodifica /meetings, que es de donde sale el nombre del gran premio" $
       -- `/sessions` trae la clave del gran premio pero NO su nombre. Medido: lo más
@@ -1194,18 +1203,19 @@ main = hspec $ do
         `shouldBe` Right [raceStartsAt]
 
   describe "openf1Session" $ do
-    it "sirve tipo, nombre y gran premio, y deja vacío lo que OpenF1 no publica" $
+    it "sirve tipo, nombre, gran premio y circuito, y deja vacío lo que OpenF1 no publica" $
       -- Las vueltas y el reloj no son un degradado: OpenF1 no los emite. El estado
       -- queda vacío aquí porque se pregunta con la sesión rodando, que es justo el
       -- borde en el que no se deduce nada.
       openf1Session
         (addUTCTime (60 * 60) raceStartsAt)
-        (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
+        (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt (Just "Madring"))
         "Spanish Grand Prix"
         `shouldBe` SessionInfo
           { siType    = "Race"
           , siName    = "Race"
           , siMeeting = "Spanish Grand Prix"
+          , siCircuit = Just "Madring"
           , siState   = Nothing
           , siLaps    = Nothing
           , siClock   = Nothing
@@ -1218,7 +1228,7 @@ main = hspec $ do
       siState
         (openf1Session
            (addUTCTime (4 * 3600) raceEndsAt)
-           (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
+           (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt Nothing)
            "")
         `shouldBe` Just (StateReading SessionFinalised Derived)
 
@@ -1231,7 +1241,7 @@ main = hspec $ do
            siState
              (openf1Session
                 t
-                (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt)
+                (Of1Session "Race" "Race" 1294 raceStartsAt raceEndsAt Nothing)
                 ""))
         [raceStartsAt, raceEndsAt, addUTCTime (3 * 3600) raceEndsAt]
         `shouldBe` [Nothing, Nothing, Nothing]
@@ -1242,12 +1252,13 @@ main = hspec $ do
       -- qué se habla, así que perder la sesión entera sería peor.
       openf1Session
         (addUTCTime (30 * 60) raceStartsAt)
-        (Of1Session "Qualifying" "Qualifying" 1294 raceStartsAt raceEndsAt)
+        (Of1Session "Qualifying" "Qualifying" 1294 raceStartsAt raceEndsAt Nothing)
         ""
         `shouldBe` SessionInfo
           { siType    = "Qualifying"
           , siName    = "Qualifying"
           , siMeeting = ""
+          , siCircuit = Nothing
           , siState   = Nothing
           , siLaps    = Nothing
           , siClock   = Nothing
@@ -1650,6 +1661,21 @@ main = hspec $ do
       -- OpenF1 sirve la sesión con el gran premio en blanco cuando no lo sabe
       -- (`openf1Session`), y entonces el título es el nombre a secas.
       sessionTitle (namedSession "Race" "Race" "") `shouldBe` "Race"
+
+    it "el circuito va entre el gran premio y el nombre" $
+      sessionTitle raceSessionFixture `shouldBe` "Spanish Grand Prix · Madring · Race"
+
+    it "sin gran premio el circuito abre el título, sin separador suelto" $
+      sessionTitle raceSessionFixture {siMeeting = ""} `shouldBe` "Madring · Race"
+
+    it "un circuito vacío se salta igual que uno ausente" $
+      -- El microservicio no emite la clave vacía, pero OpenF1 podría mandar la
+      -- cadena: los dos casos tienen que dar el mismo título.
+      map sessionTitle
+          [ raceSessionFixture {siCircuit = Just ""}
+          , raceSessionFixture {siCircuit = Nothing}
+          ]
+        `shouldBe` ["Spanish Grand Prix · Race", "Spanish Grand Prix · Race"]
 
   describe "formatCountdown" $ do
     it "da las tres unidades mayores y no la cuarta" $
@@ -3337,7 +3363,8 @@ dayAfterRace = UTCTime (fromGregorian 2026 9 14) 48845
 feedSessionRace :: ByteString
 feedSessionRace =
   "{\"siType\":\"Race\",\"siName\":\"Race\",\
-  \\"siMeeting\":\"Spanish Grand Prix\",\"siState\":\"Started\",\
+  \\"siMeeting\":\"Spanish Grand Prix\",\"siCircuit\":\"Madring\",\
+  \\"siState\":\"Started\",\
   \\"siCurrentLap\":12,\"siTotalLaps\":57,\
   \\"siClockUtc\":\"2026-09-13T13:04:05.01Z\",\
   \\"siClockRemaining\":\"01:59:59\",\"siClockRunning\":true}"
@@ -3346,7 +3373,8 @@ feedSessionRace =
 feedSessionQualy :: ByteString
 feedSessionQualy =
   "{\"siType\":\"Qualifying\",\"siName\":\"Qualifying\",\
-  \\"siMeeting\":\"Spanish Grand Prix\",\"siState\":\"Finalised\"}"
+  \\"siMeeting\":\"Spanish Grand Prix\",\"siCircuit\":\"Madring\",\
+  \\"siState\":\"Finalised\"}"
 
 -- Un estado que el feed no ha emitido en ninguna de las dos grabaciones. Existe
 -- para comprobar que llega hasta el otro lado con su texto y no como un hueco.
@@ -3425,7 +3453,7 @@ scheduled = scheduledIn 1294
 -- con uno solo el caso de 'schedule' que afirma «el suyo y no el del primero» pasaba
 -- por el motivo equivocado. Lo destapó la prueba al ponerse roja.
 scheduledIn :: Int -> T.Text -> T.Text -> UTCTime -> UTCTime -> Of1Session
-scheduledIn key sType name = Of1Session sType name key
+scheduledIn key sType name start end = Of1Session sType name key start end Nothing
 
 -- | Las dos primeras sesiones de Bakú y los instantes que rodean a la primera,
 -- tomados del calendario real el 2026-09-15: P1 el 24 a las 08:30 UTC y P2 el mismo
@@ -3472,7 +3500,7 @@ sessionAt gp st = (stateless gp) {siState = Just (StateReading st Heard)}
 
 -- | Y una sin estado ninguno, que es lo que sirve OpenF1 en el borde.
 stateless :: T.Text -> SessionInfo
-stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing
+stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing Nothing
 
 -- | 07:00 — cuarenta y cinco minutos __antes__ de que la ventana de P1 abra.
 bakuLongBefore :: UTCTime
@@ -3515,6 +3543,13 @@ openF1SessionArray =
   \\"circuit_key\":153,\"circuit_short_name\":\"Madring\",\"country_key\":1,\
   \\"country_code\":\"ESP\",\"country_name\":\"Spain\",\"location\":\"Madrid\",\
   \\"gmt_offset\":\"02:00:00\",\"year\":2026,\"is_cancelled\":false}]"
+
+-- | 'openF1SessionArray' sin @circuit_short_name@, con el resto de obligatorios.
+openF1SessionNoCircuit :: ByteString
+openF1SessionNoCircuit =
+  "[{\"session_key\":11369,\"session_type\":\"Race\",\"session_name\":\"Race\",\
+  \\"date_start\":\"2026-09-13T13:00:00+00:00\",\
+  \\"date_end\":\"2026-09-13T15:00:00+00:00\",\"meeting_key\":1294}]"
 
 -- | 'openF1SessionArray' sin @session_type@. No hay default semánticamente correcto
 -- —una sesión de tipo vacío no existe—, así que tumbar la lista es lo correcto: el
@@ -3902,20 +3937,22 @@ raceSessionFixture =
     { siType    = "Race"
     , siName    = "Race"
     , siMeeting = "Spanish Grand Prix"
+    , siCircuit = Just "Madring"
     , siState   = Just (StateReading SessionStarted Heard)
     , siLaps    = Just (LapProgress 12 57)
     , siClock   = Just (SessionClock 5400 True)
     }
 
--- | Una sesión con el tipo, el nombre y el gran premio que se le pidan, y el resto
--- como en 'raceSessionFixture'.
+-- | Una sesión con el tipo, el nombre y el gran premio que se le pidan, __sin
+-- circuito__, y el resto como en 'raceSessionFixture'.
 --
--- __Se construye actualizando y no enumerando los seis campos__: un campo nuevo en
+-- __Se construye actualizando y no enumerando los siete campos__: un campo nuevo en
 -- 'SessionInfo' dejaría aquí un hueco que el compilador solo avisa, y actualizando
 -- lo hereda del fixture.
 namedSession :: T.Text -> T.Text -> T.Text -> SessionInfo
 namedSession sType sName sMeeting =
-  raceSessionFixture { siType = sType, siName = sName, siMeeting = sMeeting }
+  raceSessionFixture
+    { siType = sType, siName = sName, siMeeting = sMeeting, siCircuit = Nothing }
 
 -- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
 liveTableFixture :: LiveTable

@@ -4,7 +4,7 @@ module Common.Types where
 
 import           Common.Format (formatCountdown)
 import           Data.Aeson    (FromJSON (..), ToJSON (..), withText)
-import           Data.Maybe    (catMaybes)
+import           Data.Maybe    (catMaybes, fromMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           GHC.Generics  (Generic)
@@ -316,6 +316,8 @@ data SessionInfo = SessionInfo
   { siType    :: Text  -- ^ Tipo, tal cual lo nombra el feed (@\"Race\"@, @\"Qualifying\"@).
   , siName    :: Text  -- ^ Nombre de la sesión (@\"Race\"@, @\"Sprint Qualifying\"@).
   , siMeeting :: Text  -- ^ Gran premio (@\"Spanish Grand Prix\"@).
+  , siCircuit :: Maybe Text
+    -- ^ Circuito (@\"Madring\"@). 'Nothing' cuando quien publica la sesión no lo dice.
   , siState   :: Maybe StateReading
     -- ^ 'Nothing' cuando no se sabe: ni la fuente lo publicó ni el calendario da
     -- para deducirlo. __Es «no se sabe» y no «el emisor lo mandó vacío»__, por el
@@ -344,11 +346,16 @@ instance FromJSON SessionInfo
 -- «Qualifying»\/«Qualifying» son 50 de 131— y el nombre ya distingue por sí solo
 -- las diez formas que se publican, «Sprint» y «Sprint Qualifying» incluidas.
 --
+-- __El circuito va entre el gran premio y el nombre__: @Spanish Grand Prix · Madring
+-- · Race@.
+--
 -- __Un campo en blanco no deja separador suelto:__ el gran premio llega vacío
 -- cuando quien publica la sesión no lo sabe, y entonces esto es el nombre a secas.
+-- Un circuito ausente o vacío se salta igual.
 sessionTitle :: SessionInfo -> Text
 sessionTitle s =
-  T.intercalate " · " (filter (not . T.null) [siMeeting s, siName s])
+  T.intercalate " · " $
+    filter (not . T.null) [siMeeting s, fromMaybe "" (siCircuit s), siName s]
 
 -- | Qué viene después de la sesión que se está enseñando.
 --
