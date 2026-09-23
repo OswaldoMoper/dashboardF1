@@ -77,7 +77,9 @@ import           Data.Aeson            (FromJSON (..), Value (..), withObject,
 import           Data.Aeson.Types      (Parser)
 import           Data.Foldable         (toList)
 import           Data.Function         (on)
-import           Data.List             (find, groupBy, maximumBy, sortOn)
+import           Data.List             (find, maximumBy, sortOn)
+import           Data.List.NonEmpty    (nonEmpty)
+import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as Map
 import           Data.Maybe            (fromMaybe, listToMaybe, mapMaybe)
 import           Data.Ord              (Down (..), comparing)
@@ -274,9 +276,7 @@ instance FromJSON Of1Result where
 classificationTime :: Value -> Maybe Double
 classificationTime (Number n) = Just (realToFrac n)
 classificationTime (Array xs) =
-  case [ realToFrac n :: Double | Number n <- toList xs ] of
-    [] -> Nothing
-    ns -> Just (last ns)
+  NE.last <$> nonEmpty [ realToFrac n :: Double | Number n <- toList xs ]
 classificationTime _ = Nothing
 
 -- | Estado de un piloto a partir de las tres banderas de @/session_result@.
@@ -890,7 +890,7 @@ classificationGaps results =
 latestByDriver :: Ord o => (a -> Int) -> (a -> o) -> [a] -> [a]
 latestByDriver drv ordf xs =
   [ maximumBy (comparing ordf) grp
-  | grp <- groupBy ((==) `on` drv) (sortOn drv xs)
+  | grp <- NE.groupBy ((==) `on` drv) (sortOn drv xs)
   ]
 
 -- | La línea que deja un fetch que no salió: cuándo fue, qué se pedía y qué

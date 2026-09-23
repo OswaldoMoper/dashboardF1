@@ -57,7 +57,7 @@ chartPad = 10
 -- * __Incluye siempre el cero__, aunque la serie no lo cruce. El cero es "iban
 --   empatados": un eje @[min, max]@ de una serie toda positiva dibujaría la misma
 --   forma que una toda negativa y el gráfico mentiría sobre quién iba delante.
---   De ahí el @0 :@ en las dos listas.
+--   De ahí el @0@ como semilla de los dos pliegues.
 --
 -- * __Nunca es degenerado__ (@lo \/= hi@), porque el resultado va a un
 --   denominador. Ocurre en dos casos reales: la serie __vacía__ (que el
@@ -70,8 +70,8 @@ deltaRange xs
   | lo == hi  = (lo - 1, hi + 1)
   | otherwise = (lo, hi)
   where
-    lo = minimum (0 : xs)
-    hi = maximum (0 : xs)
+    lo = foldr min 0 xs
+    hi = foldr max 0 xs
 
 -- | La serie como coordenadas del @viewBox@, en el mismo orden.
 --
