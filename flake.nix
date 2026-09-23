@@ -167,6 +167,24 @@
             # `FASTF1_CACHE` en vez de un `cd`
             cache="''${FASTF1_CACHE:-$PWD/telemetry-service/.fastf1-cache}"
 
+            # Both ports are checked before anything starts. `ss -p` only names
+            # processes of the current user, so the holder may be missing.
+            busy=""
+            holder_re='users:\(\("([^"]+)"'
+            check_port() {
+              local p="$1" role="$2" var="$3" line held=""
+              line="$(ss -ltnpH "sport = :$p")"
+              [ -z "$line" ] && return 0
+              if [[ $line =~ $holder_re ]]; then
+                held=" (lo tiene «''${BASH_REMATCH[1]}»)"
+              fi
+              echo "error: el puerto :$p del $role está ocupado$held; elige otro con $var=<puerto>" >&2
+              busy=1
+            }
+            check_port "$port" backend PORT
+            check_port "$tport" microservicio TELEMETRY_PORT
+            [ -z "$busy" ] || exit 2
+
             echo "microservicio FastF1 → :$tport   (cache: $cache)"
             FASTF1_CACHE="$cache" \
               ${self'.packages.telemetry}/bin/telemetry-service --port "$tport" &
