@@ -134,11 +134,8 @@ snapTo divisions v
 -- | Ancho mínimo de un tipo de widget, por debajo del cual el lienzo no deja
 -- encoger. En unidades de 'canvasSpan'.
 --
--- __Los siete números son a ojo__ hasta que se midan en navegador, y el riesgo
--- está escrito desde el 2026-09-03 (d): un mínimo demasiado grande se nota como
--- «no me deja hacerlo pequeño» sin decir por qué. Salen del contenido de cada
--- widget y no de una configuración — 'LiveTiming', con siete columnas, pide más
--- que 'ConstructorStats', con tres:
+-- Los números son a ojo hasta medirlos en navegador (2026-09-04 (b)), y cada uno
+-- sale del contenido de su widget:
 --
 -- * 'LiveTiming' — @Pos@, @Driver@, @Team@, @Gap@, @Interval@, @Last Lap@ y la
 --   marca de estado.
@@ -150,15 +147,7 @@ snapTo divisions v
 -- * 'TyreStrategy' y 'Custom' son hoy placeholders; sus números entran cuando el
 --   widget exista.
 --
--- __Vive aquí y no en @frontend\/Widgets\/*@__, que es donde el 2026-09-03 (d)
--- los había puesto. La razón es de largo plazo: por el 2026-09-03 (c) una caja
--- __conmuta de contenido__, así que su ancho mínimo real será el máximo de los
--- mínimos de su lista de favoritos, y ese cálculo necesita los siete números
--- __como valor__. Repartidos por widget, la caja tendría que importar los seis
--- para calcular uno — o sea el @case@ de @renderWidget@ duplicado, que es
--- justamente el trabajo que ese punto señala. Lo que se pierde es la cercanía del
--- número al contenido que lo justifica, y lo recupera la lista de arriba.
--- Decidido el 2026-09-04 (b).
+-- Si un widget cambia de contenido, su número se revisa aquí.
 minWidthFor :: WidgetType -> Int
 minWidthFor LiveTiming       = 55
 minWidthFor Telemetry        = 50
