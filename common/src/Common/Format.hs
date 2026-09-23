@@ -149,30 +149,10 @@ formatClock form secs = case form of
 -- 4 min 50 s
 -- @
 --
--- __No es 'formatClock', y la diferencia no es de estilo.__ Aquél cuenta segundos
--- dentro de una sesión y su unidad mayor es la hora; éste cuenta días, y con dos
--- puntos —@\"163:25:10\"@— nadie lee una semana. Por eso lleva las unidades escritas
--- y no separadores.
+-- Las tres pueden no ser contiguas (@1 d 1 s@). La unidad mayor es el día
+-- (2026-09-17 (f)). Para un reloj dentro de una sesión, 'formatClock'.
 --
--- __Se salta las magnitudes que valen cero, estén donde estén__, y por eso son tres
--- mayores __distintas de cero__ y no tres consecutivas: un @0 h@ en medio gasta
--- sitio y una posición de las tres para decir que no hay nada que decir. El precio
--- es que las tres que salen pueden no ser contiguas —@1 d 1 s@ es un valor
--- posible—, y se acepta a sabiendas.
---
--- __Tres y no todas__, porque la cuarta no cambia la decisión de nadie: a seis días
--- los segundos son ruido; a cuatro minutos ya no hay días y los segundos entran
--- solos.
---
--- __La unidad mayor es el día, no el mes.__ Medido el 2026-09-17 contra las tres
--- fuentes: el hueco más grande del calendario que queda son 12 d 5 h, y ninguna
--- publica todavía la temporada siguiente —OpenF1 da @404@ y Jolpica @total: 0@—, así
--- que un mes no se alcanza. El día que alguna la publique, la espera invernal sí lo
--- pasaría y habría que volver a decidirlo.
---
--- __Lo negativo es cero__, y el cero se dice @\"0 s\"@ y no en blanco: por el mismo
--- criterio que 'formatClock', no hay forma de expresar «falta menos que nada», y una
--- cadena vacía se leería como que la cuenta atrás se rompió.
+-- Lo negativo es cero, y el cero se dice @\"0 s\"@, nunca en blanco.
 formatCountdown :: Int -> Text
 formatCountdown secs
   | null nonZero = "0 s"
