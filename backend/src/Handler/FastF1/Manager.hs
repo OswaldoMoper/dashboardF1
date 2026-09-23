@@ -75,8 +75,7 @@ fastf1Port = port
 --   los 30 s por defecto. Aquí se quiere fallar en segundos.
 -- * __Servicio arriba con la sesión sin cargar__: la primera llamada a una sesión
 --   la carga entera —de disco, o de la red si nunca se bajó— y puede pasar del
---   techo, sobre todo con varias peticiones a la vez. Con un techo corto esa
---   llamada degrada al dummy.
+--   techo. Con un techo corto esa llamada degrada al dummy.
 --
 -- El default (@TELEMETRY_TIMEOUT@, 5 s) sirve al primero. Del segundo se ocupa
 -- @dashboardF1-dev@, que carga la última carrera antes de arrancar el backend;
