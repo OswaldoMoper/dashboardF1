@@ -26,35 +26,18 @@ import           Handler.Telemetry.Helper  (assemblePoints, resolveParams)
 import qualified Handler.Telemetry.Manager as Manager
 import           Outcome                   (Outcome (..), classify)
 
--- | Devuelve la telemetría de la vuelta rápida de cada piloto: intenta el fetch
--- real; si funciona, refresca la cache y devuelve; ante fallo o lista vacía sirve
--- la última respuesta buena __de esa misma clave__; sin ninguna, el dummy
--- (espejo de 'Handler.Historical.Context.getHistorical', con la clave como única
--- diferencia).
+-- | La telemetría de la vuelta rápida de cada piloto, por tres ramas y en este
+-- orden:
 --
--- La lista vacía cuenta como fallo, no como respuesta: el microservicio devuelve
--- @[]@ cuando la sesión no publicó telemetría, y servir una tabla vacía sería
--- peor que servir la vuelta anterior.
+-- * el fetch trae puntos → se guardan en la cache y se sirven;
+-- * la excepción es culpa del cliente ('Outcome.classify') → se rechaza sin tocar
+--   la cache (2026-08-14);
+-- * cualquier otra cosa —servicio apagado, techo vencido, @5xx@, JSON con otra
+--   forma, o la lista vacía de una sesión que no publicó telemetría— → la última
+--   respuesta buena __de esa misma clave__ y, sin ninguna, el dummy.
 --
--- La cache se lee y escribe con la __clave resuelta__ porque desde que hay
--- parámetros el degradado sin clave es un bug de correctitud: una petición de un
--- piloto concreto recibiría la última respuesta buena de @all@, es decir la
--- telemetría de otros coches presentada como suya
--- (2026-08-01).
---
--- __Tercera y última área con la escalera de tres ramas__, y con ella se cierra el
--- contrato de degradado de la Fase 4: las tres que hablan con el microservicio
--- discriminan un @400@\/@404@ del cliente de un servicio caído
--- (2026-08-14). Las otras tres áreas del backend se quedan en
--- @IO a@ __por decisión y no por deuda__: no tienen @QueryParam@, así que no
--- admiten query malo y no hay nada que discriminar en ellas.
---
--- La rama del medio es la única nueva, no toca la cache —una petición mala no
--- invalida ni refresca nada— y el orden importa: una respuesta válida nunca pasa
--- por el clasificador, y el @_@ final sigue absorbiendo lo que
--- 'Outcome.classify' no reconoce —servicio apagado, timeout, @5xx@, JSON con otra
--- forma— más el @Right@ con la lista vacía, que aquí es una sesión sin telemetría
--- publicada y se degrada.
+-- La cache va por clave resuelta: sin ella, quien pide un piloto recibiría la
+-- telemetría de otro (2026-08-01).
 --
 -- Un parámetro escrito pero vacío se rechaza antes de salir a la red y sin tocar
 -- la cache.
