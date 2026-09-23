@@ -3264,11 +3264,6 @@ openF1Grid =
   \{\"driver_number\":16,\"name_acronym\":\"LEC\",\"team_name\":\"Ferrari\",\
   \\"broadcast_name\":\"C LECLERC\",\"team_colour\":\"ED1131\"}]"
 
--- | 'openF1Grid' sin @team_name@ en el segundo coche. Espejo de 'gridWithoutTeam'
--- para el otro @\/drivers@, y con el desenlace __contrario__: allí el equipo es
--- prescindible y la lista sobrevive; aquí es @.:@ y no decodifica ninguno de los
--- dos, porque lo que se perdería con el equipo es la traducción
--- @driver_number → name_acronym@ que las dos áreas consumen.
 -- | La tabla tal cual la emite @GET \/fastf1\/live@: siete claves por fila, con el
 -- líder ya marcado y el estado como el nombre del constructor.
 feedTable :: ByteString
@@ -3403,6 +3398,11 @@ feedSessionRunningNoUtc =
 feedSessionUtcOnly :: ByteString
 feedSessionUtcOnly = "{\"siClockUtc\":\"2026-09-13T13:04:05.01Z\"}"
 
+-- | 'openF1Grid' sin @team_name@ en el segundo coche. Espejo de 'gridWithoutTeam'
+-- para el otro @\/drivers@, y con el desenlace __contrario__: allí el equipo es
+-- prescindible y la lista sobrevive; aquí es @.:@ y no decodifica ninguno de los
+-- dos, porque lo que se perdería con el equipo es la traducción
+-- @driver_number → name_acronym@ que las dos áreas consumen.
 openF1GridWithoutTeam :: ByteString
 openF1GridWithoutTeam =
   "[{\"driver_number\":1,\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"},\
