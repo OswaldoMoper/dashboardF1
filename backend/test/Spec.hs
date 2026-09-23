@@ -135,8 +135,8 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               feedVerdict, feedWindowLead,
                                               feedWindowOpen, fetchFailure,
                                               freezeClock, isoInstant,
-                                              lapProgress, meetingNames,
-                                              openf1ClockIdle,
+                                              lapProgress, latestByDriver,
+                                              meetingNames, openf1ClockIdle,
                                               openf1ClockPeriod, openf1MinGap,
                                               openf1Session, parseFeedInstant,
                                               parseRemaining, schedule,
@@ -727,6 +727,15 @@ main = hspec $ do
       -- aquí no se ha visto, y el decode tiene que sobrevivirla igual.
       map classificationTime [Null, String "+1 LAP", Bool True]
         `shouldBe` [Nothing, Nothing, Nothing]
+
+  describe "latestByDriver" $
+    it "con dos muestras empatadas en la clave de orden, gana la que llega después" $
+      -- Las series del directo entran por aquí; dos muestras del mismo coche con
+      -- la misma @date@ no se distinguen por la clave, y la respuesta tiene que ser
+      -- una y fija.
+      latestByDriver (\(n, _, _) -> n) (\(_, k, _) -> k)
+          ([(1, 5, "antes"), (16, 3, "otro"), (1, 5, "después")] :: [(Int, Int, T.Text)])
+        `shouldBe` [(1, 5, "después"), (16, 3, "otro")]
 
   -- La otra fuente, y el reparto con OpenF1 es el contrario: allí se ensamblan cinco
   -- respuestas, aquí la tabla llega hecha. Lo que estos casos sostienen es lo poco
