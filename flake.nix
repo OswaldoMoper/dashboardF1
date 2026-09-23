@@ -169,6 +169,10 @@
 
             # Both ports are checked before anything starts. `ss -p` only names
             # processes of the current user, so the holder may be missing.
+            if [ "$port" = "$tport" ]; then
+              echo "error: PORT y TELEMETRY_PORT son el mismo (:$port); elige otro con PORT=<puerto>" >&2
+              exit 2
+            fi
             busy=""
             holder_re='users:\(\("([^"]+)"'
             check_port() {
