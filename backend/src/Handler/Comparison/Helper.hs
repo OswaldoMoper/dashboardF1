@@ -38,10 +38,15 @@ module Handler.Comparison.Helper
     RawComparison (..)
     -- * Transformación pura
   , assembleComparison
+    -- * Parámetros de la petición
+  , defaultSession
+  , defaultDrivers
+  , resolveParams
   ) where
 
 import           Common.Types (LapComparison (..))
 import           Data.Aeson   (FromJSON (..), withObject, (.!=), (.:), (.:?))
+import           Data.Maybe   (fromMaybe)
 import           Data.Text    (Text)
 
 -- | La comparación tal como la emite el microservicio. Los tiempos llegan ya
@@ -89,3 +94,29 @@ assembleComparison raw =
     , lcLapB    = rcLapB raw
     , lcDelta   = rcDelta raw
     }
+
+-- | Sesión que se consulta cuando @\/api\/comparison@ no recibe @?session=@.
+-- @latest@ es la última carrera disputada, resuelta por el microservicio.
+defaultSession :: Text
+defaultSession = "latest"
+
+-- | Coches que se comparan cuando @\/api\/comparison@ no recibe @?drivers=@:
+-- __números de coche__, no acrónimos, porque es lo que acepta el microservicio
+-- (2026-08-01). Son los dos de 'Handler.Comparison.Context.dummy' —@1@ es VER
+-- y @16@ es LEC—, para que la respuesta sin parámetros y el respaldo hablen de
+-- los mismos coches.
+--
+-- __Exactamente dos.__ El servicio responde 400 a cualquier otra cantidad, así
+-- que no hay defecto análogo al @all@ de telemetría: 'Common.Types.LapComparison'
+-- tiene A y B, no una lista.
+defaultDrivers :: Text
+defaultDrivers = "1,16"
+
+-- | Aplica los defaults a los @QueryParam@ opcionales de 'Server.Api'. Espejo de
+-- 'Handler.Telemetry.Helper.resolveParams', y por la misma razón: el par que
+-- devuelve es también la __clave de cache__, resuelta una sola vez para que
+-- @?session=latest@ y la ausencia del parámetro no ocupen dos entradas con el
+-- mismo contenido.
+resolveParams :: Maybe Text -> Maybe Text -> (Text, Text)
+resolveParams session drivers =
+  (fromMaybe defaultSession session, fromMaybe defaultDrivers drivers)

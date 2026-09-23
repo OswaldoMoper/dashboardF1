@@ -15,7 +15,7 @@ import           Servant                   (Handler)
 
 -- | Los dos 'Maybe' vienen de los @QueryParam@ opcionales de 'Server.Api' y
 -- bajan sin interpretar: quien decide qué significa su ausencia es
--- 'Handler.Telemetry.Context.resolveParams'. Esta capa sigue siendo una línea de
+-- 'Handler.Telemetry.Helper.resolveParams'. Esta capa sigue siendo una línea de
 -- delegación, como las de las otras cinco áreas.
 --
 -- __El tipo público no cambia__ y 'Server.Api' tampoco: el @Outcome@ que devuelve

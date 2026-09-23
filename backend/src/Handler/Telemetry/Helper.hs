@@ -24,11 +24,15 @@ module Handler.Telemetry.Helper
     FastF1Point (..)
     -- * Transformación pura
   , assemblePoints
+    -- * Parámetros de la petición
+  , defaultSession
+  , defaultDrivers
+  , resolveParams
   ) where
 
 import           Common.Types (TelemetryPoint (..))
 import           Data.Aeson   (FromJSON (..), withObject, (.:), (.:?))
-import           Data.Maybe   (mapMaybe)
+import           Data.Maybe   (fromMaybe, mapMaybe)
 import           Data.Text    (Text)
 
 -- | Una muestra tal como la emite el microservicio. Los cuatro canales de coche
@@ -74,3 +78,28 @@ assemblePoints = mapMaybe toPoint
         <*> ffBrake p
         <*> ffGear p
         <*> ffRpm p
+
+-- | Sesión que se consulta cuando @\/api\/telemetry@ no recibe @?session=@.
+-- @latest@ es la última carrera disputada, resuelta por el microservicio.
+defaultSession :: Text
+defaultSession = "latest"
+
+-- | Pilotos que se consultan cuando @\/api\/telemetry@ no recibe @?driver=@.
+-- @all@ trae la vuelta rápida de __todos__ los de la sesión en una sola llamada
+-- HTTP; pedirlos uno a uno necesitaría @async@, que no es dependencia del
+-- backend, y multiplicaría los puntos de fallo del @try@
+-- (2026-07-31).
+defaultDrivers :: Text
+defaultDrivers = "all"
+
+-- | Aplica los defaults a los @QueryParam@ opcionales de 'Server.Api'. El
+-- invariante que fija —ausencia de parámetros ≡ comportamiento previo a que
+-- existieran— es el criterio de aceptación de todo el cambio.
+--
+-- El par que devuelve es también la __clave de cache__, y por eso se resuelve
+-- una sola vez: cachear bajo la clave sin resolver haría que
+-- @?session=latest@ y la ausencia de parámetro ocuparan dos entradas distintas
+-- con el mismo contenido.
+resolveParams :: Maybe Text -> Maybe Text -> (Text, Text)
+resolveParams session driver =
+  (fromMaybe defaultSession session, fromMaybe defaultDrivers driver)

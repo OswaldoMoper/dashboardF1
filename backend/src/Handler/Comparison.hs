@@ -16,7 +16,7 @@ import           Servant                    (Handler)
 
 -- | Los dos 'Maybe' vienen de los @QueryParam@ opcionales de 'Server.Api' y bajan
 -- sin interpretar: quien decide qué significa su ausencia es
--- 'Handler.Comparison.Context.resolveParams'. Espejo de
+-- 'Handler.Comparison.Helper.resolveParams'. Espejo de
 -- 'Handler.Telemetry.telemetryHandler', que es el otro endpoint parametrizado del
 -- repo.
 --

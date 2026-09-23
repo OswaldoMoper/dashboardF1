@@ -17,41 +17,16 @@ module Handler.Comparison.Context where
 import           App                        (Env (..))
 import           Common.Types               (LapComparison (..))
 import           Config                     (Config)
-import           Control.Concurrent.STM     (atomically, modifyTVar', readTVarIO)
+import           Control.Concurrent.STM     (atomically, modifyTVar',
+                                             readTVarIO)
 import           Control.Exception          (SomeException, try)
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (fromMaybe)
 import           Data.Text                  (Text)
-import           Handler.Comparison.Helper  (assembleComparison)
+import           Handler.Comparison.Helper  (assembleComparison, resolveParams)
 import qualified Handler.Comparison.Manager as Manager
 import           Outcome                    (Outcome (..), classify)
-
--- | Sesión que se consulta cuando @\/api\/comparison@ no recibe @?session=@.
--- @latest@ es la última carrera disputada, resuelta por el microservicio.
-defaultSession :: Text
-defaultSession = "latest"
-
--- | Coches que se comparan cuando @\/api\/comparison@ no recibe @?drivers=@:
--- __números de coche__, no acrónimos, porque es lo que acepta el microservicio
--- (2026-08-01). Son los dos del 'dummy' —@1@ es VER y @16@
--- es LEC—, para que la respuesta sin parámetros y el respaldo hablen de los
--- mismos coches.
---
--- __Exactamente dos.__ El servicio responde 400 a cualquier otra cantidad, así
--- que no hay defecto análogo al @all@ de telemetría: 'Common.Types.LapComparison'
--- tiene A y B, no una lista.
-defaultDrivers :: Text
-defaultDrivers = "1,16"
-
--- | Aplica los defaults a los @QueryParam@ opcionales de 'Server.Api'. Espejo de
--- 'Handler.Telemetry.Context.resolveParams', y por la misma razón: es lo único
--- testeable sin red del módulo, y el par que devuelve es también la __clave de
--- cache__, resuelta una sola vez y aquí para que @?session=latest@ y la ausencia
--- del parámetro no ocupen dos entradas con el mismo contenido.
-resolveParams :: Maybe Text -> Maybe Text -> (Text, Text)
-resolveParams session drivers =
-  (fromMaybe defaultSession session, fromMaybe defaultDrivers drivers)
 
 -- | Devuelve la comparación de la vuelta rápida de dos coches: intenta el fetch
 -- real; si funciona __y trae delta__, refresca la cache y devuelve; ante fallo o
@@ -121,9 +96,10 @@ fetchLapComparison cfg sessionKey driversKey =
 -- invariantes del endpoint entrena el ojo a aceptar gráficos que el dato real no
 -- puede producir.
 --
--- Los coches son los de 'defaultDrivers', no dos cualesquiera: así la respuesta
--- sin parámetros y el respaldo hablan de los mismos, y el @1@\/@16@ que el widget
--- muestra es el que mandaría de vuelta al pedir otra comparación.
+-- Los coches son los de 'Handler.Comparison.Helper.defaultDrivers', no dos
+-- cualesquiera: así la respuesta sin parámetros y el respaldo hablan de los
+-- mismos, y el @1@\/@16@ que el widget muestra es el que mandaría de vuelta al
+-- pedir otra comparación.
 --
 -- __El acrónimo del coche @1@ es @NOR@ y no @VER@ desde el 2026-08-06__, que es
 -- cuando el repo vio por primera vez una parrilla real (@\/api\/drivers@): el @1@

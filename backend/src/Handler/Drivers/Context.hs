@@ -29,25 +29,9 @@ import           Data.Map.Strict         (Map)
 import qualified Data.Map.Strict         as Map
 import           Data.Maybe              (fromMaybe)
 import           Data.Text               (Text)
-import           Handler.Drivers.Helper  (assembleDrivers)
+import           Handler.Drivers.Helper  (assembleDrivers, resolveParams)
 import qualified Handler.Drivers.Manager as Manager
 import           Outcome                 (Outcome (..), classify)
-
--- | Sesión que se consulta cuando @\/api\/drivers@ no recibe @?session=@.
--- @latest@ es la última carrera disputada, resuelta por el microservicio.
-defaultSession :: Text
-defaultSession = "latest"
-
--- | Aplica el default al @QueryParam@ opcional de 'Server.Api'. Espejo de los
--- @resolveParams@ de Telemetry y Comparison, y por la misma razón: es lo único
--- testeable sin red del módulo, y lo que devuelve es también la __clave de
--- cache__, resuelta una sola vez y aquí para que @?session=latest@ y la ausencia
--- del parámetro no ocupen dos entradas con el mismo contenido.
---
--- Devuelve un 'Text' y no un par, que es la diferencia de forma con las otras
--- dos áreas parametrizadas: aquí solo hay un parámetro que resolver.
-resolveParams :: Maybe Text -> Text
-resolveParams = fromMaybe defaultSession
 
 -- | Devuelve la parrilla de una sesión: intenta el fetch real; si funciona __y
 -- trae coches__, refresca la cache y devuelve; ante fallo o lista vacía sirve la

@@ -16,7 +16,7 @@ import           Servant                 (Handler)
 
 -- | El 'Maybe' viene del @QueryParam@ opcional de 'Server.Api' y baja sin
 -- interpretar: quien decide qué significa su ausencia es
--- 'Handler.Drivers.Context.resolveParams'. Espejo de
+-- 'Handler.Drivers.Helper.resolveParams'. Espejo de
 -- 'Handler.Comparison.comparisonHandler' con un parámetro menos — la parrilla no
 -- admite filtro por coche.
 --

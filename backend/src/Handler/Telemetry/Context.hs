@@ -22,35 +22,9 @@ import           Data.Map.Strict           (Map)
 import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (fromMaybe)
 import           Data.Text                 (Text)
-import           Handler.Telemetry.Helper  (assemblePoints)
+import           Handler.Telemetry.Helper  (assemblePoints, resolveParams)
 import qualified Handler.Telemetry.Manager as Manager
 import           Outcome                   (Outcome (..), classify)
-
--- | Sesión que se consulta cuando @\/api\/telemetry@ no recibe @?session=@.
--- @latest@ es la última carrera disputada, resuelta por el microservicio.
-defaultSession :: Text
-defaultSession = "latest"
-
--- | Pilotos que se consultan cuando @\/api\/telemetry@ no recibe @?driver=@.
--- @all@ trae la vuelta rápida de __todos__ los de la sesión en una sola llamada
--- HTTP; pedirlos uno a uno necesitaría @async@, que no es dependencia del
--- backend, y multiplicaría los puntos de fallo del @try@
--- (2026-07-31).
-defaultDrivers :: Text
-defaultDrivers = "all"
-
--- | Aplica los defaults a los @QueryParam@ opcionales de 'Server.Api'. Pura y
--- separada del resto a propósito: es lo único testeable sin red de este módulo,
--- y el invariante que fija —ausencia de parámetros ≡ comportamiento previo a que
--- existieran— es el criterio de aceptación de todo el cambio.
---
--- El par que devuelve es también la __clave de cache__, y por eso se resuelve
--- una sola vez y aquí: cachear bajo la clave sin resolver haría que
--- @?session=latest@ y la ausencia de parámetro ocuparan dos entradas distintas
--- con el mismo contenido.
-resolveParams :: Maybe Text -> Maybe Text -> (Text, Text)
-resolveParams session driver =
-  (fromMaybe defaultSession session, fromMaybe defaultDrivers driver)
 
 -- | Devuelve la telemetría de la vuelta rápida de cada piloto: intenta el fetch
 -- real; si funciona, refresca la cache y devuelve; ante fallo o lista vacía sirve

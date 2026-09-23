@@ -29,10 +29,14 @@ module Handler.Drivers.Helper
     RawDriver (..)
     -- * Transformación pura
   , assembleDrivers
+    -- * Parámetros de la petición
+  , defaultSession
+  , resolveParams
   ) where
 
 import           Common.Types (DriverEntry (..))
 import           Data.Aeson   (FromJSON (..), withObject, (.!=), (.:), (.:?))
+import           Data.Maybe   (fromMaybe)
 import           Data.Text    (Text)
 
 -- | Un coche de la parrilla tal como lo emite el microservicio.
@@ -73,3 +77,19 @@ assembleDrivers = map entry
         , deCode   = rdCode raw
         , deTeam   = rdTeam raw
         }
+
+-- | Sesión que se consulta cuando @\/api\/drivers@ no recibe @?session=@.
+-- @latest@ es la última carrera disputada, resuelta por el microservicio.
+defaultSession :: Text
+defaultSession = "latest"
+
+-- | Aplica el default al @QueryParam@ opcional de 'Server.Api'. Espejo de los
+-- @resolveParams@ de Telemetry y Comparison, y por la misma razón: lo que
+-- devuelve es también la __clave de cache__, resuelta una sola vez para que
+-- @?session=latest@ y la ausencia del parámetro no ocupen dos entradas con el
+-- mismo contenido.
+--
+-- Devuelve un 'Text' y no un par, que es la diferencia de forma con las otras
+-- dos áreas parametrizadas: aquí solo hay un parámetro que resolver.
+resolveParams :: Maybe Text -> Text
+resolveParams = fromMaybe defaultSession

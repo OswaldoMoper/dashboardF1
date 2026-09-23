@@ -1,8 +1,7 @@
 -- | Invariantes de la lógica pura de las áreas Historical
--- ('Handler.Historical.Helper'), Telemetry ('Handler.Telemetry.Helper' y la
--- resolución de parámetros de 'Handler.Telemetry.Context'), Comparison
--- ('Handler.Comparison.Helper' y el @resolveParams@ de su 'Context'), Drivers
--- (ídem), TyreStrategy ('Handler.TyreStrategy.Helper'), Live
+-- ('Handler.Historical.Helper'), Telemetry ('Handler.Telemetry.Helper', con la
+-- resolución de parámetros), Comparison ('Handler.Comparison.Helper', ídem),
+-- Drivers (ídem), TyreStrategy ('Handler.TyreStrategy.Helper'), Live
 -- ('Handler.Live.Helper' y las cabeceras de procedencia de 'Handler.Live') y los
 -- tipos crudos compartidos de OpenF1 ('Handler.OpenF1.Helper'). Con el último no
 -- queda ninguna función pura del backend sin cubrir.
@@ -110,8 +109,10 @@ import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
 import           GHC.TypeLits                (symbolVal)
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
+import qualified Handler.Comparison.Helper   as Comparison
 import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
+import qualified Handler.Drivers.Helper      as Drivers
 import           Handler.Feed.Helper         (FeedLive (..), FeedRow (..),
                                               FeedSession (..))
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
@@ -143,8 +144,8 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               stillRecent, upNext)
 import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
-import qualified Handler.Telemetry.Context   as Telemetry
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
+import qualified Handler.Telemetry.Helper    as Telemetry
 import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
 import           Network.HTTP.Req            (queryParamToList)
 import           Outcome                     (Rejection (..), rejectionFor)

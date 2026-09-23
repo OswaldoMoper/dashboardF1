@@ -194,7 +194,7 @@ refreshLine LastFailed =
 -- __Las posiciones iniciales, 0 y 1, no son la selección de verdad:__ son lo que
 -- se ve durante el instante que va del arranque a la primera respuesta. El par
 -- que el gráfico pinta lo marca el prefill, y tiene que ser así porque
--- @Handler.Comparison.Context.defaultDrivers@ son los coches @1@ y @16@ y sus
+-- @Handler.Comparison.Helper.defaultDrivers@ son los coches @1@ y @16@ y sus
 -- posiciones dependen de la parrilla: en el dummy son la 0 y la 1 —está ordenado
 -- justamente así— y en la parrilla real son la 0 y la __3__.
 carSelector
