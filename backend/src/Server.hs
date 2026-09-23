@@ -31,7 +31,8 @@ import           Network.Wai.Application.Static (defaultWebAppSettings,
                                                  staticApp)
 import           Servant
 import           System.FilePath                ((</>))
-import           WaiAppStatic.Types             (StaticSettings (..))
+import           WaiAppStatic.Types             (MaxAge (..),
+                                                 StaticSettings (..))
 
 -- | Respuesta del endpoint de bienvenida.
 newtype Home = Home {message :: Text}
@@ -101,11 +102,18 @@ server env =
 -- | Sirve el bundle estático del frontend desde 'cfgStaticDir'. Un archivo
 -- concreto gana; cualquier otra ruta cae en @index.html@ (fallback SPA), para
 -- que los deep-links del enrutado client-side resuelvan en vez de dar 404.
+--
+-- El navegador guarda cada fichero 15 s y después revalida por @ETag@: los
+-- nombres del bundle son fijos, así que un rebuild no cambia la URL.
 spaApp :: Env -> Application
 spaApp env = staticApp settings
   where
     dir = cfgStaticDir (envConfig env)
-    settings = (defaultWebAppSettings dir) {ss404Handler = Just serveIndex}
+    settings =
+      (defaultWebAppSettings dir)
+        { ss404Handler = Just serveIndex
+        , ssMaxAge = MaxAgeSeconds 15
+        }
     serveIndex _req send =
       send $
         responseFile
