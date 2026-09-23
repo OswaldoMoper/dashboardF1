@@ -123,6 +123,24 @@ data ClockForm
 -- __Las horas no se envuelven a las 24__: un valor de más de un día sale con la
 -- cuenta entera de horas, y el relleno de 'ClockPadded' es un mínimo y no un
 -- recorte.
+formatClock :: ClockForm -> Int -> Text
+formatClock form secs = case form of
+    ClockCompact
+      | hours == 0 -> T.intercalate ":" [tshow minutes, pad2 seconds]
+      | otherwise  -> withHours (tshow hours)
+    ClockHours     -> withHours (tshow hours)
+    ClockPadded    -> withHours (pad2 hours)
+  where
+    (hours, rest)      = max 0 secs `divMod` 3600
+    (minutes, seconds) = rest `divMod` 60
+
+    withHours h = T.intercalate ":" [h, pad2 minutes, pad2 seconds]
+
+    tshow :: Int -> Text
+    tshow = T.pack . show
+
+    pad2 = T.justifyRight 2 '0' . tshow
+
 -- | Cuánto falta para algo, en sus __tres magnitudes mayores que no valgan cero__.
 --
 -- @
@@ -169,21 +187,3 @@ formatCountdown secs
       [(days, "d"), (hours, "h"), (minutes, "min"), (seconds, "s")]
 
     piece (n, unit) = [T.pack (show n), unit]
-
-formatClock :: ClockForm -> Int -> Text
-formatClock form secs = case form of
-    ClockCompact
-      | hours == 0 -> T.intercalate ":" [tshow minutes, pad2 seconds]
-      | otherwise  -> withHours (tshow hours)
-    ClockHours     -> withHours (tshow hours)
-    ClockPadded    -> withHours (pad2 hours)
-  where
-    (hours, rest)      = max 0 secs `divMod` 3600
-    (minutes, seconds) = rest `divMod` 60
-
-    withHours h = T.intercalate ":" [h, pad2 minutes, pad2 seconds]
-
-    tshow :: Int -> Text
-    tshow = T.pack . show
-
-    pad2 = T.justifyRight 2 '0' . tshow
