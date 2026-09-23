@@ -358,7 +358,7 @@ premio dejan de ser un requisito suelto y pasan a tener forma.** Once decisiones
   nadie pudo pedir.
 - **Una sesión de referencia se pide una vez y se congela.** Con tres referencias y el refresco de diez
   segundos serían veinticuatro peticiones por minuto y tarjeta, y el primer acceso a una sesión del
-  microservicio tarda minutos.
+  microservicio tarda segundos (de 3 a 17 s medidos el 2026-09-23).
 - **Los parámetros tienen tres ámbitos: página, grupo y tarjeta, y manda el más cercano**, con un interruptor
   visible en la tarjeta que dice a quién obedece. «Seguir a un piloto sesión a sesión» **no es una pieza**: es
   un parámetro más, y puede vivir en los tres sitios porque quien elige es el usuario.

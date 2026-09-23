@@ -28,7 +28,7 @@ El backend Haskell lo localiza con `TELEMETRY_HOST` (default `127.0.0.1`) y `TEL
 
 | Variable | Default | Qué hace |
 | --- | --- | --- |
-| `FASTF1_CACHE` | `.fastf1-cache` | Directorio de cache de FastF1 (se crea si no existe). **La primera llamada a una sesión nueva descarga datos y tarda minutos**; con la cache caliente responde al instante. |
+| `FASTF1_CACHE` | `.fastf1-cache` | Directorio de cache de FastF1 (se crea si no existe). **La primera llamada a una sesión nueva descarga datos y tarda segundos** (16,6 s una carrera, medido el 2026-09-23); tras arrancar, una sesión ya descargada se lee de disco en unos 3 s, y ya cargada responde al instante. |
 | `TELEMETRY_MAX_POINTS` | `60` | Muestras por piloto tras el submuestreo de `/fastf1/telemetry`. Una vuelta a 10 Hz son miles de muestras y el widget pinta una tabla. **No afecta a `/fastf1/comparison`** desde el 2026-08-11: su delta son cuatro fronteras de sector, no una serie submuestreada. |
 
 ## Endpoints
