@@ -160,6 +160,7 @@
         # ── Entorno de desarrollo completo: microservicio + backend ──
         packages.dev = pkgs.writeShellApplication {
           name = "dashboardF1-dev";
+          runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.iproute2 ];
           text = ''
             port="''${PORT:-8080}"
             tport="''${TELEMETRY_PORT:-8000}"
@@ -170,6 +171,39 @@
             FASTF1_CACHE="$cache" \
               ${self'.packages.telemetry}/bin/telemetry-service --port "$tport" &
             tpid=$!
+            pids=("$tpid")
+
+            cleanup() {
+              trap - EXIT INT TERM
+              kill "''${pids[@]}" 2>/dev/null || true
+              wait "''${pids[@]}" 2>/dev/null || true
+            }
+            trap cleanup EXIT INT TERM
+
+            # Load the latest race once, alone, before the backend's 5 s ceiling
+            # meets a process that has not loaded it yet.
+            warned="la primera carga puede salir con datos de ejemplo"
+            listening=""
+            for _ in $(seq 60); do
+              if [ -n "$(ss -ltnH "sport = :$tport")" ]; then listening=1; break; fi
+              kill -0 "$tpid" 2>/dev/null || break
+              sleep 1
+            done
+            if [ -z "$listening" ]; then
+              echo "aviso: la última carrera no se pudo cargar (el microservicio no escucha en :$tport); $warned" >&2
+            else
+              warm="$(curl -sS -o /dev/null -m 120 -w '%{http_code} %{time_total}' \
+                "http://127.0.0.1:$tport/fastf1/drivers/latest" 2>/dev/null || true)"
+              read -r code secs <<<"$warm"
+              secs="$(LC_ALL=C printf '%.1f' "''${secs:-0}")"
+              if [ "$code" = 200 ]; then
+                echo "última carrera en memoria ($secs s)"
+              elif [ "$code" = 000 ]; then
+                echo "aviso: la última carrera no se pudo cargar (sin respuesta en $secs s); $warned" >&2
+              else
+                echo "aviso: la última carrera no se pudo cargar (HTTP $code, $secs s); $warned" >&2
+              fi
+            fi
 
             echo "backend Servant   → :$port      (STATIC_DIR: ${self'.packages.frontend})"
             echo "                     web en http://127.0.0.1:$port/"
@@ -179,13 +213,7 @@
             STATIC_DIR="${self'.packages.frontend}" \
               ${self'.packages.backend}/bin/backend &
             bpid=$!
-
-            cleanup() {
-              trap - EXIT INT TERM
-              kill "$tpid" "$bpid" 2>/dev/null || true
-              wait "$tpid" "$bpid" 2>/dev/null || true
-            }
-            trap cleanup EXIT INT TERM
+            pids+=("$bpid")
 
             wait "$bpid" || true
           '';
