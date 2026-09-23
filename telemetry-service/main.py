@@ -179,7 +179,7 @@ def _resolve_drivers(session: Any, spec: str) -> List[str]:
     """Números de coche a consultar: ``all`` o una lista ``1,4,16``.
 
     Una parte que no es número pasa por ``_car_number``: un acrónimo que la
-    sesión reconoce sale como el número que lleva ese piloto (``VER`` → ``1``), y
+    sesión reconoce sale como el número que lleva ese piloto (``NOR`` → ``1``), y
     cualquier otra cosa sigue tal cual.
     """
     if spec == "all":

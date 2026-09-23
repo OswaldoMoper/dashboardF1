@@ -104,7 +104,7 @@ defaultSession = "latest"
 
 -- | Coches que se comparan cuando @\/api\/comparison@ no recibe @?drivers=@:
 -- __números de coche__, no acrónimos, porque es lo que acepta el microservicio
--- (2026-08-01). Son los dos de 'Handler.Comparison.Context.dummy' —@1@ es VER
+-- (2026-08-01). Son los dos de 'Handler.Comparison.Context.dummy' —@1@ es NOR
 -- y @16@ es LEC—, para que la respuesta sin parámetros y el respaldo hablen de
 -- los mismos coches.
 --
