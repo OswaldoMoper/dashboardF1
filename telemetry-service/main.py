@@ -930,6 +930,12 @@ def _feed_gaps(line: Dict[str, Any], part: Any) -> Tuple[str, str]:
     diferencia en vueltas, y **cualquiera de las dos la toma** cuando el rival
     va doblado; y una línea sin diferencia las manda vacías, que salen como
     ``"-"``. Quien llame no puede parsearlas como tiempo sin mirar.
+
+    **La diferencia en vueltas llega con dos formas, con y sin espacio, y se
+    devuelve tal cual.** Medido en la carrera 11369: ``GapToLeader`` trae
+    ``"1 L"`` 12 veces y ``"1L"`` 8, e ``IntervalToPositionAhead`` también trae
+    las dos; las de dos cifras (``"14L"``, ``"26L"``) solo salieron sin espacio.
+    Quien distinga vueltas de segundos tiene que aceptar las dos.
     """
     stats = line.get("Stats")
     if isinstance(stats, list) and stats:
