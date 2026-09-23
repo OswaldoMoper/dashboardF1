@@ -12,8 +12,8 @@
 -- @TELEMETRY_TIMEOUT@ es el tercero de esa familia y el único que no describe
 -- __dónde__ está el servicio sino __cuánto__ se le espera. Vive en la 'Config' y
 -- no como constante del cliente porque los dos escenarios del microservicio piden
--- valores opuestos —caído, fallar en segundos; arriba con la cache fría, esperar
--- minutos— y el operador es quien sabe en cuál está
+-- valores opuestos —caído, fallar en segundos; arriba con la sesión sin cargar,
+-- esperar a que la cargue— y el operador es quien sabe en cuál está
 -- ('Handler.FastF1.Manager.fastf1Timeout').
 --
 -- @PUBLIC_API_TIMEOUT@ es el segundo techo de duración, y son dos y no uno porque
@@ -58,8 +58,8 @@ loadConfig = do
         -- 'fromMaybe' directo de los otros campos.
       , cfgTelemetryHost = maybe "127.0.0.1" T.pack mhost
       , cfgTelemetryPort = fromMaybe 8000 (mtport >>= readMaybe)
-        -- 5 s sirve al escenario de todos los días (servicio caído → degradado
-        -- rápido). El camino feliz con la cache de FastF1 fría necesita subirlo.
+        -- 5 s sirve al servicio caído (degradado rápido). Una sesión sin cargar
+        -- necesita más ('Handler.FastF1.Manager.fastf1Timeout').
       , cfgTelemetryTimeout = fromMaybe 5 (mtout >>= readMaybe)
         -- 5 s deja el techo total en 15 s con los 3 intentos de
         -- 'Handler.PublicApi.Manager', y sobra sobre el camino feliz medido

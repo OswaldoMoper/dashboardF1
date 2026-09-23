@@ -73,15 +73,15 @@ fastf1Port = port
 -- * __Servicio caído__ (el normal): conectar a un puerto sin escuchar __se
 --   cuelga__ en vez de dar @ECONNREFUSED@, así que sin techo el intento consume
 --   los 30 s por defecto. Aquí se quiere fallar en segundos.
--- * __Servicio arriba y con la cache de FastF1 fría__: la primera llamada a una
---   sesión nueva descarga y parsea la sesión entera y tarda __minutos__. Un techo
---   corto la convertiría en un degradado al dummy — el camino feliz sería
---   inalcanzable desde el backend.
+-- * __Servicio arriba con la sesión sin cargar__: la primera llamada a una sesión
+--   la carga entera —de disco, o de la red si nunca se bajó— y puede pasar del
+--   techo, sobre todo con varias peticiones a la vez. Con un techo corto esa
+--   llamada degrada al dummy.
 --
--- El default (@TELEMETRY_TIMEOUT@, 5 s) sirve al primero, que es el de todos los
--- días. Para validar el segundo con la cache fría se sube por entorno
--- (@TELEMETRY_TIMEOUT=600@), o se calienta la cache llamando al microservicio
--- directamente antes de medir nada.
+-- El default (@TELEMETRY_TIMEOUT@, 5 s) sirve al primero. Del segundo se ocupa
+-- @dashboardF1-dev@, que carga la última carrera antes de arrancar el backend;
+-- otra sesión, o el servicio lanzado de otra forma, sigue pidiendo subir el techo
+-- por entorno o pedirle antes la sesión al microservicio.
 fastf1Timeout :: Int -> Option 'Http
 fastf1Timeout seconds = responseTimeout (seconds * 1000000)
 
