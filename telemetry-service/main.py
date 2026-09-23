@@ -1031,6 +1031,8 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     anunció sesión», que no es lo mismo que anunciarla con los campos vacíos.
     No se ha observado nunca en las dos grabaciones.
 
+    ``siCircuit`` solo va si ``Meeting`` trae ``Circuit.ShortName``.
+
     Dos ausencias que son el caso normal y no un fallo:
 
     * ``LapCount`` **solo existe en carrera**, así que cuatro de las cinco
@@ -1056,6 +1058,12 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "siMeeting": _text(meeting.get("Name")),
         "siState": _text(info.get("SessionStatus")),
     }
+
+    circuit = meeting.get("Circuit")
+    circuit = circuit if isinstance(circuit, dict) else {}
+    short_name = _text(circuit.get("ShortName"))
+    if short_name:
+        session["siCircuit"] = short_name
 
     laps = snapshot.get("LapCount")
     if isinstance(laps, dict):
