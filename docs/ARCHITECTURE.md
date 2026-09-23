@@ -97,6 +97,8 @@ Endpoints (los **cuatro** implementados desde el 2026-08-13):
 `driver`/`drivers` son **números de coche** (o `all` en telemetría), no acrónimos: la traducción
 número→acrónimo la conoce solo el microservicio, así que entra número y **sale acrónimo**
 (2026-08-01 y 2026-08-03). La comparación es de **exactamente dos** coches.
+Un acrónimo que la sesión reconoce se acepta y **se traduce a número a la entrada**, así que la respuesta
+lleva números también en ese caso (2026-09-23); lo que no reconoce pasa tal cual.
 
 La comparación devuelve **también el número de coche** (`lcCarA`/`lcCarB`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**.
 

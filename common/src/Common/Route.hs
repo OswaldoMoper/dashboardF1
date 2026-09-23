@@ -70,8 +70,9 @@ telemetryPath = apiPath TelemetryApi
 --
 -- * __@driver@ son números de coche, no acrónimos.__ El valor viaja tal cual al
 --   segmento @{driver}@ del microservicio FastF1, que acepta @all@ o @1,4,16@; un
---   @VER@ devuelve 400 y el endpoint degrada a cache\/dummy. El acrónimo es el
---   vocabulario del __widget__ (@tpDriver@), no el de la API.
+--   acrónimo que la sesión reconoce lo traduce a su número, y cualquier otra
+--   cosa la pasa tal cual. El acrónimo es el vocabulario del __widget__
+--   (@tpDriver@), no el de la API.
 telemetryPathFor :: Maybe Text -> Maybe Text -> Text
 telemetryPathFor session driver =
   pathWith telemetryPath [("session", session), ("driver", driver)]
@@ -99,11 +100,11 @@ comparisonPathFor session drivers =
 -- segundo argumento de 'comparisonPathFor'.
 --
 -- __Es el guardián del desajuste de vocabularios__, no una comodidad de
--- formateo. El microservicio responde __400__ a @VER,LEC@, pero ese 400 lo
--- absorbe el @try@ del @Handler.Comparison.Context@ y el endpoint devuelve
--- __200 con el dummy__: un fallo silencioso, anotado como riesgo el 2026-08-01.
--- Con esto, un acrónimo escrito en el widget __no llega a salir__ — no hay
--- petición, en vez de una petición que degrada sin decirlo.
+-- formateo. El microservicio traduce a número un acrónimo que la sesión
+-- reconoce, pero uno que no reconoce lo pasa tal cual y la comparación degrada
+-- sin decirlo (riesgo anotado el 2026-08-01). Con esto, lo que no es un número
+-- escrito en el widget __no llega a salir__ — no hay petición, en vez de una
+-- petición que degrada en silencio.
 --
 -- Vive aquí y no en el widget por el criterio del 2026-08-04 (lo puro y sin
 -- Reflex va a @common@): el paquete @frontend@ no tiene suite, así que esta es

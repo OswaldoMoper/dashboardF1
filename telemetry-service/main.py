@@ -160,16 +160,38 @@ def _resolve_session(session_key: str) -> Any:
 
 
 def _resolve_drivers(session: Any, spec: str) -> List[str]:
-    """Números de coche a consultar: ``all`` o una lista ``1,4,16``."""
+    """Números de coche a consultar: ``all`` o una lista ``1,4,16``.
+
+    Una parte que no es número pasa por ``_car_number``: un acrónimo que la
+    sesión reconoce sale como el número que lleva ese piloto (``VER`` → ``1``), y
+    cualquier otra cosa sigue tal cual.
+    """
     if spec == "all":
         return [str(number) for number in session.drivers]
-    numbers = [part.strip() for part in spec.split(",") if part.strip()]
+    numbers = [
+        _car_number(session, part.strip()) for part in spec.split(",") if part.strip()
+    ]
     if not numbers:
         raise HTTPException(
             status_code=400,
             detail="driver debe ser 'all' o una lista de números de coche (p. ej. '1,4')",
         )
     return numbers
+
+
+def _car_number(session: Any, part: str) -> str:
+    """Número de coche de ``part``: tal cual si ya son dígitos; el que lleva ese
+    piloto si es un acrónimo que la sesión reconoce; tal cual si no.
+
+    Es la traducción inversa de ``_driver_label``, y por eso quien pide con
+    acrónimos recibe números en ``lcCarA``/``lcCarB`` y ``leNumber``.
+    """
+    if part.isdigit():
+        return part
+    try:
+        return str(session.get_driver(part)["DriverNumber"])
+    except Exception:
+        return part
 
 
 def _driver_label(session: Any, number: str) -> str:
