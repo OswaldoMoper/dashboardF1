@@ -104,8 +104,9 @@ La comparación devuelve **también el número de coche** (`lcCarA`/`lcCarB`) ju
 
 **Se arranca desde el flake** (`nix run .#telemetry`, o `nix develop .#telemetry` para iterar), con las
 dependencias de Python pineadas por él y sin venv que reconstruir (2026-08-12). La
-cache de FastF1 sigue siendo **relativa al directorio de ejecución**, así que se arranca desde
-`telemetry-service/`.
+cache de FastF1 va donde diga `FASTF1_CACHE`, que por defecto es **relativa al directorio de ejecución**
+(`.fastf1-cache`), así que suelto se arranca desde `telemetry-service/`. `nix run .#dev` le pasa una ruta
+absoluta: `telemetry-service/.fastf1-cache` bajo el directorio desde el que se lanza.
 
 `GET /fastf1/drivers/{session_key}` cierra el desajuste por completo: es el único endpoint que **publica** la traducción en vez de aplicarla por dentro, así que un consumidor puede pedir datos de un coche que aún no ha visto. Devuelve la parrilla **de esa sesión** —sustitutos y terceros coches incluidos—, en el orden que le da FastF1 y sin reordenar.
 
