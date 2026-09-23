@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -81,6 +82,10 @@ app = FastAPI(title="telemetry-service", version="0.1.0")
 # aceptada: `latest` se congela mientras el proceso viva — reiniciar `uvicorn`
 # para volver a resolverlo.
 _sessions: Dict[str, Any] = {}
+
+# Todo lo que habla con FastF1 por red va bajo este cerrojo: su cache (SQLite)
+# no admite dos hilos a la vez.
+_load_lock = threading.Lock()
 
 
 # ── Resolución de la sesión ───────────────────────────────────────────────────
@@ -118,11 +123,23 @@ def _resolve_session(session_key: str) -> Any:
     ``session_key`` es ``latest`` (última carrera disputada) o
     ``AÑO-RONDA-SESIÓN`` — con guiones, no barras, porque es **un solo segmento
     de path**: ``2026-13-R``, ``2026-13-Q``, ``2026-13-FP2``.
+
+    Carga una sesión a la vez (``_load_lock``); una sesión ya en memoria no
+    espera.
     """
     cached = _sessions.get(session_key)
     if cached is not None:
         return cached
+    with _load_lock:
+        cached = _sessions.get(session_key)
+        if cached is None:
+            cached = _load_session(session_key)
+            _sessions[session_key] = cached
+        return cached
 
+
+def _load_session(session_key: str) -> Any:
+    """Carga la sesión sin mirar el memo. Solo se llama con ``_load_lock``."""
     if session_key == "latest":
         year, rnd = _latest_race()
         identifier: Any = "R"
@@ -155,7 +172,6 @@ def _resolve_session(session_key: str) -> Any:
             detail=f"sesión no resoluble ({year}, {rnd}, {identifier}): {exc}",
         )
 
-    _sessions[session_key] = session
     return session
 
 
