@@ -42,33 +42,19 @@ import           Network.HTTP.Req
 publicApiRetries :: Int
 publicApiRetries = 2
 
--- | 'HttpConfig' de los dos clientes públicos: 'defaultHttpConfig' con la política
--- de reintentos __acotada__.
+-- | 'HttpConfig' de los dos clientes públicos: 'defaultHttpConfig' con
+-- 'publicApiRetries' reintentos en vez de 5 (2026-08-19).
 --
--- El motivo es medido. @retryPolicyDefault@ es @constantDelay 50 ms \<\>
--- limitRetries 5@ y el @responseTimeout@ por defecto de @http-client@ es de
--- __30 s por intento__, así que el techo de un GET era __6 × 30 s = 180 s__ —y
--- __360 s__ en @\/api\/historical@, que hace 2 GET en serie dentro del mismo
--- @try@—. Es la misma aritmética que dio los 180 s de FastF1 el 2026-08-04, viva
--- en los clientes que aquel día no se tocaron.
+-- El techo total de un GET es __intentos × techo por intento__, y @req@ solo deja
+-- fijar el segundo ('publicApiTimeout'); por eso este módulo exporta las dos piezas.
+-- Con 3 intentos de 5 s, ~15 s.
 --
--- __El arreglo son dos piezas y no una__, y por eso este módulo exporta las dos:
--- el techo total es el __producto__ @intentos × techo por intento@, y @req@ solo
--- ofrece el segundo factor. Tocar solo el número de intentos habría dejado 90 s;
--- tocar solo el techo lo habría dejado en 6× lo configurado, que es el riesgo que
--- el 2026-08-04 dejó escrito («si alguien reactiva los reintentos, el techo real
--- se multiplica en silencio»). Con 3 intentos de 5 s el total queda en __~15 s__.
+-- El backoff (50 ms entre intentos) y el @retryJudge@ por defecto se conservan: solo
+-- se reintentan __timeouts__ (@ResponseTimeout@\/@ConnectionTimeout@ y los status
+-- 408\/504\/524\/598\/599), no un @ECONNREFUSED@, así que __cada reintento cuesta
+-- un techo entero__.
 --
--- __El backoff se conserva__: los 50 ms × 5 de @retryPolicyDefault@ son ~250 ms en
--- total, despreciables al lado del techo, así que lo que cambia es el número de
--- intentos y no el delay. Y el @retryJudge@ también se conserva: por defecto solo
--- reintenta __timeouts__ (@ResponseTimeout@\/@ConnectionTimeout@ y los status
--- 408\/504\/524\/598\/599), no un @ECONNREFUSED@. Consecuencia que conviene tener
--- presente al medir: __cada reintento cuesta un techo entero__, porque solo ocurre
--- cuando el intento anterior se comió el techo.
---
--- No cambia la semántica del degradado: el @try@ de cada @Context@ atrapa
--- exactamente las mismas excepciones, solo que antes.
+-- No cambia qué excepciones atrapa el @try@ de cada @Context@: solo llegan antes.
 publicApiConfig :: HttpConfig
 publicApiConfig =
   defaultHttpConfig
