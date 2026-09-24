@@ -30,6 +30,7 @@ library
         Server
         Html
         Outcome
+        Provenance
         Handler.FastF1.Helper
         Handler.FastF1.Manager
         Handler.PublicApi.Manager

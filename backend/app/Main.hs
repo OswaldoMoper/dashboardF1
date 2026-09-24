@@ -10,8 +10,8 @@ import           Data.Maybe               (fromMaybe)
 import qualified Data.Text                as T
 import           Data.Time.Clock          (getCurrentTime)
 import           Handler.Live.Context     (liveClock, refreshFeedWindow)
-import           Handler.Live.Helper      (isoInstant)
 import           Network.Wai.Handler.Warp (run)
+import           Provenance               (isoInstant)
 import           Server                   (app)
 import           System.IO                (BufferMode (..), hSetBuffering,
                                            stdout)

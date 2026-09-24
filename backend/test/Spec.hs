@@ -119,10 +119,7 @@ import           Handler.Feed.Helper         (FeedLive (..), FeedRow (..),
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
-import           Handler.Live                (FetchedAtHeaderName, LiveResponse,
-                                              OriginHeaderName,
-                                              SourceHeaderName, fetchedAtText,
-                                              withOrigin)
+import           Handler.Live                (LiveResponse, withOrigin)
 import           Handler.Live.Context        (LiveResult (..))
 import           Handler.Live.Helper         (ClockVerdict (..),
                                               FeedVerdict (..), Of1Interval,
@@ -135,9 +132,9 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               feedSession, feedStatus,
                                               feedVerdict, feedWindowLead,
                                               feedWindowOpen, fetchFailure,
-                                              freezeClock, isoInstant,
-                                              lapProgress, latestByDriver,
-                                              meetingNames, openf1ClockIdle,
+                                              freezeClock, lapProgress,
+                                              latestByDriver, meetingNames,
+                                              openf1ClockIdle,
                                               openf1ClockPeriod, openf1MinGap,
                                               openf1Session, parseFeedInstant,
                                               parseRemaining, schedule,
@@ -150,6 +147,10 @@ import qualified Handler.Telemetry.Helper    as Telemetry
 import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
 import           Network.HTTP.Req            (queryParamToList)
 import           Outcome                     (Rejection (..), rejectionFor)
+import           Provenance                  (FetchedAtHeaderName,
+                                              OriginHeaderName,
+                                              SourceHeaderName, fetchedAtText,
+                                              isoInstant)
 import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
 import           Test.Hspec

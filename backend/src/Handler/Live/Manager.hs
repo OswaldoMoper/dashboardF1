@@ -13,10 +13,10 @@ module Handler.Live.Manager where
 import           Config                 (Config)
 import           Data.Time.Clock        (UTCTime)
 import           Handler.Live.Helper    (Of1Interval, Of1Lap, Of1Meeting,
-                                         Of1Position, Of1Result, Of1Session,
-                                         isoInstant)
+                                         Of1Position, Of1Result, Of1Session)
 import           Handler.OpenF1.Manager (endsAfter, fetchList, fetchListWith,
                                          meetingKey, meetingYear)
+import           Provenance             (isoInstant)
 
 -- Los cuatro reciben la 'Config' por lo mismo que 'fetchList': de ella sale el
 -- techo de duración del intento.

@@ -36,7 +36,6 @@ module Handler.Live.Helper
     -- * Lo que se deja dicho cuando un fetch no sale
   , fetchFailure
     -- * Transformaciones puras
-  , isoInstant
   , assembleRows
   , feedRows
   , feedStatus
@@ -88,11 +87,11 @@ import qualified Data.Text             as T
 import           Data.Text.Read        (decimal)
 import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime,
                                         diffUTCTime)
-import           Data.Time.Format      (defaultTimeLocale, formatTime,
-                                        parseTimeM)
+import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
 import           Handler.Feed.Helper   (FeedLive (..), FeedRow (..),
                                         FeedSession (..))
 import           Handler.OpenF1.Helper (Of1Driver (..))
+import           Provenance            (isoInstant)
 import           Text.Printf           (printf)
 
 -- | @/position@: posición del piloto en un instante (@date@).
@@ -632,13 +631,6 @@ upNext now shown sessions
       | otherwise                                = ssGrandPrix next
 
     shownMeeting = siMeeting <$> shown
-
--- | Un instante en la forma ISO 8601 que este proyecto emite, con segundos enteros.
---
--- La usan el filtro del calendario de OpenF1 y la cabecera @X-Data-Fetched-At@. Son
--- dos usos distintos de la __misma__ forma, y por eso vive aquí en vez de dos veces.
-isoInstant :: UTCTime -> Text
-isoInstant = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
 
 -- | Qué se puede hacer con lo que el feed acaba de entregar.
 --
