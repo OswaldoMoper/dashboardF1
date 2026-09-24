@@ -9,6 +9,7 @@ module Provenance
   ( OriginHeaderName
   , FetchedAtHeaderName
   , SourceHeaderName
+  , Provenanced (..)
   , WithProvenance
   , withProvenance
   , fetchedAtText
@@ -31,6 +32,21 @@ type FetchedAtHeaderName = "X-Data-Fetched-At"
 -- | Nombre de la cabecera de la fuente; espejo de 'Common.Origin.sourceHeader'.
 type SourceHeaderName = "X-Data-Source"
 
+-- | Un dato con todo lo que hace falta para servirlo: qué peldaño lo produjo, de qué
+-- fuente salió y, solo cuando sale de lo guardado, cuándo llegó.
+--
+-- El instante va aparte de 'Origin' por la razón que da
+-- 'Common.Origin.fetchedAtHeader': de un dato fresco la hora es «ahora», y de uno
+-- inventado no hay hora. La fuente va en 'Maybe' por la simétrica: el respaldo
+-- estático no salió de ninguna.
+data Provenanced a = Provenanced
+  { pvOrigin    :: Origin
+  , pvSource    :: Maybe Source
+  , pvFetchedAt :: Maybe UTCTime
+  , pvBody      :: a
+  }
+  deriving (Eq, Show)
+
 -- | Un cuerpo con las tres cabeceras de procedencia.
 type WithProvenance a =
   Headers
@@ -42,13 +58,13 @@ type WithProvenance a =
 
 -- | Pone la procedencia en cabeceras.
 --
--- @X-Data-Origin@ va siempre; las otras dos __faltan__ cuando quien llama no las
+-- @X-Data-Origin@ va siempre; las otras dos __faltan__ cuando el dato no las
 -- tiene: el instante solo lo hay al servir de lo guardado —porque aún vale o porque
 -- la fuente no contestó—, y la fuente solo si el dato salió de alguna —el respaldo
 -- estático no—. Es pura para que la suite pueda comprobar qué cabeceras salen en
 -- cada peldaño sin levantar red.
-withProvenance :: Origin -> Maybe Source -> Maybe UTCTime -> a -> WithProvenance a
-withProvenance origin source fetchedAt body =
+withProvenance :: Provenanced a -> WithProvenance a
+withProvenance (Provenanced origin source fetchedAt body) =
   addHeader (originLabel origin) (withFetchedAt (withSource body))
   where
     withSource :: a -> Headers '[Header SourceHeaderName Text] a

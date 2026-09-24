@@ -77,22 +77,11 @@ import           Handler.Live.Helper     (ClockVerdict (..), FeedVerdict (..),
 import qualified Handler.Live.Manager    as Manager
 import qualified Handler.OpenF1.Manager  as OpenF1
 import           Outcome                 (httpStatusOf)
+import           Provenance              (Provenanced (..))
 import           System.IO               (stderr)
 
--- | La tabla de live timing con todo lo que hace falta para servirla: qué peldaño
--- la produjo, de qué fuente salió y, solo cuando sale de la cache, cuándo llegó.
---
--- El instante va aparte de 'Origin' por la razón que da
--- 'Common.Origin.fetchedAtHeader': de un dato fresco la hora es «ahora», y de uno
--- inventado no hay hora. La fuente va en 'Maybe' por la simétrica: el respaldo
--- estático no salió de ninguna.
-data LiveResult = LiveResult
-  { lrOrigin    :: Origin
-  , lrSource    :: Maybe Source
-  , lrFetchedAt :: Maybe UTCTime
-  , lrTable     :: LiveTable
-  }
-  deriving (Eq, Show)
+-- | La tabla de live timing con su procedencia.
+type LiveResult = Provenanced LiveTable
 
 -- | La tabla de live timing, por la escalera de cuatro peldaños.
 --
@@ -171,9 +160,9 @@ withUpNext :: Env -> LiveResult -> IO LiveResult
 withUpNext env result = do
   now <- getCurrentTime
   window <- readTVarIO (envFeedWindow env)
-  let table = lrTable result
+  let table = pvBody result
       next = upNext now (liveSession table) (fwSessions window)
-  pure result {lrTable = table {liveNext = next}}
+  pure result {pvBody = table {liveNext = next}}
 
 -- | Guarda cuándo se vio que el feed daba la sesión por finalizada, y vuelve a
 -- pedir el calendario.
@@ -290,7 +279,7 @@ serveBox :: (UTCTime, Source, LiveTable) -> IO LiveResult
 serveBox (fetchedAt, source, table) = do
   now <- getCurrentTime
   let (origin, served) = servedFromBox now fetchedAt table
-  pure (LiveResult origin (Just source) (Just fetchedAt) served)
+  pure (Provenanced origin (Just source) (Just fetchedAt) served)
 
 -- | La única bajada que sigue saliendo del endpoint: la de la caja vacía.
 --
@@ -410,7 +399,7 @@ askOpenF1 env = do
 serveFresh :: Env -> UTCTime -> Source -> LiveTable -> IO LiveResult
 serveFresh env now source table = do
   atomically (writeTVar (envLiveCache env) (Just (now, source, table)))
-  pure (LiveResult Fresh (Just source) Nothing table)
+  pure (Provenanced Fresh (Just source) Nothing table)
 
 -- | El respaldo: la última respuesta buena con su fuente y su instante, y si nunca
 -- la hubo, el dummy — que no tiene fuente ni sesión porque no salió de ninguna.
@@ -425,9 +414,9 @@ fromCache env = do
   pure (maybe sample fromEntry cached)
   where
     fromEntry (fetchedAt, source, table) =
-      LiveResult Cached (Just source) (Just fetchedAt) (frozen table)
+      Provenanced Cached (Just source) (Just fetchedAt) (frozen table)
     frozen table = table { liveSession = freezeClock <$> liveSession table }
-    sample = LiveResult Sample Nothing Nothing (LiveTable Nothing dummy NextUnknown)
+    sample = Provenanced Sample Nothing Nothing (LiveTable Nothing dummy NextUnknown)
 
 -- | Fetch de los 5 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
 --

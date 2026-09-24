@@ -119,8 +119,7 @@ import           Handler.Feed.Helper         (FeedLive (..), FeedRow (..),
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
-import           Handler.Live                (LiveResponse, withOrigin)
-import           Handler.Live.Context        (LiveResult (..))
+import           Handler.Live                (LiveResponse)
 import           Handler.Live.Helper         (ClockVerdict (..),
                                               FeedVerdict (..), Of1Interval,
                                               Of1Lap, Of1Meeting (..),
@@ -149,8 +148,9 @@ import           Network.HTTP.Req            (queryParamToList)
 import           Outcome                     (Rejection (..), rejectionFor)
 import           Provenance                  (FetchedAtHeaderName,
                                               OriginHeaderName,
+                                              Provenanced (..),
                                               SourceHeaderName, fetchedAtText,
-                                              isoInstant)
+                                              isoInstant, withProvenance)
 import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
 import           Test.Hspec
@@ -2321,7 +2321,7 @@ main = hspec $ do
   -- El nombre de cada cabecera vive dos veces —'Text' en 'Common.Origin', 'Symbol'
   -- en el tipo de Servant— y si divergen el widget no reconoce la cabecera y calla
   -- sin error. El primer caso es el que lo impide.
-  describe "Handler.Live — procedencia en cabeceras" $ do
+  describe "Provenance — procedencia en cabeceras" $ do
     it "los nombres del tipo de Servant son los de Common.Origin" $
       map T.pack [ symbolVal (Proxy :: Proxy OriginHeaderName)
                  , symbolVal (Proxy :: Proxy FetchedAtHeaderName)
@@ -2330,39 +2330,39 @@ main = hspec $ do
         `shouldBe` [originHeader, fetchedAtHeader, sourceHeader]
 
     it "el dato fresco del feed lleva procedencia y fuente, y no el instante" $
-      headersOf (withOrigin (LiveResult Fresh (Just Feed) Nothing liveTableFixture))
+      headersOf (withProvenance (Provenanced Fresh (Just Feed) Nothing liveTableFixture))
         `shouldBe` (Header "fresh", MissingHeader, Header "feed")
 
     it "el dato fresco de OpenF1 dice que es de OpenF1, con la misma procedencia" $
       -- La mitad que hace falta la cabecera: los dos peldaños son `fresh` y sin
       -- ella la página no puede distinguir la sesión en marcha de la terminada.
       headersOf
-        (withOrigin (LiveResult Fresh (Just OpenF1) Nothing namelessTableFixture))
+        (withProvenance (Provenanced Fresh (Just OpenF1) Nothing namelessTableFixture))
         `shouldBe` (Header "fresh", MissingHeader, Header "openf1")
 
     it "el dato guardado lleva la procedencia, el instante y la fuente que tenía" $
       -- La fuente sale de la caja de la cache, no se adivina: lo guardado conserva
       -- de dónde salió, o el tooltip afirmaría una fuente que no es.
       headersOf
-        (withOrigin (LiveResult Cached (Just OpenF1) (Just fetchInstant) liveTableFixture))
+        (withProvenance (Provenanced Cached (Just OpenF1) (Just fetchInstant) liveTableFixture))
         `shouldBe` (Header "cached", Header "2026-09-11T14:03:22Z", Header "openf1")
 
     it "el reciente viaja como lo guardado, pero con su propio sello" $
       -- Lo que el cuarto sello cambia en el cable es solo la primera cabecera: el
       -- instante y la fuente son los de lo guardado, porque es lo guardado.
       headersOf
-        (withOrigin (LiveResult Recent (Just OpenF1) (Just fetchInstant) liveTableFixture))
+        (withProvenance (Provenanced Recent (Just OpenF1) (Just fetchInstant) liveTableFixture))
         `shouldBe` (Header "recent", Header "2026-09-11T14:03:22Z", Header "openf1")
 
     it "el dato de ejemplo no lleva instante ni fuente, porque no tuvo ninguno" $
-      headersOf (withOrigin (LiveResult Sample Nothing Nothing namelessTableFixture))
+      headersOf (withProvenance (Provenanced Sample Nothing Nothing namelessTableFixture))
         `shouldBe` (Header "sample", MissingHeader, MissingHeader)
 
     it "el cuerpo es la tabla entera, sesión incluida y sin tocar" $
       -- El envoltorio viaja en el CUERPO y no en cabeceras (2026-09-13 (d)), así
-      -- que `withOrigin` no puede tocarlo: lo que entra sale.
+      -- que `withProvenance` no puede tocarlo: lo que entra sale.
       getResponse
-        (withOrigin (LiveResult Cached (Just Feed) (Just fetchInstant) liveTableFixture))
+        (withProvenance (Provenanced Cached (Just Feed) (Just fetchInstant) liveTableFixture))
         `shouldBe` liveTableFixture
 
     it "el instante sale en UTC y sin fracción de segundo" $
@@ -3935,7 +3935,7 @@ resultWithoutFlagKeys =
     <> "]"
 
 -- | Filas ya ensambladas para los casos de procedencia: no prueban el ensamblado,
--- sino lo que 'withOrigin' pone alrededor, así que no pasan por ningún fixture JSON.
+-- sino lo que 'withProvenance' pone alrededor, así que no pasan por ningún fixture JSON.
 liveRowsFixture :: [LiveTimingRow]
 liveRowsFixture =
   [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:21.004" Running
