@@ -125,33 +125,25 @@ dashboardHeader openDyn =
       | open      = "dashboard-header"
       | otherwise = "dashboard-header dashboard-header--hidden"
 
--- | La banda que dice __de qué sesión__ habla la página.
+-- | La banda que dice __de qué sesión__ habla la página, y no una tarjeta
+-- (2026-09-15 (h)).
 --
--- __Es de la página y no de la tarjeta de Live Timing__, aunque hoy el dato venga
--- de su misma petición: la sesión nombra lo que enseñan todas las tarjetas a la
--- vez, y una etiqueta dentro de una de ellas afirmaría que es solo suya.
---
--- __No se desmonta cuando no hay sesión__: el lienzo descuenta su alto, así que una
--- banda que apareciera y desapareciera entre refrescos movería las tarjetas arriba
--- y abajo. Sin sesión se queda vacía, que es lo que la hoja de estilos espera.
+-- No se desmonta cuando no hay sesión: el lienzo descuenta su alto (2026-09-15 (j)),
+-- y una banda que apareciera y desapareciera movería las tarjetas. Sin sesión se
+-- queda vacía, que es lo que la hoja de estilos espera.
 --
 -- Recibe el pliegue porque con la cabecera plegada el botón le cae encima y tiene
 -- que cederle sitio; quién lo hace y cuánto, lo dice la hoja.
 --
--- __Tiene dos aspectos y el mando para cambiarlos__ —tarjeta y barra—, y el 'mdo'
--- es por eso: la clase del contenedor depende de un 'Event' que nace dentro de él.
--- El estado __no sobrevive a recargar__; recordarlo llega con los layouts
--- guardables y no antes.
+-- Tiene dos aspectos, tarjeta y barra, con su mando; el 'mdo' es porque la clase del
+-- contenedor depende de un 'Event' que nace dentro de él. El aspecto no sobrevive a
+-- recargar (2026-09-15 (n)).
 --
--- __La sesión que enseña no es la de la última respuesta, sino la última que vino
--- con nombre__ ('Common.Shown.keepLast'): una respuesta @200@ puede llegar sin
--- nombrar su sesión —medido el 2026-09-22: un @429@ al pedirlo, y ocho respuestas
--- seguidas sin él— y vaciar la banda por eso es peor que enseñar la anterior
--- diciendo de cuándo es.
+-- Enseña la última sesión que vino con nombre, no la de la última respuesta
+-- ('Common.Shown.keepLast', 2026-09-22 (b)).
 --
--- __Un tic de un segundo para los dos relojes de la banda__, y no uno cada uno: la
--- cuenta atrás y la edad de lo conservado bajan y suben al mismo ritmo, así que
--- compartirlo evita que se desincronicen entre sí.
+-- Un solo tic de un segundo mueve los dos relojes de la banda —la cuenta atrás y la
+-- edad de lo conservado—, para que no se desincronicen.
 sessionBand :: MonadWidget t m
             => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> m ()
 sessionBand openDyn poll = mdo
@@ -394,22 +386,14 @@ cfg wid wt (x, y, w, h) = WidgetConfig
   }
 
 -- | Layout "Race Overview": live timing, __dos__ telemetrías, comparación de vueltas
--- y las __dos__ clasificaciones históricas, que desde 2026-08-26 son dos widgets y
--- ocupan dos sitios propios en vez de compartir tarjeta.
+-- y las dos clasificaciones históricas, cada una en su sitio.
 --
--- __Los dos 'Telemetry' son el entregable de varias instancias__, y solo son
--- posibles desde que el id es explícito: derivado de @show wt@ los dos tenían el
--- mismo. Cada uno hace su propio fetch de @\/api\/telemetry@ y sostiene su propio
--- selector de piloto, así que pueden mostrar pilotos distintos a la vez — que es
--- para lo que sirven: comparar dos peleas.
+-- Los dos 'Telemetry' hacen cada uno su fetch y sostienen su propio selector de
+-- piloto, así que pueden enseñar pilotos distintos a la vez. Son el par que
+-- 'widgetGroup' agrupa porque así lo declara el autor, no por estar juntos
+-- (2026-09-03 (b)).
 --
--- Es el par que 'widgetGroup' va a agrupar, y __no por estar juntos__: desde el
--- 2026-09-03 (b) la membresía del grupo la declara el autor y no la adyacencia
--- (que además ya no significa nada, porque el orden de la lista dejó de colocar).
---
--- __La colocación es la del requisito__ que descartó la lista y el árbol —«uno a
--- medio layout, dos apilados junto a uno alto»—, en unidades de 120
--- (2026-09-03 y 2026-09-04):
+-- La colocación, en unidades de 120 (2026-09-03 y 2026-09-04):
 --
 -- > 0            60           120
 -- > ┌────────────┬────────────┐  0
@@ -423,20 +407,12 @@ cfg wid wt (x, y, w, h) = WidgetConfig
 -- > │ driver-st  │ constr-st  │
 -- > └────────────┴────────────┘ 120
 --
--- Las cinco unidades bajo @lap-comparison@ quedan __vacías a propósito__. Los
--- huecos son legales desde el 2026-09-03, y este existe para comprobar al
--- encender el render que el lienzo __no lo rellena solo__: es la propiedad que lo
--- distingue de la rejilla @auto-fit@ que sustituye.
+-- Las cinco unidades bajo @lap-comparison@ quedan __vacías a propósito__:
+-- comprueban que el lienzo no rellena los huecos solo. Todos los números son
+-- múltiplos de 5, o sea celda del imán de 24×24.
 --
--- Todos los números son múltiplos de 5, o sea celda del imán de 24×24.
---
--- Un typo aquí __no lo caza el compilador__ —mismo riesgo que los 'WidgetId'
--- literales del 2026-09-01—, y por eso los siete rectángulos de este módulo los
--- ejercita @backend-test@ contra "Common.Layout".
---
--- Observación, no defecto a arreglar aquí: __el segundo fetch se paga__. Son dos
--- peticiones de la misma lista multi-piloto, igual que las dos clasificaciones
--- desde el 2026-08-26; el filtrado por piloto ya era en cliente.
+-- Un typo en los ids no lo caza el compilador, y por eso los siete rectángulos de
+-- este módulo los ejercita @backend-test@ contra "Common.Layout".
 raceOverview :: Layout
 raceOverview = Layout
   { layoutId = LayoutId "race-overview"
