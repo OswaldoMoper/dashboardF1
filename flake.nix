@@ -160,7 +160,7 @@
         # ── Entorno de desarrollo completo: microservicio + backend ──
         packages.dev = pkgs.writeShellApplication {
           name = "dashboardF1-dev";
-          runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.iproute2 ];
+          runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.iproute2 pkgs.util-linux ];
           text = ''
             port="''${PORT:-8080}"
             # `FASTF1_CACHE` en vez de un `cd`
@@ -230,7 +230,7 @@
             echo "microservicio FastF1 → $sock"
             echo "                     cache en $cache"
             FASTF1_CACHE="$cache" PYTHONUNBUFFERED=1 \
-              ${self'.packages.telemetry}/bin/telemetry-service --uds "$sock" \
+              setpriv --pdeathsig TERM -- ${self'.packages.telemetry}/bin/telemetry-service --uds "$sock" \
               > >(prefix fastf1 stamp) 2>&1 &
             tpid=$!
             pids=("$tpid")
@@ -274,12 +274,24 @@
             PORT="$port" \
             TELEMETRY_SOCKET="$sock" \
             STATIC_DIR="${self'.packages.frontend}" \
-              ${self'.packages.backend}/bin/backend \
+              setpriv --pdeathsig TERM -- ${self'.packages.backend}/bin/backend \
               > >(prefix backend "") 2>&1 &
             bpid=$!
             pids+=("$bpid")
 
-            wait "$bpid" || true
+            # Only the microservice's end is reported; the backend's ends the command.
+            done_pid=""
+            status=0
+            wait -n -p done_pid "$tpid" "$bpid" || status=$?
+            if [ "$done_pid" = "$tpid" ]; then
+              why="código $status"
+              if [ "$status" -gt 128 ]; then
+                why="$why, señal $(kill -l $((status - 128)))"
+              fi
+              printf '%-7s | %s %s\n' fastf1 "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                "el microservicio terminó ($why); el backend sigue con cache o dummy"
+              wait "$bpid" || true
+            fi
           '';
         };
 
