@@ -94,36 +94,24 @@ data LiveResult = LiveResult
   }
   deriving (Eq, Show)
 
--- | Devuelve la tabla de live timing por la escalera de cuatro peldaños.
+-- | La tabla de live timing, por la escalera de cuatro peldaños.
 --
--- __Antes de la escalera se mira si la ventana está abierta__, y con ella cerrada el
--- feed no se toca: se arranca en OpenF1 y el refresco se ahorra los 16-23 s de la
--- foto. La ventana no puede dejar la pantalla sin directo — cerrada solo está
--- cuando hay calendario y dice que no hay sesión, o cuando el propio feed dio la
--- última por finalizada.
+-- Antes de la escalera se mira la ventana del feed; cerrada, se arranca en OpenF1
+-- sin pagar la foto. Solo está cerrada cuando el calendario dice que no hay sesión
+-- o cuando el feed dio la última por finalizada (2026-09-15 (c) y (d)).
 --
--- __El instante de la puerta y el de servir son dos y a propósito.__ Entre uno y
--- otro puede haber medio minuto de foto, y el reloj de la sesión hay que resolverlo
--- con el de responder, no con el de decidir.
+-- Con la ventana abierta decide lo que devuelve el feed (2026-09-12 (u) y
+-- 2026-09-14 (i)):
 --
--- __El fallo del feed y su lista vacía significan cosas distintas y se tratan
--- distinto__ (2026-09-12):
+-- * __filas de una sesión viva__ → se sirven: es la única fuente que las tiene;
+-- * __filas de una sesión finalizada__ → se baja a OpenF1;
+-- * __tabla vacía__ → se baja a OpenF1, aunque el feed nombre una sesión;
+-- * __excepción__ (microservicio apagado, @503@ del feed o techo vencido) → la
+--   cache, __sin__ intentar OpenF1. Con el microservicio apagado y OpenF1 abierto,
+--   la tabla sale de la cache aunque haya dato real.
 --
--- * __Filas de una sesión viva__ → son de la sesión en marcha, y es la única fuente
---   que las tiene.
--- * __Filas de una sesión finalizada__ → el dato ya no cambia y OpenF1 lo tiene
---   también, con la ventaja de que él sí sabe que es definitivo: se baja a él.
--- * __Tabla vacía__ → no hay sesión rodando, que es exactamente cuando OpenF1
---   contesta: se baja a él. La sesión que venga al lado no cambia esto: sin filas
---   no hay tabla que servir.
--- * __Excepción__ (microservicio apagado, @503@ del feed o techo vencido) → se sirve
---   desde la cache __sin__ intentar OpenF1.
---
--- Ese último peldaño tiene un precio que conviene tener escrito: con el
--- microservicio apagado y OpenF1 abierto —el estado más frecuente fuera de
--- sesión— la tabla sale de la cache aunque haya dato real disponible. Se eligió
--- a sabiendas, para que un feed roto durante la carrera no pague además los @401@
--- de OpenF1 antes de enseñar algo.
+-- El instante de la puerta no es el de servir: entre uno y otro puede haber medio
+-- minuto de foto, y el reloj de la sesión se resuelve al responder.
 getLiveTiming :: Env -> IO LiveResult
 getLiveTiming env = do
   now <- getCurrentTime
@@ -206,30 +194,14 @@ noteFinalised env at = do
 
 -- | Pide el calendario, le pone el nombre de cada gran premio y lo guarda.
 --
--- __Un fallo no borra lo que había__, y la diferencia importa: OpenF1 devuelve
--- @401@ durante una sesión, así que el momento en que más se le pregunta es aquel
--- en que no contesta. Vaciar la lista por eso convertiría un calendario bueno en
--- «no se sabe», que hace pagar la foto en cada refresco.
---
--- __Las dos peticiones caen juntas__, igual que las de 'fetchSessionOrNothing' y por
--- la misma razón: que una conteste y la otra no es una avería, no un régimen, y
--- guardar el calendario a medias sustituiría en silencio uno bueno por otro sin
--- nombres.
---
--- __Los grandes premios se piden por año y no uno por sesión.__ El calendario trae
--- nueve distintos, y nueve peticiones seguidas es justo lo que un servicio que
--- limita por ritmo rechaza. Los años salen del propio calendario y no del reloj, que
--- es lo que hace que esto siga valiendo en el cambio de año — el mismo cuidado que
--- 'Handler.Live.Manager.fetchCalendar' tiene al no filtrar por año.
+-- Un fallo conserva lo que había (2026-09-15 (d)), y las dos peticiones caen
+-- juntas: nunca se guarda un calendario sin sus nombres (2026-09-17 (d)).
 --
 -- Al arrancar el proceso la lista está vacía, así que hasta que esto salga bien una
--- vez se pregunta al feed siempre — el precio declarado de no perder el directo.
+-- vez se pregunta al feed siempre (2026-09-15 (d)).
 --
--- __De la misma respuesta salen los nombres de gran premio__ que 'grandPrixName'
--- después no tendrá que pedir: los 27 del año ya vienen dentro, así que aprovecharlos
--- no cuesta ninguna petición más. Las dos escrituras van en una sola transacción
--- porque son el mismo hecho — un calendario nuevo con los nombres que lo acompañan—,
--- y a medias dejarían un calendario que nombra sesiones que la otra caja no conoce.
+-- Los nombres de gran premio de la misma respuesta se guardan también para
+-- 'grandPrixName', en la misma transacción que el calendario (2026-09-18 (b)).
 refreshFeedWindow :: Env -> IO ()
 refreshFeedWindow env = do
   now <- getCurrentTime
