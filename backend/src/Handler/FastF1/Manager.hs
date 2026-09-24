@@ -7,14 +7,17 @@
 -- No comparte la base de URL, la forma de la respuesta ni dónde viajan los coches:
 -- son de cada cliente.
 module Handler.FastF1.Manager
-  ( fastf1Config
+  ( runFastF1
   , fastf1Port
   , fastf1Timeout
   , fastf1Options
   ) where
 
-import           Config           (Config (..))
+import           Config              (Config (..))
+import           Control.Exception   (bracketOnError)
+import qualified Network.HTTP.Client as HC
 import           Network.HTTP.Req
+import qualified Network.Socket      as NS
 
 -- | 'HttpConfig' de los clientes del microservicio: 'defaultHttpConfig'
 -- __sin reintentos__ (2026-08-04). Un intento dura como mucho 'fastf1Timeout';
@@ -27,6 +30,24 @@ fastf1Config =
     { httpConfigRetryJudge = \_ _ -> False
     , httpConfigRetryJudgeException = \_ _ -> False
     }
+
+-- | Ejecuta una petición al microservicio con 'fastf1Config'. Con
+-- @TELEMETRY_SOCKET@ conecta por ese socket Unix con un @Manager@ nuevo por llamada,
+-- y el host y el puerto del @Url@ solo viajan en la cabecera @Host@; sin ella, por
+-- TCP con el @Manager@ global de @req@ (2026-09-23 (s)).
+runFastF1 :: Config -> Req a -> IO a
+runFastF1 cfg action = case cfgTelemetrySocket cfg of
+  Nothing   -> runReq fastf1Config action
+  Just file -> do
+    manager <-
+      HC.newManager
+        HC.defaultManagerSettings {HC.managerRawConnection = pure (\_ _ _ -> connectUnix file)}
+    runReq fastf1Config {httpConfigAltManager = Just manager} action
+  where
+    connectUnix sock =
+      bracketOnError (NS.socket NS.AF_UNIX NS.Stream NS.defaultProtocol) NS.close $ \s -> do
+        NS.connect s (NS.SockAddrUnix sock)
+        HC.socketConnection s 8192
 
 -- | Puerto del microservicio como 'Option', monomorfizada a @'Http'@ para que el
 -- esquema case con el de las bases de URL de los clientes.

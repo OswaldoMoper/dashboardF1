@@ -29,7 +29,7 @@ module Handler.Telemetry.Manager
 
 import           Config                   (Config (..))
 import           Data.Text                (Text)
-import           Handler.FastF1.Manager   (fastf1Config, fastf1Options)
+import           Handler.FastF1.Manager   (fastf1Options, runFastF1)
 import           Handler.Telemetry.Helper (FastF1Point)
 import           Network.HTTP.Req
 
@@ -48,7 +48,7 @@ telemetryBase host = http host /: "fastf1" /: "telemetry"
 -- La firma de retorno no es opcional: sin ella el tipo que decodifica
 -- 'jsonResponse' queda ambiguo.
 fetchTelemetry :: Config -> Text -> Text -> IO [FastF1Point]
-fetchTelemetry cfg sessionKey driver = runReq fastf1Config $ do
+fetchTelemetry cfg sessionKey driver = runFastF1 cfg $ do
   res <-
     req
       GET

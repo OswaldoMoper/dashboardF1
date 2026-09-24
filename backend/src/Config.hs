@@ -18,6 +18,7 @@ data Config = Config
   , cfgStaticDir     :: FilePath -- ^ STATIC_DIR: bundle del frontend a servir (default @result@)
   , cfgTelemetryHost :: Text     -- ^ TELEMETRY_HOST: host del microservicio FastF1 (default @127.0.0.1@)
   , cfgTelemetryPort :: Int      -- ^ TELEMETRY_PORT: puerto del microservicio FastF1 (default 8000)
+  , cfgTelemetrySocket :: Maybe FilePath -- ^ TELEMETRY_SOCKET: socket Unix del microservicio; si está, sustituye a host y puerto
   , cfgTelemetryTimeout :: Int   -- ^ TELEMETRY_TIMEOUT: segundos de espera por intento (default 5)
   , cfgPublicApiTimeout :: Int   -- ^ PUBLIC_API_TIMEOUT: segundos de espera por intento en OpenF1/Jolpica (default 5)
   }
@@ -29,6 +30,7 @@ loadConfig = do
   mdir   <- lookupEnv "STATIC_DIR"
   mhost  <- lookupEnv "TELEMETRY_HOST"
   mtport <- lookupEnv "TELEMETRY_PORT"
+  msock  <- lookupEnv "TELEMETRY_SOCKET"
   mtout  <- lookupEnv "TELEMETRY_TIMEOUT"
   mptout <- lookupEnv "PUBLIC_API_TIMEOUT"
   pure
@@ -37,6 +39,7 @@ loadConfig = do
       , cfgStaticDir     = fromMaybe "result" mdir
       , cfgTelemetryHost = maybe "127.0.0.1" T.pack mhost
       , cfgTelemetryPort = fromMaybe 8000 (mtport >>= readMaybe)
+      , cfgTelemetrySocket = telemetrySocket msock
         -- 5 s sirve al servicio caído (degradado rápido). Una sesión sin cargar
         -- necesita más ('Handler.FastF1.Manager.fastf1Timeout').
       , cfgTelemetryTimeout = fromMaybe 5 (mtout >>= readMaybe)
@@ -46,3 +49,9 @@ loadConfig = do
         -- convierte una red viva pero lenta en un dummy.
       , cfgPublicApiTimeout = fromMaybe 5 (mptout >>= readMaybe)
       }
+
+-- | El socket del microservicio a partir de @TELEMETRY_SOCKET@. Vacía cuenta como no
+-- definida, y entonces el backend habla por TCP.
+telemetrySocket :: Maybe String -> Maybe FilePath
+telemetrySocket (Just "") = Nothing
+telemetrySocket msock     = msock

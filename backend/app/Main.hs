@@ -6,6 +6,7 @@ import           App                      (mkEnv)
 import           Config                   (Config (..), loadConfig)
 import           Control.Concurrent       (forkIO)
 import           Control.Monad            (void)
+import           Data.Maybe               (fromMaybe)
 import qualified Data.Text                as T
 import           Data.Time.Clock          (getCurrentTime)
 import           Handler.Live.Context     (liveClock, refreshFeedWindow)
@@ -39,4 +40,10 @@ main = do
       <> " F1 Dashboard backend en http://localhost:"
       <> show (cfgPort cfg)
       <> "/"
+  putStrLn $
+    T.unpack (isoInstant now)
+      <> " microservicio FastF1 en "
+      <> fromMaybe
+        (T.unpack (cfgTelemetryHost cfg) <> ":" <> show (cfgTelemetryPort cfg))
+        (cfgTelemetrySocket cfg)
   run (cfgPort cfg) (app env)

@@ -94,6 +94,7 @@ import           Common.Types                (DriverEntry (..),
                                               sessionStateWord, sessionTitle,
                                               statusLabel, tickDown,
                                               upNextLabel)
+import           Config                      (telemetrySocket)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
 import           Data.ByteString             (ByteString)
@@ -157,6 +158,17 @@ import           Test.QuickCheck             (Property, (.&&.), (===))
 
 main :: IO ()
 main = hspec $ do
+  describe "telemetrySocket" $ do
+    it "sin la variable, el backend habla por TCP" $
+      telemetrySocket Nothing `shouldBe` Nothing
+
+    it "vacía cuenta como no definida" $
+      telemetrySocket (Just "") `shouldBe` Nothing
+
+    it "con una ruta, esa ruta" $
+      telemetrySocket (Just "/run/user/1000/dashboardF1/fastf1-8080.sock")
+        `shouldBe` Just "/run/user/1000/dashboardF1/fastf1-8080.sock"
+
   describe "assembleStats" $ do
     it "emite una fila por piloto, en el orden de la clasificación y con la identidad completa" $
       driverStatsOf driverStandings

@@ -24,7 +24,7 @@ module Handler.Comparison.Manager
 import           Config                    (Config (..))
 import           Data.Text                 (Text)
 import           Handler.Comparison.Helper (RawComparison)
-import           Handler.FastF1.Manager    (fastf1Config, fastf1Options)
+import           Handler.FastF1.Manager    (fastf1Options, runFastF1)
 import           Network.HTTP.Req
 
 -- | Base del endpoint de comparación: @http:\/\/\<host\>\/fastf1\/comparison@.
@@ -47,7 +47,7 @@ comparisonBase host = http host /: "fastf1" /: "comparison"
 -- de coche (400 del servicio) o si la respuesta trae otra forma; es el @try@ del
 -- 'Context' quien decide qué hacer con eso.
 fetchComparison :: Config -> Text -> Text -> IO RawComparison
-fetchComparison cfg sessionKey drivers = runReq fastf1Config $ do
+fetchComparison cfg sessionKey drivers = runFastF1 cfg $ do
   res <-
     req
       GET

@@ -20,7 +20,7 @@ module Handler.Feed.Manager
 
 import           Config                 (Config (..))
 import           Data.Text              (Text)
-import           Handler.FastF1.Manager (fastf1Config, fastf1Port)
+import           Handler.FastF1.Manager (fastf1Port, runFastF1)
 import           Handler.Feed.Helper    (FeedLive)
 import           Network.HTTP.Req
 
@@ -72,7 +72,7 @@ feedTimeout = responseTimeout (feedTimeoutSeconds * 1000000)
 -- La firma de retorno no es opcional: sin ella el tipo que decodifica
 -- 'jsonResponse' queda ambiguo.
 fetchFeedLive :: Config -> IO FeedLive
-fetchFeedLive cfg = runReq fastf1Config $ do
+fetchFeedLive cfg = runFastF1 cfg $ do
   res <-
     req
       GET

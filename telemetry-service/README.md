@@ -22,7 +22,7 @@ cd telemetry-service && uvicorn main:app
 
 En los dos casos conviene arrancar con `telemetry-service/` como directorio de trabajo: la cache de FastF1 es **relativa** a él (ver `FASTF1_CACHE` abajo), así que desde otro sitio se descarga entera de nuevo.
 
-El backend Haskell lo localiza con `TELEMETRY_HOST` (default `127.0.0.1`) y `TELEMETRY_PORT` (default `8000`).
+El backend Haskell lo localiza con `TELEMETRY_HOST` (default `127.0.0.1`) y `TELEMETRY_PORT` (default `8000`), o por el socket Unix que nombre `TELEMETRY_SOCKET`, que tiene prioridad (vacía cuenta como no definida). Al arrancar escribe por dónde lo busca. Para que escuche en un socket: `--uds <ruta>` en vez de `--port`.
 
 ## Variables de entorno
 
