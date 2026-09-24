@@ -160,7 +160,7 @@
         # ── Entorno de desarrollo completo: microservicio + backend ──
         packages.dev = pkgs.writeShellApplication {
           name = "dashboardF1-dev";
-          runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.iproute2 pkgs.util-linux ];
+          runtimeInputs = [ pkgs.coreutils pkgs.iproute2 pkgs.util-linux ];
           text = ''
             port="''${PORT:-8080}"
             # `FASTF1_CACHE` en vez de un `cd`
@@ -243,29 +243,19 @@
             }
             trap cleanup EXIT INT TERM
 
-            # Load the latest race once, alone, before the backend's 5 s ceiling
-            # meets a process that has not loaded it yet.
-            warned="la primera carga puede salir con datos de ejemplo"
+            # The socket opens only after the microservice's startup load.
+            waited=0
             listening=""
-            for _ in $(seq 60); do
+            while [ "$waited" -lt 180 ]; do
               if [ -n "$(ss -lxH src "$sock")" ]; then listening=1; break; fi
               kill -0 "$tpid" 2>/dev/null || break
               sleep 1
+              waited=$((waited + 1))
             done
-            if [ -z "$listening" ]; then
-              echo "aviso: la última carrera no se pudo cargar (el microservicio no escucha en $sock); $warned" >&2
+            if [ -n "$listening" ]; then
+              echo "microservicio escuchando ($waited s)"
             else
-              warm="$(curl -sS -o /dev/null -m 120 -w '%{http_code} %{time_total}' \
-                --unix-socket "$sock" "http://localhost/fastf1/drivers/latest" 2>/dev/null || true)"
-              read -r code secs <<<"$warm"
-              secs="$(LC_ALL=C printf '%.1f' "''${secs:-0}")"
-              if [ "$code" = 200 ]; then
-                echo "última carrera en memoria ($secs s)"
-              elif [ "$code" = 000 ]; then
-                echo "aviso: la última carrera no se pudo cargar (sin respuesta en $secs s); $warned" >&2
-              else
-                echo "aviso: la última carrera no se pudo cargar (HTTP $code, $secs s); $warned" >&2
-              fi
+              echo "aviso: el microservicio no escucha en $sock tras $waited s; la primera carga puede salir con datos de ejemplo" >&2
             fi
 
             echo "backend Servant   → :$port      (STATIC_DIR: ${self'.packages.frontend})"
