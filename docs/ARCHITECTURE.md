@@ -108,6 +108,11 @@ cache de FastF1 va donde diga `FASTF1_CACHE`, que por defecto es **relativa al d
 (`.fastf1-cache`), así que suelto se arranca desde `telemetry-service/`. `nix run .#dev` le pasa una ruta
 absoluta: `telemetry-service/.fastf1-cache` bajo el directorio desde el que se lanza.
 
+**Suelto escucha en TCP** (`:8000` por defecto), **o en un socket Unix si se le pasa `--uds`**. `nix run .#dev` lo
+lanza por socket, sin puerto propio, en `$XDG_RUNTIME_DIR/dashboardF1/fastf1-<PORT>.sock` (un socket por
+puerto del backend, en un directorio `700`), y el backend le habla por ahí con `TELEMETRY_SOCKET`
+(2026-09-23 (q) a (s)).
+
 `GET /fastf1/drivers/{session_key}` cierra el desajuste por completo: es el único endpoint que **publica** la traducción en vez de aplicarla por dentro, así que un consumidor puede pedir datos de un coche que aún no ha visto. Devuelve la parrilla **de esa sesión** —sustitutos y terceros coches incluidos—, en el orden que le da FastF1 y sin reordenar.
 
 `GET /fastf1/laps/{session_key}` completa el contrato desde el 2026-08-13, y es el único de los cuatro **sin DTO** en `common`: publica las claves con el prefijo `le` que un futuro `LapEntry` usaría, y el tipo llegará con el consumidor (2026-08-13). Es también el único que devuelve la **sesión entera** —todas las vueltas de todos los coches, ~1400 objetos en una carrera—, y por eso acepta `?driver=` para filtrar en el servicio en vez de en el consumidor.

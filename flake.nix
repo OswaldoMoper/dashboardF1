@@ -163,30 +163,53 @@
           runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.iproute2 ];
           text = ''
             port="''${PORT:-8080}"
-            tport="''${TELEMETRY_PORT:-8000}"
             # `FASTF1_CACHE` en vez de un `cd`
             cache="''${FASTF1_CACHE:-$PWD/telemetry-service/.fastf1-cache}"
 
-            # Both ports are checked before anything starts. `ss -p` only names
-            # processes of the current user, so the holder may be missing.
-            if [ "$port" = "$tport" ]; then
-              echo "error: PORT y TELEMETRY_PORT son el mismo (:$port); elige otro con PORT=<puerto>" >&2
-              exit 2
+            # One socket per backend port, in a directory only this user can enter.
+            rundir="''${XDG_RUNTIME_DIR:-}"
+            if [ -z "$rundir" ]; then
+              rundir="/run/user/$(id -u)"
+              if [ ! -d "$rundir" ]; then
+                echo "error: falta XDG_RUNTIME_DIR, que dice dónde crear el socket; ejecútalo desde una sesión de login o defínela" >&2
+                exit 2
+              fi
             fi
+            sockdir="$rundir/dashboardF1"
+            [ -d "$sockdir" ] || mkdir -m 700 "$sockdir"
+            mode="$(stat -c %a "$sockdir")"
+            if [ "$mode" != 700 ]; then
+              chmod 700 "$sockdir"
+              echo "aviso: $sockdir tenía permisos $mode; se dejan en 700 para que ningún otro usuario pueda hablarle al microservicio" >&2
+            fi
+            sock="$sockdir/fastf1-$port.sock"
+            if [ -n "''${TELEMETRY_PORT:-}" ]; then
+              echo "aviso: TELEMETRY_PORT ya no se usa; el microservicio habla por $sock" >&2
+            fi
+
+            # The port and the socket are checked before anything starts. `ss -p`
+            # only names processes of the current user, so the holder may be missing.
             busy=""
             holder_re='users:\(\("([^"]+)"'
-            check_port() {
-              local p="$1" role="$2" var="$3" line held=""
-              line="$(ss -ltnpH "sport = :$p")"
-              [ -z "$line" ] && return 0
-              if [[ $line =~ $holder_re ]]; then
+            held=""
+            holder() {
+              held=""
+              if [[ $1 =~ $holder_re ]]; then
                 held=" (lo tiene «''${BASH_REMATCH[1]}»)"
               fi
-              echo "error: el puerto :$p del $role está ocupado$held; elige otro con $var=<puerto>" >&2
-              busy=1
             }
-            check_port "$port" backend PORT
-            check_port "$tport" microservicio TELEMETRY_PORT
+            line="$(ss -ltnpH "sport = :$port")"
+            if [ -n "$line" ]; then
+              holder "$line"
+              echo "error: el puerto :$port del backend está ocupado$held; elige otro con PORT=<puerto>" >&2
+              busy=1
+            fi
+            line="$(ss -lxpH src "$sock")"
+            if [ -n "$line" ]; then
+              holder "$line"
+              echo "error: el socket del microservicio está ocupado$held: $sock; su nombre sale de PORT, elige otro con PORT=<puerto>" >&2
+              busy=1
+            fi
             [ -z "$busy" ] || exit 2
 
             # Each process goes through its own filter, so `$!` stays the real PID.
@@ -204,9 +227,10 @@
               done
             }
 
-            echo "microservicio FastF1 → :$tport   (cache: $cache)"
+            echo "microservicio FastF1 → $sock"
+            echo "                     cache en $cache"
             FASTF1_CACHE="$cache" PYTHONUNBUFFERED=1 \
-              ${self'.packages.telemetry}/bin/telemetry-service --port "$tport" \
+              ${self'.packages.telemetry}/bin/telemetry-service --uds "$sock" \
               > >(prefix fastf1 stamp) 2>&1 &
             tpid=$!
             pids=("$tpid")
@@ -215,6 +239,7 @@
               trap - EXIT INT TERM
               kill "''${pids[@]}" 2>/dev/null || true
               wait "''${pids[@]}" 2>/dev/null || true
+              rm -f "$sock"
             }
             trap cleanup EXIT INT TERM
 
@@ -223,15 +248,15 @@
             warned="la primera carga puede salir con datos de ejemplo"
             listening=""
             for _ in $(seq 60); do
-              if [ -n "$(ss -ltnH "sport = :$tport")" ]; then listening=1; break; fi
+              if [ -n "$(ss -lxH src "$sock")" ]; then listening=1; break; fi
               kill -0 "$tpid" 2>/dev/null || break
               sleep 1
             done
             if [ -z "$listening" ]; then
-              echo "aviso: la última carrera no se pudo cargar (el microservicio no escucha en :$tport); $warned" >&2
+              echo "aviso: la última carrera no se pudo cargar (el microservicio no escucha en $sock); $warned" >&2
             else
               warm="$(curl -sS -o /dev/null -m 120 -w '%{http_code} %{time_total}' \
-                "http://127.0.0.1:$tport/fastf1/drivers/latest" 2>/dev/null || true)"
+                --unix-socket "$sock" "http://localhost/fastf1/drivers/latest" 2>/dev/null || true)"
               read -r code secs <<<"$warm"
               secs="$(LC_ALL=C printf '%.1f' "''${secs:-0}")"
               if [ "$code" = 200 ]; then
@@ -247,7 +272,7 @@
             echo "                     web en http://127.0.0.1:$port/"
 
             PORT="$port" \
-            TELEMETRY_PORT="$tport" \
+            TELEMETRY_SOCKET="$sock" \
             STATIC_DIR="${self'.packages.frontend}" \
               ${self'.packages.backend}/bin/backend \
               > >(prefix backend "") 2>&1 &

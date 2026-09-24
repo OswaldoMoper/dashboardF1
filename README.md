@@ -31,9 +31,11 @@ nix develop .#telemetry -c python3 --version   # entorno del microservicio
 
 `nix run .#dev` sirve el bundle del frontend **desde el store** (`STATIC_DIR`), así que no hace falta
 `./result` y `nix build .#backend` no puede pisarlo. Sí hace falta el bundle construido
-(`nix build .#frontend`), y al iterar sobre `frontend/` hay que **rearrancar** tras cada build. Puertos
-overrideables con `PORT` y `TELEMETRY_PORT`; la cache de FastF1 con `FASTF1_CACHE`. El comando imprime
-los tres al arrancar.
+(`nix build .#frontend`), y al iterar sobre `frontend/` hay que **rearrancar** tras cada build. El puerto
+se cambia con `PORT`; la cache de FastF1, con `FASTF1_CACHE`. El microservicio **no abre puerto**: escucha en
+un socket Unix, `$XDG_RUNTIME_DIR/dashboardF1/fastf1-<PORT>.sock`, y el backend le habla por ahí. Para
+depurarlo, `curl --unix-socket <ruta> http://localhost/fastf1/…`. El comando imprime el puerto, el socket y
+la cache al arrancar, y se para antes de lanzar nada si el puerto o el socket están ocupados.
 
 `nix run` a secas levanta **solo el backend**, a propósito: es el único artefacto desplegable, y con el
 microservicio caído el backend degrada a cache o dummy — el escenario que conviene ejercitar por defecto.
