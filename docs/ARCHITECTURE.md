@@ -71,7 +71,9 @@ Responsabilidades:
 
 Módulos (top-level, sin prefijo `Frontend.`; convención del 2026-07-16):
 
-- **INFRA (raíz):** `App` (router + `dispatch` ruta→página), `Router` (`PageM`, `Nav`, `navigate`, `routeLink`), `Client` (XHR + XSRF + scroll/location).
+- **INFRA (raíz):** `App` (router + `dispatch` ruta→página), `Client` (GET + decode JSON por XHR, y las
+  cabeceras de procedencia de `Common.Origin`). Futuros: `Router` (`PageM`, `Nav`, `navigate`, `routeLink`)
+  cuando haya una segunda ruta, y XSRF y `location` en `Client` cuando haya mutaciones (POST/PUT) y navegación.
 - **`Pages/`:** un módulo por flujo (`Pages.<Flujo>`).
 - **`Widgets/`:** widgets compartidos por categoría.
 - Rutas con un módulo `Route` compartido en `common` (mismas URLs en ambos extremos).
