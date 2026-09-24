@@ -151,9 +151,10 @@ def _say(line: str) -> None:
 app = FastAPI(title="telemetry-service", version="0.1.0", lifespan=_lifespan)
 
 # Sesiones ya cargadas, por `session_key`. Sin este memo cada petición vuelve a
-# hacer `session.load()`, que descarga y parsea la sesión entera. Consecuencia
-# aceptada: `latest` se congela mientras el proceso viva — reiniciar `uvicorn`
-# para volver a resolverlo.
+# hacer `session.load()`, que descarga y parsea la sesión entera. `latest` y su
+# clave `AÑO-RONDA-R` apuntan al mismo objeto: una sola copia, se pida como se
+# pida. Consecuencia aceptada: `latest` se congela mientras el proceso viva —
+# reiniciar `uvicorn` para volver a resolverlo.
 _sessions: Dict[str, Any] = {}
 
 # Todo lo que habla con FastF1 por red va bajo este cerrojo: su cache (SQLite)
@@ -206,33 +207,44 @@ def _resolve_session(session_key: str) -> Any:
     with _load_lock:
         cached = _sessions.get(session_key)
         if cached is None:
-            cached = _load_session(session_key)
+            key = _race_key(session_key)
+            cached = _sessions.get(key)
+            if cached is None:
+                cached = _load_session(key)
+                _sessions[key] = cached
             _sessions[session_key] = cached
         return cached
 
 
+def _race_key(session_key: str) -> str:
+    """La clave del memo para ``session_key``: ``latest`` pasa a ``AÑO-RONDA-R`` y
+    lo demás queda igual. Consulta el calendario, así que solo se llama con
+    ``_load_lock``."""
+    if session_key != "latest":
+        return session_key
+    year, rnd = _latest_race()
+    return f"{year}-{rnd}-R"
+
+
 def _load_session(session_key: str) -> Any:
-    """Carga la sesión sin mirar el memo. Solo se llama con ``_load_lock``."""
-    if session_key == "latest":
-        year, rnd = _latest_race()
-        identifier: Any = "R"
-    else:
-        parts = session_key.split("-")
-        if len(parts) != 3:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "session_key debe ser 'latest' o 'AÑO-RONDA-SESIÓN' "
-                    "(p. ej. '2026-13-R')"
-                ),
-            )
-        try:
-            year, rnd = int(parts[0]), int(parts[1])
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="año y ronda deben ser numéricos"
-            )
-        identifier = parts[2]
+    """Carga la sesión sin mirar el memo. Solo se llama con ``_load_lock``, y nunca
+    con ``latest``: ``_race_key`` la traduce antes."""
+    parts = session_key.split("-")
+    if len(parts) != 3:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "session_key debe ser 'latest' o 'AÑO-RONDA-SESIÓN' "
+                "(p. ej. '2026-13-R')"
+            ),
+        )
+    try:
+        year, rnd = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="año y ronda deben ser numéricos"
+        )
+    identifier = parts[2]
 
     try:
         session = fastf1.get_session(year, rnd, identifier)
