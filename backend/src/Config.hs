@@ -14,13 +14,14 @@ import           System.Environment (lookupEnv)
 import           Text.Read          (readMaybe)
 
 data Config = Config
-  { cfgPort          :: Int      -- ^ PORT (default 8080)
-  , cfgStaticDir     :: FilePath -- ^ STATIC_DIR: bundle del frontend a servir (default @result@)
-  , cfgTelemetryHost :: Text     -- ^ TELEMETRY_HOST: host del microservicio FastF1 (default @127.0.0.1@)
-  , cfgTelemetryPort :: Int      -- ^ TELEMETRY_PORT: puerto del microservicio FastF1 (default 8000)
-  , cfgTelemetrySocket :: Maybe FilePath -- ^ TELEMETRY_SOCKET: socket Unix del microservicio; si está, sustituye a host y puerto
+  { cfgPort             :: Int      -- ^ PORT (default 8080)
+  , cfgStaticDir        :: FilePath -- ^ STATIC_DIR: bundle del frontend a servir (default @result@)
+  , cfgTelemetryHost    :: Text     -- ^ TELEMETRY_HOST: host del microservicio FastF1 (default @127.0.0.1@)
+  , cfgTelemetryPort    :: Int      -- ^ TELEMETRY_PORT: puerto del microservicio FastF1 (default 8000)
+  , cfgTelemetrySocket  :: Maybe FilePath -- ^ TELEMETRY_SOCKET: socket Unix del microservicio; si está, sustituye a host y puerto
   , cfgTelemetryTimeout :: Int   -- ^ TELEMETRY_TIMEOUT: segundos de espera por intento (default 5)
   , cfgPublicApiTimeout :: Int   -- ^ PUBLIC_API_TIMEOUT: segundos de espera por intento en OpenF1/Jolpica (default 5)
+  , cfgOpenF1Log        :: Bool     -- ^ OPENF1_LOG: con cualquier valor no vacío, una línea por cada petición a OpenF1 y no solo por sus fallos
   }
   deriving (Show)
 
@@ -33,6 +34,7 @@ loadConfig = do
   msock  <- lookupEnv "TELEMETRY_SOCKET"
   mtout  <- lookupEnv "TELEMETRY_TIMEOUT"
   mptout <- lookupEnv "PUBLIC_API_TIMEOUT"
+  mlog   <- lookupEnv "OPENF1_LOG"
   pure
     Config
       { cfgPort          = fromMaybe 8080 (mport >>= readMaybe)
@@ -48,6 +50,7 @@ loadConfig = do
         -- (0.15–3.4 s). Subirlo si una de las dos APIs va lenta; bajarlo
         -- convierte una red viva pero lenta en un dummy.
       , cfgPublicApiTimeout = fromMaybe 5 (mptout >>= readMaybe)
+      , cfgOpenF1Log = openF1Log mlog
       }
 
 -- | El socket del microservicio a partir de @TELEMETRY_SOCKET@. Vacía cuenta como no
@@ -55,3 +58,8 @@ loadConfig = do
 telemetrySocket :: Maybe String -> Maybe FilePath
 telemetrySocket (Just "") = Nothing
 telemetrySocket msock     = msock
+
+-- | Si @OPENF1_LOG@ enciende el registro completo. Vacía cuenta como no definida,
+-- igual que en 'telemetrySocket'.
+openF1Log :: Maybe String -> Bool
+openF1Log = maybe False (not . null)

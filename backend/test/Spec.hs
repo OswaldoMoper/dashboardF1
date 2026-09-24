@@ -94,7 +94,7 @@ import           Common.Types                (DriverEntry (..),
                                               sessionStateWord, sessionTitle,
                                               statusLabel, tickDown,
                                               upNextLabel)
-import           Config                      (telemetrySocket)
+import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
 import           Data.ByteString             (ByteString)
@@ -139,13 +139,17 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               parseRemaining, schedule,
                                               servedFromBox, sessionClock,
                                               stillRecent, upNext)
-import           Handler.OpenF1.Helper       (Of1Driver (..))
-import           Handler.OpenF1.Manager      (endsAfter)
+import           Handler.OpenF1.Helper       (Answer (..), Of1Driver (..),
+                                              alwaysWritten, answerOf,
+                                              requestLine)
+import           Handler.OpenF1.Manager      (endsAfter, latestSession)
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
 import qualified Handler.Telemetry.Helper    as Telemetry
 import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints,
                                               tyreStep)
-import           Network.HTTP.Req            (queryParamToList)
+import qualified Network.HTTP.Client         as Client
+import           Network.HTTP.Req            (HttpException (..),
+                                              queryParamToList)
 import           Outcome                     (Rejection (..), rejectionFor)
 import           Provenance                  (FetchedAtHeaderName,
                                               OriginHeaderName,
@@ -170,6 +174,16 @@ main = hspec $ do
     it "con una ruta, esa ruta" $
       telemetrySocket (Just "/run/user/1000/dashboardF1/fastf1-8080.sock")
         `shouldBe` Just "/run/user/1000/dashboardF1/fastf1-8080.sock"
+
+  describe "openF1Log" $ do
+    it "sin la variable, solo los fallos" $
+      openF1Log Nothing `shouldBe` False
+
+    it "vacía cuenta como no definida" $
+      openF1Log (Just "") `shouldBe` False
+
+    it "con cualquier valor, todas las peticiones" $
+      openF1Log (Just "1") `shouldBe` True
 
   describe "assembleStats" $ do
     it "emite una fila por piloto, en el orden de la clasificación y con la identidad completa" $
@@ -1526,6 +1540,76 @@ main = hspec $ do
       -- del feed no se cierra jamás. Medido el 2026-09-15 contra las dos formas.
       queryParamToList (endsAfter "2026-09-24T08:30:00Z")
         `shouldBe` [("date_end>=2026-09-24T08:30:00Z", Nothing)]
+
+  -- La línea que deja cada petición a OpenF1: una petición, una línea, para poder
+  -- contarlas y ver cuáles rechaza la fuente.
+  describe "requestLine" $ do
+    it "una buena: instante con milisegundos, ruta con parámetros, código y duración" $
+      requestLine fetchInstant "position" latest 0.7984 (Answered 200 "")
+        `shouldBe`
+          "2026-09-11T14:03:22.123Z [openf1] position?session_key=latest 200 0.798 s"
+
+    it "un rechazo lleva su texto" $
+      requestLine fetchInstant "intervals" latest 0.471
+        (Answered 404 "{\"detail\":\"No results found.\"}")
+        `shouldBe`
+          "2026-09-11T14:03:22.123Z [openf1] intervals?session_key=latest 404 0.471 s: \
+          \{\"detail\":\"No results found.\"}"
+
+    it "sin código, --- y la causa" $
+      requestLine fetchInstant "position" latest 5.0021 (Unanswered "ResponseTimeout")
+        `shouldBe`
+          "2026-09-11T14:03:22.123Z [openf1] position?session_key=latest --- 5.002 s: \
+          \ResponseTimeout"
+
+    it "un parámetro sin valor sale pegado, como lo manda req" $
+      requestLine fetchInstant "sessions"
+        (queryParamToList (endsAfter "2026-09-24T08:30:00Z")) 0.5 (Answered 200 "")
+        `shouldBe`
+          "2026-09-11T14:03:22.123Z [openf1] sessions?date_end>=2026-09-24T08:30:00Z \
+          \200 0.500 s"
+
+    it "sin parámetros, la ruta sola" $
+      requestLine fetchInstant "drivers" [] 0.5 (Answered 200 "")
+        `shouldBe` "2026-09-11T14:03:22.123Z [openf1] drivers 200 0.500 s"
+
+    it "siempre una línea: los saltos del texto se vuelven espacios" $
+      requestLine fetchInstant "laps" [] 1 (Answered 429 "{\n\"detail\": \"x\"\n}")
+        `shouldBe` "2026-09-11T14:03:22.123Z [openf1] laps 429 1.000 s: { \"detail\": \"x\" }"
+
+    it "el texto se corta a 200 caracteres" $
+      requestLine fetchInstant "laps" [] 1 (Answered 500 (BC.replicate 300 'x'))
+        `shouldBe`
+          "2026-09-11T14:03:22.123Z [openf1] laps 500 1.000 s: " <> T.replicate 200 "x"
+
+  -- Qué sale sin OPENF1_LOG: los fallos, salvo el 404 con el que OpenF1 dice que aún
+  -- no hay datos (/intervals fuera de carrera lo da en cada refresco).
+  describe "alwaysWritten" $ do
+    it "una buena, no" $
+      alwaysWritten (Answered 200 "") `shouldBe` False
+
+    it "el 404, no" $
+      alwaysWritten (Answered 404 "{\"detail\":\"No results found.\"}") `shouldBe` False
+
+    it "el 429, sí" $
+      alwaysWritten (Answered 429 "") `shouldBe` True
+
+    it "un 5xx, sí" $
+      alwaysWritten (Answered 503 "") `shouldBe` True
+
+    it "sin respuesta, sí" $
+      alwaysWritten (Unanswered "ResponseTimeout") `shouldBe` True
+
+  describe "answerOf" $ do
+    it "techo vencido: solo el motivo, sin la petición que arrastra la excepción" $
+      answerOf
+        (VanillaHttpException
+           (Client.HttpExceptionRequest Client.defaultRequest Client.ResponseTimeout))
+        `shouldBe` Unanswered "ResponseTimeout"
+
+    it "un 200 que no se deja leer: el texto de aeson" $
+      answerOf (JsonHttpException "Error in $: expected Array")
+        `shouldBe` Unanswered "Error in $: expected Array"
 
   -- Cuándo merece la pena pedirle la foto al feed, que cuesta 16-23 s. Todos los
   -- casos son sobre instantes fijos y sin reloj real: la función es pura justo para
@@ -4019,6 +4103,10 @@ namelessTableFixture = LiveTable Nothing liveRowsFixture NextUnknown
 -- 'getCurrentTime': 'fetchedAtText' tiene que tirarla.
 fetchInstant :: UTCTime
 fetchInstant = UTCTime (fromGregorian 2026 9 11) 50602.123456
+
+-- | Los parámetros de la sesión en curso, sacados de la opción que se manda de verdad.
+latest :: [(T.Text, Maybe T.Text)]
+latest = queryParamToList latestSession
 
 -- | Un minuto después de 'fetchInstant': el «ahora» de 'tyreStep', distinto de la hora de
 -- lo guardado para que no se puedan confundir.

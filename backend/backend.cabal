@@ -114,6 +114,7 @@ test-suite backend-test
       -- a lista para compararlo probaría la conversión y no el índice.
       , containers
       , hspec
+      , http-client
       -- Para mirar los parámetros que se le construyen a OpenF1: el operador de un
       -- filtro va dentro del nombre, y si se le intercala un `=` la API responde
       -- 404. Es un fallo que no se ve leyendo el código.

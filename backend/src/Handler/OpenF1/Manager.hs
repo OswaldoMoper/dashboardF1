@@ -13,12 +13,20 @@
 -- puede divergir entre las dos.
 module Handler.OpenF1.Manager where
 
-import           Config                    (Config)
+import           Config                    (Config (..))
+import           Control.Exception         (throwIO, try)
+import           Control.Monad             (when)
 import           Data.Aeson                (FromJSON)
+import qualified Data.ByteString           as BS
 import           Data.Text                 (Text)
-import           Handler.OpenF1.Helper     (Of1Driver)
+import           Data.Text.Encoding        (encodeUtf8)
+import           Data.Time.Clock           (diffUTCTime, getCurrentTime)
+import           Handler.OpenF1.Helper     (Answer (..), Of1Driver,
+                                            alwaysWritten, answerOf,
+                                            requestLine)
 import           Handler.PublicApi.Manager (publicApiConfig, publicApiOptions)
 import           Network.HTTP.Req
+import           System.IO                 (stderr)
 
 -- | Base de la API pública de OpenF1.
 openf1Base :: Url 'Https
@@ -77,16 +85,30 @@ endsAfter instant = queryFlag ("date_end>=" <> instant)
 -- ('Handler.PublicApi.Manager.publicApiOptions'); el 'Env' la transporta, así que
 -- los @Context@ la pasan con @envConfig@ (mismo patrón que
 -- 'Handler.Drivers.Manager.fetchDrivers').
+--
+-- __Deja una línea en @stderr@__ ('Handler.OpenF1.Helper.requestLine'): de cada
+-- petición con @OPENF1_LOG@, y sin ella de los fallos que no son @404@
+-- ('Handler.OpenF1.Helper.alwaysWritten'). __El fallo se vuelve a lanzar tal cual__,
+-- así que el @try@ de quien llama ve lo mismo que sin la línea. La línea sale en una
+-- sola escritura: dos peticiones a la vez no mezclan las suyas.
 fetchListWith :: FromJSON a => Config -> Text -> Option 'Https -> IO [a]
-fetchListWith cfg path opts = runReq publicApiConfig $ do
-  res <-
-    req
-      GET
-      (openf1Base /: path)
-      NoReqBody
-      jsonResponse
-      (opts <> publicApiOptions cfg)
-  pure (responseBody res)
+fetchListWith cfg path opts = do
+  sent <- getCurrentTime
+  result <- try $ runReq publicApiConfig $ do
+    res <-
+      req
+        GET
+        (openf1Base /: path)
+        NoReqBody
+        jsonResponse
+        (opts <> publicApiOptions cfg)
+    pure (responseStatusCode res, responseBody res)
+  done <- getCurrentTime
+  let answer = either answerOf (\(code, _) -> Answered code "") result
+  when (cfgOpenF1Log cfg || alwaysWritten answer) $
+    BS.hPut stderr . encodeUtf8 . (<> "\n") $
+      requestLine sent path (queryParamToList opts) (diffUTCTime done sent) answer
+  either throwIO (pure . snd) result
 
 -- | 'fetchListWith' para la sesión en curso, que es el caso mayoritario.
 fetchList :: FromJSON a => Config -> Text -> IO [a]
