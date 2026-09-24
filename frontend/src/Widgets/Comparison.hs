@@ -74,32 +74,16 @@ data CState
 -- | Comparación de la vuelta rápida de dos coches: selector, cabecera con los
 -- dos pilotos y sus tiempos, y el delta acumulado como una línea.
 --
--- __El selector se monta fuera de los 'dyn_', y no es una preferencia de
--- estilo:__ 'dyn_' __re-monta__ su contenido en cada cambio del 'Dynamic', así
--- que un control dentro volvería a su valor inicial en cada respuesta. Por eso
--- las opciones entran como 'Dynamic' —'dropdown' las actualiza sin remontar el
--- @\<select\>@— en vez de montar el selector dentro de un 'dyn_' sobre la
--- parrilla, que es lo que hace 'Widgets.Telemetry' con su switcher.
+-- El selector va fuera de los 'dyn_', que lo devolverían a su valor inicial en cada
+-- respuesta; sus opciones entran como 'Dynamic' (2026-08-07).
 --
--- __Las dos peticiones salen del mismo 'getPostBuild' y son independientes.__ La
--- parrilla se pide una sola vez y no se vuelve a pedir: no hay control que la
--- cambie, porque el widget no elige sesión. Que parrilla y comparación puedan
--- discrepar es un riesgo real —son dos llamadas— pero hoy no se materializa,
--- porque las dos van a @latest@ (2026-08-07).
+-- La parrilla se pide una sola vez. Parrilla y comparación son dos peticiones que
+-- podrían discrepar; hoy las dos van a @latest@ (2026-08-07).
 --
--- __El @mdo@ es el primer 'RecursiveDo' del repo, y el ciclo es real:__ la
--- selección compone la URL, la URL trae la respuesta y la respuesta __marca__ la
--- selección, que es lo que hace que los dos @\<select\>@ digan siempre de qué
--- par habla el gráfico. Lo que impide que el nudo se cierre en el mismo instante
--- es que 'Client.fetchJson' va por @performRequestAsync@: entre @picked@ y
--- @resp@ hay una petición de red, nunca un mismo frame.
---
--- Lo que alimenta el prefill es @state@ y no @resp@, y es deliberado: @state@ es
--- __lo que se está pintando__ (ver 'step'), así que los selectores quedan
--- pinchados a eso por construcción. Con @resp@ habría un segundo acumulador en
--- paralelo, y dos acumuladores del mismo hecho acaban discrepando — justo en el
--- caso que 'step' existe para cubrir, el de la recarga fallida que conserva el
--- gráfico anterior.
+-- El 'mdo' cierra un ciclo real —la selección compone la URL y la respuesta marca
+-- la selección— que no se cierra en el mismo instante porque 'Client.fetchJson' es
+-- asíncrono. El prefill sale de @state@, lo que se está pintando, y no de @resp@
+-- (2026-08-07).
 comparisonWidget :: MonadWidget t m => m ()
 comparisonWidget = divClass "widget widget--comparison" $ mdo
   divClass "widget__head" $ el "h2" $ text "Lap Comparison"
@@ -308,30 +292,15 @@ driverLabel d
     core = deNumber d <> " · " <> deCode d
 
 -- | Un selector de coche: la posición inicial y las opciones, que __cambian__
--- cuando llega la parrilla.
+-- cuando llega la parrilla sin remontar el @\<select\>@, así que no se pierde lo
+-- que el usuario ya hubiera elegido.
 --
--- Se usa 'dropdown' y no 'selectElement' crudo, y la razón es que este commit
--- no se typecheckea en sesión (@frontend@ solo compila con GHCJS): 'dropdown'
--- resuelve por dentro la carrera del @\<select\>@ —reinyecta la selección en el
--- @postBuild@ y une la clave de @setValue@ a las opciones, de modo que un
--- prefill que llegue __antes__ que la parrilla no se pierde—, mientras que con
--- 'selectElement' habría que escribir a ciegas el @\<option selected\>@.
+-- El tercer argumento es el prefill, que sale de 'carSelector' y cierra el ciclo
+-- del @mdo@ de 'comparisonWidget'. Da igual si llega antes que la parrilla:
+-- 'dropdown' une la clave de @setValue@ a las opciones (2026-08-07).
 --
--- Las opciones entran como 'Dynamic' y no como lista: es lo que permite que el
--- @\<select\>@ se pueble al llegar @\/api\/drivers@ __sin__ remontarse, y por
--- tanto sin perder lo que el usuario ya hubiera elegido.
---
--- El tercer argumento es el prefill. Sale de 'carSelector' y cierra el ciclo del
--- @mdo@ de 'comparisonWidget'; que 'dropdown' una la clave de @setValue@ a las
--- opciones es lo que hace que no importe si llega antes que la parrilla.
---
--- La config se arma con lentes y no con @def { ... }@. No es estilo: la
--- actualización de registro sobre 'def' __no compila__. Los dos campos mencionan
--- la @t@, así que GHC la trata como variable libre del registro de partida, se
--- queda con una @t0@ fresca y no puede resolver el @Reflex t0@ que pide la
--- instancia @Default (DropdownConfig t k)@ — error @GHC-39999@ en el @def@. Con
--- @&@ y @.~@ el tipo del resultado fija la @t@ y la instancia se deduce sola. Por
--- eso 'Reflex.Dom.Widget.Input' reexporta esos dos operadores junto a 'def'.
+-- La config se arma con lentes (@&@ y @.~@) y no con @def { ... }@, que aquí no
+-- compila (@GHC-39999@, 2026-08-11 (b)).
 carDropdown
   :: MonadWidget t m
   => Int
