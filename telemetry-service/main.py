@@ -52,6 +52,9 @@ Contrato con el lado Haskell (decidido el 2026-07-31):
   de clasificación). Ordenar para presentar es del consumidor; aquí reordenar
   solo destruiría información que el backend no puede reconstruir.
 
+**Al arrancar carga la última carrera** antes de abrir el socket, y reintenta si
+falla (``_lifespan``).
+
 Variables de entorno: ``FASTF1_CACHE`` (default ``.fastf1-cache``) y
 ``TELEMETRY_MAX_POINTS`` (default ``60``, muestras por piloto). Desde el
 2026-08-11 **no** afecta al delta de comparación: son cuatro fronteras de
@@ -62,9 +65,12 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 import threading
+import time
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import fastf1
 from fastapi import FastAPI, HTTPException
@@ -75,7 +81,74 @@ MAX_POINTS = max(1, int(os.environ.get("TELEMETRY_MAX_POINTS", "60")))
 os.makedirs(CACHE_DIR, exist_ok=True)
 fastf1.Cache.enable_cache(CACHE_DIR)
 
-app = FastAPI(title="telemetry-service", version="0.1.0")
+
+# ── Arranque ──────────────────────────────────────────────────────────────────
+
+# Intentos de cargar `latest` antes de abrir el socket, y los que siguen en
+# segundo plano si esos fallan (2026-09-24 (e)).
+WARM_TRIES_BEFORE = 3
+WARM_PAUSE_BEFORE = 10.0
+WARM_TRIES_AFTER = 10
+WARM_PAUSE_AFTER = 60.0
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Carga la última carrera antes de atender.
+
+    **El socket no se abre hasta que la carga sale bien o fallan sus
+    ``WARM_TRIES_BEFORE`` intentos** (~24 s sin red); en ese rato un ``TERM``
+    tampoco se atiende. Si fallan, abre igual y sigue intentándolo en segundo
+    plano (``_warm_later``). Un fallo nunca impide arrancar: ``/fastf1/live`` no
+    depende de esta carga.
+    """
+    for attempt in range(1, WARM_TRIES_BEFORE + 1):
+        if _warm(f"intento {attempt} de {WARM_TRIES_BEFORE}"):
+            break
+        if attempt < WARM_TRIES_BEFORE:
+            time.sleep(WARM_PAUSE_BEFORE)
+    else:
+        _say(
+            f"se abre sin la última carrera; se reintenta cada "
+            f"{WARM_PAUSE_AFTER:.0f} s, hasta {WARM_TRIES_AFTER} veces"
+        )
+        threading.Thread(target=_warm_later, daemon=True).start()
+    yield
+
+
+def _warm_later() -> None:
+    """Los reintentos en segundo plano. Uno en curso retiene ``_load_lock``, así
+    que una petición de FastF1 que llegue entonces espera a que acabe."""
+    for attempt in range(1, WARM_TRIES_AFTER + 1):
+        time.sleep(WARM_PAUSE_AFTER)
+        if _warm(f"reintento {attempt} de {WARM_TRIES_AFTER}"):
+            return
+    _say("se deja de reintentar; la primera petición que la necesite la cargará")
+
+
+def _warm(attempt: str) -> bool:
+    """Carga ``latest`` en el memo y lo dice en el log. ``True`` si quedó en
+    memoria; un fallo se cuenta y no se propaga."""
+    started = time.monotonic()
+    try:
+        session = _resolve_session("latest")
+    except Exception as exc:
+        _say(f"la última carrera no se pudo cargar ({attempt}): {_why(exc)}")
+        return False
+    key = f"{session.event.year}-{int(session.event['RoundNumber'])}-R"
+    _say(f"última carrera en memoria ({key}, {time.monotonic() - started:.1f} s)")
+    return True
+
+
+def _why(exc: Exception) -> str:
+    return str(getattr(exc, "detail", None) or exc)
+
+
+def _say(line: str) -> None:
+    print(line, file=sys.stderr, flush=True)
+
+
+app = FastAPI(title="telemetry-service", version="0.1.0", lifespan=_lifespan)
 
 # Sesiones ya cargadas, por `session_key`. Sin este memo cada petición vuelve a
 # hacer `session.load()`, que descarga y parsea la sesión entera. Consecuencia
