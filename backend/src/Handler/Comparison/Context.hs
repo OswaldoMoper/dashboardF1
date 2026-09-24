@@ -28,32 +28,18 @@ import           Handler.Comparison.Helper  (assembleComparison, resolveParams)
 import qualified Handler.Comparison.Manager as Manager
 import           Outcome                    (Outcome (..), classify)
 
--- | Devuelve la comparación de la vuelta rápida de dos coches: intenta el fetch
--- real; si funciona __y trae delta__, refresca la cache y devuelve; ante fallo o
--- delta vacío sirve la última respuesta buena __de esa misma clave__; sin
--- ninguna, el dummy.
+-- | La comparación de la vuelta rápida de dos coches, por tres ramas y en este
+-- orden:
 --
--- __Primera área con la escalera de tres ramas__
--- (2026-08-14). La rama nueva es la del medio y solo ella es nueva: si la excepción
--- se reconoce como culpa del cliente ('Outcome.classify'), la petición se rechaza
--- y __no se toca la cache__ —una petición mala no invalida ni refresca nada—. Las
--- otras dos son las de siempre, y el degradado del servicio caído sale byte a byte
--- como salía: sigue siendo el escenario normal y sigue tardando ~5 s
--- (2026-08-04).
+-- * el fetch trae delta → se guarda en la cache y se sirve;
+-- * la excepción es culpa del cliente ('Outcome.classify') → se rechaza sin tocar
+--   la cache (2026-08-14);
+-- * cualquier otra cosa —servicio apagado, techo vencido, @5xx@, JSON con otra
+--   forma, o un delta vacío (@null . 'lcDelta'@, 2026-08-03)— → la última
+--   respuesta buena __de esa misma clave__ y, sin ninguna, el dummy.
 --
--- El orden de las ramas importa: el @Right@ bueno va primero, así que una
--- respuesta válida nunca pasa por el clasificador. Y el @_@ final sigue
--- absorbiendo lo que 'Outcome.classify' no reconoce —servicio apagado, timeout,
--- @5xx@, JSON con otra forma— más el @Right@ con delta vacío, que es el criterio
--- de fallo propio de esta área (@null . 'lcDelta'@,
--- 2026-08-03): un objeto sin serie no es un rechazo, es una sesión sin vueltas
--- comparables, y eso se degrada.
---
--- La cache nace con clave, sin fase intermedia de caja única: es aplicación
--- directa del 2026-08-01 —no una re-discusión— y nacer sin ella sería
--- reintroducir a sabiendas el bug que esa decisión arregló, con el mismo agravante
--- de silencio (una petición de dos coches recibiría la comparación de otros dos
--- presentada como suya).
+-- La cache va por clave resuelta: sin ella, quien pide dos coches recibiría la
+-- comparación de otros dos (2026-08-01).
 --
 -- Un parámetro escrito pero vacío se rechaza antes de salir a la red y sin tocar
 -- la cache.
@@ -87,31 +73,17 @@ fetchLapComparison :: Config -> Text -> Text -> IO LapComparison
 fetchLapComparison cfg sessionKey driversKey =
   assembleComparison <$> Manager.fetchComparison cfg sessionKey driversKey
 
--- | Comparación dummy (respaldo cuando el microservicio nunca dio datos). Se muda
--- aquí desde 'Handler.Comparison', como en las otras cuatro áreas. Misma forma que
--- emite 'Handler.Comparison.Helper.assembleComparison' —acrónimos, tiempos ya
--- formateados y un delta no vacío—, para que el widget de comparación sea
--- ejercitable sin el servicio levantado.
+-- | Comparación dummy (respaldo cuando el microservicio nunca dio datos). Misma
+-- forma que emite 'Handler.Comparison.Helper.assembleComparison' —acrónimos,
+-- tiempos ya formateados y un delta no vacío—, para que el widget sea ejercitable
+-- sin el servicio levantado.
 --
--- __El delta son cuatro valores desde el 2026-08-11__,
--- no los cinco de paso libre que tenía desde la Fase 1: las cuatro
--- fronteras de sector. Y suman: arranca en @0.0@ y acaba en @0.167@, que es la
--- diferencia entre los dos tiempos de aquí arriba. Un respaldo que no cumpla los
--- invariantes del endpoint entrena el ojo a aceptar gráficos que el dato real no
--- puede producir.
+-- El delta son las cuatro fronteras de sector, arranca en @0.0@ y acaba en la
+-- diferencia entre los dos tiempos (2026-08-11).
 --
--- Los coches son los de 'Handler.Comparison.Helper.defaultDrivers', no dos
--- cualesquiera: así la respuesta sin parámetros y el respaldo hablan de los
--- mismos, y el @1@\/@16@ que el widget muestra es el que mandaría de vuelta al
--- pedir otra comparación.
---
--- __El acrónimo del coche @1@ es @NOR@ y no @VER@ desde el 2026-08-06__, que es
--- cuando el repo vio por primera vez una parrilla real (@\/api\/drivers@): el @1@
--- lo lleva el campeón vigente. El dummy decía @VER@ desde la Fase 1 por inercia,
--- y con dos áreas cuyos respaldos se miran a la vez esa inercia pasó a ser una
--- contradicción visible — el selector listando @NOR@ y esta cabecera diciendo
--- @VER@ del mismo coche. La coherencia entre los dos dummies la fija un caso de
--- @backend-test@, no la buena memoria.
+-- Los coches son los de 'Handler.Comparison.Helper.defaultDrivers', con el
+-- acrónimo que les da la parrilla real (@1@ es @NOR@). La coherencia con
+-- 'Handler.Drivers.Context.dummy' la fija un caso de @backend-test@ (2026-08-06).
 dummy :: LapComparison
 dummy =
   MkLapComparison
