@@ -5,32 +5,36 @@
 -- @[TyreStint]@, con la cache STM del 'Env' como respaldo: intenta el fetch
 -- real; si funciona, refresca la cache y devuelve; si falla (red/4xx/5xx) o no
 -- trae filas, sirve la última respuesta buena, y si nunca la hubo, el dummy
--- estático. Espejo de 'Handler.Live.Context'.
+-- estático. Cada respuesta dice de qué peldaño salió ('Provenance'); el peldaño
+-- lo decide 'Handler.TyreStrategy.Helper.tyreStep'. Espejo de 'Handler.Live.Context'.
 module Handler.TyreStrategy.Context where
 
 import           App                          (Env (..))
+import           Common.Origin                (Origin (..))
 import           Common.Types                 (TyreStint (..))
 import           Config                       (Config)
-import           Control.Concurrent.STM       (atomically, readTVarIO,
-                                               writeTVar)
+import           Control.Concurrent.STM       (atomically, readTVar, writeTVar)
 import           Control.Exception            (SomeException, try)
 import           Data.Maybe                   (fromMaybe)
+import           Data.Time.Clock              (getCurrentTime)
 import           Handler.OpenF1.Manager       (fetchDrivers)
-import           Handler.TyreStrategy.Helper  (assembleStints)
+import           Handler.TyreStrategy.Helper  (assembleStints, tyreStep)
 import qualified Handler.TyreStrategy.Manager as Manager
+import           Provenance                   (Provenanced (..))
 
--- | Devuelve la estrategia de neumáticos (real de OpenF1, cache o dummy).
-getTyreStrategy :: Env -> IO [TyreStint]
+-- | Devuelve la estrategia de neumáticos (real de OpenF1, cache o dummy) con su
+-- procedencia.
+getTyreStrategy :: Env -> IO (Provenanced [TyreStint])
 getTyreStrategy env = do
   result <-
     try (fetchStrategy (envConfig env)) :: IO (Either SomeException [TyreStint])
-  case result of
-    Right rows | not (null rows) -> do
-      atomically (writeTVar (envTyreCache env) (Just rows))
-      pure rows
-    _ -> do
-      cached <- readTVarIO (envTyreCache env)
-      pure (fromMaybe dummy cached)
+  now <- getCurrentTime
+  served <- atomically $ do
+    cached <- readTVar (envTyreCache env)
+    let (shown, kept) = tyreStep now (either (const Nothing) Just result) cached
+    writeTVar (envTyreCache env) kept
+    pure shown
+  pure (fromMaybe (Provenanced Sample Nothing Nothing dummy) served)
 
 -- | Fetch de @/drivers@ + @/stints@ y ensamblado puro a @[TyreStint]@.
 --

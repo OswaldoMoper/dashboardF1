@@ -4,7 +4,7 @@
 -- fuentes (vía 'Handler.Feed.Manager' y 'Handler.Live.Manager'), el mapeo puro
 -- ('Handler.Live.Helper') y la cache STM del 'Env'.
 --
--- __Es el único handler que responde con cabeceras propias:__ de dónde salió el
+-- __Responde con cabeceras propias__, como 'Handler.TyreStrategy': de dónde salió el
 -- dato ('Provenance'), que son dos preguntas —qué peldaño de la escalera y qué
 -- fuente— y que el @Context@ conoce en cada una.
 --

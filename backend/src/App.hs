@@ -92,8 +92,9 @@ data Env = Env
     -- llevado un paso más: lo guardado tiene que poder decir __de qué sesión__
     -- era. Lo único que caduca de ella es el reloj, y de pararlo se encarga
     -- 'Handler.Live.Helper.freezeClock' al servir.
-  , envTyreCache       :: TVar (Maybe [TyreStint])
-    -- ^ Última respuesta buena de @/api/tyre-strategy@ (respaldo si OpenF1 falla).
+  , envTyreCache       :: TVar (Maybe (UTCTime, [TyreStint]))
+    -- ^ Última respuesta buena de @/api/tyre-strategy@ (respaldo si OpenF1 falla),
+    -- con la hora en que llegó: la que sale en @X-Data-Fetched-At@ al servirla.
   , envHistoricalCache :: TVar (Maybe [HistoricalStat])
     -- ^ Última respuesta buena de @/api/historical@ (respaldo si Jolpica falla).
   , envTelemetryCache  :: TVar (Map (Text, Text) [TelemetryPoint])

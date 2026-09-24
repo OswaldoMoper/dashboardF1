@@ -9,14 +9,19 @@ module Handler.TyreStrategy.Helper
     Of1Stint (..)
     -- * Transformación pura
   , assembleStints
+    -- * La escalera
+  , tyreStep
   ) where
 
+import           Common.Origin         (Origin (..), Source (..))
 import           Common.Types          (TyreStint (..))
 import           Data.Aeson            (FromJSON (..), withObject, (.:), (.:?))
 import           Data.List             (find, sortOn)
 import           Data.Maybe            (mapMaybe)
 import           Data.Text             (Text)
+import           Data.Time.Clock       (UTCTime)
 import           Handler.OpenF1.Helper (Of1Driver (..))
+import           Provenance            (Provenanced (..))
 
 -- | @/stints@: periodo con un mismo compuesto para un piloto.
 --
@@ -78,3 +83,21 @@ assembleStints drivers stints =
           , tsStartLap = osLapStart s
           , tsEndLap   = osLapEnd s
           }
+
+-- | El peldaño de la escalera y lo que queda guardado, a partir de lo que trajo
+-- OpenF1 ('Nothing' si el fetch falló) y de lo guardado con su hora.
+--
+-- __Lo traído solo vale con filas:__ una respuesta vacía cae a lo guardado igual que
+-- un fallo. 'Nothing' en el primer componente es que no hay nada que servir, y quien
+-- llama pone el respaldo estático. La fuente es siempre OpenF1, porque es la única
+-- que esta área consulta.
+tyreStep
+  :: UTCTime
+  -> Maybe [TyreStint]
+  -> Maybe (UTCTime, [TyreStint])
+  -> (Maybe (Provenanced [TyreStint]), Maybe (UTCTime, [TyreStint]))
+tyreStep now (Just rows@(_ : _)) _ =
+  (Just (Provenanced Fresh (Just OpenF1) Nothing rows), Just (now, rows))
+tyreStep _ _ cached = (fromEntry <$> cached, cached)
+  where
+    fromEntry (fetchedAt, rows) = Provenanced Cached (Just OpenF1) (Just fetchedAt) rows

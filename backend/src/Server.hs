@@ -10,8 +10,7 @@ module Server where
 
 import           App                            (Env (..))
 import           Common.Types                   (DriverEntry, HistoricalStat,
-                                                 LapComparison, TelemetryPoint,
-                                                 TyreStint)
+                                                 LapComparison, TelemetryPoint)
 import           Config                         (cfgStaticDir)
 import           Data.Aeson                     (ToJSON)
 import           Data.Text                      (Text)
@@ -56,9 +55,9 @@ instance ToJSON Home
 -- la comparación es de __exactamente dos__ coches y el microservicio responde
 -- 400 a cualquier otra cantidad, mientras que el de telemetría admite @all@.
 --
--- @/api/live@ es el único endpoint que responde con cabeceras propias: la
--- procedencia del dato ('Common.Origin'). El tipo vive en 'Handler.Live' y no
--- aquí porque este módulo importa aquél; el cuerpo JSON es el mismo de siempre.
+-- @/api/live@ y @/api/tyre-strategy@ responden con cabeceras propias: la
+-- procedencia del dato ('Provenance'). Cada tipo vive en su 'Handler' y no aquí
+-- porque este módulo importa aquéllos; el cuerpo JSON es el mismo de siempre.
 type Api =
        "home" :> Get '[JSON] Home
   :<|> "api" :> "live" :> Get '[JSON] Live.LiveResponse
@@ -74,7 +73,7 @@ type Api =
   :<|> "api" :> "drivers"
          :> QueryParam "session" Text
          :> Get '[JSON] [DriverEntry]
-  :<|> "api" :> "tyre-strategy" :> Get '[JSON] [TyreStint]
+  :<|> "api" :> "tyre-strategy" :> Get '[JSON] TyreStrategy.TyreResponse
   :<|> Raw
 
 api :: Proxy Api

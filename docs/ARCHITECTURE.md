@@ -47,9 +47,10 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   (se degrada a cache o dummy). El criterio vive en el `Context`; el handler solo traduce
   con `Outcome.serve` (2026-08-14). **Aplicado hoy solo a `Comparison`**;
   las otras áreas siguen con `IO a` hasta que se cierre la Fase 4.
-- **Procedencia del dato:** `/api/live` emite `X-Data-Origin` (`fresh`/`recent`/`cached`/`sample`) y,
-  con los dos que salen de lo guardado —`recent` y `cached`—, `X-Data-Fetched-At` en ISO 8601 UTC; el
-  cuerpo JSON no cambia. Tipo y valores en `Common.Origin`.
+- **Procedencia del dato:** `/api/live` y `/api/tyre-strategy` emiten `X-Data-Origin`
+  (`fresh`/`recent`/`cached`/`sample`; neumáticos no tiene `recent`), `X-Data-Source` (`feed`/`openf1`; falta
+  con el dato de ejemplo) y, con los que salen de lo guardado —`recent` y `cached`—, `X-Data-Fetched-At` en
+  ISO 8601 UTC; el cuerpo JSON no cambia. Cabeceras en `Provenance`; tipo y valores en `Common.Origin`.
 - **Presupuesto de OpenF1:** acepta 30 peticiones por minuto, y lo dice en su propio rechazo. El backend no
   vuelve a bajar a OpenF1 si lo que guardó tiene menos de 15 s y lo sirve como `recent`; el feed, que es
   propio, no se frena.

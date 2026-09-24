@@ -143,7 +143,8 @@ import           Handler.OpenF1.Helper       (Of1Driver (..))
 import           Handler.OpenF1.Manager      (endsAfter)
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
 import qualified Handler.Telemetry.Helper    as Telemetry
-import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints)
+import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints,
+                                              tyreStep)
 import           Network.HTTP.Req            (queryParamToList)
 import           Outcome                     (Rejection (..), rejectionFor)
 import           Provenance                  (FetchedAtHeaderName,
@@ -509,6 +510,31 @@ main = hspec $ do
 
     it "devuelve [] sobre una sesión sin stints publicados" $
       stintsOf openF1Grid emptyArray `shouldBe` []
+
+  -- La escalera de `/api/tyre-strategy` con su procedencia. Lo guardado lleva una
+  -- tanda distinta de la traída en todos los casos, para que servir la equivocada no
+  -- pueda pasar la prueba.
+  describe "tyreStep" $ do
+    it "con filas sirve lo traído como fresco de OpenF1 y lo guarda con la hora de ahora" $
+      tyreStep tyreNow (Just freshStints) (Just (fetchInstant, keptStints))
+        `shouldBe`
+          ( Just (Provenanced Fresh (Just OpenF1) Nothing freshStints)
+          , Just (tyreNow, freshStints) )
+
+    it "una respuesta vacía cae a lo guardado, con su hora, y no lo pisa" $
+      tyreStep tyreNow (Just []) (Just (fetchInstant, keptStints))
+        `shouldBe`
+          ( Just (Provenanced Cached (Just OpenF1) (Just fetchInstant) keptStints)
+          , Just (fetchInstant, keptStints) )
+
+    it "un fallo sirve lo guardado igual que una respuesta vacía" $
+      tyreStep tyreNow Nothing (Just (fetchInstant, keptStints))
+        `shouldBe`
+          ( Just (Provenanced Cached (Just OpenF1) (Just fetchInstant) keptStints)
+          , Just (fetchInstant, keptStints) )
+
+    it "sin nada guardado un fallo no tiene qué servir, y quien llama pone el ejemplo" $
+      tyreStep tyreNow Nothing Nothing `shouldBe` (Nothing, Nothing)
 
   -- Segunda de las tres áreas que quedaban sin suite (queda
   -- 'Handler.OpenF1.Helper'), y la que más cruza del repo: __cinco__
@@ -3993,6 +4019,20 @@ namelessTableFixture = LiveTable Nothing liveRowsFixture NextUnknown
 -- 'getCurrentTime': 'fetchedAtText' tiene que tirarla.
 fetchInstant :: UTCTime
 fetchInstant = UTCTime (fromGregorian 2026 9 11) 50602.123456
+
+-- | Un minuto después de 'fetchInstant': el «ahora» de 'tyreStep', distinto de la hora de
+-- lo guardado para que no se puedan confundir.
+tyreNow :: UTCTime
+tyreNow = addUTCTime 60 fetchInstant
+
+-- | Lo que trae OpenF1 en las pruebas de 'tyreStep'.
+freshStints :: [TyreStint]
+freshStints = [TyreStint "NOR" "MEDIUM" 1 20, TyreStint "NOR" "HARD" 21 44]
+
+-- | Lo guardado en las pruebas de 'tyreStep': otra tanda, para que servir la equivocada
+-- se note.
+keptStints :: [TyreStint]
+keptStints = [TyreStint "LEC" "SOFT" 1 12]
 
 -- | Las tres cabeceras de una respuesta de @\/api\/live@, buscadas por su nombre
 -- __de tipo__, que es el que Servant usa al serializarlas.
