@@ -63,6 +63,7 @@ sector y no una serie submuestreada (2026-08-11).
 
 from __future__ import annotations
 
+import ctypes
 import math
 import os
 import sys
@@ -102,6 +103,8 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     plano (``_warm_later``). Un fallo nunca impide arrancar: ``/fastf1/live`` no
     depende de esta carga.
     """
+    if _malloc_trim is None:
+        _say("sin malloc_trim (no hay glibc): la memoria de cada carga no se devuelve")
     for attempt in range(1, WARM_TRIES_BEFORE + 1):
         if _warm(f"intento {attempt} de {WARM_TRIES_BEFORE}"):
             break
@@ -162,6 +165,25 @@ _sessions: Dict[str, Any] = {}
 _load_lock = threading.Lock()
 
 
+def _find_malloc_trim() -> Any:
+    try:
+        return ctypes.CDLL("libc.so.6").malloc_trim
+    except (OSError, AttributeError):
+        return None
+
+
+# `malloc_trim` de glibc, o `None` si no la hay. Tras una carga el asignador se
+# queda con memoria libre que Python ya no usa; esto se la devuelve al sistema.
+_malloc_trim = _find_malloc_trim()
+
+
+def _give_back() -> None:
+    """Devuelve al sistema la memoria libre que retiene el asignador. Sin glibc no
+    hace nada; el arranque lo avisa."""
+    if _malloc_trim is not None:
+        _malloc_trim(0)
+
+
 # ── Resolución de la sesión ───────────────────────────────────────────────────
 
 
@@ -212,6 +234,7 @@ def _resolve_session(session_key: str) -> Any:
             if cached is None:
                 cached = _load_session(key)
                 _sessions[key] = cached
+                _give_back()
             _sessions[session_key] = cached
         return cached
 
