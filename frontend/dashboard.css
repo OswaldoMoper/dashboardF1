@@ -341,7 +341,13 @@ body {
    ya no crece con su contenido, porque ahora su alto lo fija el rectángulo del
    layout. Sin el `overflow-y` el contenido largo se recortaría en silencio, y ese
    scroll vertical es el que `Common.Layout.fitsAt` da por existente al mirar solo
-   el eje horizontal. */
+   el eje horizontal.
+
+   Con los dos `overflow` la tarjeta recorta a sus hijos en los dos ejes: un
+   emergente propio (menú, aviso) que quiera salir de ella se corta en el borde, sin
+   error. Va fuera de la tarjeta o con `position: fixed`, que escapa mientras ningún
+   ancestro lleve `transform`, `filter` o `contain`. El `title` y el `<select>`
+   nativos no se recortan: los pinta el navegador fuera de la página. */
 .widget {
   min-width: 0;
   height: 100%;
