@@ -1,29 +1,10 @@
--- | Configuración del backend desde variables de entorno (INFRA).
+-- | Configuración del backend, leída de variables de entorno al arrancar (INFRA).
 --
--- Fase 2: el puerto (@PORT@, default 8080) y el directorio del bundle del
--- frontend (@STATIC_DIR@, default @result@) que el backend sirve como SPA.
--- Fase 4: la dirección del microservicio FastF1 en __dos__ campos
--- (@TELEMETRY_HOST@, @TELEMETRY_PORT@) y no como URL completo — el cliente @req@
--- compone el @Url@ por piezas y lleva el puerto en una @Option@, así que parsear
--- un URL exigiría @modern-uri@ (dependencia nueva) más el manejo del fallo de
--- parseo (2026-07-31). Credenciales de PostgreSQL y
--- secretos aterrizan aquí con el mismo patrón @loadConfig@ conforme lleguen.
---
--- @TELEMETRY_TIMEOUT@ es el tercero de esa familia y el único que no describe
--- __dónde__ está el servicio sino __cuánto__ se le espera. Vive en la 'Config' y
--- no como constante del cliente porque los dos escenarios del microservicio piden
--- valores opuestos —caído, fallar en segundos; arriba con la sesión sin cargar,
--- esperar a que la cargue— y el operador es quien sabe en cuál está
--- ('Handler.FastF1.Manager.fastf1Timeout').
---
--- @PUBLIC_API_TIMEOUT@ es el segundo techo de duración, y son dos y no uno porque
--- los servicios son de naturaleza distinta: el microservicio es __local y
--- nuestro__, y OpenF1 y Jolpica son __redes públicas__ que no controlamos
--- ('Handler.PublicApi.Manager.publicApiTimeout'). El motivo de que esté aquí sí
--- es el mismo: poder aflojarlo sin recompilar el día que una de las dos APIs
--- vaya lenta. Lo que __no__ está en la 'Config' es el número de reintentos de esos
--- clientes — es una decisión de diseño y no una perilla de operación, así que vive
--- en el módulo ('Handler.PublicApi.Manager.publicApiRetries').
+-- Una variable que falta, o un número que no se puede leer, cae al default __en
+-- silencio__. La dirección del microservicio son dos campos y no un URL
+-- (2026-07-31). Los techos de duración se cambian sin recompilar (2026-08-04,
+-- 2026-08-19); el número de reintentos no
+-- ('Handler.PublicApi.Manager.publicApiRetries').
 module Config where
 
 import           Data.Maybe         (fromMaybe)
@@ -54,8 +35,6 @@ loadConfig = do
     Config
       { cfgPort          = fromMaybe 8080 (mport >>= readMaybe)
       , cfgStaticDir     = fromMaybe "result" mdir
-        -- 'lookupEnv' da 'String', no 'Text': de ahí el 'T.pack' en vez del
-        -- 'fromMaybe' directo de los otros campos.
       , cfgTelemetryHost = maybe "127.0.0.1" T.pack mhost
       , cfgTelemetryPort = fromMaybe 8000 (mtport >>= readMaybe)
         -- 5 s sirve al servicio caído (degradado rápido). Una sesión sin cargar

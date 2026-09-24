@@ -1,22 +1,11 @@
--- | Cliente del microservicio FastF1 — lo común a sus dos consumidores
--- ('Handler.Telemetry.Manager' y 'Handler.Comparison.Manager').
+-- | Política de fallo de los clientes del microservicio FastF1, común a sus cuatro
+-- consumidores ('Handler.Telemetry.Manager', 'Handler.Comparison.Manager',
+-- 'Handler.Drivers.Manager' y 'Handler.Feed.Manager'). No puede divergir entre
+-- ellos: el mismo servicio caído degradaría a velocidades distintas según el widget
+-- (2026-08-04).
 --
--- El 2026-08-03 se aplazó este módulo al tercer consumidor porque lo compartido
--- era __una línea__ (@telemetryPort = port@) y un módulo para un alias de puerto
--- es más ceremonia que valor. Lo que lo adelanta no es el tercer consumidor sino
--- la __política de fallo__: desde hoy los dos clientes comparten también una
--- 'HttpConfig' y un timeout, y esos sí son una decisión que no puede divergir
--- entre áreas — si un área reintentara y la otra no, el mismo servicio caído
--- degradaría a velocidades distintas según el widget. Ese era el disparador
--- escrito en aquella decisión ("si el import se repite, deja de ser opcional").
---
--- Efecto lateral buscado: desaparece el @Manager@ de negocio importando de otro
--- @Manager@ de negocio, que era la anomalía que el 2026-08-03 anotó como riesgo.
---
--- Lo que este módulo __no__ comparte, y por eso los dos clientes siguen
--- existiendo: la base de URL (difieren en el último segmento), la forma de la
--- respuesta (una lista contra un objeto) y dónde viajan los coches (segmento de
--- path contra query string).
+-- No comparte la base de URL, la forma de la respuesta ni dónde viajan los coches:
+-- son de cada cliente.
 module Handler.FastF1.Manager
   ( fastf1Config
   , fastf1Port
@@ -28,29 +17,10 @@ import           Config           (Config (..))
 import           Network.HTTP.Req
 
 -- | 'HttpConfig' de los clientes del microservicio: 'defaultHttpConfig'
--- __sin reintentos__.
+-- __sin reintentos__ (2026-08-04). Un intento dura como mucho 'fastf1Timeout';
+-- sin él, el @responseTimeout@ por defecto de @http-client@ son 30 s.
 --
--- El motivo es medido, no preventivo. Con el microservicio apagado
--- @\/api\/telemetry@ y @\/api\/comparison@ tardaban __~180 s__ en degradar al
--- dummy, y el degradado es el escenario __normal__ de este servicio: el widget
--- se quedaba tres minutos en "Cargando…".
---
--- __La causa no es el backoff__, al contrario de lo que se anotó el 2026-08-03:
--- @retryPolicyDefault@ es @constantDelay 50 ms \<\> limitRetries 5@, unos 250 ms
--- en total. Los 180 s son __6 intentos × 30 s__, y esos 30 s son el
--- @responseTimeout@ por defecto de @http-client@. De ahí que el arreglo tenga
--- dos piezas y no una: aquí se deja __un solo intento__, y 'fastf1Timeout' acota
--- lo que ese intento puede durar. Tocar solo el retry habría dejado 30 s.
---
--- Reintentar no aporta nada aquí y por una razón concreta: el servicio es
--- __local__ y nuestro. Si no está, no va a estar en el intento siguiente. Los
--- reintentos de @req@ están pensados para redes públicas con fallos
--- transitorios, que es el caso de OpenF1 y Jolpica — por eso ellos __sí__ los
--- conservan, aunque acotados a 2 en vez de a 5
--- ('Handler.PublicApi.Manager.publicApiRetries', 2026-08-19).
---
--- No cambia la semántica del degradado: el @try@ de cada @Context@ atrapa
--- exactamente las mismas excepciones, solo que antes.
+-- No cambia qué excepciones atrapa el @try@ de cada @Context@: solo llegan antes.
 fastf1Config :: HttpConfig
 fastf1Config =
   defaultHttpConfig
@@ -59,8 +29,7 @@ fastf1Config =
     }
 
 -- | Puerto del microservicio como 'Option', monomorfizada a @'Http'@ para que el
--- esquema case con el de las bases de URL de los dos clientes. Se muda aquí desde
--- 'Handler.Telemetry.Manager', donde vivía como @telemetryPort@.
+-- esquema case con el de las bases de URL de los clientes.
 fastf1Port :: Int -> Option 'Http
 fastf1Port = port
 
