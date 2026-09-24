@@ -33,16 +33,15 @@
   --sp-6: 2rem;
 
   /* La muesca que la tarjeta de la esquina superior derecha le abre al botón de
-     plegar la cabecera. No salen de la escala tipográfica ni de la de espaciado:
-     son medidas contra OTRO elemento, y se ajustan mirándolas.
+     plegar la cabecera. Se miden contra OTRO elemento, el botón, así que se
+     calculan desde su tamaño y no se ajustan a ojo.
 
-     De dónde vienen los números: el botón ocupa de 24 a 63 px desde el borde
-     derecho de la ventana y de 24 a 53 px desde el superior; la tarjeta empieza
-     a 32 px de los dos (24 de `.app` + 8 de `.widget-slot`). O sea que el botón
-     se mete 31 px dentro de la tarjeta a lo ancho y 21 a lo alto, y lo que
-     sobra de estos dos números es el aire que queda a su alrededor. */
-  --notch-w: 43px;  /* 31 que se mete + 12 de aire */
-  --notch-h: 33px;  /* 21 que se mete + 12 de aire */
+     De dónde salen: el botón empieza a `--sp-5` de los dos bordes y la tarjeta a
+     `--sp-5` + `--sp-2` (el `padding` de `.app` más el de `.widget-slot`), así que
+     el botón se mete en ella su tamaño menos `--sp-2`; `--sp-3` es el aire que le
+     queda alrededor. Hoy dan 43 × 33 px. */
+  --notch-w: calc(var(--btn-w) - var(--sp-2) + var(--sp-3));
+  --notch-h: calc(var(--btn-h) - var(--sp-2) + var(--sp-3));
 
   /* La banda de sesión. El alto es un número y no `auto` porque `.canvas` lo
      descuenta: con `auto`, una banda que creciera dejaría el lienzo largo y la
@@ -54,10 +53,11 @@
      tarjeta empezaba a 32, así que el botón le entra entero y no en parte. */
   --band-h: 2.75rem;
 
-  /* Lo que mide el botón de plegar a lo ancho, sacado de su propia regla: ocupa de
-     24 a 63 px desde el borde derecho de la ventana. Quien le ceda sitio le suma el
-     aire que quiera en vez de arrastrar otro número medido. */
+  /* Lo que mide el botón de plegar, que su regla fija en vez de dejarlo al glifo:
+     con otra fuente del sistema el ☰ cambia de ancho y la caja no. Quien le ceda
+     sitio le suma el aire que quiera en vez de arrastrar otro número medido. */
   --btn-w: 39px;
+  --btn-h: 29px;
 
   /* Radios. */
   --r-sm: 4px;
@@ -193,6 +193,9 @@ body {
   position: fixed;
   top: var(--sp-5);
   right: var(--sp-5);
+  box-sizing: border-box;
+  width: var(--btn-w);
+  height: var(--btn-h);
   z-index: 20;
 }
 
