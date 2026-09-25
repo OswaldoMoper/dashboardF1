@@ -50,7 +50,7 @@ module Main (main) where
 import           App                         (ScheduledSession (..))
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
-                                              axisTicks, deltaRange,
+                                              axisRange, axisTicks, deltaRange,
                                               frontierCells, zeroLineY)
 import           Common.Format               (ClockForm (..), formatClock,
                                               formatCountdown, formatDelta,
@@ -2078,16 +2078,35 @@ main = hspec $ do
       frontierCells [] `shouldBe` []
       frontierCells [0, 0.1, 0.2] `shouldBe` []
 
-  -- El eje de Lap Comparison: múltiplos de un paso redondo dentro del rango que ya
-  -- dibuja la curva, hasta cinco.
+  -- El eje de Lap Comparison: múltiplos de un paso redondo, hasta siete, con cada
+  -- extremo alargado al múltiplo más lejano del cero cuando le queda igual o más cerca.
   describe "axisTicks" $ do
     let series = [0, -0.13400000000000034, 0.19299999999999784, 0.6170000000000044]
         labels = map (\(_, _, label) -> label) . axisTicks
-    it "NOR contra LEC: paso de 0.2, y el lado negativo sin marca" $
-      labels series `shouldBe` ["+0.600 s", "+0.400 s", "+0.200 s", "0.000 s"]
+    it "NOR contra LEC: paso de 0.2, y el −0.134 alarga el eje hasta −0.200" $
+      labels series
+        `shouldBe` ["+0.600 s", "+0.400 s", "+0.200 s", "0.000 s", "\x2212\&0.200 s"]
 
-    it "de 0 a 1 el paso de 0.2 daría seis marcas, así que sube a 0.5" $
-      labels [0, 0.3, 0.6, 1.0] `shouldBe` ["+1.000 s", "+0.500 s", "0.000 s"]
+    it "de 0 a 1, seis marcas de 0.2" $
+      labels [0, 0.3, 0.6, 1.0]
+        `shouldBe` ["+1.000 s", "+0.800 s", "+0.600 s", "+0.400 s", "+0.200 s", "0.000 s"]
+
+    it "a medio paso exacto, el extremo también alarga" $
+      labels [0, -0.1, 0.6, 1.0]
+        `shouldBe` [ "+1.000 s", "+0.800 s", "+0.600 s", "+0.400 s", "+0.200 s"
+                   , "0.000 s", "\x2212\&0.200 s" ]
+
+    it "el alargamiento puede dejar ocho marcas" $ do
+      labels [0, 0.3, 0.5, 0.68]
+        `shouldBe` [ "+0.700 s", "+0.600 s", "+0.500 s", "+0.400 s", "+0.300 s"
+                   , "+0.200 s", "+0.100 s", "0.000 s" ]
+      labels [-0.18, 0.1, 0.3, 0.48]
+        `shouldBe` [ "+0.500 s", "+0.400 s", "+0.300 s", "+0.200 s", "+0.100 s"
+                   , "0.000 s", "\x2212\&0.100 s", "\x2212\&0.200 s" ]
+
+    it "si dejaría nueve, sube el paso" $
+      labels [-0.18, 0.1, 0.3, 0.58]
+        `shouldBe` ["+0.600 s", "+0.400 s", "+0.200 s", "0.000 s", "\x2212\&0.200 s"]
 
     it "una diferencia de milésimas baja hasta el paso de 0.001, y no más" $ do
       labels [0, 0.001, 0.002, 0.001] `shouldBe` ["+0.002 s", "+0.001 s", "0.000 s"]
@@ -2097,11 +2116,17 @@ main = hspec $ do
       labels [0, 0, 0, 0] `shouldBe` ["0.000 s"]
       axisTicks [] `shouldBe` []
 
-    it "la marca del cero va en la línea del cero" $
-      [y | (v, y, _) <- axisTicks series, v == 0] `shouldBe` [zeroLineY series]
+    it "el rango del eje alarga solo el extremo que lo pide" $
+      axisRange series `shouldBe` (-0.2, snd (deltaRange series))
 
-    prop "como mucho cinco marcas, y el cero entre ellas" fewTicksWithZero
+    it "sin nada que alargar, la marca del cero va en la línea del cero" $ do
+      let flat = [0, 0.3, 0.6, 1.0]
+      axisRange flat `shouldBe` deltaRange flat
+      [y | (v, y, _) <- axisTicks flat, v == 0] `shouldBe` [zeroLineY flat]
+
+    prop "como mucho ocho marcas, y el cero entre ellas" fewTicksWithZero
     prop "de arriba abajo, dentro del lienzo y sin dos etiquetas iguales" ticksReadable
+    prop "el rango del eje contiene al de la curva" axisRangeContainsDelta
 
   describe "formatDelta" $ do
     it "el positivo lleva +, y el negativo el menos tipográfico" $ do
@@ -2949,9 +2974,17 @@ staysInsideViewBox xs = all inside (deltaPoints xs)
 -- empatados», no falta nunca mientras haya datos.
 fewTicksWithZero :: [Double] -> Property
 fewTicksWithZero xs =
-  (length ticks <= 5) .&&. (null xs || 0 `elem` [v | (v, _, _) <- ticks])
+  (length ticks <= 8) .&&. (null xs || 0 `elem` [v | (v, _, _) <- ticks])
   where
     ticks = axisTicks xs
+
+-- | Alargar solo puede ensanchar: la curva escalada con el rango del eje nunca se
+-- sale de él.
+axisRangeContainsDelta :: [Double] -> Bool
+axisRangeContainsDelta xs = alo <= dlo && ahi >= dhi
+  where
+    (alo, ahi) = axisRange xs
+    (dlo, dhi) = deltaRange xs
 
 -- | Lo que hace legible el eje: cada marca más abajo que la anterior, todas dentro
 -- del lienzo (con la holgura de 'axisTicks' en los extremos) y ninguna etiqueta

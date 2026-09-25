@@ -35,6 +35,7 @@ module Common.Chart
     -- * Fronteras
   , frontierCells
     -- * Eje
+  , axisRange
   , axisTicks
   ) where
 
@@ -135,14 +136,28 @@ frontierCells xs
   where
     names = ["Inicio", "S1", "S2", "S3"]
 
+-- | El rango del eje vertical con las marcas: el de 'deltaRange' con cada extremo
+-- alargado hasta el múltiplo del paso de 'axisTicks' más lejano del cero, cuando
+-- el extremo queda igual o más cerca de él que del múltiplo más cercano al cero.
+-- Contiene siempre a 'deltaRange', y coincide con él con la serie vacía o toda en
+-- cero.
+--
+-- Es el rango que comparten las marcas y la curva cuando el eje se enseña, para que
+-- conmutar entre «Valores» y «Eje» no cambie la escala.
+axisRange :: [Double] -> (Double, Double)
+axisRange xs
+  | null xs || all (== 0) xs = deltaRange xs
+  | otherwise                = stretch (axisStep xs) (deltaRange xs)
+
 -- | Las marcas del eje vertical, de arriba abajo: su valor, su Y en el @viewBox@ y su
 -- etiqueta ('Common.Format.formatDelta').
 --
--- * El rango es el de 'deltaRange', así que enseñar el eje no cambia la escala de la
---   curva, y la Y sale del mismo escalado que sus puntos.
+-- * La Y sale de 'axisRange', no de 'deltaRange': quien pinte la curva junto a las
+--   marcas tiene que escalarla con ese mismo rango.
 -- * Las marcas son los múltiplos de un paso redondo —1, 2 o 5 por una potencia de
 --   diez, nunca menor que @0.001@, que es lo que 'formatDelta' distingue—: el menor
---   que deja como mucho cinco. El cero es múltiplo de todos, así que siempre sale.
+--   que deja como mucho 'axisMaxTicks' sin alargar y una más alargado. El cero es
+--   múltiplo de todos, así que siempre sale.
 -- * Con la serie toda en cero solo sale el cero, y con la serie vacía nada: el rango
 --   @(-1, 1)@ de esos dos casos no sale de los datos.
 axisTicks :: [Double] -> [(Double, Double, Text)]
@@ -151,15 +166,43 @@ axisTicks xs
   | all (== 0) xs = [tick 0]
   | otherwise     = [tick (fromIntegral k * step) | k <- [kHi, kHi - 1 .. kLo]]
   where
-    range@(lo, hi) = deltaRange xs
-    step           = tickStep (until fits (+ 1) 0)
-    (kLo, kHi)     = multiplesIn step
-    fits n         = let (a, b) = multiplesIn (tickStep n) in b - a + 1 <= 5
-    tick v         = (v, scaleY range v, formatDelta v)
-    -- Los múltiplos enteros del paso dentro del rango. La holgura recupera el
-    -- extremo que la coma flotante deja a una milmillonésima de paso de un múltiplo.
-    multiplesIn :: Double -> (Integer, Integer)
-    multiplesIn s = (ceiling (lo / s - 1e-9), floor (hi / s + 1e-9))
+    range      = axisRange xs
+    step       = axisStep xs
+    (kLo, kHi) = multiplesIn step range
+    tick v     = (v, scaleY range v, formatDelta v)
+
+-- | Tope de marcas antes de alargar. El alargamiento puede añadir una, nunca dos.
+axisMaxTicks :: Integer
+axisMaxTicks = 7
+
+-- | El paso de 'axisTicks' para una serie con algún valor distinto de cero.
+axisStep :: [Double] -> Double
+axisStep xs = tickStep (until fits (+ 1) 0)
+  where
+    raw = deltaRange xs
+    fits n =
+      let s = tickStep n
+      in count s raw <= axisMaxTicks && count s (stretch s raw) <= axisMaxTicks + 1
+    count s r = let (a, b) = multiplesIn s r in b - a + 1
+
+-- | Los dos extremos de un rango, alargados según la regla de 'axisRange'.
+stretch :: Double -> (Double, Double) -> (Double, Double)
+stretch s (lo, hi) = (reach lo, reach hi)
+  where
+    reach v
+      | offset < 1e-9       = v
+      | offset >= 0.5 - 1e-9 = fromIntegral (near + away) * s
+      | otherwise           = v
+      where
+        q      = v / s
+        near   = if q >= 0 then floor (q + 1e-9) else ceiling (q - 1e-9) :: Integer
+        away   = if q >= 0 then 1 else -1
+        offset = abs (q - fromIntegral near)
+
+-- | Los múltiplos enteros del paso dentro de un rango. La holgura recupera el
+-- extremo que la coma flotante deja a una milmillonésima de paso de un múltiplo.
+multiplesIn :: Double -> (Double, Double) -> (Integer, Integer)
+multiplesIn s (lo, hi) = (ceiling (lo / s - 1e-9), floor (hi / s + 1e-9))
 
 -- | El paso @n@-ésimo de la serie @0.001, 0.002, 0.005, 0.01, …@.
 tickStep :: Int -> Double
