@@ -5,13 +5,19 @@
 -- (2026-07-31). Los techos de duración se cambian sin recompilar (2026-08-04,
 -- 2026-08-19); el número de reintentos no
 -- ('Handler.PublicApi.Manager.publicApiRetries').
+--
+-- __Lleva además una pieza viva que no sale de ninguna variable__: la memoria del
+-- freno de OpenF1, creada aquí porque la configuración es lo que reciben todas las
+-- peticiones ('Handler.OpenF1.Manager.fetchListWith').
 module Config where
 
-import           Data.Maybe         (fromMaybe)
-import           Data.Text          (Text)
-import qualified Data.Text          as T
-import           System.Environment (lookupEnv)
-import           Text.Read          (readMaybe)
+import           Control.Concurrent.MVar (MVar, newMVar)
+import           Data.Maybe              (fromMaybe)
+import           Data.Text               (Text)
+import qualified Data.Text               as T
+import           Data.Time.Clock         (UTCTime)
+import           System.Environment      (lookupEnv)
+import           Text.Read               (readMaybe)
 
 data Config = Config
   { cfgPort             :: Int      -- ^ PORT (default 8080)
@@ -22,8 +28,8 @@ data Config = Config
   , cfgTelemetryTimeout :: Int   -- ^ TELEMETRY_TIMEOUT: segundos de espera por intento (default 5)
   , cfgPublicApiTimeout :: Int   -- ^ PUBLIC_API_TIMEOUT: segundos de espera por intento en OpenF1/Jolpica (default 5)
   , cfgOpenF1Log        :: Bool     -- ^ OPENF1_LOG: con cualquier valor no vacío, una línea por cada petición a OpenF1 y no solo por sus fallos
+  , cfgOpenF1Brake      :: MVar [UTCTime] -- ^ las horas de las últimas salidas a OpenF1, la más reciente primero ('Handler.OpenF1.Helper.brakeWait')
   }
-  deriving (Show)
 
 loadConfig :: IO Config
 loadConfig = do
@@ -35,6 +41,7 @@ loadConfig = do
   mtout  <- lookupEnv "TELEMETRY_TIMEOUT"
   mptout <- lookupEnv "PUBLIC_API_TIMEOUT"
   mlog   <- lookupEnv "OPENF1_LOG"
+  brake  <- newMVar []
   pure
     Config
       { cfgPort          = fromMaybe 8080 (mport >>= readMaybe)
@@ -51,6 +58,7 @@ loadConfig = do
         -- convierte una red viva pero lenta en un dummy.
       , cfgPublicApiTimeout = fromMaybe 5 (mptout >>= readMaybe)
       , cfgOpenF1Log = openF1Log mlog
+      , cfgOpenF1Brake = brake
       }
 
 -- | El socket del microservicio a partir de @TELEMETRY_SOCKET@. Vacía cuenta como no

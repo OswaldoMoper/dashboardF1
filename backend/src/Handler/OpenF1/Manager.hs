@@ -14,16 +14,19 @@
 module Handler.OpenF1.Manager where
 
 import           Config                    (Config (..))
+import           Control.Concurrent        (threadDelay)
+import           Control.Concurrent.MVar   (MVar, modifyMVar)
 import           Control.Exception         (throwIO, try)
 import           Control.Monad             (when)
 import           Data.Aeson                (FromJSON)
 import qualified Data.ByteString           as BS
 import           Data.Text                 (Text)
 import           Data.Text.Encoding        (encodeUtf8)
-import           Data.Time.Clock           (diffUTCTime, getCurrentTime)
+import           Data.Time.Clock           (UTCTime, diffUTCTime,
+                                            getCurrentTime)
 import           Handler.OpenF1.Helper     (Answer (..), Of1Driver,
-                                            alwaysWritten, answerOf,
-                                            requestLine)
+                                            alwaysWritten, answerOf, brakeBurst,
+                                            brakeWait, requestLine)
 import           Handler.PublicApi.Manager (publicApiConfig, publicApiOptions)
 import           Network.HTTP.Req
 import           System.IO                 (stderr)
@@ -91,9 +94,13 @@ endsAfter instant = queryFlag ("date_end>=" <> instant)
 -- ('Handler.OpenF1.Helper.alwaysWritten'). __El fallo se vuelve a lanzar tal cual__,
 -- así que el @try@ de quien llama ve lo mismo que sin la línea. La línea sale en una
 -- sola escritura: dos peticiones a la vez no mezclan las suyas.
+--
+-- __Antes de salir espera su turno__ ('takeTurn'), así que ninguna área puede pasarse
+-- del límite por segundo de OpenF1. Los reintentos de @req@ por techo vencido salen
+-- sin turno.
 fetchListWith :: FromJSON a => Config -> Text -> Option 'Https -> IO [a]
 fetchListWith cfg path opts = do
-  sent <- getCurrentTime
+  sent <- takeTurn (cfgOpenF1Brake cfg)
   result <- try $ runReq publicApiConfig $ do
     res <-
       req
@@ -109,6 +116,19 @@ fetchListWith cfg path opts = do
     BS.hPut stderr . encodeUtf8 . (<> "\n") $
       requestLine sent path (queryParamToList opts) (diffUTCTime done sent) answer
   either throwIO (pure . snd) result
+
+-- | Espera el turno del freno de OpenF1 ('Handler.OpenF1.Helper.brakeWait'), apunta la
+-- salida y devuelve su hora.
+--
+-- __Quien espera retiene el turno__: el que llega detrás espera a que éste salga, así
+-- que dos áreas a la vez no se cuelan juntas.
+takeTurn :: MVar [UTCTime] -> IO UTCTime
+takeTurn brake = modifyMVar brake $ \recent -> do
+  wait <- (`brakeWait` recent) <$> getCurrentTime
+  when (wait > 0) $
+    threadDelay (ceiling (realToFrac wait * 1e6 :: Double))
+  sent <- getCurrentTime
+  pure (take brakeBurst (sent : recent), sent)
 
 -- | 'fetchListWith' para la sesión en curso, que es el caso mayoritario.
 fetchList :: FromJSON a => Config -> Text -> IO [a]

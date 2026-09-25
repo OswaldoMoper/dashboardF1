@@ -9,13 +9,16 @@
 --
 -- Y lo que 'Handler.OpenF1.Manager.fetchListWith' escribe de cada petición: cómo
 -- acabó ('Answer'), si se escribe sin @OPENF1_LOG@ ('alwaysWritten') y la línea
--- ('requestLine').
+-- ('requestLine'); y cuánto espera antes de salir ('brakeWait').
 module Handler.OpenF1.Helper
   ( Of1Driver (..)
   , Answer (..)
   , answerOf
   , alwaysWritten
   , requestLine
+  , brakeBurst
+  , brakeWindow
+  , brakeWait
   ) where
 
 import           Control.Exception        (toException)
@@ -25,7 +28,8 @@ import           Data.Text                (Text)
 import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8With)
 import           Data.Text.Encoding.Error (lenientDecode)
-import           Data.Time.Clock          (NominalDiffTime, UTCTime (..))
+import           Data.Time.Clock          (NominalDiffTime, UTCTime (..),
+                                           diffUTCTime)
 import           Data.Time.Format         (defaultTimeLocale, formatTime)
 import qualified Network.HTTP.Client      as Client
 import           Network.HTTP.Req         (HttpException (..))
@@ -109,3 +113,24 @@ millisInstant t =
     <> T.pack (printf ".%03dZ" millis)
   where
     millis = (floor (toRational (utctDayTime t) * 1000) :: Integer) `mod` 1000
+
+-- | Cuántas salidas deja pasar el freno dentro de cada 'brakeWindow'.
+brakeBurst :: Int
+brakeBurst = 3
+
+-- | La ventana del freno: el segundo del límite de OpenF1 («Max 3 requests/second»,
+-- en su propio rechazo) más 0,2 s de margen, porque OpenF1 cuenta con su reloj y a
+-- la llegada, no a la salida.
+brakeWindow :: NominalDiffTime
+brakeWindow = 1.2
+
+-- | Cuánto tiene que esperar una salida, dadas las horas de las últimas, __la más
+-- reciente primero__: nada si en la ventana caben más, y si no, lo que falta para que
+-- la más vieja de las 'brakeBurst' salga de ella.
+--
+-- __Nunca más que la ventana__: una hora del futuro solo sale de un reloj que ha
+-- retrocedido, y esperar todo lo retrocedido dejaría a OpenF1 sin preguntas.
+brakeWait :: UTCTime -> [UTCTime] -> NominalDiffTime
+brakeWait now recent = case drop (brakeBurst - 1) recent of
+  oldest : _ -> max 0 (min brakeWindow (brakeWindow - diffUTCTime now oldest))
+  []         -> 0

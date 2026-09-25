@@ -141,6 +141,7 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               stillRecent, upNext)
 import           Handler.OpenF1.Helper       (Answer (..), Of1Driver (..),
                                               alwaysWritten, answerOf,
+                                              brakeWait, brakeWindow,
                                               requestLine)
 import           Handler.OpenF1.Manager      (endsAfter, latestSession)
 import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
@@ -1610,6 +1611,27 @@ main = hspec $ do
     it "un 200 que no se deja leer: el texto de aeson" $
       answerOf (JsonHttpException "Error in $: expected Array")
         `shouldBe` Unanswered "Error in $: expected Array"
+
+  -- El freno de OpenF1: 3 salidas por ventana de 1,2 s. Las horas van de la más
+  -- reciente a la más vieja, como las guarda el freno.
+  describe "brakeWait" $ do
+    let ago s = addUTCTime (negate s) fetchInstant
+    it "sin salidas previas, sale ya" $
+      brakeWait fetchInstant [] `shouldBe` 0
+
+    it "con dos en la ventana, la tercera sale ya" $
+      brakeWait fetchInstant [ago 0.16, ago 0.34] `shouldBe` 0
+
+    it "con tres en la ventana, espera a que la más vieja salga de ella" $
+      -- Un refresco del directo: drivers, position e intervals salen en 0,34 s, y
+      -- laps espera hasta 1,2 s después de drivers.
+      brakeWait fetchInstant [ago 0.16, ago 0.34, ago 0.5] `shouldBe` 0.7
+
+    it "si la más vieja de las tres ya salió de la ventana, sale ya" $
+      brakeWait fetchInstant [ago 0.2, ago 0.4, ago 1.3] `shouldBe` 0
+
+    it "una hora del futuro (reloj que retrocede) no espera más que la ventana" $
+      brakeWait fetchInstant [ago (-10), ago (-11), ago (-12)] `shouldBe` brakeWindow
 
   -- Cuándo merece la pena pedirle la foto al feed, que cuesta 16-23 s. Todos los
   -- casos son sobre instantes fijos y sin reloj real: la función es pura justo para
