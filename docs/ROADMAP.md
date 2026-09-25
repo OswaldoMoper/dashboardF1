@@ -630,10 +630,11 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       **Forma cerrada el 2026-09-01:** id explícito que pone quien construye el `Layout` (entrada del día),
       y `WidgetParams` como récord de `wpSession`/`wpDriver`/`wpDrivers` —los tres parámetros que
       `Common.Route` ya acepta— con `noParams` (entrada (b)).
-- [ ] **Lienzo libre**: posición y tamaño propios por widget, en enteros de 1/120, con huecos vacíos
+- [x] **Lienzo libre**: posición y tamaño propios por widget, en enteros de 1/120, con huecos vacíos
       permitidos (2026-09-03). Sustituye a la rejilla `auto-fit` como mecanismo de colocación.
-      **Los cuatro campos están puestos desde el 2026-09-04**, y los dos layouts fijos llevan ya sus
-      coordenadas; falta el render, que es quien las lee.
+      **Los cuatro campos están puestos desde el 2026-09-04**, y el render los lee desde el 2026-09-07
+      (`Common.Layout.slotStyle`, aplicado por el slot de `Pages.Dashboard`). Lo que falta para moverlos
+      es el arrastre, en el entregable siguiente.
 - [ ] Widgets movibles y redimensionables. **Reescrito el 2026-09-03**: mover y redimensionar son los dos
       lo mismo —cambiar las coordenadas de ese widget— y no dos entregables de coste distinto. Ni reordenar
       la lista ni `resize: both`, que quedan superados.
