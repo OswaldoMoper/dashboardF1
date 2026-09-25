@@ -34,6 +34,8 @@ module Common.Chart
   , zeroLineY
     -- * Fronteras
   , frontierCells
+    -- * Eje
+  , axisTicks
   ) where
 
 import           Common.Format (formatDelta)
@@ -132,6 +134,42 @@ frontierCells xs
   | otherwise = []
   where
     names = ["Inicio", "S1", "S2", "S3"]
+
+-- | Las marcas del eje vertical, de arriba abajo: su valor, su Y en el @viewBox@ y su
+-- etiqueta ('Common.Format.formatDelta').
+--
+-- * El rango es el de 'deltaRange', así que enseñar el eje no cambia la escala de la
+--   curva, y la Y sale del mismo escalado que sus puntos.
+-- * Las marcas son los múltiplos de un paso redondo —1, 2 o 5 por una potencia de
+--   diez, nunca menor que @0.001@, que es lo que 'formatDelta' distingue—: el menor
+--   que deja como mucho cinco. El cero es múltiplo de todos, así que siempre sale.
+-- * Con la serie toda en cero solo sale el cero, y con la serie vacía nada: el rango
+--   @(-1, 1)@ de esos dos casos no sale de los datos.
+axisTicks :: [Double] -> [(Double, Double, Text)]
+axisTicks xs
+  | null xs       = []
+  | all (== 0) xs = [tick 0]
+  | otherwise     = [tick (fromIntegral k * step) | k <- [kHi, kHi - 1 .. kLo]]
+  where
+    range@(lo, hi) = deltaRange xs
+    step           = tickStep (until fits (+ 1) 0)
+    (kLo, kHi)     = multiplesIn step
+    fits n         = let (a, b) = multiplesIn (tickStep n) in b - a + 1 <= 5
+    tick v         = (v, scaleY range v, formatDelta v)
+    -- Los múltiplos enteros del paso dentro del rango. La holgura recupera el
+    -- extremo que la coma flotante deja a una milmillonésima de paso de un múltiplo.
+    multiplesIn :: Double -> (Integer, Integer)
+    multiplesIn s = (ceiling (lo / s - 1e-9), floor (hi / s + 1e-9))
+
+-- | El paso @n@-ésimo de la serie @0.001, 0.002, 0.005, 0.01, …@.
+tickStep :: Int -> Double
+tickStep n = mantissa * 10 ^^ (decade - 3)
+  where
+    (decade, m) = n `divMod` 3
+    mantissa = case m of
+      0 -> 1
+      1 -> 2
+      _ -> 5
 
 -- | X del punto @i@ de una serie de @n@. Con @n <= 1@ no hay @n-1@ por el que
 -- dividir: el punto va al centro. Privada porque solo tiene sentido con la @n@

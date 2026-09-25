@@ -50,8 +50,8 @@ module Main (main) where
 import           App                         (ScheduledSession (..))
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
-                                              deltaRange, frontierCells,
-                                              zeroLineY)
+                                              axisTicks, deltaRange,
+                                              frontierCells, zeroLineY)
 import           Common.Format               (ClockForm (..), formatClock,
                                               formatCountdown, formatDelta,
                                               formatFixed, formatTrimmed,
@@ -2078,6 +2078,31 @@ main = hspec $ do
       frontierCells [] `shouldBe` []
       frontierCells [0, 0.1, 0.2] `shouldBe` []
 
+  -- El eje de Lap Comparison: múltiplos de un paso redondo dentro del rango que ya
+  -- dibuja la curva, hasta cinco.
+  describe "axisTicks" $ do
+    let series = [0, -0.13400000000000034, 0.19299999999999784, 0.6170000000000044]
+        labels = map (\(_, _, label) -> label) . axisTicks
+    it "NOR contra LEC: paso de 0.2, y el lado negativo sin marca" $
+      labels series `shouldBe` ["+0.600 s", "+0.400 s", "+0.200 s", "0.000 s"]
+
+    it "de 0 a 1 el paso de 0.2 daría seis marcas, así que sube a 0.5" $
+      labels [0, 0.3, 0.6, 1.0] `shouldBe` ["+1.000 s", "+0.500 s", "0.000 s"]
+
+    it "una diferencia de milésimas baja hasta el paso de 0.001, y no más" $ do
+      labels [0, 0.001, 0.002, 0.001] `shouldBe` ["+0.002 s", "+0.001 s", "0.000 s"]
+      labels [0, 0.0001, 0.0002, 0.0001] `shouldBe` ["0.000 s"]
+
+    it "toda en cero, solo el cero; vacía, nada" $ do
+      labels [0, 0, 0, 0] `shouldBe` ["0.000 s"]
+      axisTicks [] `shouldBe` []
+
+    it "la marca del cero va en la línea del cero" $
+      [y | (v, y, _) <- axisTicks series, v == 0] `shouldBe` [zeroLineY series]
+
+    prop "como mucho cinco marcas, y el cero entre ellas" fewTicksWithZero
+    prop "de arriba abajo, dentro del lienzo y sin dos etiquetas iguales" ticksReadable
+
   describe "formatDelta" $ do
     it "el positivo lleva +, y el negativo el menos tipográfico" $ do
       formatDelta 0.617 `shouldBe` "+0.617 s"
@@ -2920,6 +2945,28 @@ staysInsideViewBox xs = all inside (deltaPoints xs)
   where
     inside (x, y) =
       x >= 0 && x <= chartWidth && y >= chartPad && y <= chartHeight - chartPad
+
+-- | El tope de marcas se cumple en cualquier serie, y el cero, que es «iban
+-- empatados», no falta nunca mientras haya datos.
+fewTicksWithZero :: [Double] -> Property
+fewTicksWithZero xs =
+  (length ticks <= 5) .&&. (null xs || 0 `elem` [v | (v, _, _) <- ticks])
+  where
+    ticks = axisTicks xs
+
+-- | Lo que hace legible el eje: cada marca más abajo que la anterior, todas dentro
+-- del lienzo (con la holgura de 'axisTicks' en los extremos) y ninguna etiqueta
+-- repetida, que es lo que el paso mínimo de @0.001@ garantiza con tres decimales.
+ticksReadable :: [Double] -> Bool
+ticksReadable xs =
+  and (zipWith (<) ys (drop 1 ys))
+    && all inside ys
+    && length (nub labels) == length labels
+  where
+    ticks  = axisTicks xs
+    ys     = [y | (_, y, _) <- ticks]
+    labels = [label | (_, _, label) <- ticks]
+    inside y = y >= chartPad - 1e-6 && y <= chartHeight - chartPad + 1e-6
 
 -- | Con la ventana del feed abierta el veredicto no depende de nada más: ni de
 -- cuándo preguntó el último lector, ni de si preguntó alguna vez.
