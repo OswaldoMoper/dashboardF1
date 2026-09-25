@@ -78,7 +78,7 @@ gridDivisions = 24
 --
 -- Lo que eso compra es __exactitud en los bordes compartidos__, que es donde el
 -- redondeo se vería. Dos widgets pegados —uno acabando en 60 y el otro empezando
--- en 60, el caso que el par @telemetry@\/@telemetry-2@ produce— no dejan una raya
+-- en 60, o el par @telemetry@\/@lap-comparison@ en 35— no dejan una raya
 -- de fondo entre ellos ni se montan un píxel, porque
 -- @calc(60 * 100% \/ 120)@ y @calc(60 * 100% \/ 120)@ son __la misma cantidad__ y
 -- no dos redondeos que casi coinciden. Lo que se paga es que el inspector del

@@ -299,7 +299,7 @@ slot poll wc =
 
 -- | Clase del slot: el bloque, y el modificador solo cuando hay algo que
 -- modificar — mismo criterio que el @rowClass@ de 'Widgets.LiveTiming'
--- (2026-08-27). De los siete slots de los layouts fijos lo llevan dos.
+-- (2026-08-27). De los seis slots de los layouts fijos lo llevan dos.
 --
 -- __El modificador no pinta nada hoy:__ la hoja dejó de dibujar la muesca cuando
 -- la banda de sesión bajó las tarjetas fuera del alcance del botón. Se emite igual,
@@ -385,13 +385,8 @@ cfg wid wt (x, y, w, h) = WidgetConfig
   , wcH           = h
   }
 
--- | Layout "Race Overview": live timing, __dos__ telemetrías, comparación de vueltas
--- y las dos clasificaciones históricas, cada una en su sitio.
---
--- Los dos 'Telemetry' hacen cada uno su fetch y sostienen su propio selector de
--- piloto, así que pueden enseñar pilotos distintos a la vez. Son el par que
--- 'widgetGroup' agrupa porque así lo declara el autor, no por estar juntos
--- (2026-09-03 (b)).
+-- | Layout "Race Overview": live timing, telemetría, comparación de vueltas y las
+-- dos clasificaciones históricas, cada una en su sitio.
 --
 -- La colocación, en unidades de 120 (2026-09-03 y 2026-09-04):
 --
@@ -399,9 +394,9 @@ cfg wid wt (x, y, w, h) = WidgetConfig
 -- > ┌────────────┬────────────┐  0
 -- > │            │  telemetry │
 -- > │            ├────────────┤ 35
--- > │ live-timing│ telemetry-2│
--- > │            ├────────────┤ 70
+-- > │ live-timing│            │
 -- > │            │ lap-compar │
+-- > │            │            │
 -- > │            ├╌╌╌╌╌╌╌╌╌╌╌╌┤ 85
 -- > ├────────────┼────────────┤ 90
 -- > │ driver-st  │ constr-st  │
@@ -411,7 +406,7 @@ cfg wid wt (x, y, w, h) = WidgetConfig
 -- comprueban que el lienzo no rellena los huecos solo. Todos los números son
 -- múltiplos de 5, o sea celda del imán de 24×24.
 --
--- Un typo en los ids no lo caza el compilador, y por eso los siete rectángulos de
+-- Un typo en los ids no lo caza el compilador, y por eso los seis rectángulos de
 -- este módulo los ejercita @backend-test@ contra "Common.Layout".
 raceOverview :: Layout
 raceOverview = Layout
@@ -419,8 +414,7 @@ raceOverview = Layout
   , widgets  =
       [ cfg (WidgetId "live-timing")       LiveTiming       (  0,  0, 60, 90)
       , cfg (WidgetId "telemetry")         Telemetry        ( 60,  0, 60, 35)
-      , cfg (WidgetId "telemetry-2")       Telemetry        ( 60, 35, 60, 35)
-      , cfg (WidgetId "lap-comparison")    LapComparison    ( 60, 70, 60, 15)
+      , cfg (WidgetId "lap-comparison")    LapComparison    ( 60, 35, 60, 50)
       , cfg (WidgetId "driver-stats")      HistoricalStats  (  0, 90, 60, 30)
       , cfg (WidgetId "constructor-stats") ConstructorStats ( 60, 90, 60, 30)
       ]

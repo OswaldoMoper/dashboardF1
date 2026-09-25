@@ -31,7 +31,7 @@
 --   __widget__ probada aquí: sin esto, lo único que impide mandar un acrónimo a
 --   un endpoint que lo absorbe en silencio estaría solo revisado a ojo.
 -- * 'Common.Layout' — la aritmética del lienzo y la traducción del rectángulo a
---   CSS (2026-09-07), más los siete rectángulos de los
+--   CSS (2026-09-07), más los seis rectángulos de los
 --   layouts fijos, que son una __copia__ de @Pages.Dashboard@ porque @frontend@ no
 --   está en @cabal.project@ y la suite no puede importarlo.
 -- * 'Common.Origin' — la procedencia del dato que viaja en cabecera
@@ -2329,13 +2329,13 @@ main = hspec $ do
       map (T.takeWhile (/= ':')) (T.splitOn "; " (slotStyle (rect LiveTiming (0, 0, 60, 90))))
         `shouldBe` ["left", "top", "width", "height"]
 
-    -- El borde entre `telemetry` y `telemetry-2`, que `overlaps` ya declaró que
-    -- no es solape: el bajo de uno y el alto del otro tienen que salir como la
-    -- MISMA cantidad, no como dos redondeos que casi coinciden. Es lo que impide
-    -- la raya de fondo o el píxel montado entre dos widgets pegados.
+    -- El borde entre `telemetry` y `lap-comparison` en Race Overview: el bajo de
+    -- uno y el alto del otro tienen que salir como la MISMA cantidad, no como dos
+    -- redondeos que casi coinciden. Es lo que impide la raya de fondo o el píxel
+    -- montado entre dos widgets pegados.
     it "el borde compartido de dos widgets pegados es la misma cantidad exacta" $
-      let arriba = rect Telemetry (60,  0, 60, 35)
-          abajo  = rect Telemetry (60, 35, 60, 35)
+      let arriba = rect Telemetry     (60,  0, 60, 35)
+          abajo  = rect LapComparison (60, 35, 60, 50)
        in spanCss (wcY arriba + wcH arriba) `shouldBe` spanCss (wcY abajo)
 
     it "el widget que llena el lienzo va del 0 al 100 %" $
@@ -2350,7 +2350,7 @@ main = hspec $ do
     it "el hueco bajo lap-comparison sobrevive a la traducción" $
       spanCss 85 `shouldNotBe` spanCss 90
 
-  -- __El caso que más vale de todo el bloque.__ Los siete rectángulos de
+  -- __El caso que más vale de todo el bloque.__ Los seis rectángulos de
   -- `Pages.Dashboard` están escritos a mano y un typo NO lo caza el compilador —
   -- mismo riesgo que los `WidgetId` literales del 2026-09-01, con la misma
   -- consecuencia: se nota al mirar la página, no al compilar.
@@ -2361,10 +2361,10 @@ main = hspec $ do
   -- verde midiendo un layout que ya no existe. Mientras sea copia, hay que
   -- cambiar los dos sitios.
   describe "los layouts fijos de Pages.Dashboard" $ do
-    it "los siete widgets caben donde dicen estar" $
+    it "los seis widgets caben donde dicen estar" $
       filter (not . fitsAt) (raceOverviewFixture <> qualyFixture) `shouldBe` []
 
-    it "clampToMin no cambia ninguno: los siete respetan ya su ancho mínimo" $
+    it "clampToMin no cambia ninguno: los seis respetan ya su ancho mínimo" $
       map clampToMin (raceOverviewFixture <> qualyFixture)
         `shouldBe` (raceOverviewFixture <> qualyFixture)
 
@@ -2384,17 +2384,16 @@ main = hspec $ do
       filter (overlaps (rect Custom (60, 85, 60, 5))) raceOverviewFixture
         `shouldBe` []
 
-    -- Los mismos siete rectángulos, ahora vistos por el lado que la página
+    -- Los mismos seis rectángulos, ahora vistos por el lado que la página
     -- consume. Los dos casos de arriba dicen que los rectángulos son legales;
     -- este dice CUÁLES son, que es lo único que caza un 35 escrito donde iba
     -- un 30.
-    it "los siete slots traducen a su rectángulo" $
+    it "los seis slots traducen a su rectángulo" $
       map slotStyle (raceOverviewFixture <> qualyFixture)
         `shouldBe` map expectedSlot
              [ (  0,  0,  60,  90)
              , ( 60,  0,  60,  35)
-             , ( 60, 35,  60,  35)
-             , ( 60, 70,  60,  15)
+             , ( 60, 35,  60,  50)
              , (  0, 90,  60,  30)
              , ( 60, 90,  60,  30)
              , (  0,  0, 120, 120)
@@ -3061,15 +3060,14 @@ expectedSlot (x, y, w, h) = T.intercalate "; "
 --
 -- __Es deuda, y conviene decirlo aquí donde se ve:__ si las coordenadas cambian
 -- allí y no aquí, estos casos siguen verdes midiendo un layout que ya no existe.
--- Se acepta porque la alternativa —no probarlos— deja los siete rectángulos
+-- Se acepta porque la alternativa —no probarlos— deja los seis rectángulos
 -- escritos a mano sin nada que cace un typo, que es el riesgo que este bloque
 -- existe para cubrir.
 raceOverviewFixture :: [WidgetConfig]
 raceOverviewFixture =
   [ rectNamed "live-timing"       LiveTiming       (  0,  0, 60, 90)
   , rectNamed "telemetry"         Telemetry        ( 60,  0, 60, 35)
-  , rectNamed "telemetry-2"       Telemetry        ( 60, 35, 60, 35)
-  , rectNamed "lap-comparison"    LapComparison    ( 60, 70, 60, 15)
+  , rectNamed "lap-comparison"    LapComparison    ( 60, 35, 60, 50)
   , rectNamed "driver-stats"      HistoricalStats  (  0, 90, 60, 30)
   , rectNamed "constructor-stats" ConstructorStats ( 60, 90, 60, 30)
   ]
