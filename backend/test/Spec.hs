@@ -104,7 +104,8 @@ import           Common.Types                (DriverEntry (..),
                                               upNextLabel, lapLabel,
                                               showsClock, clockLabel,
                                               tickClock, waitingSession,
-                                              waitingTable)
+                                              waitingTable, bandRight,
+                                              shownClock)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
@@ -2732,6 +2733,20 @@ main = hspec $ do
     it "mientras espera, la sesión se nombra pero no dice estado, vuelta ni reloj" $
       waitingSession raceSessionFixture
         `shouldBe` raceSessionFixture {siState = Nothing, siLaps = Nothing, siClock = Nothing}
+
+    it "la banda calla el reloj donde showsClock lo calla" $ do
+      shownClock raceSessionFixture `shouldBe` Nothing
+      shownClock ((namedSession "Qualifying" "Qualifying" "Azerbaijan Grand Prix") {siLaps = Nothing})
+        `shouldBe` Just (SessionClock 5400 True)
+
+    it "mientras la sesión rueda, la derecha dice la vuelta o, sin ella, el reloj" $ do
+      bandRight NextSilent (Just (LapProgress 23 57)) Nothing `shouldBe` "Vuelta 23/57"
+      bandRight NextSilent Nothing (Just (SessionClock 754 True)) `shouldBe` "Quedan 12:34"
+      bandRight NextSilent Nothing Nothing `shouldBe` ""
+
+    it "si no rueda, la derecha dice la próxima sesión aunque haya vuelta" $
+      bandRight (NextStartsIn (12 * 60)) (Just (LapProgress 57 57)) Nothing
+        `shouldBe` "empieza en 12 min"
 
     it "mientras espera, la tabla no tiene filas ni dice qué viene después" $
       waitingTable liveTableFixture {liveNext = NextStartsIn 60}

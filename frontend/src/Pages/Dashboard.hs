@@ -33,11 +33,13 @@ import           Common.Shown       (Kept (..), Poll (..), delayDefaultSeconds,
                                      delayFromUrl, keepLast, keptNothing,
                                      landed, readDelay)
 import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
-                                     SessionInfo (..), StateReading (..),
+                                     SessionClock, SessionInfo (..),
+                                     StateReading (..),
                                      UpNext (..), WidgetConfig (..),
                                      WidgetId (..), WidgetType (..), bandNote,
-                                     bandStateLabel, isDerived, noParams,
-                                     sessionTitle, tickDown, upNextLabel)
+                                     bandRight, bandStateLabel, isDerived,
+                                     noParams, sessionTitle, shownClock,
+                                     tickClock, tickDown)
 import           Data.Maybe         (fromMaybe, isJust)
 import qualified Data.Text          as T
 import           Reflex.Dom
@@ -182,11 +184,13 @@ sessionBand openDyn poll = mdo
   title   <- holdUniqDyn (maybe "" sessionTitle . keptValue <$> kept)
   reading <- holdUniqDyn ((\k -> siState =<< keptValue k) <$> kept)
   next    <- countdown tick (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
+  clock   <- sessionClock tick ((shownClock =<<) . sessionOf <$> poll)
+  let laps = (siLaps =<<) . sessionOf <$> poll
   asCard  <- toggle True lookClick
   lookClick <- elDynClass "div" (bandClass <$> openDyn <*> asCard) $ do
     dynText title
     sessionState reading (keptStale <$> kept) age
-    elClass "span" "session-band__next" $ dynText (upNextLabel <$> next)
+    elClass "span" "session-band__next" $ dynText (bandRight <$> next <*> laps <*> clock)
     lookSwitch asCard
   pure ()
   where
@@ -296,6 +300,17 @@ countdown tick served = do
   fresh <- holdUniqDyn served
   foldDyn ($) NextUnknown $
     leftmost [const <$> updated fresh, tickDown <$ tick]
+
+-- | El reloj de la sesión que llega en la respuesta, descontado en el navegador con
+-- el mismo reparto que 'countdown': cada valor servido nuevo manda, y entre uno y
+-- otro baja con el tic si el feed dice que corre ('Common.Types.tickClock').
+sessionClock :: MonadWidget t m
+             => Event t TickInfo -> Dynamic t (Maybe SessionClock)
+             -> m (Dynamic t (Maybe SessionClock))
+sessionClock tick served = do
+  fresh <- holdUniqDyn served
+  foldDyn ($) Nothing $
+    leftmost [const <$> updated fresh, fmap tickClock <$ tick]
 
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
 -- lienzo, con el estilo que calcula 'slotStyle'.

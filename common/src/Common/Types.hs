@@ -428,6 +428,19 @@ lapLabel lp = "Vuelta " <> T.pack (show (lpCurrent lp)) <> "/" <> T.pack (show (
 showsClock :: SessionInfo -> Bool
 showsClock s = siType s /= "Race" && null (siLaps s)
 
+-- | El reloj de una sesión que enseña la banda: el suyo, salvo donde 'showsClock' lo
+-- calla.
+shownClock :: SessionInfo -> Maybe SessionClock
+shownClock s
+  | showsClock s = siClock s
+  | otherwise    = Nothing
+
+-- | Lo que dice la derecha de la banda: la próxima sesión y, mientras la que se
+-- enseña rueda ('NextSilent'), su vuelta o, si no tiene, su reloj.
+bandRight :: UpNext -> Maybe LapProgress -> Maybe SessionClock -> Text
+bandRight NextSilent laps clock = maybe (maybe "" clockLabel clock) lapLabel laps
+bandRight next _ _              = upNextLabel next
+
 -- | El reloj en la banda: @Quedan 12:34@, con horas solo a partir de una.
 clockLabel :: SessionClock -> Text
 clockLabel c = "Quedan " <> formatClock ClockCompact (scRemaining c)
