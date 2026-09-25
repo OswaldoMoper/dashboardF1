@@ -32,10 +32,13 @@ module Common.Chart
   , deltaPoints
   , deltaPolyline
   , zeroLineY
+    -- * Fronteras
+  , frontierCells
   ) where
 
-import           Data.Text (Text)
-import qualified Data.Text as T
+import           Common.Format (formatDelta)
+import           Data.Text     (Text)
+import qualified Data.Text     as T
 
 -- | Ancho del @viewBox@. Es un sistema de coordenadas, no píxeles: el @\<svg\>@
 -- se sirve con @width=\"100%\"@ y el navegador escala.
@@ -110,6 +113,25 @@ deltaPolyline = T.unwords . map render . deltaPoints
 -- pueden desalinearse.
 zeroLineY :: [Double] -> Double
 zeroLineY xs = scaleY (deltaRange xs) 0
+
+-- | La fila de debajo del gráfico: por cada frontera, la X de su punto en tanto
+-- por ciento del ancho, su nombre y su valor ('Common.Format.formatDelta').
+--
+-- __Solo con las cuatro fronteras__ (@Inicio@, @S1@, @S2@, @S3@: cada punto lleva el
+-- sector que acaba de terminar). Con cualquier otro número de valores la lista es
+-- vacía: nombrar puntos que no son esas fronteras sería afirmar algo falso.
+--
+-- La X sale del mismo escalado que los puntos, así que cada valor queda debajo del
+-- suyo aunque el @\<svg\>@ se estire.
+frontierCells :: [Double] -> [(Double, Text, Text)]
+frontierCells xs
+  | length xs == length names =
+      [ (scaleX (length xs) i / chartWidth * 100, name, formatDelta v)
+      | (i, name, v) <- zip3 [0 ..] names xs
+      ]
+  | otherwise = []
+  where
+    names = ["Inicio", "S1", "S2", "S3"]
 
 -- | X del punto @i@ de una serie de @n@. Con @n <= 1@ no hay @n-1@ por el que
 -- dividir: el punto va al centro. Privada porque solo tiene sentido con la @n@

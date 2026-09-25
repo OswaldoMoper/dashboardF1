@@ -50,10 +50,12 @@ module Main (main) where
 import           App                         (ScheduledSession (..))
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
-                                              deltaRange, zeroLineY)
+                                              deltaRange, frontierCells,
+                                              zeroLineY)
 import           Common.Format               (ClockForm (..), formatClock,
-                                              formatCountdown, formatFixed,
-                                              formatTrimmed, noData)
+                                              formatCountdown, formatDelta,
+                                              formatFixed, formatTrimmed,
+                                              noData)
 import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
                                               gridDivisions, minWidthFor,
                                               overlaps, slotStyle, snapTo,
@@ -2054,6 +2056,39 @@ main = hspec $ do
       deltaPolyline [0, 0, 0] `shouldBe` "10,100 300,100 590,100"
 
     prop "ninguna coordenada se sale del viewBox" staysInsideViewBox
+
+  -- La fila de debajo del gráfico de Lap Comparison: nombre y valor de cada frontera,
+  -- con los números tal como llegan del microservicio.
+  describe "frontierCells" $ do
+    let series = [0, -0.13400000000000034, 0.19299999999999784, 0.6170000000000044]
+    it "cuatro fronteras: su nombre y su valor con signo y unidad" $
+      map (\(_, name, value) -> (name, value)) (frontierCells series)
+        `shouldBe`
+          [ ("Inicio", "0.000 s")
+          , ("S1", "\x2212\&0.134 s")
+          , ("S2", "+0.193 s")
+          , ("S3", "+0.617 s")
+          ]
+
+    it "cada valor va en la X de su punto" $
+      map (\(x, _, _) -> x) (frontierCells series)
+        `shouldBe` map ((\x -> x / chartWidth * 100) . fst) (deltaPoints series)
+
+    it "con otro número de valores no se nombra nada" $ do
+      frontierCells [] `shouldBe` []
+      frontierCells [0, 0.1, 0.2] `shouldBe` []
+
+  describe "formatDelta" $ do
+    it "el positivo lleva +, y el negativo el menos tipográfico" $ do
+      formatDelta 0.617 `shouldBe` "+0.617 s"
+      formatDelta (-0.134) `shouldBe` "\x2212\&0.134 s"
+
+    it "lo que redondea a cero va sin signo" $ do
+      formatDelta 0 `shouldBe` "0.000 s"
+      formatDelta (-0.0004) `shouldBe` "0.000 s"
+
+    it "lo no finito es la raya de no-dato" $
+      formatDelta (0 / 0) `shouldBe` noData
 
   -- El formateo de cifras vive en `common` por la misma razón que el escalado del
   -- gráfico: es lógica de presentación de dos widgets y el paquete `frontend` no

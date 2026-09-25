@@ -31,6 +31,7 @@
 module Common.Format
   ( formatFixed
   , formatTrimmed
+  , formatDelta
   , noData
   , ClockForm (..)
   , formatClock
@@ -95,6 +96,21 @@ formatTrimmed decimals x
       | otherwise        = t
 
     unsign t = if t == "-0" then "0" else t
+
+-- | Una diferencia de tiempo en segundos con el signo siempre escrito y la unidad:
+-- @\"+0.617 s\"@, @\"−0.134 s\"@ y, si redondea a cero, @\"0.000 s\"@ sin signo.
+--
+-- El menos es el tipográfico (U+2212), que mide lo mismo que el @+@ y deja las
+-- cifras alineadas. No-finito da 'noData', como 'formatFixed'.
+formatDelta :: Double -> Text
+formatDelta x
+  | isNaN x || isInfinite x = noData
+  | digits == zero          = digits <> " s"
+  | x > 0                   = "+" <> digits <> " s"
+  | otherwise               = "\x2212" <> digits <> " s"
+  where
+    digits = formatFixed 3 (abs x)
+    zero   = formatFixed 3 0
 
 -- | Cuánto sitio ocupa un reloj, que es lo único en lo que se distinguen las tres
 -- formas: el valor que dicen es el mismo.

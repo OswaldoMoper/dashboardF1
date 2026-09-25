@@ -50,18 +50,19 @@
 -- @backend-test@ (2026-08-06).
 module Widgets.Comparison where
 
-import           Client       (fetchJson)
-import           Common.Chart (chartHeight, chartPad, chartWidth, deltaPolyline,
-                               zeroLineY)
-import           Common.Route (comparisonPath, comparisonPathFor, driversParam,
-                               driversPathFor)
-import           Common.Types (DriverEntry (..), LapComparison (..))
-import           Data.List    (find)
-import           Data.Map     (Map)
-import qualified Data.Map     as Map
-import           Data.Maybe   (fromMaybe)
-import           Data.Text    (Text)
-import qualified Data.Text    as T
+import           Client        (fetchJson)
+import           Common.Chart  (chartHeight, chartPad, chartWidth,
+                                deltaPolyline, frontierCells, zeroLineY)
+import           Common.Format (formatFixed)
+import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
+                                driversPathFor)
+import           Common.Types  (DriverEntry (..), LapComparison (..))
+import           Data.List     (find)
+import           Data.Map      (Map)
+import qualified Data.Map      as Map
+import           Data.Maybe    (fromMaybe)
+import           Data.Text     (Text)
+import qualified Data.Text     as T
 import           Reflex.Dom
 
 -- | Estado del fetch de @\/api\/comparison@. 'Failed' (no 'Error') para no
@@ -105,6 +106,8 @@ comparisonWidget = divClass "widget widget--comparison" $ mdo
     renderState (Loaded c) = do
       lapHeader c
       deltaChart (lcDelta c)
+      frontierRow (lcDelta c)
+      legend c
 
 -- | Cómo avanza el estado con cada respuesta. __Es la pieza que impide el
 -- parpadeo__, y por eso el widget usa 'foldDyn' y no el 'holdDyn' de los otros
@@ -373,6 +376,51 @@ deltaChart series = do
   case series of
     [] -> elClass "p" "status status--empty" $ text "Sin delta que dibujar"
     _  -> blank
+
+-- | Debajo del gráfico, el nombre y el valor de cada frontera, cada uno en la X de
+-- su punto ('Common.Chart.frontierCells'). Van en HTML y no dentro del @\<svg\>@,
+-- que se estira a lo ancho y deformaría el texto.
+--
+-- La primera se alinea a la izquierda de su punto y la última a la derecha, para
+-- que no se salgan de la caja; las del medio, centradas.
+frontierRow :: DomBuilder t m => [Double] -> m ()
+frontierRow series = case frontierCells series of
+  []    -> blank
+  cells ->
+    divClass "comparison__frontiers" $
+      mapM_ (frontierCell (length cells - 1)) (zip [0 ..] cells)
+
+-- | Una celda de 'frontierRow': su posición en la fila, la última posición, y la X,
+-- el nombre y el valor de su frontera.
+frontierCell :: DomBuilder t m => Int -> (Int, (Double, Text, Text)) -> m ()
+frontierCell lastIx (i, (x, name, value)) =
+  elAttr "div" attrs $ do
+    elClass "span" "comparison__frontier-name" $ text name
+    elClass "span" "comparison__frontier-value" $ text value
+  where
+    attrs =
+      Map.fromList
+        [ ("class", "comparison__frontier" <> anchor)
+        , ("style", "left: " <> formatFixed 3 x <> "%")
+        ]
+    anchor
+      | i == 0      = " comparison__frontier--first"
+      | i == lastIx = " comparison__frontier--last"
+      | otherwise   = ""
+
+-- | Qué es cada línea: la discontinua es el coche de la derecha, la referencia, y
+-- la roja el de la izquierda contra él. Por encima del cero, el de la izquierda va
+-- por detrás, porque la serie es A − B.
+--
+-- Sin serie no hay línea roja que explicar, y no se pinta.
+legend :: DomBuilder t m => LapComparison -> m ()
+legend c
+  | null (lcDelta c) = blank
+  | otherwise = divClass "comparison__legend" $ do
+      elClass "span" "comparison__key comparison__key--ref" $ text "- - -"
+      text (" " <> lcDriverB c <> " (referencia)")
+      elClass "span" "comparison__key comparison__key--delta" $ text "——"
+      text (" " <> lcDriverA c <> ": por encima, va por detrás")
 
 -- | Elemento en el namespace de SVG.
 --
