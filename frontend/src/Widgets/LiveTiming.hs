@@ -32,13 +32,15 @@ import           Client        (fetchJsonSourced)
 import           Common.Origin (Sourced (..))
 import           Common.Route  (livePath)
 import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
-                                canRequest, indicatorClass, indicatorFrom,
-                                indicatorTooltip, liveRefreshSeconds, pollIdle,
-                                pollStep)
+                                canRequest, delayNote, delayWait,
+                                delayWaitLabel, delayedPoll, indicatorClass,
+                                indicatorFrom, indicatorTooltip, landed,
+                                liveRefreshSeconds, pollIdle, pollStep,
+                                recordArrival)
 import           Common.Types  (DriverStatus (..), LiveTable (..),
                                 LiveTimingRow (..), SessionInfo (..),
                                 StateReading (..), sessionInProgress,
-                                statusLabel)
+                                statusLabel, waitingTable)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           Reflex.Dom
@@ -49,6 +51,8 @@ data LiveState
   = Loading
   | Failed
   | Loaded [LiveTimingRow]
+  | Waiting Text
+    -- ^ Con retraso, mientras nada es tan viejo: el aviso de la espera.
   deriving (Eq)
 
 -- | Lo que se enseña a partir del estado del refresco.
@@ -120,32 +124,64 @@ livePoll = mdo
   poll <- foldDyn pollStep pollIdle (leftmost [Sent <$ sent, Arrived <$> resp])
   pure poll
 
--- | Tabla de live timing, alimentada por el refresco que le pasa quien la monta.
-liveTimingWidget :: MonadWidget t m => Dynamic t (Poll (Sourced LiveTable)) -> m ()
-liveTimingWidget poll = divClass "widget widget--live-timing" $ do
+-- | El directo tal como se enseña: el refresco visto con el retraso pedido, el
+-- retraso, y cuántos segundos faltan para tener algo tan viejo ('Nothing' si ya lo
+-- hay o no hay retraso).
+data LiveView t = LiveView
+  { lvPoll  :: Dynamic t (Poll (Sourced LiveTable))
+  , lvDelay :: Dynamic t Int
+  , lvWait  :: Dynamic t (Maybe Int)
+  }
+
+-- | Aplica el retraso al refresco, una sola vez para la banda y para la tarjeta.
+-- Guarda cada llegada con el segundo en que llegó, contado desde que se montó; lo
+-- que se enseña cambia solo cuando cambia lo que se ve ('holdUniqDyn'), aunque el
+-- segundero lo recalcule cada segundo.
+delayedLive :: MonadWidget t m
+            => Dynamic t Int -> Dynamic t (Poll (Sourced LiveTable)) -> m (LiveView t)
+delayedLive delay poll = do
+  tick     <- tickLossyFromPostBuildTime 1
+  now      <- holdDyn 0 (fromIntegral . _tickInfo_n <$> tick)
+  arrivals <- foldDyn (uncurry recordArrival) [] $
+                attach (current now) (fmapMaybe landed (updated poll))
+  shown    <- holdUniqDyn (delayedPoll waiting <$> delay <*> now <*> arrivals <*> poll)
+  wait     <- holdUniqDyn (delayWait <$> delay <*> now <*> arrivals)
+  pure (LiveView shown delay wait)
+  where
+    waiting s = s {srcValue = waitingTable (srcValue s)}
+
+-- | Tabla de live timing, alimentada por el directo que le pasa quien la monta.
+liveTimingWidget :: MonadWidget t m => LiveView t -> m ()
+liveTimingWidget live = divClass "widget widget--live-timing" $ do
   divClass "widget__head" $ do
     el "h2" $ text "Live Timing"
-    liveBadge (indicatorOf <$> poll)
-  state <- holdUniqDyn (liveStateOf <$> poll)
+    liveBadge (lvDelay live) (indicatorOf <$> lvPoll live)
+  state <- holdUniqDyn (viewOf <$> lvDelay live <*> lvWait live <*> lvPoll live)
   dyn_ (renderState <$> state)
   where
+    viewOf n (Just wait) _ = Waiting (delayWaitLabel n wait)
+    viewOf _ Nothing p     = liveStateOf p
+
     -- __El texto es siempre @Live@__ (2026-09-11 (d)) y lo que cambia es el
     -- punto: un texto que cambiara de palabra se leería sin mirar el color, pero
     -- también se movería la fila del título cada diez segundos.
     --
     -- __Hace falta 'elDynAttr' y no 'elDynClass'__ porque son dos atributos: la
     -- clase la pinta la hoja y el @title@ la explica.
-    liveBadge :: MonadWidget t m => Dynamic t Indicator -> m ()
-    liveBadge indicator =
-      elDynAttr "span" (attrsFor <$> indicator) $ text "Live"
+    liveBadge :: MonadWidget t m => Dynamic t Int -> Dynamic t Indicator -> m ()
+    liveBadge delay indicator =
+      elDynAttr "span" (attrsFor <$> delay <*> indicator) $ text "Live"
       where
-        attrsFor i = "class" =: indicatorClass i <> "title" =: indicatorTooltip i
+        attrsFor n i =
+          "class" =: indicatorClass i <> "title" =: delayNote n (indicatorTooltip i)
 
     renderState :: DomBuilder t m => LiveState -> m ()
     renderState Loading =
       elClass "p" "status status--loading" $ text "Cargando…"
     renderState Failed =
       elClass "p" "status status--error" $ text "Error al cargar /api/live"
+    renderState (Waiting label) =
+      elClass "p" "status status--loading" $ text label
     renderState (Loaded rows) =
       elClass "table" "live-timing" $ do
         el "thead" $ el "tr" $ mapM_ (el "th" . text) headers

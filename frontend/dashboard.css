@@ -594,6 +594,41 @@ body {
   margin-bottom: var(--sp-2);
 }
 
+/* Los botones de layout a la izquierda y el retraso del directo a la derecha, en
+   la misma fila; en una pantalla estrecha el campo baja a la siguiente. */
+.dashboard-header__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.delay-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--c-muted);
+}
+
+.delay-field__input {
+  width: 4.5em;
+  padding: var(--sp-1) var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+
+.delay-field__input:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
 /* Los switchers comparten botón (`switcher__btn`), porque comparten aspecto: una
    regla y no una por bloque. Eran cuatro hasta el 2026-08-26 y hoy son tres —el de
    etiqueta se fue con el toggle de Historical—; el nombre genérico del botón se

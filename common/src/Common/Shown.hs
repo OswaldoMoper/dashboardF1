@@ -64,6 +64,8 @@ module Common.Shown
   , recordArrival
   , delayedShown
   , delayedPoll
+  , landed
+  , delayFromUrl
   , delayWait
   , delayWaitLabel
   , delayNote
@@ -375,12 +377,35 @@ delayedShown n now = fmap snd . find (\(t, _) -> now - t >= n)
 
 -- | El refresco visto con @n@ segundos de retraso: lo enseñado sale de
 -- 'delayedShown', y lo que está en vuelo y el último fallo siguen siendo los de
--- ahora, así que una caída del servidor se ve al momento. Con @n <= 0@ es el
--- refresco tal cual.
-delayedPoll :: Int -> Int -> Arrivals a -> Poll a -> Poll a
-delayedPoll n now xs p
+-- ahora, así que una caída del servidor se ve al momento. Mientras nada es tan
+-- viejo, se enseña lo último que llegó pasado por @waiting@, que decide qué se
+-- puede ver de ello. Con @n <= 0@ es el refresco tal cual.
+delayedPoll :: (a -> a) -> Int -> Int -> Arrivals a -> Poll a -> Poll a
+delayedPoll waiting n now xs p
   | n <= 0    = p
-  | otherwise = p {pollShown = delayedShown n now xs}
+  | otherwise = p {pollShown = maybe (waiting . snd <$> newest) Just (delayedShown n now xs)}
+  where
+    newest = case xs of
+      x : _ -> Just x
+      []    -> Nothing
+
+-- | Lo que llegó en una actualización del refresco, si fue una llegada buena. __El
+-- envío no cuenta__: el estado cambia dos veces por ciclo y solo la segunda trae
+-- respuesta. __Y el fallo tampoco__: 'pollStep' conserva lo anterior, y tratarlo
+-- como llegada lo haría pasar por nuevo.
+landed :: Poll a -> Maybe a
+landed p
+  | pollInFlight p || pollLastFailed p = Nothing
+  | otherwise                          = pollShown p
+
+-- | El retraso que trae la dirección de la página en @?retraso=@, con 'readDelay';
+-- los dos puntos pueden venir escritos @%3A@. 'Nothing' si no lo trae o no vale.
+delayFromUrl :: Text -> Maybe Int
+delayFromUrl url = readDelay . unescape =<< lookup "retraso" params
+  where
+    query    = T.takeWhile (/= '#') (T.drop 1 (T.dropWhile (/= '?') url))
+    params   = [(k, T.drop 1 v) | pair <- T.splitOn "&" query, let (k, v) = T.breakOn "=" pair]
+    unescape = T.replace "%3A" ":" . T.replace "%3a" ":"
 
 -- | Cuántos segundos faltan para que haya algo que enseñar con @n@ de retraso.
 -- 'Nothing' si ya lo hay o si no hay retraso; sin ninguna llegada, cuenta como si

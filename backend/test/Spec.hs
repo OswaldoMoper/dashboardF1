@@ -80,7 +80,8 @@ import           Common.Shown                (Indicator (..), Kept (..),
                                               delayMaxSeconds, delayNote,
                                               delayWait, delayWaitLabel,
                                               delayedPoll, delayedShown,
-                                              readDelay, recordArrival)
+                                              delayFromUrl, landed, readDelay,
+                                              recordArrival)
 import           Common.Types                (DriverEntry (..),
                                               DriverStatus (..),
                                               HistoricalStat (..),
@@ -102,7 +103,8 @@ import           Common.Types                (DriverEntry (..),
                                               statusLabel, tickDown,
                                               upNextLabel, lapLabel,
                                               showsClock, clockLabel,
-                                              tickClock, waitingSession)
+                                              tickClock, waitingSession,
+                                              waitingTable)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
@@ -2644,12 +2646,42 @@ main = hspec $ do
       delayedShown 31 30 arrivals `shouldBe` Nothing
 
     it "sin retraso, el refresco tal cual" $
-      delayedPoll 0 30 arrivals (Poll False (Just 'c') False)
+      delayedPoll succ 0 30 arrivals (Poll False (Just 'c') False)
         `shouldBe` Poll False (Just 'c') False
 
     it "con retraso, lo enseñado se retrasa y el fallo se ve al momento" $
-      delayedPoll 15 30 arrivals (Poll True (Just 'c') True)
+      delayedPoll succ 15 30 arrivals (Poll True (Just 'c') True)
         `shouldBe` Poll True (Just 'b') True
+
+    it "mientras espera, enseña lo último que llegó pasado por lo que se puede ver" $ do
+      delayedPoll succ 41 30 arrivals (Poll False (Just 'c') False)
+        `shouldBe` Poll False (Just 'd') False
+      delayedPoll succ 41 5 [] (Poll True (Nothing :: Maybe Char) False)
+        `shouldBe` Poll True Nothing False
+
+    it "una llegada es un refresco que volvió bien; el envío y el fallo no lo son" $ do
+      landed (Poll False (Just 'c') False) `shouldBe` Just 'c'
+      landed (Poll True (Just 'c') False) `shouldBe` Nothing
+      landed (Poll False (Just 'c') True) `shouldBe` Nothing
+      landed (Poll False Nothing False :: Poll Char) `shouldBe` Nothing
+
+    it "la dirección da el retraso en segundos o en m:ss, con los dos puntos escapados o no" $
+      map delayFromUrl
+        [ "http://localhost:3000/?retraso=0:41"
+        , "http://localhost:3000/?retraso=38"
+        , "http://localhost:3000/?retraso=0%3A41"
+        , "http://localhost:3000/?x=1&retraso=45:00#arriba"
+        ]
+        `shouldBe` map Just [41, 38, 41, 2700]
+
+    it "sin retraso en la dirección, o con uno que no vale, nada" $
+      map delayFromUrl
+        [ "http://localhost:3000/"
+        , "http://localhost:3000/?retraso"
+        , "http://localhost:3000/?retraso=1:5"
+        , "http://localhost:3000/?otro=41"
+        ]
+        `shouldBe` replicate 4 Nothing
 
     it "la espera cuenta desde lo más viejo que llegó, o desde ahora si no llegó nada" $ do
       delayWait 41 30 arrivals `shouldBe` Just 11
@@ -2700,6 +2732,10 @@ main = hspec $ do
     it "mientras espera, la sesión se nombra pero no dice estado, vuelta ni reloj" $
       waitingSession raceSessionFixture
         `shouldBe` raceSessionFixture {siState = Nothing, siLaps = Nothing, siClock = Nothing}
+
+    it "mientras espera, la tabla no tiene filas ni dice qué viene después" $
+      waitingTable liveTableFixture {liveNext = NextStartsIn 60}
+        `shouldBe` LiveTable (Just (waitingSession raceSessionFixture)) [] NextSilent
 
   -- Una respuesta 200 que no nombra su sesión no es un fallo, así que 'pollStep' no
   -- la conserva: la tabla llega entera y lo que falta es un campo de dentro. Lo que

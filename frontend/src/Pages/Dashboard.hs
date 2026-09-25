@@ -26,22 +26,25 @@
 --
 module Pages.Dashboard where
 
+import           Common.Format      (ClockForm (..), formatClock)
 import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
-import           Common.Shown       (Kept (..), Poll (..), keepLast,
-                                     keptNothing)
+import           Common.Shown       (Kept (..), Poll (..), delayDefaultSeconds,
+                                     delayFromUrl, keepLast, keptNothing,
+                                     landed, readDelay)
 import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
                                      SessionInfo (..), StateReading (..),
                                      UpNext (..), WidgetConfig (..),
                                      WidgetId (..), WidgetType (..), bandNote,
                                      bandStateLabel, isDerived, noParams,
                                      sessionTitle, tickDown, upNextLabel)
-import           Data.Maybe         (isJust)
+import           Data.Maybe         (fromMaybe, isJust)
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
 import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
-import           Widgets.LiveTiming (livePoll, liveTimingWidget, sessionOf)
+import           Widgets.LiveTiming (LiveView (..), delayedLive, livePoll,
+                                     liveTimingWidget, sessionOf)
 import           Widgets.Telemetry  (telemetryWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
@@ -70,12 +73,14 @@ dashboardPage = divClass "page page--dashboard" $ do
   toggleClick <- headerToggle
   openDyn     <- toggle True toggleClick
   poll        <- livePoll
-  layoutDyn   <- divClass "top-bar" $ do
-    active <- dashboardHeader openDyn
-    sessionBand openDyn poll
-    pure active
+  initial     <- fromMaybe delayDefaultSeconds . delayFromUrl <$> getLocationUrl
+  (layoutDyn, live) <- divClass "top-bar" $ do
+    (active, delay) <- dashboardHeader initial openDyn
+    live <- delayedLive delay poll
+    sessionBand openDyn (lvPoll live)
+    pure (active, live)
   elDynClass "div" (canvasClass <$> openDyn) $
-    dyn_ $ ffor layoutDyn $ \l -> mapM_ (slot poll) (widgets l)
+    dyn_ $ ffor layoutDyn $ \l -> mapM_ (slot live) (widgets l)
   where
     -- __El lienzo dice si la cabecera está plegada__, para quien necesite saberlo
     -- desde la hoja de estilos. Hoy no lo lee nadie: lo leía la muesca de la
@@ -108,22 +113,45 @@ headerToggle = do
   (e, _) <- elClass' "button" "header-toggle" $ text "☰"
   pure (domEvent Click e)
 
--- | La cabecera: título y conmutación de layouts, que se pliegan __juntos__
--- (2026-09-07). Devuelve el layout activo, porque el switcher vive dentro.
+-- | La cabecera: título, conmutación de layouts y el retraso del directo, que se
+-- pliegan __juntos__ (2026-09-07). Devuelve el layout activo y el retraso en
+-- segundos, porque los dos viven dentro; el retraso arranca en @initial@.
 --
 -- __Se pliega con una clase y no desmontando__, y la diferencia importa: con
 -- 'dyn' el contenido se re-monta en cada cambio, así que 'layoutSwitcher'
 -- perdería su @Dynamic t Layout@ y __volvería a 'raceOverview'__ cada vez que se
 -- desplegara. Con 'elDynClass' el DOM se queda montado y solo cambia si se pinta.
-dashboardHeader :: MonadWidget t m => Dynamic t Bool -> m (Dynamic t Layout)
-dashboardHeader openDyn =
+dashboardHeader :: MonadWidget t m
+                => Int -> Dynamic t Bool -> m (Dynamic t Layout, Dynamic t Int)
+dashboardHeader initial openDyn =
   elDynClass "div" (headerClass <$> openDyn) $ do
     el "h1" $ text "F1 Functional Dashboard"
-    layoutSwitcher
+    divClass "dashboard-header__controls" $ do
+      active <- layoutSwitcher
+      delay  <- delayField initial
+      pure (active, delay)
   where
     headerClass open
       | open      = "dashboard-header"
       | otherwise = "dashboard-header dashboard-header--hidden"
+
+-- | El campo del retraso, en @m:ss@. Lo tecleado se aplica __al pulsar Enter o al
+-- salir del campo__, nunca tecla a tecla: camino de @0:41@ se pasa por @0@, que
+-- quitaría el retraso. Lo que no vale ('Common.Shown.readDelay') no cambia nada, y
+-- al aplicarse el campo vuelve a escribir el retraso vigente.
+delayField :: MonadWidget t m => Int -> m (Dynamic t Int)
+delayField initial = elClass "label" "delay-field" $ mdo
+  elClass "span" "delay-field__label" $ text "Diferido"
+  input <- inputElement $
+    def
+      & inputElementConfig_initialValue .~ formatClock ClockCompact initial
+      & inputElementConfig_setValue     .~ (formatClock ClockCompact <$> applied)
+      & initialAttributes               .~ ("class" =: "delay-field__input" <> "size" =: "5")
+  let committed = leftmost [() <$ ffilter (== 13) (domEvent Keypress input), domEvent Blur input]
+      typed     = tag (current (_inputElement_value input)) committed
+      applied   = attachWith (\old t -> fromMaybe old (readDelay t)) (current delay) typed
+  delay <- holdDyn initial applied
+  pure delay
 
 -- | La banda que dice __de qué sesión__ habla la página, y no una tarjeta
 -- (2026-09-15 (h)).
@@ -148,7 +176,7 @@ sessionBand :: MonadWidget t m
             => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> m ()
 sessionBand openDyn poll = mdo
   tick    <- tickLossyFromPostBuildTime 1
-  let arrived = sessionOf <$> ffilter landed (updated poll)
+  let arrived = sessionOf <$> ffilter (isJust . landed) (updated poll)
   kept    <- foldDyn keepLast keptNothing arrived
   age     <- sessionAge tick arrived
   title   <- holdUniqDyn (maybe "" sessionTitle . keptValue <$> kept)
@@ -162,13 +190,6 @@ sessionBand openDyn poll = mdo
     lookSwitch asCard
   pure ()
   where
-    -- Qué cuenta como una respuesta que llegó con algo dentro, y son dos descartes.
-    -- __El envío no cuenta__: el estado del refresco cambia dos veces por ciclo y
-    -- solo la segunda trae respuesta. __Y el fallo tampoco__: de él ya se encarga
-    -- 'Common.Shown.pollStep' conservando la tabla, y tratarlo como una llegada
-    -- pondría la edad a cero afirmando que el nombre es de ahora.
-    landed p = not (pollInFlight p) && not (pollLastFailed p)
-
     bandClass open card =
       T.unwords $
         ["session-band", lookClass card]
@@ -291,11 +312,10 @@ countdown tick served = do
 -- razón: quien sabe dónde está la tarjeta es quien la coloca. Marca a la tarjeta
 -- que ocupa la esquina donde vive el botón de plegar, que es @fixed@ contra la
 -- ventana (2026-09-07 b); a quién le toca lo dice 'touchesTopRight'.
-slot :: MonadWidget t m
-     => Dynamic t (Poll (Sourced LiveTable)) -> WidgetConfig -> m ()
-slot poll wc =
+slot :: MonadWidget t m => LiveView t -> WidgetConfig -> m ()
+slot live wc =
   elAttr "div" ("class" =: slotClass wc <> "style" =: slotStyle wc) $
-    renderWidget poll wc
+    renderWidget live wc
 
 -- | Clase del slot: el bloque, y el modificador solo cuando hay algo que
 -- modificar — mismo criterio que el @rowClass@ de 'Widgets.LiveTiming'
@@ -342,10 +362,9 @@ switcherButton label = do
 -- razón por la que el rectángulo no lo lleva el widget: quien conoce el dato es
 -- quien monta, y darlo solo a la rama que lo pide exigiría que el @case@ devolviera
 -- funciones de tipos distintos.
-renderWidget :: MonadWidget t m
-             => Dynamic t (Poll (Sourced LiveTable)) -> WidgetConfig -> m ()
-renderWidget poll wc = case widgetType wc of
-  LiveTiming       -> liveTimingWidget poll
+renderWidget :: MonadWidget t m => LiveView t -> WidgetConfig -> m ()
+renderWidget live wc = case widgetType wc of
+  LiveTiming       -> liveTimingWidget live
   Telemetry        -> telemetryWidget
   LapComparison    -> comparisonWidget
   TyreStrategy     -> placeholderWidget "Tyre Strategy"

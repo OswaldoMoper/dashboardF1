@@ -444,6 +444,12 @@ tickClock c
 waitingSession :: SessionInfo -> SessionInfo
 waitingSession s = s {siState = Nothing, siLaps = Nothing, siClock = Nothing}
 
+-- | La tabla mientras la página espera: la sesión según 'waitingSession', sin filas
+-- y sin decir qué viene después, que también contaría cómo acabó la sesión.
+waitingTable :: LiveTable -> LiveTable
+waitingTable t =
+  t {liveSession = waitingSession <$> liveSession t, liveRows = [], liveNext = NextSilent}
+
 -- | Qué significa un asterisco.
 --
 -- Vive aquí y no en el widget por el criterio de 'statusLabel', y __se enseña al
