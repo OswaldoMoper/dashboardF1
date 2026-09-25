@@ -51,7 +51,9 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   (`fresh`/`recent`/`cached`/`sample`; neumáticos no tiene `recent`), `X-Data-Source` (`feed`/`openf1`; falta
   con el dato de ejemplo) y, con los que salen de lo guardado —`recent` y `cached`—, `X-Data-Fetched-At` en
   ISO 8601 UTC; el cuerpo JSON no cambia. Cabeceras en `Provenance`; tipo y valores en `Common.Origin`.
-- **Presupuesto de OpenF1:** acepta 30 peticiones por minuto, y lo dice en su propio rechazo. El backend no
+- **Presupuesto de OpenF1:** acepta 30 peticiones por minuto y 3 por segundo, y lo dice en su propio rechazo.
+  Toda petición pasa por un freno único (3 salidas por ventana de 1,2 s) en
+  `Handler.OpenF1.Manager.fetchListWith`, y con `OPENF1_LOG` deja una línea por petición. El backend no
   vuelve a bajar a OpenF1 si lo que guardó tiene menos de 15 s y lo sirve como `recent`; el feed, que es
   propio, no se frena.
 - **NEGOCIO (`Handler/`) por área:** `Handler.<Área>{,.Context,.Helper,.Manager}` (interfaz → orquestación → efectos → pureza). Áreas: `Live`, `Historical`, `Telemetry`, `Comparison`, `TyreStrategy`; luego `OpenF1`/`Jolpica`/`FastF1` como `Manager`s. Cache en memoria (STM) como infra cuando llegue (Fase 3).
