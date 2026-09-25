@@ -75,7 +75,12 @@ import           Common.Shown                (Indicator (..), Kept (..),
                                               indicatorClass, indicatorFrom,
                                               indicatorTooltip, keepLast,
                                               keptNothing, liveRefreshSeconds,
-                                              pollIdle, pollStep)
+                                              pollIdle, pollStep, Arrivals,
+                                              delayDefaultSeconds,
+                                              delayMaxSeconds, delayNote,
+                                              delayWait, delayWaitLabel,
+                                              delayedPoll, delayedShown,
+                                              readDelay, recordArrival)
 import           Common.Types                (DriverEntry (..),
                                               DriverStatus (..),
                                               HistoricalStat (..),
@@ -95,7 +100,9 @@ import           Common.Types                (DriverEntry (..),
                                               sessionInProgress, sessionIsLive,
                                               sessionStateWord, sessionTitle,
                                               statusLabel, tickDown,
-                                              upNextLabel)
+                                              upNextLabel, lapLabel,
+                                              showsClock, clockLabel,
+                                              tickClock, waitingSession)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
@@ -163,7 +170,8 @@ import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck       (prop)
-import           Test.QuickCheck             (Property, (.&&.), (===))
+import           Test.QuickCheck             (NonNegative (..), Property, (.&&.),
+                                              (===))
 
 main :: IO ()
 main = hspec $ do
@@ -2617,6 +2625,82 @@ main = hspec $ do
       pollStep (Arrived (Just (3 :: Int))) (Poll True (Just 1) True)
         `shouldBe` Poll False (Just 3) False
 
+  -- El retraso contra el spoiler: qué se enseña con N segundos de retraso, qué se
+  -- guarda, y cómo se lee lo tecleado. Los segundos cuentan desde que se abrió la
+  -- página.
+  describe "Common.Shown (retraso)" $ do
+    let arrivals = [(20, 'c'), (10, 'b'), (0, 'a')] :: Arrivals Char
+    it "lee segundos a secas y m:ss" $ do
+      map readDelay ["41", "0:41", "0", "45:00", "2700", "1:05"]
+        `shouldBe` map Just [41, 41, 0, 2700, 2700, 65]
+
+    it "lo que no tiene la forma, o pasa de 45 min, no vale" $
+      map readDelay ["", "abc", "-5", "1:5", "0:75", "45:01", "2701", " 41", "1:2:03", "99999999999999999999"]
+        `shouldBe` replicate 10 Nothing
+
+    it "enseña lo más nuevo que tenga al menos N segundos" $ do
+      delayedShown 15 30 arrivals `shouldBe` Just 'b'
+      delayedShown 10 30 arrivals `shouldBe` Just 'c'
+      delayedShown 31 30 arrivals `shouldBe` Nothing
+
+    it "sin retraso, el refresco tal cual" $
+      delayedPoll 0 30 arrivals (Poll False (Just 'c') False)
+        `shouldBe` Poll False (Just 'c') False
+
+    it "con retraso, lo enseñado se retrasa y el fallo se ve al momento" $
+      delayedPoll 15 30 arrivals (Poll True (Just 'c') True)
+        `shouldBe` Poll True (Just 'b') True
+
+    it "la espera cuenta desde lo más viejo que llegó, o desde ahora si no llegó nada" $ do
+      delayWait 41 30 arrivals `shouldBe` Just 11
+      delayWait 41 5 ([] :: Arrivals Char) `shouldBe` Just 41
+      delayWait 15 30 arrivals `shouldBe` Nothing
+      delayWait 0 0 ([] :: Arrivals Char) `shouldBe` Nothing
+
+    it "al guardar se poda lo que ningún retraso aceptado puede enseñar" $
+      map fst (recordArrival 2800 'e' [(2750, 'd'), (90, 'c'), (80, 'b'), (0, 'a')])
+        `shouldBe` [2800, 2750, 90]
+
+    it "los textos de la espera y del tooltip" $ do
+      delayWaitLabel 41 32 `shouldBe` "En espera · diferido 0:41 · empieza en 32 s"
+      delayNote 41 "feed · En vivo" `shouldBe` "feed · En vivo · diferido 0:41"
+      delayNote 0 "feed · En vivo" `shouldBe` "feed · En vivo"
+
+    it "el retraso por defecto y el tope se leen como se escriben" $
+      (readDelay "0:41", readDelay "45:00") `shouldBe` (Just delayDefaultSeconds, Just delayMaxSeconds)
+
+    prop "sin retraso se enseña lo último que llegó" delayZeroShowsNewest
+
+  -- La vuelta y el reloj de la banda, y lo que se calla mientras se espera.
+  describe "lapLabel, showsClock, clockLabel y tickClock" $ do
+    it "la vuelta" $
+      lapLabel (LapProgress 23 57) `shouldBe` "Vuelta 23/57"
+
+    it "ni la carrera ni la Sprint enseñan reloj; libres y clasificación, sí" $ do
+      showsClock raceSessionFixture `shouldBe` False
+      showsClock ((namedSession "Race" "Sprint" "Chinese Grand Prix") {siLaps = Nothing})
+        `shouldBe` False
+      showsClock ((namedSession "Qualifying" "Qualifying" "Azerbaijan Grand Prix") {siLaps = Nothing})
+        `shouldBe` True
+      showsClock ((namedSession "Practice" "Practice 3" "Azerbaijan Grand Prix") {siLaps = Nothing})
+        `shouldBe` True
+
+    it "una sesión que publica vueltas no enseña reloj, se llame como se llame" $
+      showsClock (namedSession "Sprint" "Sprint" "Chinese Grand Prix") `shouldBe` False
+
+    it "el reloj, compacto y con horas solo a partir de una" $ do
+      clockLabel (SessionClock 754 True) `shouldBe` "Quedan 12:34"
+      clockLabel (SessionClock 3600 True) `shouldBe` "Quedan 1:00:00"
+
+    it "el reloj baja solo si corre, y no baja de cero" $ do
+      tickClock (SessionClock 60 True) `shouldBe` SessionClock 59 True
+      tickClock (SessionClock 60 False) `shouldBe` SessionClock 60 False
+      tickClock (SessionClock 0 True) `shouldBe` SessionClock 0 True
+
+    it "mientras espera, la sesión se nombra pero no dice estado, vuelta ni reloj" $
+      waitingSession raceSessionFixture
+        `shouldBe` raceSessionFixture {siState = Nothing, siLaps = Nothing, siClock = Nothing}
+
   -- Una respuesta 200 que no nombra su sesión no es un fallo, así que 'pollStep' no
   -- la conserva: la tabla llega entera y lo que falta es un campo de dentro. Lo que
   -- aquí se prueba es qué queda en pantalla cuando eso pasa, y que se pueda cablear
@@ -2972,6 +3056,18 @@ staysInsideViewBox xs = all inside (deltaPoints xs)
 
 -- | El tope de marcas se cumple en cualquier serie, y el cero, que es «iban
 -- empatados», no falta nunca mientras haya datos.
+-- | Con retraso cero, lo enseñado es lo último que llegó, sea cual sea el ritmo de
+-- las llegadas (varias en el mismo segundo incluidas).
+delayZeroShowsNewest :: [(NonNegative Int, Char)] -> Property
+delayZeroShowsNewest steps = delayedShown 0 now xs === newest
+  where
+    times  = scanl1 (+) (map (getNonNegative . fst) steps)
+    xs     = reverse (zip times (map snd steps))
+    now    = if null times then 0 else last times
+    newest = case xs of
+      (_, x) : _ -> Just x
+      []         -> Nothing
+
 fewTicksWithZero :: [Double] -> Property
 fewTicksWithZero xs =
   (length ticks <= 8) .&&. (null xs || 0 `elem` [v | (v, _, _) <- ticks])

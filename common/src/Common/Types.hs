@@ -2,7 +2,7 @@
 
 module Common.Types where
 
-import           Common.Format (formatCountdown)
+import           Common.Format (ClockForm (..), formatClock, formatCountdown)
 import           Data.Aeson    (FromJSON (..), ToJSON (..), withText)
 import           Data.Maybe    (catMaybes, fromMaybe)
 import           Data.Text     (Text)
@@ -417,6 +417,32 @@ tickDown :: UpNext -> UpNext
 tickDown (NextStartsIn n) = NextStartsIn (max 0 (n - 1))
 tickDown (NextAfter l n)  = NextAfter l (max 0 (n - 1))
 tickDown other            = other
+
+-- | La vuelta en la banda: @Vuelta 23/57@.
+lapLabel :: LapProgress -> Text
+lapLabel lp = "Vuelta " <> T.pack (show (lpCurrent lp)) <> "/" <> T.pack (show (lpTotal lp))
+
+-- | Si la banda enseña el reloj. Nunca en una carrera ni en una Sprint —las dos
+-- llegan con tipo @Race@, y son las únicas que publican vueltas—, porque ahí el
+-- reloj es el tope de la sesión y no lo que le queda.
+showsClock :: SessionInfo -> Bool
+showsClock s = siType s /= "Race" && null (siLaps s)
+
+-- | El reloj en la banda: @Quedan 12:34@, con horas solo a partir de una.
+clockLabel :: SessionClock -> Text
+clockLabel c = "Quedan " <> formatClock ClockCompact (scRemaining c)
+
+-- | El mismo reloj un segundo después, por el reparto de 'tickDown': baja solo si
+-- corre, y no baja de cero.
+tickClock :: SessionClock -> SessionClock
+tickClock c
+  | scRunning c = c {scRemaining = max 0 (scRemaining c - 1)}
+  | otherwise   = c
+
+-- | La sesión mientras la página espera a tener algo con el retraso pedido: se sabe
+-- cuál es, pero su estado, su vuelta y su reloj todavía no se enseñan.
+waitingSession :: SessionInfo -> SessionInfo
+waitingSession s = s {siState = Nothing, siLaps = Nothing, siClock = Nothing}
 
 -- | Qué significa un asterisco.
 --

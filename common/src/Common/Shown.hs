@@ -56,11 +56,24 @@ module Common.Shown
   , indicatorClass
   , indicatorTooltip
   , fetchedAtLabel
+    -- * Retraso
+  , delayMaxSeconds
+  , delayDefaultSeconds
+  , readDelay
+  , Arrivals
+  , recordArrival
+  , delayedShown
+  , delayedPoll
+  , delayWait
+  , delayWaitLabel
+  , delayNote
   ) where
 
+import           Common.Format (ClockForm (..), formatClock, formatCountdown)
 import           Common.Origin (Origin (..), Source, Sourced (..), originNotice,
                                 sourceName)
 import           Data.Char     (isDigit)
+import           Data.List     (find)
 import           Data.Maybe    (fromMaybe, isJust)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
@@ -318,3 +331,79 @@ fetchedAtLabel raw
   where
     hhmm = T.take 5 (T.drop 1 (T.dropWhile (/= 'T') (T.strip raw)))
     twoDigits t = T.length t == 2 && T.all isDigit t
+
+-- | El retraso más largo que acepta la página: 45 minutos, en segundos.
+delayMaxSeconds :: Int
+delayMaxSeconds = 2700
+
+-- | El retraso con el que abre la página cuando la dirección no trae otro.
+delayDefaultSeconds :: Int
+delayDefaultSeconds = 41
+
+-- | Un retraso tecleado, en el campo o en la dirección: segundos a secas (@41@) o
+-- @m:ss@ (@0:41@), con los segundos a dos dígitos y por debajo de 60. Lo que no
+-- tenga esa forma o pase de 'delayMaxSeconds' da 'Nothing'.
+readDelay :: Text -> Maybe Int
+readDelay raw = case T.splitOn ":" raw of
+  [s] | digits s -> bounded (number s)
+  [m, s]
+    | digits m, T.length s == 2, digits s, number s < 60 ->
+        bounded (60 * number m + number s)
+  _ -> Nothing
+  where
+    digits t = not (T.null t) && T.all isDigit t
+    number :: Text -> Integer
+    number = T.foldl' (\acc c -> acc * 10 + toInteger (fromEnum c - fromEnum '0')) 0
+    bounded n
+      | n <= toInteger delayMaxSeconds = Just (fromInteger n)
+      | otherwise                      = Nothing
+
+-- | Lo que ha llegado, cada cosa con el segundo en que llegó, lo más nuevo delante.
+-- Los segundos se cuentan desde que se abrió la página.
+type Arrivals a = [(Int, a)]
+
+-- | Una llegada más. Poda lo que ya no puede enseñarse con ningún retraso aceptado:
+-- de lo que tiene 'delayMaxSeconds' o más, conserva solo lo más nuevo.
+recordArrival :: Int -> a -> Arrivals a -> Arrivals a
+recordArrival now x xs = (now, x) : young <> take 1 old
+  where
+    (young, old) = span (\(t, _) -> now - t < delayMaxSeconds) xs
+
+-- | Lo más nuevo que llegó hace al menos @n@ segundos; 'Nothing' si nada es tan viejo.
+delayedShown :: Int -> Int -> Arrivals a -> Maybe a
+delayedShown n now = fmap snd . find (\(t, _) -> now - t >= n)
+
+-- | El refresco visto con @n@ segundos de retraso: lo enseñado sale de
+-- 'delayedShown', y lo que está en vuelo y el último fallo siguen siendo los de
+-- ahora, así que una caída del servidor se ve al momento. Con @n <= 0@ es el
+-- refresco tal cual.
+delayedPoll :: Int -> Int -> Arrivals a -> Poll a -> Poll a
+delayedPoll n now xs p
+  | n <= 0    = p
+  | otherwise = p {pollShown = delayedShown n now xs}
+
+-- | Cuántos segundos faltan para que haya algo que enseñar con @n@ de retraso.
+-- 'Nothing' si ya lo hay o si no hay retraso; sin ninguna llegada, cuenta como si
+-- la primera fuera ahora.
+delayWait :: Int -> Int -> Arrivals a -> Maybe Int
+delayWait n now xs
+  | n <= 0                         = Nothing
+  | isJust (delayedShown n now xs) = Nothing
+  | otherwise                      = Just (n - oldestAge)
+  where
+    oldestAge = case reverse xs of
+      (t, _) : _ -> now - t
+      []         -> 0
+
+-- | El aviso de Live Timing mientras espera: @En espera · diferido 0:41 · empieza en
+-- 32 s@.
+delayWaitLabel :: Int -> Int -> Text
+delayWaitLabel n wait =
+  "En espera · diferido " <> formatClock ClockCompact n <> " · empieza en "
+    <> formatCountdown wait
+
+-- | El tooltip del indicador con el retraso añadido al final; sin retraso, igual.
+delayNote :: Int -> Text -> Text
+delayNote n tooltip
+  | n <= 0    = tooltip
+  | otherwise = tooltip <> " · diferido " <> formatClock ClockCompact n
