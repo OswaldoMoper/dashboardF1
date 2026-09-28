@@ -822,6 +822,7 @@ body {
    pone como atributos del SVG (#888888 el cero, #e10600 la serie). */
 .comparison__legend {
   margin-top: var(--sp-2);
+  text-align: center;
   font-size: var(--fs-xs);
   color: var(--c-muted);
 }
