@@ -51,15 +51,21 @@
 module Widgets.Comparison where
 
 import           Client        (fetchJson)
-import           Common.Chart  (chartHeight, chartPad, chartWidth,
-                                deltaPolyline, frontierCells, zeroLineY)
-import           Common.ComparisonCard (CardLayout (..), Side (..),
-                                        cardLayout, defaultControlSide,
-                                        otherSide)
+import           Common.Chart  (axisPolyline, axisTicks, axisZeroY, chartHeight,
+                                chartPad, chartWidth, frontierCells)
+import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
+                                        axisColumnWidth, cardLayout,
+                                        defaultControlSide, defaultMode,
+                                        insideAxisLabels, modeEnabled,
+                                        modeFromKey, modeKey, modeOption,
+                                        modesInOrder, otherSide, rowHeight,
+                                        shownMode, showsNames, showsValues,
+                                        valueHeight, valuesFitMeasured)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
                                 driversPathFor)
 import           Common.Types  (DriverEntry (..), LapComparison (..))
+import           Control.Monad (forM_, unless, when)
 import           Data.List     (find)
 import           Data.Map      (Map)
 import qualified Data.Map      as Map
@@ -67,9 +73,10 @@ import           Data.Maybe    (fromMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import qualified GHCJS.DOM     as DOM (currentWindowUnchecked)
+import qualified GHCJS.DOM.Element as DOM (getClientHeight)
 import qualified GHCJS.DOM.EventM as DOM (on)
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM (resize)
-import qualified GHCJS.DOM.HTMLElement as DOM (getOffsetWidth)
+import qualified GHCJS.DOM.HTMLElement as DOM (getOffsetHeight, getOffsetWidth)
 import qualified GHCJS.DOM.Types as DOM (Element (..), HTMLElement (..),
                                          liftJSM, uncheckedCastTo)
 import           Reflex.Dom
@@ -89,6 +96,10 @@ data CState
 -- dos columnas, con la tabla de mando en el lado que elige «⇄», o apilada. Hasta la
 -- primera medida se pinta apilada.
 --
+-- El eje vertical va siempre. El desplegable de modos elige qué lleva la fila de
+-- fronteras y enseña el modo que se ve ('Common.ComparisonCard.shownMode'); la
+-- elección del usuario se guarda aparte y vuelve en cuanto caben las dos líneas.
+--
 -- El selector va fuera de los 'dyn_', que lo devolverían a su valor inicial en cada
 -- respuesta; sus opciones entran como 'Dynamic' (2026-08-07).
 --
@@ -100,72 +111,90 @@ data CState
 -- asíncrono. El prefill sale de @state@, lo que se está pintando, y no de @resp@
 -- (2026-08-07).
 comparisonWidget :: MonadWidget t m => m ()
-comparisonWidget = divClass "widget widget--comparison" $ mdo
-  (card, ()) <- elClass' "div" "comparison__card" $ mdo
-    swap <- divClass "widget__head" $ do
-      el "h2" $ text "Lap Comparison"
-      swapButton (clStacked <$> layout)
-    side    <- foldDyn (const otherSide) defaultControlSide swap
-    pb      <- getPostBuild
-    gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
-    grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
-    picked  <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
-      p <- elDynAttr "div" (controlAttrs <$> layout) $ do
-        p' <- carSelector grid (shownComparison <$> state)
-        dyn_ (controlState <$> state)
-        pure p'
-      divClass "comparison__plot" $ do
-        dyn_ (banner <$> zipDyn refresh state)
-        dyn_ (plotState <$> state)
-      pure p
-    dyn_ (legendState <$> state)
-    resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
-    refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
-    state   <- foldDyn step Loading resp
-    pure ()
-  width <- cardWidth card
-  let layout = cardLayout . fromMaybe 0 <$> width
+comparisonWidget = mdo
+  (root, (card, (userMode, state))) <-
+    elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
+      swap <- divClass "widget__head" $ do
+        el "h2" $ text "Lap Comparison"
+        swapButton (clStacked <$> layout)
+      side    <- foldDyn (const otherSide) defaultControlSide swap
+      pb      <- getPostBuild
+      gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
+      grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
+      (picked, chosenE) <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
+        r <- elDynAttr "div" (controlAttrs <$> layout) $ do
+          r' <- carSelector grid (shownComparison <$> st) (modeSelect fits shown)
+          dyn_ (controlState <$> st)
+          pure r'
+        divClass "comparison__plot" $ do
+          dyn_ (banner <$> zipDyn refresh st)
+          dyn_ (plotView <$> shown <*> layout <*> (otherSide <$> side) <*> st)
+        pure r
+      dyn_ (legendState <$> st)
+      resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
+      refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
+      st      <- foldDyn step Loading resp
+      pure (chosenE, st)
+  size    <- cardSize root card (current rowNow) changed
+  stacked <- holdUniqDyn (clStacked <$> layout)
+  chosen  <- holdDyn defaultMode userMode
+  shown   <- holdUniqDyn (shownMode <$> fits <*> chosen)
+  let layout   = cardLayout . maybe 0 fst <$> size
+      fits     = maybe True snd <$> size
+      rowNow   = rowHeightNow <$> shown <*> state
+      changed  = leftmost [() <$ updated shown, () <$ updated state, () <$ updated stacked]
   pure ()
   where
     controlState :: MonadWidget t m => CState -> m ()
     controlState (Loaded c) = lapHeader c
     controlState _          = blank
 
-    plotState :: MonadWidget t m => CState -> m ()
-    plotState Loading =
-      elClass "p" "status status--loading" $ text "Cargando…"
-    plotState Failed =
-      elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
-    plotState (Loaded c) = do
-      deltaChart (lcDelta c)
-      frontierRow (lcDelta c)
-
     legendState :: MonadWidget t m => CState -> m ()
     legendState (Loaded c) = legend c
     legendState _          = blank
 
--- | El ancho por dentro de la tarjeta, en px: se mide al montarse y cada vez que
--- cambia la ventana. Mientras la tarjeta aún no está en la página mide 0, y se
--- vuelve a medir cada 0,2 s hasta 'measureTries' veces. 'Nothing' hasta la primera
--- medida que no es 0.
+-- | El alto de la fila de fronteras pintada: el de su modo si hay fronteras que
+-- nombrar, 0 si no hay fila.
+rowHeightNow :: ChartMode -> CState -> Double
+rowHeightNow m (Loaded c) | not (null (frontierCells (lcDelta c))) = rowHeight m
+rowHeightNow _ _          = 0
+
+-- | Lo que se mide de la tarjeta: su ancho por dentro, en px, y si caben las dos
+-- líneas de la fila de fronteras sin que pida scroll
+-- ('Common.ComparisonCard.valuesFitMeasured', con el alto de la fila pintada que da
+-- el 'Behavior').
+--
+-- Se mide al montarse, cada vez que cambia la ventana y un instante después de cada
+-- evento del último argumento (cambios del contenido). Mientras la tarjeta aún no
+-- está en la página mide 0, y se vuelve a medir cada 0,2 s hasta 'measureTries'
+-- veces. 'Nothing' hasta la primera medida con ancho; no cambia si la medida se
+-- repite.
 --
 -- No mide los cambios de tamaño de la tarjeta que no vienen de la ventana.
-cardWidth
+cardSize
   :: MonadWidget t m
   => Element EventResult GhcjsDomSpace t
-  -> m (Dynamic t (Maybe Double))
-cardWidth card = mdo
+  -> Element EventResult GhcjsDomSpace t
+  -> Behavior t Double
+  -> Event t ()
+  -> m (Dynamic t (Maybe (Double, Bool)))
+cardSize root card rowNow changed = mdo
   mounted  <- delay 0 =<< getPostBuild
   win      <- DOM.liftJSM DOM.currentWindowUnchecked
   resized  <- wrapDomEvent win (`DOM.on` DOM.resize) (pure ())
-  measured <- performEvent (measure <$ leftmost [mounted, resized, retry])
-  let zero = ffilter (<= 0) measured
+  settled  <- delay 0 changed
+  measured <- performEvent (measure <$> tag rowNow (leftmost [mounted, resized, settled, retry]))
+  let zero = ffilter ((<= 0) . fst) measured
   tries    <- count zero
   retry    <- delay 0.2 (() <$ ffilter (< measureTries) (tag (current tries) zero))
-  holdDyn Nothing (Just <$> ffilter (> 0) measured)
+  holdUniqDyn =<< holdDyn Nothing (Just <$> ffilter ((> 0) . fst) measured)
   where
-    measure =
-      DOM.liftJSM (DOM.getOffsetWidth (DOM.uncheckedCastTo DOM.HTMLElement (_element_raw card)))
+    cardEl = DOM.uncheckedCastTo DOM.HTMLElement (_element_raw card)
+    measure row = DOM.liftJSM $ do
+      w       <- DOM.getOffsetWidth cardEl
+      content <- DOM.getOffsetHeight cardEl
+      client  <- DOM.getClientHeight (_element_raw root)
+      pure (w, valuesFitMeasured client content row)
 
 -- | Cuántas veces se vuelve a medir una tarjeta que mide 0 (10 s en total).
 measureTries :: Int
@@ -278,12 +307,16 @@ refreshLine LastFailed =
 -- @Handler.Comparison.Helper.defaultDrivers@ son los coches @1@ y @16@ y sus
 -- posiciones dependen de la parrilla: en el dummy son la 0 y la 1 —está ordenado
 -- justamente así— y en la parrilla real son la 0 y la __3__.
+--
+-- El último argumento se pinta junto a «Comparar», en la misma fila, y su
+-- resultado se devuelve con la URL.
 carSelector
   :: MonadWidget t m
   => Dynamic t [DriverEntry]
   -> Dynamic t (Maybe LapComparison)
-  -> m (Event t Text)
-carSelector grid shown = divClass "car-selector" $ do
+  -> m a
+  -> m (Event t Text, a)
+carSelector grid shown beside = divClass "car-selector" $ do
   let indexed = indexedGrid <$> grid
       labels  = Map.map driverLabel <$> indexed
       -- El prefill de un lado: la posición que ocupa hoy el coche del que habla
@@ -296,10 +329,10 @@ carSelector grid shown = divClass "car-selector" $ do
   posB  <- carDropdown 1 labels (setPos lcCarB)
   elClass "span" "car-selector__vs" $ text "vs"
   posA  <- carDropdown 0 labels (setPos lcCarA)
-  click <- compareButton
+  (click, a) <- divClass "comparison__actions" $ (,) <$> compareButton <*> beside
   let picked = zipDyn (zipDynWith carAt indexed posA)
                       (zipDynWith carAt indexed posB)
-  pure (fmapMaybe urlFor (tagPromptlyDyn picked click))
+  pure (fmapMaybe urlFor (tagPromptlyDyn picked click), a)
   where
     -- 'fmapMaybe' es lo que hace que una selección incompleta __no dispare
     -- nada__, en vez de disparar y confiar en el degradado. Y el 'Just' interior
@@ -423,6 +456,28 @@ compareButton = do
   (e, _) <- elClass' "button" "car-selector__btn" $ text "Comparar"
   pure (domEvent Click e)
 
+-- | El desplegable de modos, nativo: enseña el modo que se ve, apaga «Eje y
+-- valores» cuando la fila no cabe, y devuelve solo lo que elige el usuario (el
+-- valor que pone el código no dispara nada).
+modeSelect
+  :: MonadWidget t m
+  => Dynamic t Bool
+  -> Dynamic t ChartMode
+  -> m (Event t ChartMode)
+modeSelect fits shown = do
+  pb <- getPostBuild
+  let cfg = def
+        & selectElementConfig_initialValue .~ modeKey defaultMode
+        & selectElementConfig_setValue .~ (modeKey <$> leftmost [updated shown, tag (current shown) pb])
+        & selectElementConfig_elementConfig . elementConfig_initialAttributes
+            .~ ("class" =: "car-selector__select comparison__modes")
+  (sel, _) <- selectElement cfg $ forM_ modesInOrder $ \m ->
+    elDynAttr "option" (optionAttrs m <$> fits) $ dynText ((`modeOption` m) <$> fits)
+  pure (fmapMaybe modeFromKey (_selectElement_change sel))
+  where
+    optionAttrs m f =
+      ("value" =: modeKey m) <> if modeEnabled f m then mempty else "disabled" =: "disabled"
+
 -- | Los dos pilotos con su tiempo de vuelta, tal cual llegan. @lcLapA@\/@lcLapB@
 -- son 'Text' ya formateado (@M:SS.mmm@) por el microservicio: intentar
 -- reformatearlos aquí sería reintroducir en el widget un trabajo que el servicio
@@ -452,8 +507,66 @@ lapLabel driver car lap = divClass "comparison__lap" $ do
     else elClass "span" "comparison__car" $ text ("#" <> car)
   elClass "span" "comparison__time" $ text lap
 
+-- | La gráfica según el reparto, el lado del eje y el modo que se ve: la curva, el
+-- eje vertical (en su columna o dentro, según 'clAxisInside') y la fila de
+-- fronteras con las líneas que pida el modo.
+plotView :: MonadWidget t m => ChartMode -> CardLayout -> Side -> CState -> m ()
+plotView _ _ _ Loading =
+  elClass "p" "status status--loading" $ text "Cargando…"
+plotView _ _ _ Failed =
+  elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
+plotView m l axis (Loaded c) =
+  elAttr "div" (plotRowAttrs axis) $ do
+    divClass "comparison__plotarea" $ do
+      divClass "comparison__canvas" $ do
+        deltaChart series
+        when (clAxisInside l) $
+          mapM_ insideTick (insideAxisLabels axis (clChart l) series)
+      frontierRow (showsNames m) (showsValues m) series
+    unless (clAxisInside l) $ axisColumn axis series
+  where
+    series = lcDelta c
+
+-- | La fila de la gráfica: el lienzo con su fila de valores y, al lado del eje, su
+-- columna.
+plotRowAttrs :: Side -> Map Text Text
+plotRowAttrs axis =
+  Map.singleton "class" $
+    "comparison__plotrow" <> if axis == SideLeft then " comparison__plotrow--axis-left" else ""
+
+-- | Los números del eje en su columna, cada uno a la altura de su línea, el cero
+-- incluido.
+axisColumn :: DomBuilder t m => Side -> [Double] -> m ()
+axisColumn axis series =
+  elAttr "div" attrs $ mapM_ tick (axisTicks series)
+  where
+    attrs =
+      Map.fromList
+        [ ("class", "comparison__axis" <> if axis == SideLeft then " comparison__axis--left" else "")
+        , ("style", "width: " <> formatFixed 1 axisColumnWidth <> "px")
+        ]
+    tick (_, y, label) =
+      elAttr "span" (Map.fromList [("class", "comparison__tick"), ("style", topAt y)]) $
+        text label
+
+-- | Un número del eje dentro de la gráfica ('Common.ComparisonCard.insideAxisLabels').
+insideTick :: DomBuilder t m => (Double, Double, Text) -> m ()
+insideTick (x, y, label) =
+  elAttr "span" attrs $ text label
+  where
+    attrs =
+      Map.fromList
+        [ ("class", "comparison__tick comparison__tick--inside")
+        , ("style", "left: " <> formatFixed 1 x <> "px; " <> topAt y)
+        ]
+
+-- | La posición vertical de un número centrado en la Y de su línea.
+topAt :: Double -> Text
+topAt y = "top: " <> formatFixed 1 (y - valueHeight / 2) <> "px"
+
 -- | El delta acumulado como @\<polyline\>@ sobre un @viewBox@ fijo, con la línea
--- del cero dibujada aparte.
+-- del cero dibujada aparte y una línea tenue por cada número del eje salvo el cero.
+-- Todo con el rango de 'Common.Chart.axisRange'.
 --
 -- La línea del cero se pinta __siempre__, incluso sin serie: es la referencia que
 -- da sentido al eje ("iban empatados"), no una decoración de los datos. Con
@@ -463,6 +576,8 @@ lapLabel driver car lap = divClass "comparison__lap" $ do
 deltaChart :: MonadWidget t m => [Double] -> m ()
 deltaChart series = do
   svgEl "svg" chartAttrs $ do
+    mapM_ (\y -> svgEl "line" (gridLineAttrs y) blank)
+      [y | (v, y, _) <- axisTicks series, v /= 0]
     svgEl "line" (zeroLineAttrs series) blank
     case series of
       [] -> blank
@@ -471,26 +586,32 @@ deltaChart series = do
     [] -> elClass "p" "status status--empty" $ text "Sin delta que dibujar"
     _  -> blank
 
--- | Debajo del gráfico, el nombre y el valor de cada frontera, cada uno en la X de
--- su punto ('Common.Chart.frontierCells'). Van en HTML y no dentro del @\<svg\>@,
--- que se estira a lo ancho y deformaría el texto.
+-- | Debajo del gráfico, el nombre y el valor de cada frontera —o solo uno de los
+-- dos, según los dos primeros argumentos—, cada uno en la X de su punto
+-- ('Common.Chart.frontierCells'). Van en HTML y no dentro del @\<svg\>@, que se
+-- estira a lo ancho y deformaría el texto.
 --
 -- La primera se alinea a la izquierda de su punto y la última a la derecha, para
 -- que no se salgan de la caja; las del medio, centradas.
-frontierRow :: DomBuilder t m => [Double] -> m ()
-frontierRow series = case frontierCells series of
+frontierRow :: DomBuilder t m => Bool -> Bool -> [Double] -> m ()
+frontierRow names values series = case frontierCells series of
   []    -> blank
   cells ->
-    divClass "comparison__frontiers" $
-      mapM_ (frontierCell (length cells - 1)) (zip [0 ..] cells)
+    elClass "div" rowClass $
+      mapM_ (frontierCell names values (length cells - 1)) (zip [0 ..] cells)
+  where
+    rowClass
+      | names && values = "comparison__frontiers"
+      | otherwise       = "comparison__frontiers comparison__frontiers--single"
 
--- | Una celda de 'frontierRow': su posición en la fila, la última posición, y la X,
--- el nombre y el valor de su frontera.
-frontierCell :: DomBuilder t m => Int -> (Int, (Double, Text, Text)) -> m ()
-frontierCell lastIx (i, (x, name, value)) =
+-- | Una celda de 'frontierRow': qué líneas lleva, su posición en la fila, la última
+-- posición, y la X, el nombre y el valor de su frontera.
+frontierCell
+  :: DomBuilder t m => Bool -> Bool -> Int -> (Int, (Double, Text, Text)) -> m ()
+frontierCell names values lastIx (i, (x, name, value)) =
   elAttr "div" attrs $ do
-    elClass "span" "comparison__frontier-name" $ text name
-    elClass "span" "comparison__frontier-value" $ text value
+    when names $ elClass "span" "comparison__frontier-name" $ text name
+    when values $ elClass "span" "comparison__frontier-value" $ text value
   where
     attrs =
       Map.fromList
@@ -551,8 +672,22 @@ chartAttrs =
     , ("preserveAspectRatio", "none")
     ]
 
+-- | Línea tenue de un número del eje, a lo ancho del lienzo.
+gridLineAttrs :: Double -> Map Text Text
+gridLineAttrs y =
+  Map.fromList
+    [ ("class", "comparison__gridline")
+    , ("x1", num chartPad)
+    , ("y1", num y)
+    , ("x2", num (chartWidth - chartPad))
+    , ("y2", num y)
+    , ("stroke", "#888888")
+    , ("stroke-opacity", "0.3")
+    , ("stroke-width", "1")
+    ]
+
 -- | Línea de referencia del cero, discontinua para que no se confunda con la
--- serie. Su Y sale del mismo 'Common.Chart.deltaRange' que los puntos.
+-- serie. Su Y sale del mismo 'Common.Chart.axisRange' que los puntos.
 zeroLineAttrs :: [Double] -> Map Text Text
 zeroLineAttrs series =
   Map.fromList
@@ -566,7 +701,7 @@ zeroLineAttrs series =
     , ("stroke-dasharray", "4 4")
     ]
   where
-    y = num (zeroLineY series)
+    y = num (axisZeroY series)
 
 -- | La serie. @fill=\"none\"@ es obligatorio: por defecto un @\<polyline\>@ se
 -- rellena en negro y el gráfico sale como una mancha.
@@ -574,7 +709,7 @@ polylineAttrs :: [Double] -> Map Text Text
 polylineAttrs series =
   Map.fromList
     [ ("class", "comparison__delta")
-    , ("points", deltaPolyline series)
+    , ("points", axisPolyline series)
     , ("fill", "none")
     , ("stroke", "#e10600")
     , ("stroke-width", "2")
@@ -582,7 +717,7 @@ polylineAttrs series =
     ]
 
 -- | Un número del lienzo como texto de atributo. Entero por el mismo motivo que
--- las coordenadas de 'Common.Chart.deltaPolyline': 'show' sobre 'Double' emite
+-- las coordenadas de 'Common.Chart.axisPolyline': 'show' sobre 'Double' emite
 -- notación científica para los valores pequeños.
 --
 -- __@stroke@, @fill@ y compañía se quedan aquí a propósito__ y no pasaron a

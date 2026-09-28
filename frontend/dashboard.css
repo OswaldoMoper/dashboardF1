@@ -740,6 +740,65 @@ body {
   margin-left: auto;
 }
 
+/* «Comparar» y el desplegable de modos: lo que sobre de la fila, entre los dos. */
+.comparison__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.comparison__body:not(.comparison__body--stacked) .comparison__actions {
+  align-self: stretch;
+}
+
+/* La gráfica con su fila de valores y, al lado del eje, la columna de sus números.
+   El ancho de la columna lo pone el widget (`axisColumnWidth`); su alto es el del
+   lienzo (`chartHeight`). Los números van a la altura de su línea, con `top` desde
+   el widget. */
+.comparison__plotrow {
+  display: flex;
+  align-items: flex-start;
+}
+
+.comparison__plotrow--axis-left {
+  flex-direction: row-reverse;
+}
+
+.comparison__plotarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.comparison__canvas {
+  position: relative;
+}
+
+.comparison__axis {
+  position: relative;
+  flex: none;
+  height: 200px;
+}
+
+.comparison__tick {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* En su columna, pegados a la gráfica con el hueco de `axisGap`. */
+.comparison__axis .comparison__tick {
+  left: 4px;
+}
+
+.comparison__axis--left .comparison__tick {
+  left: auto;
+  right: 4px;
+}
+
 .comparison__header {
   display: flex;
   align-items: baseline;
@@ -786,6 +845,11 @@ body {
   position: relative;
   height: 2.5rem;
   margin-top: var(--sp-1);
+}
+
+/* Con una sola línea: la línea y 6,6 px de aire (`singleRowHeight`, sin el margen). */
+.comparison__frontiers--single {
+  height: 24px;
 }
 
 .comparison__frontier {

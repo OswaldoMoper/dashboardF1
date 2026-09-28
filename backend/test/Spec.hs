@@ -57,12 +57,16 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap,
-                                              compareButtonWidth, controlGap,
+                                              controlMaxWidth,
                                               controlWidth, defaultControlSide,
                                               defaultMode, insideAxisLabels,
-                                              modeEnabled,
+                                              modeEnabled, modeFromKey,
+                                              modeKey, rowHeight, showsNames,
+                                              showsValues, singleRowHeight,
+                                              valuesFitMeasured,
+                                              valuesRowHeight,
                                               modeLabel, modeOption,
-                                              modeSelectWidth, modesInOrder,
+                                              modesInOrder,
                                               otherSide, shownMode,
                                               valueHeight, valueWidth,
                                               valuesFit, valuesRowFits)
@@ -2167,12 +2171,11 @@ main = hspec $ do
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9
-        controlMax = compareButtonWidth + controlGap + modeSelectWidth
-    it "los modos, en el orden y con el texto del desplegable; abre en Valores" $ do
+    it "los modos, en el orden y con el texto del desplegable; abre en Eje y valores" $ do
       map modeLabel modesInOrder `shouldBe` ["Valores", "Solo eje", "Eje y valores"]
-      defaultMode `shouldBe` ModeValues
+      defaultMode `shouldBe` ModeAxisValues
 
-    it "sin sitio para la fila, «Eje y valores» se apaga y se ve como «Solo eje»" $ do
+    it "sin sitio para las dos líneas, «Eje y valores» se apaga y se ve como «Solo eje»" $ do
       map (modeEnabled False) modesInOrder `shouldBe` [True, True, False]
       modeOption False ModeAxisValues `shouldBe` "Eje y valores (no cabe)"
       map (shownMode False) modesInOrder `shouldBe` [ModeValues, ModeAxis, ModeAxis]
@@ -2181,7 +2184,24 @@ main = hspec $ do
       map (modeOption True) modesInOrder `shouldBe` map modeLabel modesInOrder
       map (shownMode True) modesInOrder `shouldBe` modesInOrder
 
-    it "la fila de valores cabe si el contenido sin ella más 44 px no pasa del alto" $ do
+    it "cada modo tiene su valor en el desplegable, y un valor ajeno no es ninguno" $ do
+      map (modeFromKey . modeKey) modesInOrder `shouldBe` map Just modesInOrder
+      modeFromKey "eje" `shouldBe` Nothing
+
+    it "Valores pinta los valores; Solo eje, los nombres; Eje y valores, las dos líneas" $ do
+      map showsValues modesInOrder `shouldBe` [True, False, True]
+      map showsNames modesInOrder `shouldBe` [False, True, True]
+
+    it "la fila mide 44 px con dos líneas y 28 con una" $
+      map rowHeight modesInOrder `shouldBe` [28, 28, 44]
+
+    it "con lo medido en la tarjeta de hoy (326,5 de alto), las dos líneas caben con 280 de contenido" $ do
+      valuesFitMeasured 326.5 280 44 `shouldBe` True
+      valuesFitMeasured 326.5 279 28 `shouldBe` False
+
+    prop "da lo mismo medir con una línea, con dos o sin fila" measuredFitAgrees
+
+    it "las dos líneas caben si el contenido sin la fila más 44 px no pasa del alto" $ do
       valuesRowFits 292.5 248.5 `shouldBe` True
       valuesRowFits 292.5 249 `shouldBe` False
 
@@ -2189,11 +2209,11 @@ main = hspec $ do
       defaultControlSide `shouldBe` SideLeft
       map otherSide [SideLeft, SideRight] `shouldBe` [SideRight, SideLeft]
 
-    it "la tarjeta de hoy (874,5 px): la tabla mide Comparar y los modos juntos; eje fuera" $ do
+    it "la tarjeta de hoy (874,5 px): la tabla mide su máximo, 250; eje fuera" $ do
       let l = cardLayout 874.5
       clStacked l `shouldBe` False
-      clControl l `shouldSatisfy` near controlMax
-      clChart l `shouldSatisfy` near (874.5 - controlMax - columnGap)
+      clControl l `shouldBe` 250
+      clChart l `shouldSatisfy` near (874.5 - 250 - columnGap)
       clAxisInside l `shouldBe` False
 
     it "la tabla de mando es un tercio, entre el desplegable de piloto y su máximo" $ do
@@ -3233,6 +3253,20 @@ axisRangeContainsDelta xs = alo <= dlo && ahi >= dhi
     (alo, ahi) = axisRange xs
     (dlo, dhi) = deltaRange xs
 
+-- | Pintar la fila solo añade su alto al contenido, así que el veredicto no cambia
+-- con ella, tenga una línea, dos o ninguna: es lo que impide que «Eje y valores» se
+-- apague y se encienda sola.
+--
+-- En px enteros, para que sumar y restar el alto de la fila sea exacto.
+measuredFitAgrees :: NonNegative Int -> NonNegative Int -> Bool
+measuredFitAgrees (NonNegative c) (NonNegative x) =
+  all (== valuesFitMeasured client content 0)
+    [ valuesFitMeasured client (content + row) row
+    | row <- [singleRowHeight, valuesRowHeight] ]
+  where
+    client  = fromIntegral (5 * c)
+    content = fromIntegral (5 * x)
+
 -- | Con la tarjeta en dos columnas no sobra ni falta ancho.
 -- Los anchos generados se multiplican por 10 para cubrir tarjetas reales (0–1000
 -- px): el 'Arbitrary' de 'Double' se queda cerca de 100.
@@ -3245,7 +3279,7 @@ twoColumnsAddUp (NonNegative x) =
 
 controlWithinBounds :: NonNegative Double -> Bool
 controlWithinBounds (NonNegative x) =
-  w >= carSelectWidth && w <= compareButtonWidth + controlGap + modeSelectWidth
+  w >= carSelectWidth && w <= controlMaxWidth
   where
     w = controlWidth (10 * x)
 

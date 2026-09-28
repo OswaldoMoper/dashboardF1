@@ -1,6 +1,6 @@
 -- | Las reglas de la tarjeta de Lap Comparison que dependen de su tamaño: el ancho
--- de la tabla de mando, cuándo se apila, cuándo el eje entra en la gráfica y qué
--- modo de la gráfica se puede elegir.
+-- de la tabla de mando, cuándo se apila, cuándo el eje vertical entra en la
+-- gráfica y qué modo de la fila de fronteras se puede elegir.
 --
 -- Puro: entra el tamaño medido de la tarjeta (en px, por dentro) y salen
 -- decisiones. Quien mide y pinta es 'Widgets.Comparison'.
@@ -10,10 +10,16 @@ module Common.ComparisonCard
   , defaultMode
   , modesInOrder
   , modeLabel
+  , modeKey
+  , modeFromKey
   , modeOption
   , modeEnabled
   , shownMode
+  , showsValues
+  , showsNames
+  , rowHeight
   , valuesRowFits
+  , valuesFitMeasured
     -- * Lado de la tabla de mando
   , Side (..)
   , defaultControlSide
@@ -29,12 +35,13 @@ module Common.ComparisonCard
   , valueWidth
   , valueHeight
   , carSelectWidth
-  , compareButtonWidth
-  , modeSelectWidth
-  , controlGap
+  , controlMaxWidth
   , columnGap
   , axisGap
+  , axisColumnWidth
   , valuesRowHeight
+  , singleRowHeight
+  , cardPadding
   ) where
 
 import           Common.Chart (axisPoints, axisTicks, chartWidth,
@@ -44,16 +51,17 @@ import           Data.Maybe   (mapMaybe)
 import           Data.Ord     (Down (..))
 import           Data.Text    (Text)
 
--- | Qué números acompañan a la curva.
+-- | Qué lleva la fila de fronteras, debajo de la gráfica. El eje vertical va
+-- siempre, en los tres.
 data ChartMode
-  = ModeValues      -- ^ El valor de cada frontera debajo de la gráfica.
-  | ModeAxis        -- ^ Los números del eje, sin la fila de valores.
-  | ModeAxisValues  -- ^ Las dos cosas.
+  = ModeValues      -- ^ Solo los valores: @0.000 s · −0.134 s · …@.
+  | ModeAxis        -- ^ Solo el eje: @Inicio · S1 · S2 · S3@.
+  | ModeAxisValues  -- ^ Las dos líneas.
   deriving stock (Eq, Ord, Show, Enum, Bounded)
 
 -- | El modo con el que abre la tarjeta.
 defaultMode :: ChartMode
-defaultMode = ModeValues
+defaultMode = ModeAxisValues
 
 -- | El orden de la lista del desplegable.
 modesInOrder :: [ChartMode]
@@ -65,7 +73,30 @@ modeLabel ModeValues     = "Valores"
 modeLabel ModeAxis       = "Solo eje"
 modeLabel ModeAxisValues = "Eje y valores"
 
--- | Si el modo se puede elegir, sabiendo si cabe la fila de valores
+-- | El valor del modo en el desplegable.
+modeKey :: ChartMode -> Text
+modeKey ModeValues     = "values"
+modeKey ModeAxis       = "axis"
+modeKey ModeAxisValues = "axis-values"
+
+-- | El modo de un valor del desplegable; 'Nothing' si no es de ninguno.
+modeFromKey :: Text -> Maybe ChartMode
+modeFromKey k = lookup k [(modeKey m, m) | m <- modesInOrder]
+
+-- | Si el modo pinta la línea de valores.
+showsValues :: ChartMode -> Bool
+showsValues = (/= ModeAxis)
+
+-- | Si el modo pinta la línea de nombres (@Inicio · S1 · S2 · S3@).
+showsNames :: ChartMode -> Bool
+showsNames = (/= ModeValues)
+
+-- | Alto de la fila de fronteras en ese modo, con su margen.
+rowHeight :: ChartMode -> Double
+rowHeight ModeAxisValues = valuesRowHeight
+rowHeight _              = singleRowHeight
+
+-- | Si el modo se puede elegir, sabiendo si caben las dos líneas
 -- ('valuesRowFits'). Solo «Eje y valores» se apaga.
 modeEnabled :: Bool -> ChartMode -> Bool
 modeEnabled valuesFitHere = \case
@@ -78,19 +109,27 @@ modeOption valuesFitHere m
   | modeEnabled valuesFitHere m = modeLabel m
   | otherwise                   = modeLabel m <> " (no cabe)"
 
--- | El modo que se pinta a partir del elegido: «Eje y valores» sin sitio para la
--- fila se ve como «Solo eje», y vuelve solo en cuanto cabe. La elección no se
--- toca.
+-- | El modo que se pinta a partir del elegido: «Eje y valores» sin sitio para las
+-- dos líneas se ve como «Solo eje», y vuelve solo en cuanto caben. La elección no
+-- se toca.
 shownMode :: Bool -> ChartMode -> ChartMode
 shownMode valuesFitHere m
   | modeEnabled valuesFitHere m = m
   | otherwise                   = ModeAxis
 
--- | Si la fila de valores cabe sin que la tarjeta pida scroll: el alto por dentro
--- de la tarjeta y el de su contenido __sin__ esa fila, los dos medidos.
+-- | Si la fila de fronteras con sus dos líneas cabe sin que la tarjeta pida scroll:
+-- el alto por dentro de la tarjeta y el de su contenido __sin__ esa fila, los dos
+-- medidos.
 valuesRowFits :: Double -> Double -> Bool
-valuesRowFits innerHeight contentWithoutValues =
-  contentWithoutValues + valuesRowHeight <= innerHeight
+valuesRowFits innerHeight contentWithoutRow =
+  contentWithoutRow + valuesRowHeight <= innerHeight
+
+-- | 'valuesRowFits' con lo que se mide en la página: el alto de la tarjeta con su
+-- relleno (@clientHeight@), el de su contenido y el alto de la fila de fronteras
+-- pintada en ese momento (0 si no hay).
+valuesFitMeasured :: Double -> Double -> Double -> Bool
+valuesFitMeasured client content row =
+  valuesRowFits (client - cardPadding) (content - row)
 
 -- | Un lado de la tarjeta.
 data Side = SideLeft | SideRight
@@ -120,10 +159,10 @@ data CardLayout = CardLayout
 
 -- | El reparto para un ancho por dentro de la tarjeta.
 --
--- * Dos columnas mientras la fila de valores quepa bajo la gráfica ('valuesFit');
---   si no, apilada.
--- * El eje va dentro cuando, en su columna, dejaría a la curva tan estrecha que la
---   fila de valores no cabría. Se decide igual en los modos sin fila de valores.
+-- * Dos columnas mientras los valores de las fronteras quepan bajo la gráfica
+--   ('valuesFit'); si no, apilada.
+-- * El eje vertical va dentro cuando, en su columna, dejaría a la curva tan
+--   estrecha que los valores no cabrían. Se decide igual en todos los modos.
 cardLayout :: Double -> CardLayout
 cardLayout inner
   | valuesFit twoColumnChart = layout False (controlWidth inner) twoColumnChart
@@ -135,15 +174,13 @@ cardLayout inner
         { clStacked    = stacked
         , clControl    = control
         , clChart      = chart
-        , clAxisInside = not (valuesFit (chart - valueWidth - axisGap))
+        , clAxisInside = not (valuesFit (chart - axisColumnWidth))
         }
 
 -- | Ancho de la tabla de mando con dos columnas: un tercio de la tarjeta, nunca
--- menos que el desplegable de piloto ni más que «Comparar» y el desplegable de
--- modos juntos.
+-- menos que el desplegable de piloto ni más que 'controlMaxWidth'.
 controlWidth :: Double -> Double
-controlWidth inner =
-  max carSelectWidth (min (compareButtonWidth + controlGap + modeSelectWidth) (inner / 3))
+controlWidth inner = max carSelectWidth (min controlMaxWidth (inner / 3))
 
 -- | Si los cuatro valores de las fronteras caben sin pisarse bajo una gráfica de
 -- ese ancho, colocados como 'Common.Chart.frontierCells': el primero hacia la
@@ -223,18 +260,9 @@ valueHeight = 17.4
 carSelectWidth :: Double
 carSelectWidth = 191
 
--- | Ancho de «Comparar».
-compareButtonWidth :: Double
-compareButtonWidth = 84.2
-
--- | Ancho del desplegable de modos: el de su opción más larga, «Eje y valores (no
--- cabe)».
-modeSelectWidth :: Double
-modeSelectWidth = 176
-
--- | Hueco entre controles de la tabla de mando (@--sp-2@).
-controlGap :: Double
-controlGap = 8
+-- | El ancho máximo de la tabla de mando.
+controlMaxWidth :: Double
+controlMaxWidth = 250
 
 -- | Hueco entre la tabla de mando y la gráfica (@--sp-4@).
 columnGap :: Double
@@ -244,6 +272,20 @@ columnGap = 16
 axisGap :: Double
 axisGap = 4
 
--- | Alto de la fila de valores con su margen (@2.5rem@ más @--sp-1@).
+-- | Ancho de la columna del eje cuando va fuera de la gráfica: un número y su hueco.
+axisColumnWidth :: Double
+axisColumnWidth = valueWidth + axisGap
+
+-- | Alto de la fila de fronteras con sus dos líneas y su margen (@2.5rem@ más
+-- @--sp-1@).
 valuesRowHeight :: Double
 valuesRowHeight = 44
+
+-- | Alto de la fila de fronteras con una sola línea y su margen: la línea, 6,6 px de
+-- aire y @--sp-1@.
+singleRowHeight :: Double
+singleRowHeight = 28
+
+-- | Relleno de la tarjeta, arriba y abajo juntos (@--sp-4@ dos veces).
+cardPadding :: Double
+cardPadding = 32
