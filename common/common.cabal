@@ -21,6 +21,7 @@ library
     hs-source-dirs:   src
     exposed-modules:
         Common.Chart
+        Common.ComparisonCard
         Common.Format
         Common.Layout
         Common.Origin

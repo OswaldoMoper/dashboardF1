@@ -54,6 +54,16 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               axisRange, axisTicks, axisZeroY,
                                               deltaRange, frontierCells,
                                               zeroLineY)
+import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
+                                              Side (..), carSelectWidth,
+                                              cardLayout, columnGap,
+                                              compareButtonWidth, controlGap,
+                                              controlWidth, defaultControlSide,
+                                              defaultMode, modeEnabled,
+                                              modeLabel, modeOption,
+                                              modeSelectWidth, modesInOrder,
+                                              otherSide, shownMode, valuesFit,
+                                              valuesRowFits)
 import           Common.Format               (ClockForm (..), formatClock,
                                               formatCountdown, formatDelta,
                                               formatFixed, formatTrimmed,
@@ -2153,6 +2163,57 @@ main = hspec $ do
     prop "el rango del eje contiene al de la curva" axisRangeContainsDelta
     prop "la curva del eje no se sale del viewBox" (staysInsideViewBox axisPoints)
 
+  describe "Common.ComparisonCard" $ do
+    let near a b = abs (a - b) < 1e-9
+        controlMax = compareButtonWidth + controlGap + modeSelectWidth
+    it "los modos, en el orden y con el texto del desplegable; abre en Valores" $ do
+      map modeLabel modesInOrder `shouldBe` ["Valores", "Solo eje", "Eje y valores"]
+      defaultMode `shouldBe` ModeValues
+
+    it "sin sitio para la fila, «Eje y valores» se apaga y se ve como «Solo eje»" $ do
+      map (modeEnabled False) modesInOrder `shouldBe` [True, True, False]
+      modeOption False ModeAxisValues `shouldBe` "Eje y valores (no cabe)"
+      map (shownMode False) modesInOrder `shouldBe` [ModeValues, ModeAxis, ModeAxis]
+
+    it "con sitio, cada modo se ve como se eligió" $ do
+      map (modeOption True) modesInOrder `shouldBe` map modeLabel modesInOrder
+      map (shownMode True) modesInOrder `shouldBe` modesInOrder
+
+    it "la fila de valores cabe si el contenido sin ella más 44 px no pasa del alto" $ do
+      valuesRowFits 292.5 248.5 `shouldBe` True
+      valuesRowFits 292.5 249 `shouldBe` False
+
+    it "la tabla de mando abre a la izquierda, y el eje va siempre en el lado contrario" $ do
+      defaultControlSide `shouldBe` SideLeft
+      map otherSide [SideLeft, SideRight] `shouldBe` [SideRight, SideLeft]
+
+    it "la tarjeta de hoy (874,5 px): la tabla mide Comparar y los modos juntos; eje fuera" $ do
+      let l = cardLayout 874.5
+      clStacked l `shouldBe` False
+      clControl l `shouldSatisfy` near controlMax
+      clChart l `shouldSatisfy` near (874.5 - controlMax - columnGap)
+      clAxisInside l `shouldBe` False
+
+    it "la tabla de mando es un tercio, entre el desplegable de piloto y su máximo" $ do
+      controlWidth 700 `shouldSatisfy` near (700 / 3)
+      controlWidth 450 `shouldBe` carSelectWidth
+
+    it "los cuatro valores caben desde ~246 px de gráfica" $ do
+      valuesFit 245.5 `shouldBe` False
+      valuesFit 246 `shouldBe` True
+
+    it "por debajo de ~453 px se apila, y apilada la gráfica tiene todo el ancho" $ do
+      clStacked (cardLayout 453) `shouldBe` False
+      cardLayout 452 `shouldBe` CardLayout True 452 452 False
+
+    it "el eje entra por debajo de ~510 px con dos columnas y de ~303 apilada" $
+      map (clAxisInside . cardLayout) [510, 509, 452, 303, 302]
+        `shouldBe` [False, True, False, False, True]
+
+    prop "con dos columnas, tabla, hueco y gráfica suman la tarjeta" twoColumnsAddUp
+    prop "la tabla de mando nunca baja del desplegable ni pasa de su máximo" controlWithinBounds
+    prop "si los valores caben en un ancho, caben en cualquiera mayor" valuesFitMonotone
+
   describe "formatDelta" $ do
     it "el positivo lleva +, y el negativo el menos tipográfico" $ do
       formatDelta 0.617 `shouldBe` "+0.617 s"
@@ -3146,6 +3207,27 @@ axisRangeContainsDelta xs = alo <= dlo && ahi >= dhi
   where
     (alo, ahi) = axisRange xs
     (dlo, dhi) = deltaRange xs
+
+-- | Con la tarjeta en dos columnas no sobra ni falta ancho.
+-- Los anchos generados se multiplican por 10 para cubrir tarjetas reales (0–1000
+-- px): el 'Arbitrary' de 'Double' se queda cerca de 100.
+twoColumnsAddUp :: NonNegative Double -> Bool
+twoColumnsAddUp (NonNegative x) =
+  clStacked l || abs (clControl l + columnGap + clChart l - inner) < 1e-9
+  where
+    inner = 10 * x
+    l     = cardLayout inner
+
+controlWithinBounds :: NonNegative Double -> Bool
+controlWithinBounds (NonNegative x) =
+  w >= carSelectWidth && w <= compareButtonWidth + controlGap + modeSelectWidth
+  where
+    w = controlWidth (10 * x)
+
+-- | Lo que hace que apilar y meter el eje sean umbrales y no intervalos sueltos.
+valuesFitMonotone :: NonNegative Double -> NonNegative Double -> Bool
+valuesFitMonotone (NonNegative x) (NonNegative d) =
+  valuesFit (10 * x) <= valuesFit (10 * x + d)
 
 -- | Lo que hace legible el eje: cada marca más abajo que la anterior, todas dentro
 -- del lienzo (con la holgura de 'axisTicks' en los extremos) y ninguna etiqueta
