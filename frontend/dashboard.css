@@ -636,7 +636,8 @@ body {
    distintos. */
 .switcher__btn,
 .car-selector__btn,
-.header-toggle {
+.header-toggle,
+.comparison__swap {
   padding: var(--sp-1) var(--sp-3);
   font: inherit;
   font-size: var(--fs-sm);
@@ -649,14 +650,16 @@ body {
 
 .switcher__btn:hover,
 .car-selector__btn:hover,
-.header-toggle:hover {
+.header-toggle:hover,
+.comparison__swap:hover {
   border-color: var(--c-muted);
 }
 
 .switcher__btn:focus-visible,
 .car-selector__btn:focus-visible,
 .car-selector__select:focus-visible,
-.header-toggle:focus-visible {
+.header-toggle:focus-visible,
+.comparison__swap:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 1px;
 }
@@ -688,6 +691,54 @@ body {
 }
 
 /* ── Comparación de vueltas ─────────────────────────────────────────────── */
+
+/* El reparto de la tarjeta lo decide `Common.ComparisonCard.cardLayout` con el ancho
+   medido: el widget pone el ancho de la tabla de mando y las clases; el hueco entre
+   columnas es su `columnGap`. */
+.comparison__body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+}
+
+.comparison__body--control-right {
+  flex-direction: row-reverse;
+}
+
+.comparison__body--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.comparison__control {
+  flex: none;
+  min-width: 0;
+}
+
+.comparison__plot {
+  flex: 1;
+  min-width: 0;
+}
+
+/* En columna, un control por fila y los dos pilotos uno debajo del otro. */
+.comparison__body:not(.comparison__body--stacked) .car-selector {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.comparison__body:not(.comparison__body--stacked) .comparison__header {
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.comparison__body:not(.comparison__body--stacked) .comparison__header .comparison__vs {
+  display: none;
+}
+
+.comparison__swap {
+  margin-left: auto;
+}
 
 .comparison__header {
   display: flex;

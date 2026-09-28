@@ -53,6 +53,9 @@ module Widgets.Comparison where
 import           Client        (fetchJson)
 import           Common.Chart  (chartHeight, chartPad, chartWidth,
                                 deltaPolyline, frontierCells, zeroLineY)
+import           Common.ComparisonCard (CardLayout (..), Side (..),
+                                        cardLayout, defaultControlSide,
+                                        otherSide)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
                                 driversPathFor)
@@ -63,6 +66,12 @@ import qualified Data.Map      as Map
 import           Data.Maybe    (fromMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
+import qualified GHCJS.DOM     as DOM (currentWindowUnchecked)
+import qualified GHCJS.DOM.EventM as DOM (on)
+import qualified GHCJS.DOM.GlobalEventHandlers as DOM (resize)
+import qualified GHCJS.DOM.HTMLElement as DOM (getOffsetWidth)
+import qualified GHCJS.DOM.Types as DOM (Element (..), HTMLElement (..),
+                                         liftJSM, uncheckedCastTo)
 import           Reflex.Dom
 
 -- | Estado del fetch de @\/api\/comparison@. 'Failed' (no 'Error') para no
@@ -72,8 +81,13 @@ data CState
   | Failed
   | Loaded LapComparison
 
--- | Comparación de la vuelta rápida de dos coches: selector, cabecera con los
--- dos pilotos y sus tiempos, y el delta acumulado como una línea.
+-- | Comparación de la vuelta rápida de dos coches: la tabla de mando (selectores y
+-- los dos pilotos con su tiempo), la gráfica del delta acumulado y la leyenda al
+-- pie, a todo el ancho.
+--
+-- La tarjeta se reparte según su ancho medido ('Common.ComparisonCard.cardLayout'):
+-- dos columnas, con la tabla de mando en el lado que elige «⇄», o apilada. Hasta la
+-- primera medida se pinta apilada.
 --
 -- El selector va fuera de los 'dyn_', que lo devolverían a su valor inicial en cada
 -- respuesta; sus opciones entran como 'Dynamic' (2026-08-07).
@@ -87,27 +101,107 @@ data CState
 -- (2026-08-07).
 comparisonWidget :: MonadWidget t m => m ()
 comparisonWidget = divClass "widget widget--comparison" $ mdo
-  divClass "widget__head" $ el "h2" $ text "Lap Comparison"
-  pb      <- getPostBuild
-  gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
-  grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
-  picked  <- carSelector grid (shownComparison <$> state)
-  resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
-  refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
-  state   <- foldDyn step Loading resp
-  dyn_ (banner <$> zipDyn refresh state)
-  dyn_ (renderState <$> state)
+  (card, ()) <- elClass' "div" "comparison__card" $ mdo
+    swap <- divClass "widget__head" $ do
+      el "h2" $ text "Lap Comparison"
+      swapButton (clStacked <$> layout)
+    side    <- foldDyn (const otherSide) defaultControlSide swap
+    pb      <- getPostBuild
+    gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
+    grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
+    picked  <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
+      p <- elDynAttr "div" (controlAttrs <$> layout) $ do
+        p' <- carSelector grid (shownComparison <$> state)
+        dyn_ (controlState <$> state)
+        pure p'
+      divClass "comparison__plot" $ do
+        dyn_ (banner <$> zipDyn refresh state)
+        dyn_ (plotState <$> state)
+      pure p
+    dyn_ (legendState <$> state)
+    resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
+    refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
+    state   <- foldDyn step Loading resp
+    pure ()
+  width <- cardWidth card
+  let layout = cardLayout . fromMaybe 0 <$> width
+  pure ()
   where
-    renderState :: MonadWidget t m => CState -> m ()
-    renderState Loading =
+    controlState :: MonadWidget t m => CState -> m ()
+    controlState (Loaded c) = lapHeader c
+    controlState _          = blank
+
+    plotState :: MonadWidget t m => CState -> m ()
+    plotState Loading =
       elClass "p" "status status--loading" $ text "Cargando…"
-    renderState Failed =
+    plotState Failed =
       elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
-    renderState (Loaded c) = do
-      lapHeader c
+    plotState (Loaded c) = do
       deltaChart (lcDelta c)
       frontierRow (lcDelta c)
-      legend c
+
+    legendState :: MonadWidget t m => CState -> m ()
+    legendState (Loaded c) = legend c
+    legendState _          = blank
+
+-- | El ancho por dentro de la tarjeta, en px: se mide al montarse y cada vez que
+-- cambia la ventana. Mientras la tarjeta aún no está en la página mide 0, y se
+-- vuelve a medir cada 0,2 s hasta 'measureTries' veces. 'Nothing' hasta la primera
+-- medida que no es 0.
+--
+-- No mide los cambios de tamaño de la tarjeta que no vienen de la ventana.
+cardWidth
+  :: MonadWidget t m
+  => Element EventResult GhcjsDomSpace t
+  -> m (Dynamic t (Maybe Double))
+cardWidth card = mdo
+  mounted  <- delay 0 =<< getPostBuild
+  win      <- DOM.liftJSM DOM.currentWindowUnchecked
+  resized  <- wrapDomEvent win (`DOM.on` DOM.resize) (pure ())
+  measured <- performEvent (measure <$ leftmost [mounted, resized, retry])
+  let zero = ffilter (<= 0) measured
+  tries    <- count zero
+  retry    <- delay 0.2 (() <$ ffilter (< measureTries) (tag (current tries) zero))
+  holdDyn Nothing (Just <$> ffilter (> 0) measured)
+  where
+    measure =
+      DOM.liftJSM (DOM.getOffsetWidth (DOM.uncheckedCastTo DOM.HTMLElement (_element_raw card)))
+
+-- | Cuántas veces se vuelve a medir una tarjeta que mide 0 (10 s en total).
+measureTries :: Int
+measureTries = 50
+
+-- | El botón que pasa la tabla de mando al otro lado. Con la tarjeta apilada no
+-- hay lados y se oculta; el lado elegido se conserva.
+swapButton :: MonadWidget t m => Dynamic t Bool -> m (Event t ())
+swapButton stacked = do
+  (e, _) <- elDynAttr' "button" (attrs <$> stacked) $ text "⇄"
+  pure (domEvent Click e)
+  where
+    attrs s =
+      Map.fromList $
+        [ ("class", "comparison__swap")
+        , ("type", "button")
+        , ("title", "Pasar la tabla de mando al otro lado")
+        ]
+          <> [("hidden", "") | s]
+
+-- | Atributos del cuerpo de la tarjeta: dos columnas (con la tabla de mando a la
+-- derecha si toca) o apilada.
+bodyAttrs :: Side -> CardLayout -> Map Text Text
+bodyAttrs side l =
+  Map.singleton "class" . T.unwords $
+    ["comparison__body"]
+      <> ["comparison__body--stacked" | clStacked l]
+      <> ["comparison__body--control-right" | side == SideRight, not (clStacked l)]
+
+-- | Atributos de la tabla de mando: su ancho con dos columnas; apilada, el de la
+-- tarjeta.
+controlAttrs :: CardLayout -> Map Text Text
+controlAttrs l =
+  Map.fromList $
+    ("class", "comparison__control")
+      : [("style", "width: " <> formatFixed 1 (clControl l) <> "px") | not (clStacked l)]
 
 -- | Cómo avanza el estado con cada respuesta. __Es la pieza que impide el
 -- parpadeo__, y por eso el widget usa 'foldDyn' y no el 'holdDyn' de los otros
@@ -156,7 +250,7 @@ refreshOf = maybe LastFailed (const Idle)
 -- sustituirlo sería volver a la pantalla en blanco que 'step' evita.
 --
 -- Solo se muestra cuando ya hay datos debajo. Sin ellos el mensaje lo da
--- 'renderState' ('Loading' \/ 'Failed'), y dos a la vez serían ruido.
+-- la gráfica ('Loading' \/ 'Failed'), y dos a la vez serían ruido.
 banner :: DomBuilder t m => (Refresh, CState) -> m ()
 banner (r, Loaded _) = refreshLine r
 banner _             = blank
@@ -199,9 +293,9 @@ carSelector grid shown = divClass "car-selector" $ do
       -- buscaría el coche en una lista vacía y el prefill se perdería para
       -- siempre.
       setPos car = fmapMaybe id (updated (zipDynWith (positionFor car) indexed shown))
-  posA  <- carDropdown 0 labels (setPos lcCarA)
-  elClass "span" "car-selector__vs" $ text "vs"
   posB  <- carDropdown 1 labels (setPos lcCarB)
+  elClass "span" "car-selector__vs" $ text "vs"
+  posA  <- carDropdown 0 labels (setPos lcCarA)
   click <- compareButton
   let picked = zipDyn (zipDynWith carAt indexed posA)
                       (zipDynWith carAt indexed posB)
@@ -335,9 +429,9 @@ compareButton = do
 -- ya hizo.
 lapHeader :: DomBuilder t m => LapComparison -> m ()
 lapHeader c = divClass "comparison__header" $ do
-  lapLabel (lcDriverA c) (lcCarA c) (lcLapA c)
-  elClass "span" "comparison__vs" $ text "vs"
   lapLabel (lcDriverB c) (lcCarB c) (lcLapB c)
+  elClass "span" "comparison__vs" $ text "vs"
+  lapLabel (lcDriverA c) (lcCarA c) (lcLapA c)
 
 -- | Un piloto, su coche y su tiempo.
 --

@@ -30,6 +30,7 @@ executable frontend
       , case-insensitive
       , common
       , containers
+      , ghcjs-dom
       , reflex
       , reflex-dom
       , text
