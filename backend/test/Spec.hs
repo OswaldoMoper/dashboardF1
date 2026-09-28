@@ -59,11 +59,13 @@ import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               cardLayout, columnGap,
                                               compareButtonWidth, controlGap,
                                               controlWidth, defaultControlSide,
-                                              defaultMode, modeEnabled,
+                                              defaultMode, insideAxisLabels,
+                                              modeEnabled,
                                               modeLabel, modeOption,
                                               modeSelectWidth, modesInOrder,
-                                              otherSide, shownMode, valuesFit,
-                                              valuesRowFits)
+                                              otherSide, shownMode,
+                                              valueHeight, valueWidth,
+                                              valuesFit, valuesRowFits)
 import           Common.Format               (ClockForm (..), formatClock,
                                               formatCountdown, formatDelta,
                                               formatFixed, formatTrimmed,
@@ -2210,6 +2212,29 @@ main = hspec $ do
       map (clAxisInside . cardLayout) [510, 509, 452, 303, 302]
         `shouldBe` [False, True, False, False, True]
 
+    describe "insideAxisLabels" $ do
+      let norLec = [0, -0.134, 0.193, 0.617]
+          placed side w = [(label, round x :: Int) | (x, _, label) <- insideAxisLabels side w norLec]
+      it "NOR contra LEC a la derecha en 264 px: el +0.600 y el +0.400 se apartan de la curva" $
+        placed SideRight 264
+          `shouldBe` [ ("+0.600 s", 195), ("+0.400 s", 154), ("+0.200 s", 211)
+                     , ("\x2212\&0.200 s", 211) ]
+
+      it "a la izquierda nada se aparta: la curva empieza en el cero, que no se escribe" $
+        placed SideLeft 264
+          `shouldBe` [ ("+0.600 s", 0), ("+0.400 s", 0), ("+0.200 s", 0)
+                     , ("\x2212\&0.200 s", 0) ]
+
+      it "sin un tramo libre en su línea, el número no sale" $
+        insideAxisLabels SideRight 120 [0, 0.4, -0.4, 0.4, -0.4, 0.4] `shouldBe` []
+
+      it "no pasa de los tres cuartos: con el único hueco en el cuarto de la tabla, no sale" $
+        [label | (_, _, label) <- insideAxisLabels SideRight 246 [0, 0.3, 0.3, 0.3]]
+          `shouldBe` ["+0.250 s", "+0.200 s", "+0.150 s", "+0.100 s", "+0.050 s"]
+
+      prop "cada número cabe en sus tres cuartos de la gráfica y la curva no lo tapa"
+        insideLabelsClear
+
     prop "con dos columnas, tabla, hueco y gráfica suman la tarjeta" twoColumnsAddUp
     prop "la tabla de mando nunca baja del desplegable ni pasa de su máximo" controlWithinBounds
     prop "si los valores caben en un ancho, caben en cualquiera mayor" valuesFitMonotone
@@ -3223,6 +3248,28 @@ controlWithinBounds (NonNegative x) =
   w >= carSelectWidth && w <= compareButtonWidth + controlGap + modeSelectWidth
   where
     w = controlWidth (10 * x)
+
+-- | Comprobado por muestreo y no con la cuenta del módulo: 200 puntos por tramo de
+-- la curva, ninguno dentro de la caja de un número.
+insideLabelsClear :: Bool -> NonNegative Double -> [Double] -> Bool
+insideLabelsClear right (NonNegative x) xs = all ok (insideAxisLabels side width xs)
+  where
+    side  = if right then SideRight else SideLeft
+    width = 60 + 10 * x
+    curve = [(px / chartWidth * width, py) | (px, py) <- axisPoints xs]
+    samples =
+      curve
+        ++ [ (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
+           | ((x1, y1), (x2, y2)) <- zip curve (drop 1 curve)
+           , k <- [0 .. 200 :: Int]
+           , let t = fromIntegral k / 200
+           ]
+    ok (a, y, _) =
+      a >= lowest - 1e-9 && a + valueWidth <= highest + 1e-9
+        && not (any (inside a y) samples)
+    (lowest, highest) = if right then (width / 4, width) else (0, width * 3 / 4)
+    inside a y (sx, sy) =
+      sx > a + 1e-6 && sx < a + valueWidth - 1e-6 && abs (sy - y) < valueHeight / 2
 
 -- | Lo que hace que apilar y meter el eje sean umbrales y no intervalos sueltos.
 valuesFitMonotone :: NonNegative Double -> NonNegative Double -> Bool

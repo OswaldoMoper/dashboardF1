@@ -23,6 +23,8 @@ module Common.ComparisonCard
   , cardLayout
   , controlWidth
   , valuesFit
+    -- * El eje dentro de la gráfica
+  , insideAxisLabels
     -- * Medidas
   , valueWidth
   , valueHeight
@@ -35,7 +37,11 @@ module Common.ComparisonCard
   , valuesRowHeight
   ) where
 
-import           Common.Chart (frontierCells)
+import           Common.Chart (axisPoints, axisTicks, chartWidth,
+                               frontierCells)
+import           Data.List    (find, sort, sortOn)
+import           Data.Maybe   (mapMaybe)
+import           Data.Ord     (Down (..))
 import           Data.Text    (Text)
 
 -- | Qué números acompañan a la curva.
@@ -152,6 +158,57 @@ valuesFit width = and (zipWith (<=) (map snd spans) (drop 1 (map fst spans)))
       | i == 0     = (x, x + valueWidth)
       | i == lastI = (x - valueWidth, x)
       | otherwise  = (x - valueWidth / 2, x + valueWidth / 2)
+
+-- | Los números del eje cuando van dentro de la gráfica: la X de su borde izquierdo
+-- y la Y de su centro, en px dentro de una gráfica de ese ancho y
+-- 'Common.Chart.chartHeight' de alto, y su etiqueta.
+--
+-- * Sin el cero: lo marca la línea discontinua.
+-- * Cada número va pegado al borde del lado del eje, sobre su línea. Si la curva lo
+--   tapa, se desliza hacia el otro borde lo justo para dejar de taparlo, sin pasar
+--   de los tres cuartos del ancho: el cuarto del lado de la tabla de mando queda
+--   libre.
+-- * Si en esos tres cuartos no hay un tramo libre, no sale.
+insideAxisLabels :: Side -> Double -> [Double] -> [(Double, Double, Text)]
+insideAxisLabels side width xs =
+  [ (x, y, label)
+  | (v, y, label) <- axisTicks xs
+  , v /= 0
+  , Just x <- [place (blocked y)]
+  ]
+  where
+    curve = [(px / chartWidth * width, py) | (px, py) <- axisPoints xs]
+    reach = valueHeight / 2 + curveHalfStroke
+    blocked y =
+      mapMaybe (crossing (y - reach) (y + reach)) (zip curve (drop 1 curve))
+        ++ [(px, px) | (px, py) <- curve, abs (py - y) <= reach]
+    place spans = find (free spans) (candidates spans)
+    free spans a =
+      a >= lowest && a + valueWidth <= highest
+        && not (any (\(s, e) -> a < e - 1e-9 && a + valueWidth > s + 1e-9) spans)
+    candidates spans = case side of
+      SideRight -> width - valueWidth : sortOn Down [s - valueWidth | (s, _) <- spans]
+      SideLeft  -> 0 : sort [e | (_, e) <- spans]
+    (lowest, highest) = case side of
+      SideRight -> (width / 4, width)
+      SideLeft  -> (0, width * 3 / 4)
+
+-- | El tramo en X de un segmento de la curva cuya Y cae entre @lo@ y @hi@.
+crossing :: Double -> Double -> ((Double, Double), (Double, Double)) -> Maybe (Double, Double)
+crossing lo hi ((x1, y1), (x2, y2))
+  | y1 == y2  = if lo <= y1 && y1 <= hi then Just (min x1 x2, max x1 x2) else Nothing
+  | tMin > tMax = Nothing
+  | otherwise = Just (at tMin, at tMax)
+  where
+    tA   = (lo - y1) / (y2 - y1)
+    tB   = (hi - y1) / (y2 - y1)
+    tMin = max 0 (min tA tB)
+    tMax = min 1 (max tA tB)
+    at t = x1 + t * (x2 - x1)
+
+-- | Media anchura del trazo de la curva (@stroke-width@ 2).
+curveHalfStroke :: Double
+curveHalfStroke = 1
 
 -- | Ancho de un valor con signo («+0.617 s») en la letra fija de 12 px. Los
 -- números del eje tienen la misma forma.
