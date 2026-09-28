@@ -50,8 +50,10 @@ module Main (main) where
 import           App                         (ScheduledSession (..))
 import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
-                                              axisRange, axisTicks, deltaRange,
-                                              frontierCells, zeroLineY)
+                                              axisPoints, axisPolyline,
+                                              axisRange, axisTicks, axisZeroY,
+                                              deltaRange, frontierCells,
+                                              zeroLineY)
 import           Common.Format               (ClockForm (..), formatClock,
                                               formatCountdown, formatDelta,
                                               formatFixed, formatTrimmed,
@@ -2066,7 +2068,7 @@ main = hspec $ do
     it "emite `points` con coordenadas enteras, sin notación científica" $
       deltaPolyline [0, 0, 0] `shouldBe` "10,100 300,100 590,100"
 
-    prop "ninguna coordenada se sale del viewBox" staysInsideViewBox
+    prop "ninguna coordenada se sale del viewBox" (staysInsideViewBox deltaPoints)
 
   -- La fila de debajo del gráfico de Lap Comparison: nombre y valor de cada frontera,
   -- con los números tal como llegan del microservicio.
@@ -2135,9 +2137,21 @@ main = hspec $ do
       axisRange flat `shouldBe` deltaRange flat
       [y | (v, y, _) <- axisTicks flat, v == 0] `shouldBe` [zeroLineY flat]
 
+    it "la curva del eje pone su cero en la marca del cero" $
+      [y | (v, y, _) <- axisTicks series, v == 0] `shouldBe` [axisZeroY series]
+
+    it "con el eje, el −0.134 de NOR contra LEC queda por encima del −0.200 del fondo" $
+      map snd (axisPoints series) `shouldSatisfy` all (< chartHeight - chartPad)
+
+    it "sin nada que alargar, la curva del eje es la de siempre; vacía, sin puntos" $ do
+      let flat = [0, 0.3, 0.6, 1.0]
+      axisPolyline flat `shouldBe` deltaPolyline flat
+      axisPolyline [] `shouldBe` ""
+
     prop "como mucho ocho marcas, y el cero entre ellas" fewTicksWithZero
     prop "de arriba abajo, dentro del lienzo y sin dos etiquetas iguales" ticksReadable
     prop "el rango del eje contiene al de la curva" axisRangeContainsDelta
+    prop "la curva del eje no se sale del viewBox" (staysInsideViewBox axisPoints)
 
   describe "formatDelta" $ do
     it "el positivo lleva +, y el negativo el menos tipográfico" $ do
@@ -3093,14 +3107,14 @@ roundTripsDouble :: Double -> Property
 roundTripsDouble d = parseNum (T.pack (show d)) === Just d
 
 -- | El invariante que hace segura la función: sea cual sea la serie, todo punto
--- cae dentro del lienzo. Cubre de golpe las dos divisiones por cero y los
+-- cae dentro del lienzo, con cualquiera de los dos escalados. Cubre de golpe las dos divisiones por cero y los
 -- desbordamientos de escala que ningún caso concreto va a adivinar.
 --
 -- El 'Arbitrary' de 'Double' de QuickCheck no genera @NaN@\/@Infinity@ (mismo
 -- supuesto que 'roundTripsDouble'), así que la serie generada es siempre finita —
 -- que es también lo que garantiza el @_num@ del microservicio.
-staysInsideViewBox :: [Double] -> Bool
-staysInsideViewBox xs = all inside (deltaPoints xs)
+staysInsideViewBox :: ([Double] -> [(Double, Double)]) -> [Double] -> Bool
+staysInsideViewBox points xs = all inside (points xs)
   where
     inside (x, y) =
       x >= 0 && x <= chartWidth && y >= chartPad && y <= chartHeight - chartPad

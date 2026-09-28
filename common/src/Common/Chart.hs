@@ -37,6 +37,9 @@ module Common.Chart
     -- * Eje
   , axisRange
   , axisTicks
+  , axisPoints
+  , axisPolyline
+  , axisZeroY
   ) where
 
 import           Common.Format (formatDelta)
@@ -94,8 +97,7 @@ deltaRange xs
 -- distancia recorrida, sobre una serie submuestreada de un eje que resultó no
 -- ser medible (ver 2026-08-10).
 deltaPoints :: [Double] -> [(Double, Double)]
-deltaPoints xs =
-  [ (scaleX (length xs) i, scaleY (deltaRange xs) v) | (i, v) <- zip [0 ..] xs ]
+deltaPoints xs = pointsIn (deltaRange xs) xs
 
 -- | Atributo @points@ de un @\<polyline\>@: @\"x,y x,y …\"@. La serie vacía da
 -- @\"\"@, que es lo que hace que el widget pueda no dibujar nada sin un caso
@@ -106,10 +108,7 @@ deltaPoints xs =
 -- científica para los valores pequeños (@1.0e-2@) — legal en SVG, pero ilegible
 -- y molesto de comparar en un test.
 deltaPolyline :: [Double] -> Text
-deltaPolyline = T.unwords . map render . deltaPoints
-  where
-    render (x, y) = coord x <> "," <> coord y
-    coord = T.pack . show . (round :: Double -> Int)
+deltaPolyline = polyline . deltaPoints
 
 -- | Y del eje cero dentro del @viewBox@, para dibujar la línea de referencia.
 -- Deriva del mismo 'deltaRange' que los puntos, así que la línea y la serie no
@@ -171,6 +170,19 @@ axisTicks xs
     (kLo, kHi) = multiplesIn step range
     tick v     = (v, scaleY range v, formatDelta v)
 
+-- | La serie como coordenadas del @viewBox@, escalada con 'axisRange': la curva que
+-- casa con las marcas de 'axisTicks'. Misma X que 'deltaPoints'.
+axisPoints :: [Double] -> [(Double, Double)]
+axisPoints xs = pointsIn (axisRange xs) xs
+
+-- | Atributo @points@ de 'axisPoints', con el formato de 'deltaPolyline'.
+axisPolyline :: [Double] -> Text
+axisPolyline = polyline . axisPoints
+
+-- | Y del cero con el rango de 'axisRange'; es la Y de la marca @0.000 s@.
+axisZeroY :: [Double] -> Double
+axisZeroY xs = scaleY (axisRange xs) 0
+
 -- | Tope de marcas antes de alargar. El alargamiento puede añadir una, nunca dos.
 axisMaxTicks :: Integer
 axisMaxTicks = 7
@@ -214,6 +226,18 @@ tickStep n = mantissa * 10 ^^ (decade - 3)
       1 -> 2
       _ -> 5
 
+-- | La serie escalada con un rango dado: el índice da la X y el rango la Y.
+pointsIn :: (Double, Double) -> [Double] -> [(Double, Double)]
+pointsIn range xs =
+  [ (scaleX (length xs) i, scaleY range v) | (i, v) <- zip [0 ..] xs ]
+
+-- | Coordenadas como atributo @points@, redondeadas a entero (ver 'deltaPolyline').
+polyline :: [(Double, Double)] -> Text
+polyline = T.unwords . map render
+  where
+    render (x, y) = coord x <> "," <> coord y
+    coord = T.pack . show . (round :: Double -> Int)
+
 -- | X del punto @i@ de una serie de @n@. Con @n <= 1@ no hay @n-1@ por el que
 -- dividir: el punto va al centro. Privada porque solo tiene sentido con la @n@
 -- de la serie que se está pintando.
@@ -227,8 +251,8 @@ scaleX n i
 -- | Y de un valor dentro de un rango. __Invertida__: en SVG la Y crece hacia
 -- abajo, así que el máximo de la serie va arriba.
 --
--- Privada, y esa es la mitad de su seguridad: el único rango que la alcanza sale
--- de 'deltaRange', que garantiza @lo \/= hi@. Exponerla invitaría a pasarle un
--- @(0, 0)@ calculado a mano.
+-- Privada, y esa es la mitad de su seguridad: los rangos que la alcanzan salen de
+-- 'deltaRange', que garantiza @lo \/= hi@, o de 'axisRange', que lo contiene.
+-- Exponerla invitaría a pasarle un @(0, 0)@ calculado a mano.
 scaleY :: (Double, Double) -> Double -> Double
 scaleY (lo, hi) v = chartPad + (hi - v) / (hi - lo) * (chartHeight - 2 * chartPad)
