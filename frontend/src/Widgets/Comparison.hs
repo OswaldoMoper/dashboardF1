@@ -128,9 +128,9 @@ comparisonWidget = mdo
                   (modeSelect fits shown)
           dyn_ (controlState <$> st)
           pure r'
-        divClass "comparison__plot" $ do
-          dyn_ (banner <$> zipDyn refresh st)
-          dyn_ (plotView <$> shown <*> layout <*> (otherSide <$> side) <*> st)
+        divClass "comparison__plot" $
+          dyn_ ( plotView (dyn_ (banner <$> zipDyn refresh st))
+                   <$> shown <*> layout <*> (otherSide <$> side) <*> st )
         pure r
       dyn_ (legendState <$> st)
       resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
@@ -289,8 +289,9 @@ data Refresh
 refreshOf :: Maybe LapComparison -> Refresh
 refreshOf = maybe LastFailed (const Idle)
 
--- | El aviso de la petición, __al lado__ del contenido y no en su lugar:
--- sustituirlo sería volver a la pantalla en blanco que 'step' evita.
+-- | El aviso de la petición, __encima__ de la curva y no en su lugar:
+-- sustituirlo sería volver a la pantalla en blanco que 'step' evita. Flota en el
+-- centro del lienzo, sin mover nada de la tarjeta.
 --
 -- Solo se muestra cuando ya hay datos debajo. Sin ellos el mensaje lo da
 -- la gráfica ('Loading' \/ 'Failed'), y dos a la vez serían ruido.
@@ -528,19 +529,21 @@ lapLabel driver car lap = divClass "comparison__lap" $ do
 
 -- | La gráfica según el reparto, el lado del eje y el modo que se ve: la curva, el
 -- eje vertical (en su columna o dentro, según 'clAxisInside') y la fila de
--- fronteras con las líneas que pida el modo.
-plotView :: MonadWidget t m => ChartMode -> CardLayout -> Side -> CState -> m ()
-plotView _ _ _ Loading =
+-- fronteras con las líneas que pida el modo. El primer argumento se pinta encima
+-- de la curva, dentro de su lienzo: el aviso de la petición.
+plotView :: MonadWidget t m => m () -> ChartMode -> CardLayout -> Side -> CState -> m ()
+plotView _ _ _ _ Loading =
   elClass "p" "status status--loading" $ text "Cargando…"
-plotView _ _ _ Failed =
+plotView _ _ _ _ Failed =
   elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
-plotView m l axis (Loaded c) =
+plotView overlay m l axis (Loaded c) =
   elAttr "div" (plotRowAttrs axis) $ do
     divClass "comparison__plotarea" $ do
       divClass "comparison__canvas" $ do
         deltaChart series
         when (clAxisInside l) $
           mapM_ insideTick (insideAxisLabels axis (clChart l) series)
+        overlay
       frontierRow (showsNames m) (showsValues m) series
     unless (clAxisInside l) $ axisColumn axis series
   where
