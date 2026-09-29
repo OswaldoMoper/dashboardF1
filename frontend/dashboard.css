@@ -39,7 +39,7 @@
      De dónde salen: el botón empieza a `--sp-5` de los dos bordes y la tarjeta a
      `--sp-5` + `--sp-2` (el `padding` de `.app` más el de `.widget-slot`), así que
      el botón se mete en ella su tamaño menos `--sp-2`; `--sp-3` es el aire que le
-     queda alrededor. Hoy dan 43 × 33 px. */
+     queda alrededor. Hoy dan 42 × 32 px. */
   --notch-w: calc(var(--btn-w) - var(--sp-2) + var(--sp-3));
   --notch-h: calc(var(--btn-h) - var(--sp-2) + var(--sp-3));
 
@@ -49,8 +49,8 @@
      es lo que lleva dentro.
 
      El hueco que le cede al botón se calcula con `--btn-w` y no con `--notch-w`:
-     la banda empieza a 24 px del borde —solo el `padding` de `.app`— donde la
-     tarjeta empezaba a 32, así que el botón le entra entero y no en parte. */
+     la banda empieza a 18 px del borde —solo el `padding` de `.app`— donde la
+     tarjeta empezaba a 24, así que el botón le entra entero y no en parte. */
   --band-h: 2.75rem;
 
   /* Lo que mide el botón de plegar, que su regla fija en vez de dejarlo al glifo:
@@ -71,7 +71,11 @@
 
 /* ── Raíz ───────────────────────────────────────────────────────────────── */
 
+/* La base de todos los `rem`: 12 px, y no los 16 del navegador. Las medidas en
+   píxeles de `Common.ComparisonCard` se tomaron con ella; si cambia, se vuelven a
+   medir. Las `@media` no la ven: sus `rem` siguen siendo de 16 px. */
 html {
+  font-size: 12px;
   background: var(--c-bg);
 }
 
@@ -243,8 +247,8 @@ body {
 
    __Los dos aspectos se lo ceden de forma distinta porque son formas distintas.__
    La tarjeta ACABA antes del botón. No es una muesca como la de la esquina de un
-   widget: aquélla mide 41 px de alto y la banda mide 44, así que el mordisco se
-   comería el extremo entero y dejaría un filo de tres píxeles. */
+   widget: aquélla mide 38 px de alto —el botón y `--sp-3`— y la banda mide 33, así
+   que el mordisco se comería el extremo entero. */
 .session-band--card.session-band--header-hidden {
   margin-right: calc(var(--btn-w) + var(--sp-2) * 2);
 }
@@ -847,9 +851,9 @@ body {
   margin-top: var(--sp-1);
 }
 
-/* Con una sola línea: la línea y 6,6 px de aire (`singleRowHeight`, sin el margen). */
+/* Con una sola línea: la línea y 4,95 px de aire (`singleRowHeight`, sin el margen). */
 .comparison__frontiers--single {
-  height: 24px;
+  height: 18px;
 }
 
 .comparison__frontier {

@@ -2192,64 +2192,64 @@ main = hspec $ do
       map showsValues modesInOrder `shouldBe` [True, False, True]
       map showsNames modesInOrder `shouldBe` [False, True, True]
 
-    it "la fila mide 44 px con dos líneas y 28 con una" $
-      map rowHeight modesInOrder `shouldBe` [28, 28, 44]
+    it "la fila mide 33 px con dos líneas y 21 con una" $
+      map rowHeight modesInOrder `shouldBe` [21, 21, 33]
 
-    it "con lo medido en la tarjeta de hoy (326,5 de alto), las dos líneas caben con 280 de contenido" $ do
-      valuesFitMeasured 326.5 280 44 `shouldBe` True
-      valuesFitMeasured 326.5 279 28 `shouldBe` False
+    it "en una tarjeta de 326,5 de alto, las dos líneas caben hasta 302,5 de contenido" $ do
+      valuesFitMeasured 326.5 302.5 33 `shouldBe` True
+      valuesFitMeasured 326.5 291 21 `shouldBe` False
 
     prop "da lo mismo medir con una línea, con dos o sin fila" measuredFitAgrees
 
-    it "las dos líneas caben si el contenido sin la fila más 44 px no pasa del alto" $ do
-      valuesRowFits 292.5 248.5 `shouldBe` True
-      valuesRowFits 292.5 249 `shouldBe` False
+    it "las dos líneas caben si el contenido sin la fila más 33 px no pasa del alto" $ do
+      valuesRowFits 292.5 259.5 `shouldBe` True
+      valuesRowFits 292.5 260 `shouldBe` False
 
     it "la tabla de mando abre a la izquierda, y el eje va siempre en el lado contrario" $ do
       defaultControlSide `shouldBe` SideLeft
       map otherSide [SideLeft, SideRight] `shouldBe` [SideRight, SideLeft]
 
-    it "la tarjeta de hoy (874,5 px): la tabla mide su máximo, 250; eje fuera" $ do
-      let l = cardLayout 874.5
+    it "la tarjeta de hoy (893 px): la tabla mide su máximo, 187,5; eje fuera" $ do
+      let l = cardLayout 893
       clStacked l `shouldBe` False
-      clControl l `shouldBe` 250
-      clChart l `shouldSatisfy` near (874.5 - 250 - columnGap)
+      clControl l `shouldBe` 187.5
+      clChart l `shouldSatisfy` near (893 - 187.5 - columnGap)
       clAxisInside l `shouldBe` False
 
     it "la tabla de mando es un tercio, entre el desplegable de piloto y su máximo" $ do
-      controlWidth 700 `shouldSatisfy` near (700 / 3)
-      controlWidth 450 `shouldBe` carSelectWidth
+      controlWidth 500 `shouldSatisfy` near (500 / 3)
+      controlWidth 400 `shouldBe` carSelectWidth
 
-    it "los cuatro valores caben desde ~246 px de gráfica" $ do
-      valuesFit 245.5 `shouldBe` False
-      valuesFit 246 `shouldBe` True
+    it "los cuatro valores caben desde ~184,5 px de gráfica" $ do
+      valuesFit 184 `shouldBe` False
+      valuesFit 184.5 `shouldBe` True
 
-    it "por debajo de ~453 px se apila, y apilada la gráfica tiene todo el ancho" $ do
-      clStacked (cardLayout 453) `shouldBe` False
-      cardLayout 452 `shouldBe` CardLayout True 452 452 False
+    it "por debajo de ~345,5 px se apila, y apilada la gráfica tiene todo el ancho" $ do
+      clStacked (cardLayout 345.5) `shouldBe` False
+      cardLayout 345 `shouldBe` CardLayout True 345 345 False
 
-    it "el eje entra por debajo de ~510 px con dos columnas y de ~303 apilada" $
-      map (clAxisInside . cardLayout) [510, 509, 452, 303, 302]
+    it "el eje entra por debajo de ~389 px con dos columnas y de ~228 apilada" $
+      map (clAxisInside . cardLayout) [389, 388.5, 345, 228, 227.5]
         `shouldBe` [False, True, False, False, True]
 
     describe "insideAxisLabels" $ do
       let norLec = [0, -0.134, 0.193, 0.617]
           placed side w = [(label, round x :: Int) | (x, _, label) <- insideAxisLabels side w norLec]
-      it "NOR contra LEC a la derecha en 264 px: el +0.600 y el +0.400 se apartan de la curva" $
-        placed SideRight 264
-          `shouldBe` [ ("+0.600 s", 195), ("+0.400 s", 154), ("+0.200 s", 211)
-                     , ("\x2212\&0.200 s", 211) ]
+      it "NOR contra LEC a la derecha en 198 px: el +0.600 y el +0.400 se apartan de la curva" $
+        placed SideRight 198
+          `shouldBe` [ ("+0.600 s", 147), ("+0.400 s", 117), ("+0.200 s", 158)
+                     , ("\x2212\&0.200 s", 158) ]
 
       it "a la izquierda nada se aparta: la curva empieza en el cero, que no se escribe" $
-        placed SideLeft 264
+        placed SideLeft 198
           `shouldBe` [ ("+0.600 s", 0), ("+0.400 s", 0), ("+0.200 s", 0)
                      , ("\x2212\&0.200 s", 0) ]
 
       it "sin un tramo libre en su línea, el número no sale" $
-        insideAxisLabels SideRight 120 [0, 0.4, -0.4, 0.4, -0.4, 0.4] `shouldBe` []
+        insideAxisLabels SideRight 90 [0, 0.4, -0.4, 0.4, -0.4, 0.4] `shouldBe` []
 
       it "no pasa de los tres cuartos: con el único hueco en el cuarto de la tabla, no sale" $
-        [label | (_, _, label) <- insideAxisLabels SideRight 246 [0, 0.3, 0.3, 0.3]]
+        [label | (_, _, label) <- insideAxisLabels SideRight 184.5 [0, 0.3, 0.3, 0.3]]
           `shouldBe` ["+0.250 s", "+0.200 s", "+0.150 s", "+0.100 s", "+0.050 s"]
 
       prop "cada número cabe en sus tres cuartos de la gráfica y la curva no lo tapa"

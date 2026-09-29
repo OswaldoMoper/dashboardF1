@@ -247,26 +247,26 @@ crossing lo hi ((x1, y1), (x2, y2))
 curveHalfStroke :: Double
 curveHalfStroke = 1
 
--- | Ancho de un valor con signo («+0.617 s») en la letra fija de 12 px. Los
--- números del eje tienen la misma forma.
+-- | Ancho de un valor con signo («+0.617 s»), medido con la base de 12 px de la
+-- hoja. Los números del eje tienen la misma forma.
 valueWidth :: Double
-valueWidth = 52.8
+valueWidth = 39.6
 
 -- | Alto de un valor, o de un número del eje.
 valueHeight :: Double
-valueHeight = 17.4
+valueHeight = 13.05
 
 -- | Ancho del desplegable de piloto: el de su opción más larga.
 carSelectWidth :: Double
-carSelectWidth = 191
+carSelectWidth = 149
 
 -- | El ancho máximo de la tabla de mando.
 controlMaxWidth :: Double
-controlMaxWidth = 250
+controlMaxWidth = 187.5
 
 -- | Hueco entre la tabla de mando y la gráfica (@--sp-4@).
 columnGap :: Double
-columnGap = 16
+columnGap = 12
 
 -- | Hueco entre la columna del eje y la curva.
 axisGap :: Double
@@ -279,13 +279,13 @@ axisColumnWidth = valueWidth + axisGap
 -- | Alto de la fila de fronteras con sus dos líneas y su margen (@2.5rem@ más
 -- @--sp-1@).
 valuesRowHeight :: Double
-valuesRowHeight = 44
+valuesRowHeight = 33
 
--- | Alto de la fila de fronteras con una sola línea y su margen: la línea, 6,6 px de
--- aire y @--sp-1@.
+-- | Alto de la fila de fronteras con una sola línea y su margen: la línea, 4,95 px
+-- de aire y @--sp-1@.
 singleRowHeight :: Double
-singleRowHeight = 28
+singleRowHeight = 21
 
 -- | Relleno de la tarjeta, arriba y abajo juntos (@--sp-4@ dos veces).
 cardPadding :: Double
-cardPadding = 32
+cardPadding = 24
