@@ -519,10 +519,11 @@ lapHeader c = divClass "comparison__header" $ do
 -- que la clave existiera (2026-08-05).
 lapLabel :: DomBuilder t m => Text -> Text -> Text -> m ()
 lapLabel driver car lap = divClass "comparison__lap" $ do
-  elClass "span" "comparison__driver" $ text driver
-  if T.null car
-    then blank
-    else elClass "span" "comparison__car" $ text ("#" <> car)
+  elClass "span" "comparison__who" $ do
+    elClass "span" "comparison__driver" $ text driver
+    if T.null car
+      then blank
+      else elClass "span" "comparison__car" $ text ("#" <> car)
   elClass "span" "comparison__time" $ text lap
 
 -- | La gráfica según el reparto, el lado del eje y el modo que se ve: la curva, el

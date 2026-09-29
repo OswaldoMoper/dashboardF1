@@ -768,16 +768,20 @@ body {
   margin-left: var(--sp-2);
 }
 
+/* En columna, los dos pilotos en dos columnas —piloto y coche, tiempo— para que los
+   tiempos queden uno bajo el otro, con el aire repartido por igual entre ellas y
+   los bordes. */
 .comparison__body:not(.comparison__body--stacked) .comparison__header {
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--sp-1);
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: space-evenly;
+  align-items: baseline;
+  row-gap: var(--sp-1);
   margin-bottom: 0;
 }
 
-/* En columna, el piloto y su coche a la izquierda y el tiempo a la derecha. */
-.comparison__body:not(.comparison__body--stacked) .comparison__time {
-  margin-left: auto;
+.comparison__body:not(.comparison__body--stacked) .comparison__lap {
+  display: contents;
 }
 
 .comparison__body:not(.comparison__body--stacked) .comparison__header .comparison__vs {
@@ -797,8 +801,10 @@ body {
   gap: var(--sp-2);
 }
 
+/* En columna, el aire de la fila a los dos lados de cada uno. */
 .comparison__body:not(.comparison__body--stacked) .comparison__actions {
   align-self: stretch;
+  justify-content: space-around;
 }
 
 /* La gráfica con su fila de valores y, al lado del eje, la columna de sus números.
@@ -860,6 +866,13 @@ body {
   gap: var(--sp-2);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* El piloto y su coche, juntos: en columna son una sola celda. */
+.comparison__who {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
 }
 
 .comparison__driver {
