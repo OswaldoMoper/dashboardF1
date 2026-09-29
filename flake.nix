@@ -311,9 +311,14 @@
           runtimeInputs = [ pythonEnv ];
           text = ''
             ${guardRoot}
-            if [ "$#" -lt 1 ]; then
-              echo "uso: dashboardF1-record <fichero> [timeout_segundos]" >&2
-              echo "     (o nix run .#record -- <fichero> [timeout_segundos])" >&2
+            files=0
+            for arg in "$@"; do
+              [ "$arg" = "--f1tv" ] || files=$((files + 1))
+            done
+            if [ "$files" -lt 1 ]; then
+              echo "uso: dashboardF1-record [--f1tv] <fichero> [timeout_segundos]" >&2
+              echo "     (o nix run .#record -- [--f1tv] <fichero> [timeout_segundos])" >&2
+              echo "     --f1tv, o F1TV=1: con la cuenta de F1TV (la primera vez, inicio de sesión)" >&2
               exit 2
             fi
             exec python telemetry-service/record_live.py "$@"
@@ -441,7 +446,7 @@
             echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
             echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
             echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"
-            echo "  grabar  : dashboardF1-record <fichero> [segundos]"
+            echo "  grabar  : dashboardF1-record [--f1tv] <fichero> [segundos]"
           '';
         };
 
@@ -454,7 +459,7 @@
             echo "  correr:  cd telemetry-service && uvicorn main:app   (:8000)"
             echo "  o sin shell:  nix run .#telemetry -- --port 8000"
             echo "  feed en vivo: nix run .#live                  # la tabla, ahora"
-            echo "  grabar feed : nix run .#record -- salida.txt 900"
+            echo "  grabar feed : nix run .#record -- [--f1tv] salida.txt 900"
           '';
         };
       };
