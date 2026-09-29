@@ -28,6 +28,7 @@ module Common.ComparisonCard
   , CardLayout (..)
   , cardLayout
   , controlWidth
+  , vsBeside
   , valuesFit
     -- * El eje dentro de la gráfica
   , insideAxisLabels
@@ -35,6 +36,7 @@ module Common.ComparisonCard
   , valueWidth
   , valueHeight
   , carSelectWidth
+  , vsWidth
   , controlMaxWidth
   , columnGap
   , axisGap
@@ -182,6 +184,12 @@ cardLayout inner
 controlWidth :: Double -> Double
 controlWidth inner = max carSelectWidth (min controlMaxWidth (inner / 3))
 
+-- | Si el «VS» va a la derecha del desplegable de referencia en una tabla de mando
+-- de ese ancho. El desplegable va centrado, así que el «VS» y su hueco (@--sp-2@)
+-- tienen que caber en el margen que le queda; si no, va en su propia línea.
+vsBeside :: Double -> Bool
+vsBeside control = (control - carSelectWidth) / 2 >= 6 + vsWidth
+
 -- | Si los cuatro valores de las fronteras caben sin pisarse bajo una gráfica de
 -- ese ancho, colocados como 'Common.Chart.frontierCells': el primero hacia la
 -- derecha de su punto, el último hacia la izquierda y los de en medio centrados.
@@ -260,9 +268,13 @@ valueHeight = 13.05
 carSelectWidth :: Double
 carSelectWidth = 149
 
+-- | Ancho del «VS» entre los desplegables.
+vsWidth :: Double
+vsWidth = 11.9
+
 -- | El ancho máximo de la tabla de mando.
 controlMaxWidth :: Double
-controlMaxWidth = 187.5
+controlMaxWidth = 225
 
 -- | Hueco entre la tabla de mando y la gráfica (@--sp-4@).
 columnGap :: Double

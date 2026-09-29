@@ -69,7 +69,8 @@ import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               modesInOrder,
                                               otherSide, shownMode,
                                               valueHeight, valueWidth,
-                                              valuesFit, valuesRowFits)
+                                              valuesFit, valuesRowFits,
+                                              vsBeside)
 import           Common.Format               (ClockForm (..), formatClock,
                                               formatCountdown, formatDelta,
                                               formatFixed, formatTrimmed,
@@ -2209,12 +2210,20 @@ main = hspec $ do
       defaultControlSide `shouldBe` SideLeft
       map otherSide [SideLeft, SideRight] `shouldBe` [SideRight, SideLeft]
 
-    it "la tarjeta de hoy (893 px): la tabla mide su máximo, 187,5; eje fuera" $ do
+    it "la tarjeta de hoy (893 px): la tabla mide su máximo, 225; eje fuera" $ do
       let l = cardLayout 893
       clStacked l `shouldBe` False
-      clControl l `shouldBe` 187.5
-      clChart l `shouldSatisfy` near (893 - 187.5 - columnGap)
+      clControl l `shouldBe` 225
+      clChart l `shouldSatisfy` near (893 - 225 - columnGap)
       clAxisInside l `shouldBe` False
+
+    it "el «VS» va al lado de la referencia si cabe en su margen: desde ~185 px de tabla" $ do
+      vsBeside carSelectWidth `shouldBe` False
+      vsBeside 184 `shouldBe` False
+      vsBeside 185 `shouldBe` True
+      vsBeside controlMaxWidth `shouldBe` True
+
+    prop "si el «VS» cabe al lado en un ancho, cabe en cualquiera mayor" vsBesideMonotone
 
     it "la tabla de mando es un tercio, entre el desplegable de piloto y su máximo" $ do
       controlWidth 500 `shouldSatisfy` near (500 / 3)
@@ -3309,6 +3318,11 @@ insideLabelsClear right (NonNegative x) xs = all ok (insideAxisLabels side width
 valuesFitMonotone :: NonNegative Double -> NonNegative Double -> Bool
 valuesFitMonotone (NonNegative x) (NonNegative d) =
   valuesFit (10 * x) <= valuesFit (10 * x + d)
+
+-- | Lo que hace del «VS» al lado un umbral: al ensanchar la tabla no vuelve a bajar.
+vsBesideMonotone :: NonNegative Double -> NonNegative Double -> Bool
+vsBesideMonotone (NonNegative x) (NonNegative d) =
+  vsBeside (10 * x) <= vsBeside (10 * x + d)
 
 -- | Lo que hace legible el eje: cada marca más abajo que la anterior, todas dentro
 -- del lienzo (con la holgura de 'axisTicks' en los extremos) y ninguna etiqueta

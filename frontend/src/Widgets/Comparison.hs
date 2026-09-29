@@ -60,7 +60,8 @@ import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         modeFromKey, modeKey, modeOption,
                                         modesInOrder, otherSide, rowHeight,
                                         shownMode, showsNames, showsValues,
-                                        valueHeight, valuesFitMeasured)
+                                        valueHeight, valuesFitMeasured,
+                                        vsBeside)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
                                 driversPathFor)
@@ -123,7 +124,8 @@ comparisonWidget = mdo
       grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
       (picked, chosenE) <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
         r <- elDynAttr "div" (controlAttrs <$> layout) $ do
-          r' <- carSelector grid (shownComparison <$> st) (modeSelect fits shown)
+          r' <- carSelector grid (shownComparison <$> st) (vsNextTo <$> layout)
+                  (modeSelect fits shown)
           dyn_ (controlState <$> st)
           pure r'
         divClass "comparison__plot" $ do
@@ -224,6 +226,18 @@ bodyAttrs side l =
       <> ["comparison__body--stacked" | clStacked l]
       <> ["comparison__body--control-right" | side == SideRight, not (clStacked l)]
 
+-- | Si el «VS» va a la derecha del primer desplegable: solo con dos columnas, y
+-- cuando cabe ('vsBeside'). Apilada, los dos desplegables y el «VS» ya comparten
+-- línea.
+vsNextTo :: CardLayout -> Bool
+vsNextTo l = not (clStacked l) && vsBeside (clControl l)
+
+-- | Atributos del grupo de los dos desplegables y el «VS».
+pairAttrs :: Bool -> Map Text Text
+pairAttrs next =
+  Map.singleton "class" . T.unwords $
+    ["car-selector__pair"] <> ["car-selector__pair--vs-beside" | next]
+
 -- | Atributos de la tabla de mando: su ancho con dos columnas; apilada, el de la
 -- tarjeta.
 controlAttrs :: CardLayout -> Map Text Text
@@ -308,15 +322,17 @@ refreshLine LastFailed =
 -- posiciones dependen de la parrilla: en el dummy son la 0 y la 1 —está ordenado
 -- justamente así— y en la parrilla real son la 0 y la __3__.
 --
--- El último argumento se pinta junto a «Comparar», en la misma fila, y su
+-- El tercer argumento dice si el «VS» va a la derecha del primer desplegable
+-- ('vsNextTo'). El último se pinta junto a «Comparar», en la misma fila, y su
 -- resultado se devuelve con la URL.
 carSelector
   :: MonadWidget t m
   => Dynamic t [DriverEntry]
   -> Dynamic t (Maybe LapComparison)
+  -> Dynamic t Bool
   -> m a
   -> m (Event t Text, a)
-carSelector grid shown beside = divClass "car-selector" $ do
+carSelector grid shown vsNext beside = divClass "car-selector" $ do
   let indexed = indexedGrid <$> grid
       labels  = Map.map driverLabel <$> indexed
       -- El prefill de un lado: la posición que ocupa hoy el coche del que habla
@@ -326,9 +342,11 @@ carSelector grid shown beside = divClass "car-selector" $ do
       -- buscaría el coche en una lista vacía y el prefill se perdería para
       -- siempre.
       setPos car = fmapMaybe id (updated (zipDynWith (positionFor car) indexed shown))
-  posB  <- carDropdown 1 labels (setPos lcCarB)
-  elClass "span" "car-selector__vs" $ text "vs"
-  posA  <- carDropdown 0 labels (setPos lcCarA)
+  (posB, posA) <- elDynAttr "div" (pairAttrs <$> vsNext) $ do
+    b <- carDropdown 1 labels (setPos lcCarB)
+    elClass "span" "car-selector__vs" $ text "vs"
+    a' <- carDropdown 0 labels (setPos lcCarA)
+    pure (b, a')
   (click, a) <- divClass "comparison__actions" $ (,) <$> compareButton <*> beside
   let picked = zipDyn (zipDynWith carAt indexed posA)
                       (zipDynWith carAt indexed posB)

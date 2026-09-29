@@ -725,15 +725,59 @@ body {
   min-width: 0;
 }
 
-/* En columna, un control por fila y los dos pilotos uno debajo del otro. */
-.comparison__body:not(.comparison__body--stacked) .car-selector {
+/* Los dos desplegables y el «VS». Apilada, en una línea con «Comparar». */
+.car-selector__pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* En columna, la tabla de mando mide el alto de la gráfica y lo reparte entre tres
+   grupos: los desplegables arriba, «Comparar» en medio y los tiempos abajo. El
+   `display: contents` hace de los desplegables y de «Comparar» dos grupos aparte. */
+.comparison__body:not(.comparison__body--stacked) .comparison__control {
+  align-self: stretch;
+  display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.comparison__body:not(.comparison__body--stacked) .car-selector {
+  display: contents;
+}
+
+/* Los desplegables centrados uno encima del otro, y el «VS» centrado en su línea
+   o, con `--vs-beside`, en el margen derecho del primero. */
+.comparison__body:not(.comparison__body--stacked) .car-selector__pair {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  row-gap: var(--sp-2);
+}
+
+.comparison__body:not(.comparison__body--stacked) .car-selector__pair > * {
+  grid-column: 2;
+  justify-self: center;
+}
+
+.comparison__body:not(.comparison__body--stacked) .car-selector__pair--vs-beside .car-selector__vs {
+  grid-row: 1;
+  grid-column: 3;
+  justify-self: start;
+  margin-left: var(--sp-2);
 }
 
 .comparison__body:not(.comparison__body--stacked) .comparison__header {
   flex-direction: column;
+  align-items: stretch;
   gap: var(--sp-1);
+  margin-bottom: 0;
+}
+
+/* En columna, el piloto y su coche a la izquierda y el tiempo a la derecha. */
+.comparison__body:not(.comparison__body--stacked) .comparison__time {
+  margin-left: auto;
 }
 
 .comparison__body:not(.comparison__body--stacked) .comparison__header .comparison__vs {
