@@ -139,6 +139,18 @@ body {
   height: calc(100vh - var(--sp-5) * 2 - var(--band-h));
 }
 
+/* Una capa por layout, del tamaño del lienzo, para que los porcentajes de los slots
+   se sigan midiendo contra él. Las dos se montan una vez y la del layout inactivo
+   se oculta (2026-09-29 (j)). */
+.canvas__layer {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas__layer--hidden {
+  display: none;
+}
+
 /* El rectángulo lo pone el atributo `style` que emite `slotStyle`; aquí va solo
    lo que NO depende del dato.
 

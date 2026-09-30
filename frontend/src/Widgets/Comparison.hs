@@ -22,8 +22,8 @@
 -- sigue en pie para el día que hagan falta tooltips o zoom, con el coste que
 -- registró la decisión del 2026-08-04: servir el @.js@, escribir el
 -- @foreign import javascript@ y sobre todo manejar que 'dyn_' __re-monte__ el
--- nodo bajo un gráfico imperativo, que es justo lo que pasa aquí al conmutar de
--- layout.
+-- nodo bajo un gráfico imperativo, que es justo lo que pasa aquí con cada
+-- respuesta.
 --
 -- __Es el primer widget del repo cuyo fetch no sale solo de 'getPostBuild'.__
 -- Los tres switchers anteriores ('Widgets.Historical' ×2, 'Widgets.Telemetry')
@@ -111,8 +111,11 @@ data CState
 -- la selección— que no se cierra en el mismo instante porque 'Client.fetchJson' es
 -- asíncrono. El prefill sale de @state@, lo que se está pintando, y no de @resp@
 -- (2026-08-07).
-comparisonWidget :: MonadWidget t m => m ()
-comparisonWidget = mdo
+--
+-- @revealed@ avisa de que la tarjeta se acaba de enseñar tras estar oculta: oculta
+-- mide 0, así que al enseñarse se vuelve a medir.
+comparisonWidget :: MonadWidget t m => Event t () -> m ()
+comparisonWidget revealed = mdo
   (root, (card, (userMode, state))) <-
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
       swap <- divClass "widget__head" $ do
@@ -144,7 +147,8 @@ comparisonWidget = mdo
   let layout   = cardLayout . maybe 0 fst <$> size
       fits     = maybe True snd <$> size
       rowNow   = rowHeightNow <$> shown <*> state
-      changed  = leftmost [() <$ updated shown, () <$ updated state, () <$ updated stacked]
+      changed  = leftmost
+                   [() <$ updated shown, () <$ updated state, () <$ updated stacked, revealed]
   pure ()
   where
     controlState :: MonadWidget t m => CState -> m ()
@@ -167,9 +171,9 @@ rowHeightNow _ _          = 0
 -- el 'Behavior').
 --
 -- Se mide al montarse, cada vez que cambia la ventana y un instante después de cada
--- evento del último argumento (cambios del contenido). Mientras la tarjeta aún no
--- está en la página mide 0, y se vuelve a medir cada 0,2 s hasta 'measureTries'
--- veces. 'Nothing' hasta la primera medida con ancho; no cambia si la medida se
+-- evento del último argumento (cambios del contenido, o que se acaba de enseñar).
+-- Mientras la tarjeta aún no está en la página, o está oculta, mide 0, y se vuelve a
+-- medir cada 0,2 s hasta 'measureTries' veces. 'Nothing' hasta la primera medida con ancho; no cambia si la medida se
 -- repite.
 --
 -- No mide los cambios de tamaño de la tarjeta que no vienen de la ventana.

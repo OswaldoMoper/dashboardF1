@@ -9,7 +9,8 @@
 -- 'widgetType' a los widgets existentes ('liveTimingWidget' \/ 'telemetryWidget') y
 -- da un placeholder para los tipos aún no implementados. Dos botones conmutan entre
 -- dos 'Layout' fijos ('raceOverview' \/ 'qualy') sosteniendo un @Dynamic t Layout@;
--- 'dyn_' re-monta la lista de widgets en cada cambio. Único consumidor de
+-- los dos se montan una vez, cada uno en su capa, y el inactivo se oculta
+-- ('layer'). Único consumidor de
 -- 'Layout'\/'WidgetConfig'\/'WidgetType'\/'WidgetParams'\/'WidgetId'.
 --
 -- __Desde el 2026-09-07 el layout coloca de verdad.__ Hasta entonces los widgets
@@ -50,8 +51,8 @@ import           Widgets.LiveTiming (LiveView (..), delayedLive, livePoll,
 import           Widgets.Telemetry  (telemetryWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
--- __banda de sesión__ y el __lienzo__ con los widgets del layout activo, cada uno
--- en su rectángulo.
+-- __banda de sesión__ y el __lienzo__ con los dos layouts, cada widget en su
+-- rectángulo; solo se ve el activo.
 --
 -- __Los tres son hermanos, y el lienzo no lleva encabezado dentro__: los widgets se
 -- colocan desde la esquina de arriba de su contenedor, así que cualquier cosa en
@@ -66,10 +67,9 @@ import           Widgets.Telemetry  (telemetryWidget)
 -- y arranca abierta. El botón se monta antes que ella porque el 'Event' que emite
 -- es lo que alimenta su estado, y no por dónde salga en pantalla.
 --
--- __El refresco del directo lo monta la página y no la tarjeta__ ('Widgets.LiveTiming.livePoll'),
--- y se monta __fuera del @dyn_@__: conmutar de layout re-monta los widgets, así que
--- una petición montada dentro volvería a salir en cada conmutación. Fuera, los dos
--- layouts comparten una sola.
+-- __El refresco del directo lo monta la página y no la tarjeta__ ('Widgets.LiveTiming.livePoll'):
+-- los dos layouts están montados a la vez y los dos llevan Live Timing, así que una
+-- petición por tarjeta saldría dos veces. Así comparten una sola.
 dashboardPage :: MonadWidget t m => m ()
 dashboardPage = divClass "page page--dashboard" $ do
   toggleClick <- headerToggle
@@ -82,7 +82,7 @@ dashboardPage = divClass "page page--dashboard" $ do
     sessionBand openDyn (lvPoll live)
     pure (active, live)
   elDynClass "div" (canvasClass <$> openDyn) $
-    dyn_ $ ffor layoutDyn $ \l -> mapM_ (slot live) (widgets l)
+    mapM_ (layer live layoutDyn) [raceOverview, qualy]
   where
     -- __El lienzo dice si la cabecera está plegada__, para quien necesite saberlo
     -- desde la hoja de estilos. Hoy no lo lee nadie: lo leía la muesca de la
@@ -312,6 +312,24 @@ sessionClock tick served = do
   foldDyn ($) Nothing $
     leftmost [const <$> updated fresh, fmap tickClock <$ tick]
 
+-- | La capa de un layout: sus widgets, del tamaño del lienzo. Se monta una vez y se
+-- oculta mientras su layout no es el activo, así que cambiar de layout no
+-- reconstruye nada y cada layout conserva lo suyo, scroll incluido
+-- (2026-09-29 (j)). Pulsar el layout activo no cambia nada.
+--
+-- Al volver a enseñarse avisa a sus widgets; lo usa Lap Comparison, que mide su
+-- ancho y oculta mide 0.
+layer :: MonadWidget t m => LiveView t -> Dynamic t Layout -> Layout -> m ()
+layer live layoutDyn l = do
+  active <- holdUniqDyn (((== layoutId l) . layoutId) <$> layoutDyn)
+  let revealed = () <$ ffilter id (updated active)
+  elDynClass "div" (layerClass <$> active) $
+    mapM_ (slot live revealed) (widgets l)
+  where
+    layerClass a
+      | a         = "canvas__layer"
+      | otherwise = "canvas__layer canvas__layer--hidden"
+
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
 -- lienzo, con el estilo que calcula 'slotStyle'.
 --
@@ -327,10 +345,10 @@ sessionClock tick served = do
 -- razón: quien sabe dónde está la tarjeta es quien la coloca. Marca a la tarjeta
 -- que ocupa la esquina donde vive el botón de plegar, que es @fixed@ contra la
 -- ventana (2026-09-07 b); a quién le toca lo dice 'touchesTopRight'.
-slot :: MonadWidget t m => LiveView t -> WidgetConfig -> m ()
-slot live wc =
+slot :: MonadWidget t m => LiveView t -> Event t () -> WidgetConfig -> m ()
+slot live revealed wc =
   elAttr "div" ("class" =: slotClass wc <> "style" =: slotStyle wc) $
-    renderWidget live wc
+    renderWidget live revealed wc
 
 -- | Clase del slot: el bloque, y el modificador solo cuando hay algo que
 -- modificar — mismo criterio que el @rowClass@ de 'Widgets.LiveTiming'
@@ -373,15 +391,16 @@ switcherButton label = do
 -- tablas. La totalidad de este @case@ es la que cobra el constructor nuevo, y
 -- __solo bajo GHCJS__ (@-Wall@ del paquete @frontend@).
 --
--- __El refresco del directo atraviesa las siete ramas y lo usa una__, por la misma
--- razón por la que el rectángulo no lo lleva el widget: quien conoce el dato es
--- quien monta, y darlo solo a la rama que lo pide exigiría que el @case@ devolviera
--- funciones de tipos distintos.
-renderWidget :: MonadWidget t m => LiveView t -> WidgetConfig -> m ()
-renderWidget live wc = case widgetType wc of
+-- __El refresco del directo y el aviso de que la capa se enseña atraviesan las
+-- siete ramas y cada uno lo usa una__, por la misma razón por la que el
+-- rectángulo no lo lleva el widget: quien conoce el dato es quien monta, y darlo
+-- solo a la rama que lo pide exigiría que el @case@ devolviera funciones de tipos
+-- distintos.
+renderWidget :: MonadWidget t m => LiveView t -> Event t () -> WidgetConfig -> m ()
+renderWidget live revealed wc = case widgetType wc of
   LiveTiming       -> liveTimingWidget live
   Telemetry        -> telemetryWidget
-  LapComparison    -> comparisonWidget
+  LapComparison    -> comparisonWidget revealed
   TyreStrategy     -> placeholderWidget "Tyre Strategy"
   HistoricalStats  -> driverStatsWidget
   ConstructorStats -> constructorStatsWidget
