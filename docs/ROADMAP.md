@@ -262,6 +262,9 @@ encimarse** como las ventanas de un escritorio, y **qué hace el lienzo en panta
 `auto-fit` daba el responsive gratis y un lienzo de posiciones libres no—. Las dos se deciden al ver el
 lienzo funcionando, no antes.
 
+**La primera se contestó el 2026-09-29 (h): dos widgets no se enciman.** Al soltar uno encima de otro, el pisado se
+aparta, en cadena, y lo que no cabe encoge hasta su mínimo o no se deja. La segunda sigue abierta.
+
 **Desde el 2026-09-07 la segunda ya se puede responder mirando, y ha crecido.** El lienzo existe, así
 que la pregunta deja de ser hipotética; y ahora arrastra tres cosas concretas que antes no tenía:
 
@@ -637,14 +640,16 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       es el arrastre, en el entregable siguiente.
 - [ ] Widgets movibles y redimensionables. **Reescrito el 2026-09-03**: mover y redimensionar son los dos
       lo mismo —cambiar las coordenadas de ese widget— y no dos entregables de coste distinto. Ni reordenar
-      la lista ni `resize: both`, que quedan superados.
+      la lista ni `resize: both`, que quedan superados. **Decidido entero el 2026-09-29 (g) y (h)**: en modo
+      edición, se coge por el título y se estira por la esquina; soltar encima empuja. **El empuje, puro, está en
+      `Common.Push.applyDrag` desde ese día**; falta todo lo que se ve.
 - [ ] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
       que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
-      desde el 2026-09-04**, con el imán apagado como caso normal y no como error; falta el arrastre.
-- [ ] **Ancho mínimo por widget**, en `Common.Layout.minWidthFor` y no en el código de cada uno
-      (2026-09-04 (b)), por debajo del cual el lienzo no deja encoger; el alto solo con mínimo de título y
-      control (2026-09-03 (d)). **Los siete números están escritos desde el 2026-09-04, y siguen siendo a
-      ojo** hasta medirlos en navegador.
+      desde el 2026-09-04**, con el imán apagado como caso normal y no como error; falta el arrastre. La tecla
+      es **Alt** y el interruptor va junto al del modo edición (2026-09-29 (g)).
+- [x] **Tamaño mínimo por widget**, en `Common.Layout.minWidthFor` y `minHeightFor` y no en el código de cada
+      uno (2026-09-04 (b)). **Medidos en Edge el 2026-09-29 (i)**: el ancho más estrecho sin barra y el alto
+      con una fila de datos, en múltiplos de 5. Medirlos desde la propia página queda para después.
 - [ ] **La marca de «aquí no cabe»**, sobre `Common.Layout.fitsAt`: nada se recoloca solo, y lo que no cabe
       se avisa (2026-09-04 (c)). El predicado existe desde ese mismo día; falta pintarla.
 - [ ] **Recomposición por zonas** en los seis widgets: identidad envuelve, cifras mantienen línea, y se
