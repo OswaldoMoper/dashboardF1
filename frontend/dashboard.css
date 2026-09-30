@@ -911,6 +911,12 @@ body {
   border-radius: var(--r-sm);
 }
 
+/* La curva va en su lienzo, encima del de las líneas; su margen lo pone el widget. */
+.comparison__curve {
+  position: absolute;
+  top: 0;
+}
+
 /* La fila de fronteras: cada celda va en la X de su punto (`left` lo pone el
    widget), centrada sobre ella salvo la primera y la última, que se apoyan hacia
    dentro para no salirse de la caja. */
@@ -937,15 +943,6 @@ body {
   white-space: nowrap;
 }
 
-.comparison__frontier--first {
-  align-items: flex-start;
-  transform: none;
-}
-
-.comparison__frontier--last {
-  align-items: flex-end;
-  transform: translateX(-100%);
-}
 
 .comparison__frontier-name {
   color: var(--c-muted);

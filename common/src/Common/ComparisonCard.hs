@@ -41,6 +41,7 @@ module Common.ComparisonCard
   , columnGap
   , axisGap
   , axisColumnWidth
+  , curveInset
   , valuesRowHeight
   , singleRowHeight
   , cardPadding
@@ -191,18 +192,18 @@ vsBeside :: Double -> Bool
 vsBeside control = (control - carSelectWidth) / 2 >= 6 + vsWidth
 
 -- | Si los cuatro valores de las fronteras caben sin pisarse bajo una gráfica de
--- ese ancho, colocados como 'Common.Chart.frontierCells': el primero hacia la
--- derecha de su punto, el último hacia la izquierda y los de en medio centrados.
+-- ese ancho, cada uno centrado en su punto ('Common.Chart.frontierCells', dentro de
+-- 'curveInset').
 valuesFit :: Double -> Bool
 valuesFit width = and (zipWith (<=) (map snd spans) (drop 1 (map fst spans)))
   where
-    xs    = [x / 100 * width | (x, _, _) <- frontierCells [0, 0, 0, 0]]
-    lastI = length xs - 1
-    spans = [span' i x | (i, x) <- zip [0 :: Int ..] xs]
-    span' i x
-      | i == 0     = (x, x + valueWidth)
-      | i == lastI = (x - valueWidth, x)
-      | otherwise  = (x - valueWidth / 2, x + valueWidth / 2)
+    spans = [ (x - valueWidth / 2, x + valueWidth / 2)
+            | (p, _, _) <- frontierCells [0, 0, 0, 0]
+            , let x = insetX width (p / 100) ]
+
+-- | La X en px de una fracción del ancho de la curva, en una gráfica de ese ancho.
+insetX :: Double -> Double -> Double
+insetX width f = curveInset + f * (width - 2 * curveInset)
 
 -- | Los números del eje cuando van dentro de la gráfica: la X de su borde izquierdo
 -- y la Y de su centro, en px dentro de una gráfica de ese ancho y
@@ -222,7 +223,7 @@ insideAxisLabels side width xs =
   , Just x <- [place (blocked y)]
   ]
   where
-    curve = [(px / chartWidth * width, py) | (px, py) <- axisPoints xs]
+    curve = [(insetX width (px / chartWidth), py) | (px, py) <- axisPoints xs]
     reach = valueHeight / 2 + curveHalfStroke
     blocked y =
       mapMaybe (crossing (y - reach) (y + reach)) (zip curve (drop 1 curve))
@@ -250,6 +251,12 @@ crossing lo hi ((x1, y1), (x2, y2))
     tMin = max 0 (min tA tB)
     tMax = min 1 (max tA tB)
     at t = x1 + t * (x2 - x1)
+
+-- | Margen de la curva y de la fila de fronteras a cada lado de la gráfica, en px:
+-- medio valor, para que el valor centrado en el primer o el último punto no se
+-- salga. Las líneas del eje no lo llevan: van de borde a borde.
+curveInset :: Double
+curveInset = valueWidth / 2
 
 -- | Media anchura del trazo de la curva (@stroke-width@ 2).
 curveHalfStroke :: Double

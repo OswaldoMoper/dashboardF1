@@ -56,7 +56,7 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               zeroLineY)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
-                                              cardLayout, columnGap,
+                                              cardLayout, columnGap, curveInset,
                                               controlMaxWidth,
                                               controlWidth, defaultControlSide,
                                               defaultMode, insideAxisLabels,
@@ -2229,28 +2229,28 @@ main = hspec $ do
       controlWidth 500 `shouldSatisfy` near (500 / 3)
       controlWidth 400 `shouldBe` carSelectWidth
 
-    it "los cuatro valores caben desde ~184,5 px de gráfica" $ do
-      valuesFit 184 `shouldBe` False
-      valuesFit 184.5 `shouldBe` True
+    it "los cuatro valores, centrados en sus puntos, caben desde ~162,5 px de gráfica" $ do
+      valuesFit 162.4 `shouldBe` False
+      valuesFit 162.5 `shouldBe` True
 
-    it "por debajo de ~345,5 px se apila, y apilada la gráfica tiene todo el ancho" $ do
-      clStacked (cardLayout 345.5) `shouldBe` False
-      cardLayout 345 `shouldBe` CardLayout True 345 345 False
+    it "por debajo de ~323,5 px se apila, y apilada la gráfica tiene todo el ancho" $ do
+      clStacked (cardLayout 323.5) `shouldBe` False
+      cardLayout 323 `shouldBe` CardLayout True 323 323 False
 
-    it "el eje entra por debajo de ~389 px con dos columnas y de ~228 apilada" $
-      map (clAxisInside . cardLayout) [389, 388.5, 345, 228, 227.5]
+    it "el eje entra por debajo de ~367 px con dos columnas y de ~206 apilada" $
+      map (clAxisInside . cardLayout) [367.5, 367, 323, 206.5, 206]
         `shouldBe` [False, True, False, False, True]
 
     describe "insideAxisLabels" $ do
       let norLec = [0, -0.134, 0.193, 0.617]
           placed side w = [(label, round x :: Int) | (x, _, label) <- insideAxisLabels side w norLec]
-      it "NOR contra LEC a la derecha en 198 px: el +0.600 y el +0.400 se apartan de la curva" $
-        placed SideRight 198
-          `shouldBe` [ ("+0.600 s", 147), ("+0.400 s", 117), ("+0.200 s", 158)
-                     , ("\x2212\&0.200 s", 158) ]
+      it "NOR contra LEC a la derecha en 160 px: el +0.600 y el +0.400 se apartan de la curva" $
+        placed SideRight 160
+          `shouldBe` [ ("+0.600 s", 94), ("+0.400 s", 76), ("+0.200 s", 120)
+                     , ("\x2212\&0.200 s", 120) ]
 
       it "a la izquierda nada se aparta: la curva empieza en el cero, que no se escribe" $
-        placed SideLeft 198
+        placed SideLeft 160
           `shouldBe` [ ("+0.600 s", 0), ("+0.400 s", 0), ("+0.200 s", 0)
                      , ("\x2212\&0.200 s", 0) ]
 
@@ -3299,7 +3299,8 @@ insideLabelsClear right (NonNegative x) xs = all ok (insideAxisLabels side width
   where
     side  = if right then SideRight else SideLeft
     width = 60 + 10 * x
-    curve = [(px / chartWidth * width, py) | (px, py) <- axisPoints xs]
+    curve = [ (curveInset + px / chartWidth * (width - 2 * curveInset), py)
+            | (px, py) <- axisPoints xs ]
     samples =
       curve
         ++ [ (x1 + t * (x2 - x1), y1 + t * (y2 - y1))

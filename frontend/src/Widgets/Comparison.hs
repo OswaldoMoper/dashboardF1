@@ -52,9 +52,9 @@ module Widgets.Comparison where
 
 import           Client        (fetchJson)
 import           Common.Chart  (axisPolyline, axisTicks, axisZeroY, chartHeight,
-                                chartPad, chartWidth, frontierCells)
+                                chartWidth, frontierCells)
 import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
-                                        axisColumnWidth, cardLayout,
+                                        axisColumnWidth, cardLayout, curveInset,
                                         defaultControlSide, defaultMode,
                                         insideAxisLabels, modeEnabled,
                                         modeFromKey, modeKey, modeOption,
@@ -588,7 +588,8 @@ topAt y = "top: " <> formatFixed 1 (y - valueHeight / 2) <> "px"
 
 -- | El delta acumulado como @\<polyline\>@ sobre un @viewBox@ fijo, con la línea
 -- del cero dibujada aparte y una línea tenue por cada número del eje salvo el cero.
--- Todo con el rango de 'Common.Chart.axisRange'.
+-- Todo con el rango de 'Common.Chart.axisRange'. Las líneas van de borde a borde
+-- en un lienzo; la curva, en otro encima que entra 'curveInset' por lado.
 --
 -- La línea del cero se pinta __siempre__, incluso sin serie: es la referencia que
 -- da sentido al eje ("iban empatados"), no una decoración de los datos. Con
@@ -601,49 +602,43 @@ deltaChart series = do
     mapM_ (\y -> svgEl "line" (gridLineAttrs y) blank)
       [y | (v, y, _) <- axisTicks series, v /= 0]
     svgEl "line" (zeroLineAttrs series) blank
-    case series of
-      [] -> blank
-      _  -> svgEl "polyline" (polylineAttrs series) blank
   case series of
     [] -> elClass "p" "status status--empty" $ text "Sin delta que dibujar"
-    _  -> blank
+    _  -> svgEl "svg" curveAttrs $ svgEl "polyline" (polylineAttrs series) blank
 
 -- | Debajo del gráfico, el nombre y el valor de cada frontera —o solo uno de los
--- dos, según los dos primeros argumentos—, cada uno en la X de su punto
+-- dos, según los dos primeros argumentos—, cada uno centrado en la X de su punto
 -- ('Common.Chart.frontierCells'). Van en HTML y no dentro del @\<svg\>@, que se
--- estira a lo ancho y deformaría el texto.
---
--- La primera se alinea a la izquierda de su punto y la última a la derecha, para
--- que no se salgan de la caja; las del medio, centradas.
+-- estira a lo ancho y deformaría el texto. La fila entra 'curveInset' por lado,
+-- como la curva, para que el primero y el último no se salgan.
 frontierRow :: DomBuilder t m => Bool -> Bool -> [Double] -> m ()
 frontierRow names values series = case frontierCells series of
   []    -> blank
-  cells ->
-    elClass "div" rowClass $
-      mapM_ (frontierCell names values (length cells - 1)) (zip [0 ..] cells)
+  cells -> elAttr "div" rowAttrs $ mapM_ (frontierCell names values) cells
   where
+    rowAttrs =
+      Map.fromList
+        [ ("class", rowClass)
+        , ("style", "margin-left: " <> inset <> "; margin-right: " <> inset)
+        ]
+    inset = formatFixed 1 curveInset <> "px"
     rowClass
       | names && values = "comparison__frontiers"
       | otherwise       = "comparison__frontiers comparison__frontiers--single"
 
--- | Una celda de 'frontierRow': qué líneas lleva, su posición en la fila, la última
--- posición, y la X, el nombre y el valor de su frontera.
-frontierCell
-  :: DomBuilder t m => Bool -> Bool -> Int -> (Int, (Double, Text, Text)) -> m ()
-frontierCell names values lastIx (i, (x, name, value)) =
+-- | Una celda de 'frontierRow': qué líneas lleva, y la X, el nombre y el valor de su
+-- frontera.
+frontierCell :: DomBuilder t m => Bool -> Bool -> (Double, Text, Text) -> m ()
+frontierCell names values (x, name, value) =
   elAttr "div" attrs $ do
     when names $ elClass "span" "comparison__frontier-name" $ text name
     when values $ elClass "span" "comparison__frontier-value" $ text value
   where
     attrs =
       Map.fromList
-        [ ("class", "comparison__frontier" <> anchor)
+        [ ("class", "comparison__frontier")
         , ("style", "left: " <> formatFixed 3 x <> "%")
         ]
-    anchor
-      | i == 0      = " comparison__frontier--first"
-      | i == lastIx = " comparison__frontier--last"
-      | otherwise   = ""
 
 -- | Qué es cada línea: la discontinua es el coche de la derecha, la referencia, y
 -- la roja el de la izquierda contra él. Por encima del cero, el de la izquierda va
@@ -694,14 +689,28 @@ chartAttrs =
     , ("preserveAspectRatio", "none")
     ]
 
--- | Línea tenue de un número del eje, a lo ancho del lienzo.
+-- | La curva, en su propio lienzo encima del de las líneas: entra 'curveInset' por
+-- cada lado, con el mismo @viewBox@ y el mismo alto.
+curveAttrs :: Map Text Text
+curveAttrs =
+  Map.fromList
+    [ ("class", "comparison__curve")
+    , ("viewBox", "0 0 " <> num chartWidth <> " " <> num chartHeight)
+    , ("height", num chartHeight)
+    , ("preserveAspectRatio", "none")
+    , ( "style"
+      , "left: " <> formatFixed 1 curveInset <> "px; width: calc(100% - "
+          <> formatFixed 1 (2 * curveInset) <> "px)" )
+    ]
+
+-- | Línea tenue de un número del eje, de borde a borde del lienzo.
 gridLineAttrs :: Double -> Map Text Text
 gridLineAttrs y =
   Map.fromList
     [ ("class", "comparison__gridline")
-    , ("x1", num chartPad)
+    , ("x1", "0")
     , ("y1", num y)
-    , ("x2", num (chartWidth - chartPad))
+    , ("x2", num chartWidth)
     , ("y2", num y)
     , ("stroke", "#888888")
     , ("stroke-opacity", "0.3")
@@ -714,9 +723,9 @@ zeroLineAttrs :: [Double] -> Map Text Text
 zeroLineAttrs series =
   Map.fromList
     [ ("class", "comparison__zero")
-    , ("x1", num chartPad)
+    , ("x1", "0")
     , ("y1", y)
-    , ("x2", num (chartWidth - chartPad))
+    , ("x2", num chartWidth)
     , ("y2", y)
     , ("stroke", "#888888")
     , ("stroke-width", "1")
