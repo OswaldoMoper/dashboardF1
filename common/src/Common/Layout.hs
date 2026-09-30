@@ -1,4 +1,4 @@
--- | Aritmética del __lienzo libre__: pegar a la rejilla, el ancho mínimo por
+-- | Aritmética del __lienzo libre__: pegar a la rejilla, el tamaño mínimo por
 -- widget, si un widget cabe donde dice estar, y la traducción de su rectángulo a
 -- CSS.
 --
@@ -34,8 +34,9 @@ module Common.Layout
   , spanCss
     -- * Imán
   , snapTo
-    -- * Ancho mínimo
+    -- * Tamaño mínimo
   , minWidthFor
+  , minHeightFor
   , clampToMin
     -- * Comprobaciones que informan
   , fitsAt
@@ -132,30 +133,42 @@ snapTo divisions v
     cell = (clampSpan v * divisions + canvasSpan `div` 2) `div` canvasSpan
 
 -- | Ancho mínimo de un tipo de widget, por debajo del cual el lienzo no deja
--- encoger. En unidades de 'canvasSpan'.
+-- encoger. En unidades de 'canvasSpan', así que en píxeles vale distinto en cada
+-- ventana.
 --
--- Los números son a ojo hasta medirlos en navegador (2026-09-04 (b)), y cada uno
--- sale del contenido de su widget:
+-- Medidos en Edge con la base de 12 px sobre un lienzo de 1861 × 845 px
+-- (2026-09-29): el ancho más estrecho sin barra horizontal, redondeado __hacia
+-- arriba__ a múltiplo de 5 para caer en celda del imán. Las celdas de las tablas no
+-- parten nunca; lo que cede es la fila de botones de 'Telemetry', que baja de
+-- línea, y 'LapComparison', que se apila. 'TyreStrategy' y 'Custom' no tienen
+-- widget y conservan el número a ojo.
 --
--- * 'LiveTiming' — @Pos@, @Driver@, @Team@, @Gap@, @Interval@, @Last Lap@ y la
---   marca de estado.
--- * 'Telemetry' — ocho magnitudes por muestra más el selector de piloto.
--- * 'LapComparison' — dos desplegables de parrilla más el @\<svg\>@ de
---   'Common.Chart'.
--- * 'HistoricalStats' \/ 'ConstructorStats' — nombre, @Puntos@ y @Victorias@; el
---   nombre del constructor es más corto.
--- * 'TyreStrategy' y 'Custom' son hoy placeholders; sus números entran cuando el
---   widget exista.
---
--- Si un widget cambia de contenido, su número se revisa aquí.
+-- Si un widget cambia de contenido, su número se vuelve a medir.
 minWidthFor :: WidgetType -> Int
-minWidthFor LiveTiming       = 55
-minWidthFor Telemetry        = 50
-minWidthFor LapComparison    = 45
-minWidthFor HistoricalStats  = 35
-minWidthFor ConstructorStats = 30
+minWidthFor LiveTiming       = 30
+minWidthFor Telemetry        = 35
+minWidthFor LapComparison    = 25
+minWidthFor HistoricalStats  = 25
+minWidthFor ConstructorStats = 20
 minWidthFor TyreStrategy     = 30
 minWidthFor Custom           = 25
+
+-- | Alto mínimo de un tipo de widget, en unidades de 'canvasSpan': el título, su
+-- control y una fila de datos; en 'LapComparison', la tabla de mando entera y la
+-- leyenda. Medido y redondeado como 'minWidthFor'; 'TyreStrategy' y 'Custom'
+-- llevan el menor de los medidos.
+--
+-- __No depende de la forma de la tarjeta:__ 'LapComparison' apilada pide 65, y
+-- con este mínimo su leyenda queda bajo el scroll. En el lienzo medido no llega a
+-- apilarse sin bajar de 'minWidthFor'.
+minHeightFor :: WidgetType -> Int
+minHeightFor LiveTiming       = 20
+minHeightFor Telemetry        = 30
+minHeightFor LapComparison    = 50
+minHeightFor HistoricalStats  = 20
+minHeightFor ConstructorStats = 20
+minHeightFor TyreStrategy     = 20
+minHeightFor Custom           = 20
 
 -- | Sube el ancho de un widget hasta su mínimo si viene por debajo.
 --
@@ -176,11 +189,10 @@ clampToMin w = w { wcW = max (wcW w) (minWidthFor (widgetType w)) }
 -- __Informa; no corrige.__ Es lo que alimenta la marca visible, y por eso tiene
 -- que poder decir que no sobre una 'WidgetConfig' intacta.
 --
--- __Mira solo el eje horizontal__, y es a propósito. Por el 2026-09-03 (d) el
--- alto solo lleva un mínimo muy pequeño —título y su control—, porque encoger el
--- alto ya se resuelve con el scroll vertical que la tarjeta tiene desde el
--- 2026-08-21. A lo ancho, en cambio, la barra es el último recurso (2026-09-04 c)
--- y por eso hay algo que avisar antes de llegar a ella.
+-- __Mira solo el eje horizontal__, y es a propósito: encoger el alto se resuelve
+-- con el scroll vertical que la tarjeta tiene desde el 2026-08-21, así que
+-- 'minHeightFor' no entra aquí. A lo ancho, en cambio, la barra es el último
+-- recurso (2026-09-04 c) y por eso hay algo que avisar antes de llegar a ella.
 fitsAt :: WidgetConfig -> Bool
 fitsAt w =
   wcX w >= 0

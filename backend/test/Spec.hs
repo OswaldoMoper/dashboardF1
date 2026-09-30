@@ -76,8 +76,9 @@ import           Common.Format               (ClockForm (..), formatClock,
                                               formatFixed, formatTrimmed,
                                               noData)
 import           Common.Layout               (canvasSpan, clampToMin, fitsAt,
-                                              gridDivisions, minWidthFor,
-                                              overlaps, slotStyle, snapTo,
+                                              gridDivisions, minHeightFor,
+                                              minWidthFor, overlaps,
+                                              slotStyle, snapTo,
                                               spanCss, touchesTopRight)
 import           Common.Origin               (Origin (..), Source (..),
                                               Sourced (..), fetchedAtHeader,
@@ -2409,6 +2410,23 @@ main = hspec $ do
     prop "es idempotente: pegar algo ya pegado no lo mueve" snapIsIdempotent
     prop "el resultado nunca sale del lienzo" snapStaysInCanvas
 
+  describe "minWidthFor y minHeightFor" $ do
+    -- Los números medidos en Edge, tipo por tipo: lo único que caza un 30 escrito
+    -- donde iba un 35.
+    it "son los medidos, como (ancho, alto)" $
+      map (\t -> (minWidthFor t, minHeightFor t))
+          [ LiveTiming, Telemetry, LapComparison, HistoricalStats
+          , ConstructorStats, TyreStrategy, Custom ]
+        `shouldBe` [ (30, 20), (35, 30), (25, 50), (25, 20)
+                   , (20, 20), (30, 20), (25, 20) ]
+
+    it "caen todos en celda del imán" $
+      filter ((/= 0) . (`mod` 5))
+          (concatMap (\t -> [minWidthFor t, minHeightFor t])
+             [ LiveTiming, Telemetry, LapComparison, HistoricalStats
+             , ConstructorStats, TyreStrategy, Custom ])
+        `shouldBe` []
+
   describe "clampToMin" $ do
     it "sube al mínimo el widget demasiado estrecho para su contenido" $
       wcW (clampToMin (rect LiveTiming (0, 0, 12, 40))) `shouldBe` minWidthFor LiveTiming
@@ -2532,6 +2550,11 @@ main = hspec $ do
     it "clampToMin no cambia ninguno: los seis respetan ya su ancho mínimo" $
       map clampToMin (raceOverviewFixture <> qualyFixture)
         `shouldBe` (raceOverviewFixture <> qualyFixture)
+
+    it "ninguno baja de su alto mínimo" $
+      filter (\w -> wcH w < minHeightFor (widgetType w))
+          (raceOverviewFixture <> qualyFixture)
+        `shouldBe` []
 
     it "ningún par de Race Overview se encima" $
       [ (widgetId a, widgetId b)
