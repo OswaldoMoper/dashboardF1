@@ -21,7 +21,7 @@
 -- error suyo no aparece hasta el build completo.
 --
 -- __Ninguna función de este módulo decide una política.__ 'clampToMin' solo
--- ensancha y no mueve nada; 'fitsAt' y 'overlaps' __informan__ y no corrigen.
+-- agranda y no mueve nada; 'fitsAt' y 'overlaps' __informan__ y no corrigen.
 -- Quién pinta la marca de «aquí no cabe», si el encimado se permite y qué hace
 -- el lienzo en pantalla estrecha son cosas del consumidor y preguntas abiertas
 -- del @ROADMAP.md@, y no se cierran de tapadillo dentro de una función pura.
@@ -170,34 +170,35 @@ minHeightFor ConstructorStats = 20
 minHeightFor TyreStrategy     = 20
 minHeightFor Custom           = 20
 
--- | Sube el ancho de un widget hasta su mínimo si viene por debajo.
+-- | Sube el ancho y el alto de un widget hasta sus mínimos si vienen por debajo.
 --
--- __Solo ensancha. No mueve nada, nunca__, ni siquiera cuando el widget se sale
--- del lienzo por la derecha: no toca 'wcX', ni 'wcY', ni 'wcH'.
+-- __Solo agranda. No mueve nada, nunca__, ni siquiera cuando el widget se sale
+-- del lienzo: no toca 'wcX' ni 'wcY'.
 --
 -- Que se salga es asunto de 'fitsAt', que lo __informa__ para que el consumidor
 -- pinte la marca de «aquí no cabe». Y el reparto es deliberado: si esta función
--- corrigiera el desbordamiento moviendo el widget a la izquierda, sobre un layout
--- ya saneado 'fitsAt' diría siempre que sí y __la marca no aparecería jamás__.
--- Decidido el 2026-09-04 (c).
+-- corrigiera el desbordamiento moviendo el widget, sobre un layout ya saneado
+-- 'fitsAt' diría siempre que sí y __la marca no aparecería jamás__. Decidido el
+-- 2026-09-04 (c).
 clampToMin :: WidgetConfig -> WidgetConfig
-clampToMin w = w { wcW = max (wcW w) (minWidthFor (widgetType w)) }
+clampToMin w = w
+  { wcW = max (wcW w) (minWidthFor  (widgetType w))
+  , wcH = max (wcH w) (minHeightFor (widgetType w))
+  }
 
 -- | Si un widget cabe donde dice estar: empieza dentro del lienzo, no baja de su
--- ancho mínimo, y no se sale por la derecha.
+-- ancho ni de su alto mínimos, y no se sale ni por la derecha ni por abajo.
 --
 -- __Informa; no corrige.__ Es lo que alimenta la marca visible, y por eso tiene
 -- que poder decir que no sobre una 'WidgetConfig' intacta.
---
--- __Mira solo el eje horizontal__, y es a propósito: encoger el alto se resuelve
--- con el scroll vertical que la tarjeta tiene desde el 2026-08-21, así que
--- 'minHeightFor' no entra aquí. A lo ancho, en cambio, la barra es el último
--- recurso (2026-09-04 c) y por eso hay algo que avisar antes de llegar a ella.
 fitsAt :: WidgetConfig -> Bool
 fitsAt w =
   wcX w >= 0
+    && wcY w >= 0
     && wcW w >= minWidthFor (widgetType w)
+    && wcH w >= minHeightFor (widgetType w)
     && wcX w + wcW w <= canvasSpan
+    && wcY w + wcH w <= canvasSpan
 
 -- | Si los rectángulos de dos widgets se enciman.
 --

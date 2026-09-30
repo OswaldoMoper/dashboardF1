@@ -2431,20 +2431,25 @@ main = hspec $ do
     it "sube al mínimo el widget demasiado estrecho para su contenido" $
       wcW (clampToMin (rect LiveTiming (0, 0, 12, 40))) `shouldBe` minWidthFor LiveTiming
 
+    it "sube al mínimo el widget demasiado bajo para su contenido" $
+      wcH (clampToMin (rect LapComparison (0, 0, 60, 10))) `shouldBe` minHeightFor LapComparison
+
     it "deja intacto al que ya cumple, sin redondear ni pegar a la rejilla" $
       clampToMin (rect Telemetry (7, 3, 63, 41)) `shouldBe` rect Telemetry (7, 3, 63, 41)
 
     -- El caso que fija el reparto del 2026-09-04 (c). Si esta función moviera el
     -- widget, `fitsAt` no tendría nunca nada que decir sobre un layout saneado y
     -- la marca visible no aparecería jamás.
-    it "no mueve nada nunca, ni cuando el widget se sale por la derecha" $ do
-      let w = clampToMin (rect LiveTiming (100, 10, 45, 40))
+    it "no mueve nada nunca, ni cuando el widget se sale del lienzo" $ do
+      let w = clampToMin (rect LiveTiming (100, 110, 45, 10))
       wcX w `shouldBe` 100
-      wcY w `shouldBe` 10
-      wcH w `shouldBe` 40
+      wcY w `shouldBe` 110
+      wcH w `shouldBe` minHeightFor LiveTiming
 
-    it "tampoco recorta al que se sale: ensanchar es todo lo que hace" $
-      wcW (clampToMin (rect Custom (0, 0, 200, 10))) `shouldBe` 200
+    it "tampoco recorta al que se sale: agrandar es todo lo que hace" $ do
+      let w = clampToMin (rect Custom (0, 0, 200, 150))
+      wcW w `shouldBe` 200
+      wcH w `shouldBe` 150
 
     prop "sube siempre al mínimo del tipo, sea cual sea la entrada" clampReachesMin
 
@@ -2461,11 +2466,17 @@ main = hspec $ do
     it "rechaza la coordenada negativa" $
       fitsAt (rect LiveTiming (-5, 0, 60, 40)) `shouldBe` False
 
-    -- Deliberado, no descuido: por el 2026-09-03 (d) encoger el alto se resuelve
-    -- con el scroll vertical que la tarjeta tiene desde el 2026-08-21, así que a
-    -- lo alto no hay nada que avisar.
-    it "no mira el eje vertical: un widget que se sale por abajo sí cabe" $
-      fitsAt (rect LiveTiming (0, 100, 60, 90)) `shouldBe` True
+    it "rechaza al que se sale por abajo" $
+      fitsAt (rect LiveTiming (0, 100, 60, 90)) `shouldBe` False
+
+    it "rechaza al que baja de su alto mínimo" $
+      fitsAt (rect LapComparison (60, 35, 60, 45)) `shouldBe` False
+
+    it "rechaza la coordenada vertical negativa" $
+      fitsAt (rect LiveTiming (0, -5, 60, 40)) `shouldBe` False
+
+    it "acepta al que llega justo al borde de abajo" $
+      fitsAt (rect ConstructorStats (60, 90, 60, 30)) `shouldBe` True
 
   describe "overlaps" $ do
     it "dos widgets separados no se enciman" $
@@ -3395,13 +3406,15 @@ snapStaysInCanvas :: Int -> Int -> Property
 snapStaysInCanvas d v = r >= 0 .&&. r <= canvasSpan
   where r = snapTo d v
 
--- | Tras 'clampToMin' el ancho cumple el mínimo del tipo, venga como venga la
--- entrada. Es la garantía entera de la función; lo que NO garantiza —que el
--- widget quepa— es de 'fitsAt' (2026-09-04 c).
+-- | Tras 'clampToMin' el ancho y el alto cumplen los mínimos del tipo, venga como
+-- venga la entrada. Es la garantía entera de la función; lo que NO garantiza —que
+-- el widget quepa— es de 'fitsAt' (2026-09-04 c).
 clampReachesMin :: Int -> Int -> Int -> Int -> Bool
 clampReachesMin x y w h =
-  wcW (clampToMin r) >= minWidthFor (widgetType r)
-  where r = rect LiveTiming (x, y, w, h)
+  wcW c >= minWidthFor (widgetType r) && wcH c >= minHeightFor (widgetType r)
+  where
+    r = rect LiveTiming (x, y, w, h)
+    c = clampToMin r
 
 -- | Que A se encime con B y que B se encime con A son la misma pregunta. Si no lo
 -- fueran, el resultado dependería del orden de la lista de widgets — que es
