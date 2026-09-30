@@ -87,6 +87,7 @@ import           Common.Origin               (Origin (..), Source (..),
                                               sourceFrom, sourceHeader,
                                               sourceLabel, sourceName,
                                               sourcedFrom, sourcedHeaders)
+import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Shown                (Indicator (..), Kept (..),
@@ -2554,6 +2555,73 @@ main = hspec $ do
   -- toca las coordenadas de `Pages.Dashboard` y no toca estas, el test seguirá
   -- verde midiendo un layout que ya no existe. Mientras sea copia, hay que
   -- cambiar los dos sitios.
+  describe "applyDrag" $ do
+    let onRace wid d = applyDrag gridDivisions raceOverviewFixture (d (WidgetId wid))
+        rects        = fmap (map (\w -> (wcX w, wcY w, wcW w, wcH w)))
+        column       = [ rectNamed "c1" Custom (0,  0, 30, 40)
+                       , rectNamed "c2" Custom (0, 40, 30, 40)
+                       , rectNamed "c3" Custom (0, 80, 30, 40) ]
+        onColumn divs wid d = rects (applyDrag divs column (d (WidgetId wid)))
+
+    it "Constructores encima de Lap Comparison: la tapa de lado a lado y Lap Comparison baja entera" $
+      rects (onRace "constructor-stats" (\w -> MoveTo w 60 35))
+        `shouldBe` Just [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
+
+    it "Telemetry 20 a la izquierda: Live Timing se estrecha por el lado del menor solape" $
+      rects (onRace "telemetry" (\w -> MoveTo w 40 0))
+        `shouldBe` Just [(0, 0, 40, 90), (40, 0, 60, 35), (60, 35, 60, 50), (0, 90, 60, 30), (60, 90, 60, 30)]
+
+    -- Telemetry 35 + Pilotos 30 + los mínimos de Lap Comparison (50) y Constructores
+    -- (20) suman 135: la columna no cabe, y en una columna no se prueba el otro eje.
+    it "Pilotos a la columna derecha no se deja, con el imán y sin él" $ do
+      onRace "driver-stats" (\w -> MoveTo w 60 35) `shouldBe` Nothing
+      applyDrag 0 raceOverviewFixture (MoveTo (WidgetId "driver-stats") 60 35) `shouldBe` Nothing
+
+    it "estirar Telemetry empuja la columna, y Constructores encoge hasta su mínimo" $
+      rects (onRace "telemetry" (\w -> ResizeTo w 60 50))
+        `shouldBe` Just [(0, 0, 60, 90), (60, 0, 60, 50), (60, 50, 60, 50), (0, 90, 60, 30), (60, 100, 60, 20)]
+
+    it "Live Timing sobre la columna derecha intercambia las columnas" $
+      rects (onRace "live-timing" (\w -> MoveTo w 60 0))
+        `shouldBe` Just [(60, 0, 60, 90), (0, 0, 60, 35), (0, 35, 60, 50), (0, 90, 60, 30), (60, 90, 60, 30)]
+
+    it "soltar en el mismo sitio no cambia nada" $
+      onRace "telemetry" (\w -> MoveTo w 60 0) `shouldBe` Just raceOverviewFixture
+
+    it "lo que se sale del lienzo se queda en el borde" $
+      onRace "constructor-stats" (\w -> MoveTo w 200 200) `shouldBe` Just raceOverviewFixture
+
+    it "un widget que no está no se deja" $
+      onRace "no-existe" (\w -> MoveTo w 0 0) `shouldBe` Nothing
+
+    it "en una columna, la de abajo arriba del todo reordena y la de arriba abajo también" $ do
+      onColumn gridDivisions "c3" (\w -> MoveTo w 0 0)
+        `shouldBe` Just [(0, 40, 30, 40), (0, 80, 30, 40), (0, 0, 30, 40)]
+      onColumn gridDivisions "c1" (\w -> MoveTo w 0 80)
+        `shouldBe` Just [(0, 80, 30, 40), (0, 0, 30, 40), (0, 40, 30, 40)]
+
+    it "en una fila, la de la derecha a la izquierda del todo reordena" $
+      rects (applyDrag gridDivisions
+               [ rectNamed "f1" Custom (0, 0, 30, 40), rectNamed "f2" Custom (30, 0, 30, 40)
+               , rectNamed "f3" Custom (60, 0, 30, 40) ]
+               (MoveTo (WidgetId "f3") 0 0))
+        `shouldBe` Just [(30, 0, 30, 40), (60, 0, 30, 40), (0, 0, 30, 40)]
+
+    it "estirar hasta tapar entera a la de abajo la empuja hacia donde crece" $
+      onColumn gridDivisions "c1" (\w -> ResizeTo w 30 80)
+        `shouldBe` Just [(0, 0, 30, 80), (0, 80, 30, 20), (0, 100, 30, 20)]
+
+    -- La cadena encoge en proporción; con el imán, cada alto al múltiplo de 5 y la
+    -- del borde se queda con lo que sobre; sin él, de 1 en 1.
+    it "el redondeo del encogido sigue al imán" $ do
+      onColumn gridDivisions "c1" (\w -> ResizeTo w 30 57)
+        `shouldBe` Just [(0, 0, 30, 57), (0, 57, 30, 30), (0, 87, 30, 33)]
+      onColumn 0 "c1" (\w -> ResizeTo w 30 57)
+        `shouldBe` Just [(0, 0, 30, 57), (0, 57, 30, 31), (0, 88, 30, 32)]
+
+    prop "tras un sí, los mismos widgets, sin solapes y cabiendo" dragKeepsLayoutValid
+    prop "la que se lleva queda donde se pide, dentro del lienzo y con su tamaño" moveKeepsHeld
+
   describe "los layouts fijos de Pages.Dashboard" $ do
     it "los seis widgets caben donde dicen estar" $
       filter (not . fitsAt) (raceOverviewFixture <> qualyFixture) `shouldBe` []
@@ -3405,6 +3473,38 @@ snapIsIdempotent d v = snapTo d (snapTo d v) === snapTo d v
 snapStaysInCanvas :: Int -> Int -> Property
 snapStaysInCanvas d v = r >= 0 .&&. r <= canvasSpan
   where r = snapTo d v
+
+-- | Cualquier gesto sobre Race Overview, mover o estirar: o no se deja, o deja los
+-- mismos widgets en el mismo orden, sin solapes y cabiendo en el lienzo.
+dragKeepsLayoutValid :: Int -> Bool -> Int -> Int -> Bool
+dragKeepsLayoutValid i resize a b =
+  case applyDrag gridDivisions raceOverviewFixture drag of
+    Nothing -> True
+    Just l  ->
+      map widgetId l == map widgetId raceOverviewFixture
+        && all fitsAt l
+        && and [ not (overlaps x y) | (m, x) <- zip [0 :: Int ..] l, (n, y) <- zip [0 ..] l, m < n ]
+  where
+    held = raceOverviewFixture !! (i `mod` length raceOverviewFixture)
+    drag
+      | resize    = ResizeTo (widgetId held) (a `mod` 130) (b `mod` 130)
+      | otherwise = MoveTo (widgetId held) (a `mod` 140 - 10) (b `mod` 140 - 10)
+
+-- | La tarjeta que se lleva no encoge nunca y acaba donde se pidió, recortado al
+-- lienzo.
+moveKeepsHeld :: Int -> Int -> Int -> Bool
+moveKeepsHeld i a b =
+  case applyDrag gridDivisions raceOverviewFixture (MoveTo (widgetId held) x y) of
+    Nothing -> True
+    Just l  -> case filter ((== widgetId held) . widgetId) l of
+      [h] -> wcW h == wcW held && wcH h == wcH held
+               && wcX h == max 0 (min (canvasSpan - wcW held) x)
+               && wcY h == max 0 (min (canvasSpan - wcH held) y)
+      _   -> False
+  where
+    held = raceOverviewFixture !! (i `mod` length raceOverviewFixture)
+    x = a `mod` 140 - 10
+    y = b `mod` 140 - 10
 
 -- | Tras 'clampToMin' el ancho y el alto cumplen los mínimos del tipo, venga como
 -- venga la entrada. Es la garantía entera de la función; lo que NO garantiza —que
