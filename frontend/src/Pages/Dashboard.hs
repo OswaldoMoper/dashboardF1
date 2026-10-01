@@ -177,14 +177,14 @@ delayField initial = elClass "label" "delay-field" $ mdo
 sessionBand :: MonadWidget t m
             => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> Dynamic t (Maybe Int)
             -> m ()
-sessionBand openDyn poll age = mdo
+sessionBand openDyn poll lag = mdo
   tick    <- tickLossyFromPostBuildTime 1
   let arrived = sessionOf <$> ffilter (isJust . landed) (updated poll)
   kept    <- foldDyn keepLast keptNothing arrived
   age     <- sessionAge tick arrived
   title   <- holdUniqDyn (maybe "" sessionTitle . keptValue <$> kept)
   reading <- holdUniqDyn ((\k -> siState =<< keptValue k) <$> kept)
-  next    <- countdown tick age (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
+  next    <- countdown tick lag (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
   clock   <- sessionClock tick ((shownClock =<<) . sessionOf <$> poll)
   let laps = (siLaps =<<) . sessionOf <$> poll
   asCard  <- toggle True lookClick
@@ -302,10 +302,10 @@ sessionAge tick arrived =
 countdown :: MonadWidget t m
           => Event t TickInfo -> Dynamic t (Maybe Int) -> Dynamic t UpNext
           -> m (Dynamic t UpNext)
-countdown tick age served = do
+countdown tick lag served = do
   fresh <- holdUniqDyn served
   foldDyn ($) NextUnknown $
-    leftmost [ attachPromptlyDynWith (\a v -> const (catchUp (fromMaybe 0 a) v)) age (updated fresh)
+    leftmost [ attachPromptlyDynWith (\a v -> const (catchUp (fromMaybe 0 a) v)) lag (updated fresh)
              , tickDown <$ tick
              ]
 
