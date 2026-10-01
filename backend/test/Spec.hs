@@ -102,7 +102,7 @@ import           Common.Shown                (Indicator (..), Kept (..),
                                               delayWait, delayWaitLabel,
                                               delayedPoll, delayedShown,
                                               delayFromUrl, landed, readDelay,
-                                              recordArrival)
+                                              recordArrival, shownAge)
 import           Common.Types                (DriverEntry (..),
                                               DriverStatus (..),
                                               HistoricalStat (..),
@@ -121,7 +121,7 @@ import           Common.Types                (DriverEntry (..),
                                               bandStateLabel, noParams,
                                               sessionInProgress, sessionIsLive,
                                               sessionStateWord, sessionTitle,
-                                              statusLabel, tickDown,
+                                              statusLabel, tickDown, catchUp,
                                               upNextLabel, lapLabel,
                                               showsClock, clockLabel,
                                               tickClock, waitingSession,
@@ -135,7 +135,8 @@ import qualified Data.ByteString.Char8       as BC
 import           Data.Either                 (isLeft)
 import           Data.List                   (nub)
 import qualified Data.Map.Strict             as Map
-import           Data.Proxy                  (Proxy (..))
+import           Data.Maybe                  (fromMaybe)
+import           Data.Proxy                 (Proxy (..))
 import qualified Data.Text                   as T
 import           Data.Time.Calendar          (fromGregorian)
 import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
@@ -1923,6 +1924,19 @@ main = hspec $ do
       -- función no lo inventa.
       iterate tickDown (NextStartsIn 2) !! 5 `shouldBe` NextStartsIn 0
 
+    it "lo que llegó hace k segundos se pone a la hora del calendario" $
+      map (catchUp 41) [NextStartsIn 100, NextAfter "Baku" 100]
+        `shouldBe` [NextStartsIn 59, NextAfter "Baku" 59]
+
+    it "ponerse al día no toca a las que no cuentan, no sube con k negativo ni baja de cero" $ do
+      map (catchUp 41) [NextSilent, NextUnknown] `shouldBe` [NextSilent, NextUnknown]
+      catchUp (-5) (NextStartsIn 10) `shouldBe` NextStartsIn 10
+      catchUp 41 (NextAfter "Baku" 30) `shouldBe` NextAfter "Baku" 0
+
+    prop "ponerse al día en dos saltos es ponerse al día en uno" $
+      \(NonNegative a) (NonNegative b) (NonNegative n) ->
+        catchUp a (catchUp b (NextStartsIn n)) === catchUp (a + b) (NextStartsIn n)
+
   describe "sessionStateWord y bandStateLabel" $ do
     it "da la palabra de los tres estados publicados" $
       map sessionStateWord [SessionInactive, SessionStarted, SessionFinalised]
@@ -2876,6 +2890,17 @@ main = hspec $ do
       delayedShown 15 30 arrivals `shouldBe` Just 'b'
       delayedShown 10 30 arrivals `shouldBe` Just 'c'
       delayedShown 31 30 arrivals `shouldBe` Nothing
+
+    it "la edad de lo enseñado: lo retrasado, o lo más nuevo si espera o no hay retraso" $ do
+      shownAge 15 30 arrivals `shouldBe` Just 20
+      shownAge 10 30 arrivals `shouldBe` Just 10
+      shownAge 31 30 arrivals `shouldBe` Just 10
+      shownAge 0 30 arrivals `shouldBe` Just 10
+      shownAge 41 5 ([] :: Arrivals Char) `shouldBe` Nothing
+
+    it "la edad es la de lo que se enseña, retraso a retraso" $
+      [shownAge n 30 arrivals >>= \age -> lookup (30 - age) arrivals | n <- [1 .. 40]]
+        `shouldBe` [Just (fromMaybe 'c' (delayedShown n 30 arrivals)) | n <- [1 .. 40]]
 
     it "sin retraso, el refresco tal cual" $
       delayedPoll succ 0 30 arrivals (Poll False (Just 'c') False)

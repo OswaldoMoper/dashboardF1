@@ -63,6 +63,7 @@ module Common.Shown
   , Arrivals
   , recordArrival
   , delayedShown
+  , shownAge
   , delayedPoll
   , landed
   , delayFromUrl
@@ -76,7 +77,7 @@ import           Common.Origin (Origin (..), Source, Sourced (..), originNotice,
                                 sourceName)
 import           Data.Char     (isDigit)
 import           Data.List     (find)
-import           Data.Maybe    (fromMaybe, isJust)
+import           Data.Maybe    (fromMaybe, isJust, listToMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 
@@ -373,7 +374,21 @@ recordArrival now x xs = (now, x) : young <> take 1 old
 
 -- | Lo más nuevo que llegó hace al menos @n@ segundos; 'Nothing' si nada es tan viejo.
 delayedShown :: Int -> Int -> Arrivals a -> Maybe a
-delayedShown n now = fmap snd . find (\(t, _) -> now - t >= n)
+delayedShown n now = fmap snd . delayedArrival n now
+
+-- | La llegada que 'delayedShown' enseña, con su segundo.
+delayedArrival :: Int -> Int -> Arrivals a -> Maybe (Int, a)
+delayedArrival n now = find (\(t, _) -> now - t >= n)
+
+-- | Cuántos segundos hace que llegó lo que 'delayedPoll' enseña con @n@ de retraso:
+-- lo de 'delayedShown' o, mientras nada es tan viejo o sin retraso, lo más nuevo.
+-- 'Nothing' sin ninguna llegada.
+shownAge :: Int -> Int -> Arrivals a -> Maybe Int
+shownAge n now xs = (now -) . fst <$> pick
+  where
+    pick
+      | n > 0, Just x <- delayedArrival n now xs = Just x
+      | otherwise                                = listToMaybe xs
 
 -- | El refresco visto con @n@ segundos de retraso: lo enseñado sale de
 -- 'delayedShown', y lo que está en vuelo y el último fallo siguen siendo los de

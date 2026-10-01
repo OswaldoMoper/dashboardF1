@@ -414,9 +414,14 @@ upNextLabel (NextAfter l n)  = l <> " · en " <> formatCountdown n
 -- __No baja de cero__ ni inventa un estado nuevo al llegar: lo que hay después de
 -- que la cuenta se agote lo dice la respuesta siguiente, no esta función.
 tickDown :: UpNext -> UpNext
-tickDown (NextStartsIn n) = NextStartsIn (max 0 (n - 1))
-tickDown (NextAfter l n)  = NextAfter l (max 0 (n - 1))
-tickDown other            = other
+tickDown = catchUp 1
+
+-- | La misma cuenta atrás @k@ segundos después: lo que se enseña con @k@ segundos de
+-- retraso, puesto a la hora del calendario. Con @k <= 0@ no cambia; no baja de cero.
+catchUp :: Int -> UpNext -> UpNext
+catchUp k (NextStartsIn n) = NextStartsIn (max 0 (n - max 0 k))
+catchUp k (NextAfter l n)  = NextAfter l (max 0 (n - max 0 k))
+catchUp _ other            = other
 
 -- | La vuelta en la banda: @Vuelta 23/57@.
 lapLabel :: LapProgress -> Text
