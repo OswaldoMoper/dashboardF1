@@ -1,9 +1,11 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { openDashboard } from './serve';
 
 type Box = { x: number; y: number; width: number; height: number };
 
+// En el orden en que `Pages.Dashboard` monta sus capas: la capa n es la del layout n.
 const LAYOUTS = ['Race Overview', 'Qualy'] as const;
+type Layout = (typeof LAYOUTS)[number];
 
 // Margen para el redondeo de los porcentajes a píxeles.
 const EPS = 0.5;
@@ -24,13 +26,18 @@ function overlaps(a: Box, b: Box): boolean {
   return w > EPS && h > EPS;
 }
 
-async function show(page: Page, layout: string): Promise<void> {
+// Pulsa el layout y espera a que su capa sea la que se ve, que no es en el mismo
+// instante del clic.
+async function show(page: Page, layout: Layout): Promise<Locator> {
   await page.getByRole('button', { name: layout, exact: true }).click();
+  const layer = page.locator('.canvas__layer').nth(LAYOUTS.indexOf(layout));
+  await expect(layer).not.toHaveClass(/canvas__layer--hidden/);
+  return layer;
 }
 
-// Los rectángulos de las tarjetas del layout que se ve, en el orden en que se pintan.
-async function slots(page: Page): Promise<Box[]> {
-  const shown = page.locator('.canvas__layer:not(.canvas__layer--hidden) > .widget-slot');
+// Los rectángulos de las tarjetas de una capa, en el orden en que se pintan.
+async function slots(layer: Locator): Promise<Box[]> {
+  const shown = layer.locator(':scope > .widget-slot');
   await expect(shown.first()).toBeVisible();
   return shown.evaluateAll((els) =>
     els.map((el) => {
@@ -55,10 +62,10 @@ test.describe('los layouts', () => {
 
   for (const layout of LAYOUTS) {
     test(`${layout}: cada tarjeta dentro del lienzo y ninguna encima de otra`, async ({ page }) => {
-      await show(page, layout);
+      const layer = await show(page, layout);
       const canvas = await page.locator('.canvas').boundingBox();
       if (!canvas) throw new Error('el lienzo no se ve');
-      const boxes = await slots(page);
+      const boxes = await slots(layer);
       for (const [i, box] of boxes.entries()) {
         expect(inside(box, canvas), `la tarjeta ${i} se sale del lienzo`).toBe(true);
       }
@@ -70,11 +77,9 @@ test.describe('los layouts', () => {
     });
 
     test(`${layout}: al volver de otro layout cada tarjeta sigue en su sitio`, async ({ page }) => {
-      await show(page, layout);
-      const before = await slots(page);
+      const before = await slots(await show(page, layout));
       for (const other of LAYOUTS.filter((l) => l !== layout)) await show(page, other);
-      await show(page, layout);
-      expect(await slots(page)).toEqual(before);
+      expect(await slots(await show(page, layout))).toEqual(before);
     });
   }
 });
