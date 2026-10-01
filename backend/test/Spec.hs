@@ -54,6 +54,8 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               axisRange, axisTicks, axisZeroY,
                                               deltaRange, frontierCells,
                                               zeroLineY)
+import           Common.Comparison           (Baseline (..), anchored,
+                                              deltasAgainst)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
@@ -2185,6 +2187,51 @@ main = hspec $ do
     prop "de arriba abajo, dentro del lienzo y sin dos etiquetas iguales" ticksReadable
     prop "el rango del eje contiene al de la curva" axisRangeContainsDelta
     prop "la curva del eje no se sale del viewBox" (staysInsideViewBox axisPoints)
+
+  -- Los sectores son los de la clasificación de Bakú 2026 (FastF1 3.8.3), con LEC de
+  -- referencia; los valores esperados salen de GHC.
+  describe "Common.Comparison" $ do
+    let near a b = abs (a - b) < 1e-9
+        nearRows xs ys =
+          length xs == length ys && and (zipWith (\x y -> length x == length y && and (zipWith near x y)) xs ys)
+        lec = (36.079, 42.073, 25.211)
+        nor = (36.279, 41.840, 25.553)
+        rus = (36.009, 41.659, 24.858)
+    it "contra la referencia: comparado − referencia en Inicio, S1, S2 y S3" $
+      deltasAgainst AgainstReference [Just lec, Just nor, Just rus]
+        `shouldSatisfy` nearRows [[0, 0, 0, 0], [0, 0.2, -0.033, 0.309], [0, -0.07, -0.484, -0.837]]
+
+    it "contra el más rápido: la base es RUS, aunque no sea la referencia" $
+      deltasAgainst AgainstFastest [Just lec, Just nor, Just rus]
+        `shouldSatisfy` nearRows [[0, 0.07, 0.484, 0.837], [0, 0.27, 0.451, 1.146], [0, 0, 0, 0]]
+
+    it "sin sus tres sectores no hay Δ: el piloto da [], y sin base, todos" $ do
+      deltasAgainst AgainstReference [Just lec, Nothing, Just rus]
+        `shouldSatisfy` nearRows [[0, 0, 0, 0], [], [0, -0.07, -0.484, -0.837]]
+      deltasAgainst AgainstReference [Nothing, Just nor] `shouldBe` [[], []]
+      deltasAgainst AgainstFastest [Nothing, Just nor, Nothing] `shouldBe` [[], [0, 0, 0, 0], []]
+      deltasAgainst AgainstFastest [] `shouldBe` []
+
+    it "un empate en el más rápido se lo queda el primero" $
+      deltasAgainst AgainstFastest [Just (30, 40, 30), Just (35, 35, 30)]
+        `shouldBe` [[0, 0, 0, 0], [0, 5, 0, 0]]
+
+    prop "la última Δ es la diferencia de vueltas, y la de la base es cero" lastDeltaIsLapDiff
+    prop "contra el más rápido nadie acaba por debajo del cero" noneEndsBelowFastest
+
+    it "Sectores: las fronteras del coche caen en las de la referencia; 0 y 1 no se mueven" $
+      map (anchored (0.3, 0.7) (0.25, 0.6)) [0, 0.3, 0.5, 0.7, 1]
+        `shouldSatisfy` (and . zipWith near [0, 0.25, 0.425, 0.6, 1])
+
+    it "Sectores: con las fronteras de la referencia no cambia, ni con unas imposibles" $ do
+      all (\f -> near (anchored (0.3, 0.7) (0.3, 0.7) f) f) [0, 0.01 .. 1] `shouldBe` True
+      map (anchored (0, 0.7) (0.25, 0.6)) [0.2, 0.9] `shouldBe` [0.2, 0.9]
+      anchored (0.7, 0.3) (0.25, 0.6) 0.2 `shouldBe` 0.2
+
+    it "Sectores: no desordena la vuelta" $
+      and [ anchored (0.3, 0.7) (0.25, 0.6) f <= anchored (0.3, 0.7) (0.25, 0.6) g
+          | f <- [0, 0.01 .. 1], g <- [0, 0.01 .. 1], f <= g ]
+        `shouldBe` True
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9
@@ -4840,3 +4887,18 @@ onlyFreshIsSilent n at = silent === (origin == Fresh)
       case originNotice origin (T.pack <$> at) of
         Nothing -> True
         Just _  -> False
+
+-- | Con la referencia primero, la última Δ del otro es su vuelta menos la de la
+-- referencia, y la de la referencia es cero: los sectores suman la vuelta.
+lastDeltaIsLapDiff
+  :: (NonNegative Double, NonNegative Double, NonNegative Double)
+  -> (NonNegative Double, NonNegative Double, NonNegative Double)
+  -> Property
+lastDeltaIsLapDiff (NonNegative r1, NonNegative r2, NonNegative r3) (NonNegative c1, NonNegative c2, NonNegative c3) =
+  map last (deltasAgainst AgainstReference [Just (r1, r2, r3), Just (c1, c2, c3)])
+    === [0, (c1 + c2 + c3) - (r1 + r2 + r3)]
+
+-- | La base es la vuelta más corta, así que ninguna Δ acaba en negativo.
+noneEndsBelowFastest :: [(NonNegative Double, NonNegative Double, NonNegative Double)] -> Bool
+noneEndsBelowFastest laps =
+  all (>= 0) [last d | d <- deltasAgainst AgainstFastest [Just (a, b, c) | (NonNegative a, NonNegative b, NonNegative c) <- laps]]
