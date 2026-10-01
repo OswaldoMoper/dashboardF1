@@ -7,7 +7,7 @@ const har = 'recordings/api.har';
  * Abre el dashboard. Al grabar, contra el servidor vivo, guardando lo que contesta
  * `/api/*`. Si no, nada sale a la red: la página sale del frontend construido
  * (`E2E_FRONTEND`) y `/api/*` de lo grabado, y una petición que no está grabada se
- * aborta. Lo grabado solo se reproduce con el mismo `E2E_URL` con el que se grabó.
+ * aborta. Lo grabado queda a nombre de `localhost:3000`, se grabe contra donde se grabe.
  */
 export async function openDashboard(page: Page): Promise<void> {
   if (recording) {

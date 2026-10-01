@@ -8,7 +8,11 @@ export default defineConfig({
   retries: 1,
   reporter: 'list',
   use: {
-    baseURL: process.env.E2E_URL ?? 'http://localhost:3000',
+    // `E2E_URL` solo cuenta al grabar; lo grabado queda a nombre de :3000.
+    baseURL:
+      process.env.E2E_RECORD === '1'
+        ? (process.env.E2E_URL ?? 'http://localhost:3000')
+        : 'http://localhost:3000',
     trace: 'retain-on-failure',
   },
   projects: [

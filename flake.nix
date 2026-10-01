@@ -385,7 +385,15 @@
             ln -sfn ${pkgs.playwright-test}/lib/node_modules node_modules
             tsc -p .
             if [ -n "$record" ]; then
-              E2E_RECORD=1 exec playwright test --project=edge-1912x914 "''${args[@]}"
+              E2E_RECORD=1 playwright test --project=edge-1912x914 "''${args[@]}"
+              # The recording is replayed against :3000 wherever it was made.
+              origin="''${E2E_URL:-http://localhost:3000}"
+              origin="''${origin#*://}"
+              origin="''${origin%/}"
+              if [ "$origin" != localhost:3000 ]; then
+                sed -i "s|$origin|localhost:3000|g" recordings/api.har
+              fi
+              exit 0
             fi
             E2E_FRONTEND=${self'.packages.frontend} exec playwright test "''${args[@]}"
           '';
@@ -508,7 +516,7 @@
             echo "  pruebas : dashboardF1-hspec       # cabal build all + cabal test all"
             echo "  las dos : dashboardF1-test        # hspec y, si pasa, e2e"
             echo "  e2e     : dashboardF1-e2e         # tsc + Playwright, con lo grabado en e2e/recordings"
-            echo "  e2e rec : dashboardF1-e2e-record  # graba /api/* de :3000 (otro con E2E_URL)"
+            echo "  e2e rec : dashboardF1-e2e-record  # graba /api/* de :3000 (otro con E2E_URL; queda a nombre de :3000)"
             echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
             echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
             echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"
