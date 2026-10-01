@@ -328,8 +328,8 @@
         # No `runtimeInputs`: it uses the dev shell's cabal, which already has
         # zlib and pkg-config resolved. A second GHC here would link against a
         # different zlib and fail where `cabal build` succeeds.
-        packages.test = pkgs.writeShellApplication {
-          name = "dashboardF1-test";
+        packages.hspec = pkgs.writeShellApplication {
+          name = "dashboardF1-hspec";
           text = ''
             ${guardRoot}
             if ! command -v cabal >/dev/null 2>&1; then
@@ -338,6 +338,14 @@
             fi
             cabal build all
             exec cabal test all --test-show-details=direct "$@"
+          '';
+        };
+
+        packages.test = pkgs.writeShellApplication {
+          name = "dashboardF1-test";
+          runtimeInputs = [ self'.packages.hspec ];
+          text = ''
+            exec dashboardF1-hspec "$@"
           '';
         };
 
@@ -406,6 +414,11 @@
           program = "${self'.packages.record}/bin/dashboardF1-record";
         };
 
+        apps.hspec = {
+          type = "app";
+          program = "${self'.packages.hspec}/bin/dashboardF1-hspec";
+        };
+
         apps.test = {
           type = "app";
           program = "${self'.packages.test}/bin/dashboardF1-test";
@@ -429,6 +442,7 @@
             pkg-config
           ]) ++ [
             devLauncher
+            self'.packages.hspec
             self'.packages.test
             self'.packages.serve
             self'.packages.api
@@ -442,7 +456,7 @@
             echo "F1 Functional Dashboard — dev shell (Haskell)"
             echo "  backend : cabal run backend       # Servant en :8080 (Fase 0, sesión 3)"
             echo "  todo    : dashboardF1-dev         # microservicio + backend, STATIC_DIR desde el store"
-            echo "  pruebas : dashboardF1-test        # cabal build all + cabal test all"
+            echo "  pruebas : dashboardF1-hspec       # cabal build all + cabal test all"
             echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
             echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
             echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"
