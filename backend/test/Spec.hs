@@ -54,8 +54,11 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               axisRange, axisTicks, axisZeroY,
                                               deltaRange, frontierCells,
                                               zeroLineY)
-import           Common.Comparison           (Baseline (..), anchored,
-                                              deltasAgainst)
+import           Common.Comparison           (Axis (..), Baseline (..),
+                                              LapGeometry (..), anchored,
+                                              axesInOrder, axisLabel,
+                                              axisNotice, axisXs,
+                                              defaultAxis, deltasAgainst)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
@@ -2227,6 +2230,26 @@ main = hspec $ do
       all (\f -> near (anchored (0.3, 0.7) (0.3, 0.7) f) f) [0, 0.01 .. 1] `shouldBe` True
       map (anchored (0, 0.7) (0.25, 0.6)) [0.2, 0.9] `shouldBe` [0.2, 0.9]
       anchored (0.7, 0.3) (0.25, 0.6) 0.2 `shouldBe` 0.2
+
+    it "los ejes, en el orden y con el nombre del desplegable; abre en Tiempo" $ do
+      map axisLabel axesInOrder `shouldBe` ["Distancia", "Fracción de vuelta", "Tiempo", "Sectores"]
+      defaultAxis `shouldBe` AxisTime
+      map axisNotice axesInOrder `shouldSatisfy` all (not . T.null)
+
+    it "cada eje lleva las muestras (segundos, metros) a su X" $ do
+      let car = LapGeometry 1000 (300, 700)
+          ref = LapGeometry 2000 (500, 1200)
+          pts = [(0, 0), (10, 300), (20, 500), (30, 700), (40, 1000)]
+      axisXs AxisTime car ref pts `shouldBe` [0, 10, 20, 30, 40]
+      axisXs AxisDistance car ref pts `shouldBe` [0, 300, 500, 700, 1000]
+      axisXs AxisFraction car ref pts `shouldSatisfy` (and . zipWith near [0, 0.3, 0.5, 0.7, 1])
+      axisXs AxisSectors car ref pts `shouldSatisfy` (and . zipWith near [0, 0.25, 0.425, 0.6, 1])
+
+    it "Sectores contra sí mismo es la fracción, y sin distancia todo cae a 0" $ do
+      let car = LapGeometry 1000 (300, 700)
+          pts = [(0, 0), (10, 300), (20, 500), (30, 700), (40, 1000)]
+      and (zipWith near (axisXs AxisSectors car car pts) (axisXs AxisFraction car car pts)) `shouldBe` True
+      axisXs AxisSectors (LapGeometry 0 (0, 0)) car pts `shouldBe` [0, 0, 0, 0, 0]
 
     it "Sectores: no desordena la vuelta" $
       and [ anchored (0.3, 0.7) (0.25, 0.6) f <= anchored (0.3, 0.7) (0.25, 0.6) g

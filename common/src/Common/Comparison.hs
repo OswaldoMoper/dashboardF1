@@ -1,11 +1,18 @@
 -- | Lo que Lap Comparison calcula con los datos de cada piloto, sin pintar nada: la Δ
--- en las fronteras contra la base que elija el usuario, y el estiramiento del eje
--- «Sectores».
+-- en las fronteras contra la base que elija el usuario, y la X de cada muestra de
+-- las trazas en el eje elegido.
 module Common.Comparison
   ( Sectors
   , frontierTimes
   , Baseline (..)
   , deltasAgainst
+  , Axis (..)
+  , axesInOrder
+  , defaultAxis
+  , axisLabel
+  , axisNotice
+  , LapGeometry (..)
+  , axisXs
   , anchored
   ) where
 
@@ -13,6 +20,7 @@ import           Control.Monad (join)
 import           Data.List     (minimumBy)
 import           Data.Maybe    (catMaybes, listToMaybe)
 import           Data.Ord      (comparing)
+import           Data.Text     (Text)
 
 -- | Los tres tiempos de sector de una vuelta, en segundos.
 type Sectors = (Double, Double, Double)
@@ -42,6 +50,61 @@ deltasAgainst baseline entries =
     fastest [] = Nothing
     fastest xs = Just (minimumBy (comparing lapOf) xs)
     lapOf (s1, s2, s3) = s1 + s2 + s3
+
+-- | El eje X de las trazas.
+data Axis = AxisDistance | AxisFraction | AxisTime | AxisSectors
+  deriving stock (Eq, Show, Enum, Bounded)
+
+-- | Los ejes en el orden del desplegable.
+axesInOrder :: [Axis]
+axesInOrder = [minBound .. maxBound]
+
+-- | El eje con el que abre la tarjeta.
+defaultAxis :: Axis
+defaultAxis = AxisTime
+
+-- | El nombre del eje en el desplegable.
+axisLabel :: Axis -> Text
+axisLabel AxisDistance = "Distancia"
+axisLabel AxisFraction = "Fracción de vuelta"
+axisLabel AxisTime     = "Tiempo"
+axisLabel AxisSectors  = "Sectores"
+
+-- | El aviso que va siempre bajo la leyenda: qué no es exacto en ese eje.
+axisNotice :: Axis -> Text
+axisNotice AxisDistance = "La distancia la integra FastF1 desde la velocidad: cada coche va en su escala."
+axisNotice AxisFraction =
+  "Cada coche dividido por su propia distancia: la misma fracción puede no ser el mismo punto de la pista."
+axisNotice AxisTime     = "Segundos desde la línea: el coche más rápido llega antes a cada curva."
+axisNotice AxisSectors  = "Estirado para que S1 y S2 coincidan: dentro de cada sector, aproximado."
+
+-- | Lo que la vuelta de un coche aporta a los ejes: su distancia total y dónde cruzó
+-- S1 y S2, en metros. Las fronteras vienen calculadas con la vuelta completa.
+data LapGeometry = LapGeometry
+  { lgTotal     :: Double
+  , lgFrontiers :: (Double, Double)
+  }
+  deriving stock (Eq, Show)
+
+-- | La X de cada muestra (segundos y metros desde la línea) de un coche en el eje
+-- elegido; el segundo 'LapGeometry' es el de la referencia, y solo cuenta en
+-- 'AxisSectors'. Con una distancia total que no sea positiva, la fracción es 0.
+axisXs :: Axis -> LapGeometry -> LapGeometry -> [(Double, Double)] -> [Double]
+axisXs AxisTime _ _       = map fst
+axisXs AxisDistance _ _   = map snd
+axisXs AxisFraction car _ = map (fractionOf car . snd)
+axisXs AxisSectors car ref =
+  map (anchored (frontierFractions car) (frontierFractions ref) . fractionOf car . snd)
+
+fractionOf :: LapGeometry -> Double -> Double
+fractionOf lap d
+  | lgTotal lap > 0 = d / lgTotal lap
+  | otherwise       = 0
+
+frontierFractions :: LapGeometry -> (Double, Double)
+frontierFractions lap = (fractionOf lap s1, fractionOf lap s2)
+  where
+    (s1, s2) = lgFrontiers lap
 
 -- | Una fracción de vuelta de un coche, llevada por tramos a las fronteras de la
 -- referencia: las fronteras S1 y S2 del coche (en fracción de vuelta) caen en las de
