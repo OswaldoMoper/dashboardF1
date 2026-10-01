@@ -1,0 +1,24 @@
+import { defineConfig, devices } from '@playwright/test';
+
+// Un proceso y un reintento: una prueba que solo pasa al reintentar sale como
+// «flaky», y ese aviso se lee.
+export default defineConfig({
+  testDir: '.',
+  workers: 1,
+  retries: 1,
+  reporter: 'list',
+  use: {
+    baseURL: process.env.E2E_URL ?? 'http://localhost:3000',
+    trace: 'retain-on-failure',
+  },
+  projects: [
+    {
+      name: 'edge-1912x914',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1912, height: 914 } },
+    },
+    {
+      name: 'portatil-1280x720',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 720 } },
+    },
+  ],
+});

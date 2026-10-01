@@ -122,6 +122,24 @@
             exec nix run .#dev -- "$@"
           '';
         };
+
+        # Same deferral for the browser suite: its 2.3 GiB of browsers are fetched
+        # the first time it runs, never on entering the dev shell.
+        e2eLauncher = pkgs.writeShellApplication {
+          name = "dashboardF1-e2e";
+          text = ''
+            ${guardRoot}
+            exec nix run .#e2e -- "$@"
+          '';
+        };
+
+        e2eRecordLauncher = pkgs.writeShellApplication {
+          name = "dashboardF1-e2e-record";
+          text = ''
+            ${guardRoot}
+            exec nix run .#e2e -- --record "$@"
+          '';
+        };
       in
       {
         # ── Backend Servant (Fase 1: /home + /api/* en :8080, override con PORT) ──
@@ -349,6 +367,26 @@
           '';
         };
 
+        packages.e2e = pkgs.writeShellApplication {
+          name = "dashboardF1-e2e";
+          runtimeInputs = [ pkgs.playwright-test pkgs.typescript ];
+          text = ''
+            ${guardRoot}
+            record=""
+            args=()
+            for arg in "$@"; do
+              if [ "$arg" = --record ]; then record=1; else args+=("$arg"); fi
+            done
+            cd e2e
+            ln -sfn ${pkgs.playwright-test}/lib/node_modules node_modules
+            tsc -p .
+            if [ -n "$record" ]; then
+              E2E_RECORD=1 exec playwright test --project=edge-1912x914 "''${args[@]}"
+            fi
+            E2E_FRONTEND=${self'.packages.frontend} exec playwright test "''${args[@]}"
+          '';
+        };
+
         # Runs the binary `cabal build backend` leaves in the working tree, so a
         # code change needs no `nix build`. Its path carries the GHC and package
         # version, so it is located and never spelled out. The default port
@@ -424,6 +462,11 @@
           program = "${self'.packages.test}/bin/dashboardF1-test";
         };
 
+        apps.e2e = {
+          type = "app";
+          program = "${self'.packages.e2e}/bin/dashboardF1-e2e";
+        };
+
         apps.api = {
           type = "app";
           program = "${self'.packages.api}/bin/dashboardF1-api";
@@ -442,6 +485,8 @@
             pkg-config
           ]) ++ [
             devLauncher
+            e2eLauncher
+            e2eRecordLauncher
             self'.packages.hspec
             self'.packages.test
             self'.packages.serve
@@ -457,6 +502,8 @@
             echo "  backend : cabal run backend       # Servant en :8080 (Fase 0, sesión 3)"
             echo "  todo    : dashboardF1-dev         # microservicio + backend, STATIC_DIR desde el store"
             echo "  pruebas : dashboardF1-hspec       # cabal build all + cabal test all"
+            echo "  e2e     : dashboardF1-e2e         # tsc + Playwright, con lo grabado en e2e/recordings"
+            echo "  e2e rec : dashboardF1-e2e-record  # graba /api/* de :3000 (otro con E2E_URL)"
             echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
             echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
             echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"
