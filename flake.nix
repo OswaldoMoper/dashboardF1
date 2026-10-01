@@ -361,9 +361,13 @@
 
         packages.test = pkgs.writeShellApplication {
           name = "dashboardF1-test";
-          runtimeInputs = [ self'.packages.hspec ];
+          runtimeInputs = [ self'.packages.hspec e2eLauncher ];
           text = ''
-            exec dashboardF1-hspec "$@"
+            if ! dashboardF1-hspec "$@"; then
+              echo "dashboardF1-hspec falló; mientras lo revisas puedes correr dashboardF1-e2e" >&2
+              exit 1
+            fi
+            exec dashboardF1-e2e
           '';
         };
 
@@ -502,6 +506,7 @@
             echo "  backend : cabal run backend       # Servant en :8080 (Fase 0, sesión 3)"
             echo "  todo    : dashboardF1-dev         # microservicio + backend, STATIC_DIR desde el store"
             echo "  pruebas : dashboardF1-hspec       # cabal build all + cabal test all"
+            echo "  las dos : dashboardF1-test        # hspec y, si pasa, e2e"
             echo "  e2e     : dashboardF1-e2e         # tsc + Playwright, con lo grabado en e2e/recordings"
             echo "  e2e rec : dashboardF1-e2e-record  # graba /api/* de :3000 (otro con E2E_URL)"
             echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
