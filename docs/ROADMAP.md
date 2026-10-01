@@ -679,13 +679,19 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       —página, grupo, tarjeta—, así que no es el único mando de sesión sino el de arriba. Y la sesión
       **en marcha** no hay que ir a buscarla a OpenF1: el feed la anuncia, que es justo cuando OpenF1
       está cerrado.
+- [ ] **Lap Comparison elige el tipo de gráfica y compara hasta cinco** (2026-09-29 (a) y (b), 2026-09-30 (a)).
+      Cuatro tipos —Delta por sectores, Lap Speed Trace, Telemetría comparativa (velocidad, acelerador y freno) y
+      Lap Delta—, elegidos en el título, con la Δ **solo en las fronteras**, que es lo único exacto. Hasta cinco
+      pilotos de una sesión, o un piloto en cinco sesiones; esta segunda forma llega con el selector de sesión.
+      **Una sola respuesta** del microservicio elige la vuelta y trae tiempos, Δ y curvas, así que el cambio cruza
+      microservicio, `LapComparison` (hoy `lcCarA`/`lcCarB` fijos), backend y widget a la vez. En los tipos con
+      trazas el usuario elige el eje, las fronteras y las muestras (de 60 a 250, en N exactas: el paso de hoy,
+      `len // N`, no las da). Una tarjeta más baja que el mínimo del tipo elegido hace scroll dentro hasta que
+      exista el modo edición, y el deslizable pide como mucho una vez cada ~200 ms mientras se arrastra, más la
+      del final (2026-10-01). **Sin decidir:** contra quién se mide la Δ con tres o más pilotos. Falta el código.
 
 **Lo que NO es de esta fase**, aunque se pida junto con lo de arriba y se le parezca:
 
-- **Comparar N pilotos en Lap Comparison.** El microservicio compara **exactamente dos** coches por
-  contrato (ver 2026-08-03 y 2026-08-05) y `LapComparison` tiene `lcCarA`/`lcCarB` fijos, así que toca
-  Python, DTO, `Handler.Comparison.Helper` y `Common.Chart` —de una serie a N—. **Fase propia**, y con
-  diseño previo: con tres coches «el delta contra el otro» no existe, y hay que elegir contra qué se mide.
 - **Evolución de los dos campeonatos.** El dato no existe hoy: Jolpica publica los standings de **una**
   ronda y `/api/historical` sirve la clasificación actual. La evolución pide las 24 rondas, o sea agregado
   o endpoint nuevo, más **cache por ronda** — sería el primer dato del proyecto que **no cambia nunca**, lo
