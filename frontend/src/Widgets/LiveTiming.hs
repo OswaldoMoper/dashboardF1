@@ -36,7 +36,7 @@ import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
                                 delayWaitLabel, delayedPoll, indicatorClass,
                                 indicatorFrom, indicatorTooltip, landed,
                                 liveRefreshSeconds, pollIdle, pollStep,
-                                recordArrival)
+                                recordArrival, shownAge)
 import           Common.Types  (DriverStatus (..), LiveTable (..),
                                 LiveTimingRow (..), SessionInfo (..),
                                 StateReading (..), sessionInProgress,
@@ -126,11 +126,13 @@ livePoll = mdo
 
 -- | El directo tal como se enseña: el refresco visto con el retraso pedido, el
 -- retraso, y cuántos segundos faltan para tener algo tan viejo ('Nothing' si ya lo
--- hay o no hay retraso).
+-- hay o no hay retraso), y cuántos segundos hace que llegó lo enseñado
+-- ('Common.Shown.shownAge').
 data LiveView t = LiveView
   { lvPoll  :: Dynamic t (Poll (Sourced LiveTable))
   , lvDelay :: Dynamic t Int
   , lvWait  :: Dynamic t (Maybe Int)
+  , lvAge   :: Dynamic t (Maybe Int)
   }
 
 -- | Aplica el retraso al refresco, una sola vez para la banda y para la tarjeta.
@@ -146,7 +148,8 @@ delayedLive delay poll = do
                 attach (current now) (fmapMaybe landed (updated poll))
   shown    <- holdUniqDyn (delayedPoll waiting <$> delay <*> now <*> arrivals <*> poll)
   wait     <- holdUniqDyn (delayWait <$> delay <*> now <*> arrivals)
-  pure (LiveView shown delay wait)
+  age      <- holdUniqDyn (shownAge <$> delay <*> now <*> arrivals)
+  pure (LiveView shown delay wait age)
   where
     waiting s = s {srcValue = waitingTable (srcValue s)}
 

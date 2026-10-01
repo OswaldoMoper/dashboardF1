@@ -3004,9 +3004,9 @@ main = hspec $ do
       bandRight (NextStartsIn (12 * 60)) (Just (LapProgress 57 57)) Nothing
         `shouldBe` "empieza en 12 min"
 
-    it "mientras espera, la tabla no tiene filas ni dice qué viene después" $
+    it "mientras espera, la tabla no tiene filas pero sí dice qué viene después" $
       waitingTable liveTableFixture {liveNext = NextStartsIn 60}
-        `shouldBe` LiveTable (Just (waitingSession raceSessionFixture)) [] NextSilent
+        `shouldBe` LiveTable (Just (waitingSession raceSessionFixture)) [] (NextStartsIn 60)
 
   -- Una respuesta 200 que no nombra su sesión no es un fallo, así que 'pollStep' no
   -- la conserva: la tabla llega entera y lo que falta es un campo de dentro. Lo que

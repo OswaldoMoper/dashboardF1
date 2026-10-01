@@ -40,7 +40,7 @@ import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
                                      WidgetId (..), WidgetType (..), bandNote,
                                      bandRight, bandStateLabel, isDerived,
                                      noParams, sessionTitle, shownClock,
-                                     tickClock, tickDown)
+                                     tickClock, tickDown, catchUp)
 import           Data.Maybe         (fromMaybe, isJust)
 import qualified Data.Text          as T
 import           Reflex.Dom
@@ -79,7 +79,7 @@ dashboardPage = divClass "page page--dashboard" $ do
   (layoutDyn, live) <- divClass "top-bar" $ do
     (active, delay) <- dashboardHeader initial openDyn
     live <- delayedLive delay poll
-    sessionBand openDyn (lvPoll live)
+    sessionBand openDyn (lvPoll live) (lvAge live)
     pure (active, live)
   elDynClass "div" (canvasClass <$> openDyn) $
     mapM_ (layer live layoutDyn) [raceOverview, qualy]
@@ -175,15 +175,16 @@ delayField initial = elClass "label" "delay-field" $ mdo
 -- Un solo tic de un segundo mueve los dos relojes de la banda —la cuenta atrás y la
 -- edad de lo conservado—, para que no se desincronicen.
 sessionBand :: MonadWidget t m
-            => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> m ()
-sessionBand openDyn poll = mdo
+            => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> Dynamic t (Maybe Int)
+            -> m ()
+sessionBand openDyn poll age = mdo
   tick    <- tickLossyFromPostBuildTime 1
   let arrived = sessionOf <$> ffilter (isJust . landed) (updated poll)
   kept    <- foldDyn keepLast keptNothing arrived
   age     <- sessionAge tick arrived
   title   <- holdUniqDyn (maybe "" sessionTitle . keptValue <$> kept)
   reading <- holdUniqDyn ((\k -> siState =<< keptValue k) <$> kept)
-  next    <- countdown tick (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
+  next    <- countdown tick age (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
   clock   <- sessionClock tick ((shownClock =<<) . sessionOf <$> poll)
   let laps = (siLaps =<<) . sessionOf <$> poll
   asCard  <- toggle True lookClick
@@ -292,14 +293,21 @@ sessionAge tick arrived =
 -- servido delante): lo que el backend resolvió manda sobre lo que el navegador
 -- descontó.
 --
+-- __Cada valor servido entra a la hora del calendario__: se le descuenta la edad de
+-- lo enseñado ('Common.Types.catchUp'), leída en el mismo frame
+-- ('attachPromptlyDynWith'), porque con @current@ sería la del valor anterior.
+--
 -- __El tic entra por argumento y no se crea aquí__: es el mismo que cuenta la edad
 -- de lo conservado, y dos relojes de un segundo se separarían con el tiempo.
 countdown :: MonadWidget t m
-          => Event t TickInfo -> Dynamic t UpNext -> m (Dynamic t UpNext)
-countdown tick served = do
+          => Event t TickInfo -> Dynamic t (Maybe Int) -> Dynamic t UpNext
+          -> m (Dynamic t UpNext)
+countdown tick age served = do
   fresh <- holdUniqDyn served
   foldDyn ($) NextUnknown $
-    leftmost [const <$> updated fresh, tickDown <$ tick]
+    leftmost [ attachPromptlyDynWith (\a v -> const (catchUp (fromMaybe 0 a) v)) age (updated fresh)
+             , tickDown <$ tick
+             ]
 
 -- | El reloj de la sesión que llega en la respuesta, descontado en el navegador con
 -- el mismo reparto que 'countdown': cada valor servido nuevo manda, y entre uno y
