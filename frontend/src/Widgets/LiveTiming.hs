@@ -160,8 +160,9 @@ liveTimingWidget :: MonadWidget t m => LiveView t -> m ()
 liveTimingWidget live = divClass "widget widget--live-timing" $ do
   closed <- divClass "widget__head" $ do
     el "h2" $ text "Live Timing"
+    c <- columnsMenu
     liveBadge (lvDelay live) (indicatorOf <$> lvPoll live)
-    columnsMenu
+    pure c
   state <- holdUniqDyn (viewOf <$> lvDelay live <*> lvWait live <*> lvPoll live)
   dyn_ (renderState <$> closed <*> state)
   where

@@ -532,10 +532,15 @@ body {
 }
 
 /* «Columnas ▾»: el panel flota encima de la tabla, y la capa transparente de debajo
-   lo cierra al pulsar fuera. */
+   lo cierra al pulsar fuera. El botón va pegado a «Live», que se queda en la
+   esquina: empuja él, y el indicador deja de empujar (2026-10-02). */
 .live-timing__columns {
   position: relative;
   margin-left: auto;
+}
+
+.widget--live-timing .widget__badge {
+  margin-left: var(--sp-6);
 }
 
 .live-timing__columns-btn {
