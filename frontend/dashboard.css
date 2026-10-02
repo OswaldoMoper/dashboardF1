@@ -967,11 +967,18 @@ body {
 
 /* Los colores de las dos rayas repiten los de las líneas del gráfico, que el widget
    pone como atributos del SVG (#888888 el cero, #e10600 la serie). */
+/* Dos piezas, «Δ contra [▾]» y la leyenda como un bloque, repartidas con space-evenly. */
 .comparison__legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
   margin-top: var(--sp-2);
-  text-align: center;
   font-size: var(--fs-xs);
   color: var(--c-muted);
+}
+
+.comparison__legend[hidden] {
+  display: none;
 }
 
 .comparison__key {

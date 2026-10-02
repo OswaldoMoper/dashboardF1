@@ -11,8 +11,9 @@
 -- 'Widgets.LiveTiming', 'Widgets.Telemetry' e 'Widgets.Historical'.
 --
 -- __Es el primer widget del repo que pinta una serie y no una tabla.__ Pinta el
--- par de los dos primeros coches de 'Common.Types.LapComparison': el primero es la
--- referencia y la serie es la Δ del segundo contra él ('Common.Comparison.pairDelta').
+-- par de los dos primeros coches de 'Common.Types.LapComparison' (el primero es la
+-- referencia) con la base que elige «Δ contra»: la serie es la Δ del coche que no es
+-- la base ('Common.Comparison.pairWith').
 -- Los tiempos vienen __ya formateados__ desde el microservicio (2026-07-31).
 --
 -- __El gráfico es SVG a mano, sin librería.__ El escalado vive en 'Common.Chart',
@@ -61,7 +62,10 @@ import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         shownMode, showsNames, showsValues,
                                         valueHeight, valuesFitMeasured,
                                         vsBeside)
-import           Common.Comparison (lapShown, missingReference, pairDelta)
+import           Common.Comparison (Baseline (..), Pair (..), baselineFromKey,
+                                    baselineKey, baselineLabel, baselineRole,
+                                    baselinesInOrder, lapShown,
+                                    missingReference, pairWith)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
                                 driversPathFor)
@@ -117,7 +121,7 @@ data CState
 -- mide 0, así que al enseñarse se vuelve a medir.
 comparisonWidget :: MonadWidget t m => Event t () -> m ()
 comparisonWidget revealed = mdo
-  (root, (card, (userMode, state))) <-
+  (root, (card, (userMode, state, base))) <-
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
       swap <- divClass "widget__head" $ do
         el "h2" $ text "Lap Comparison"
@@ -134,37 +138,68 @@ comparisonWidget revealed = mdo
           pure r'
         divClass "comparison__plot" $
           dyn_ ( plotView (dyn_ (banner <$> zipDyn refresh st))
-                   <$> shown <*> layout <*> (otherSide <$> side) <*> st )
+                   <$> shown <*> layout <*> (otherSide <$> side) <*> b <*> st )
         pure r
-      dyn_ (legendState <$> st)
+      b       <- legendRow st
       resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
       refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
       st      <- foldDyn step Loading resp
-      pure (chosenE, st)
+      pure (chosenE, st, b)
   size    <- cardSize root card (current rowNow) changed
   stacked <- holdUniqDyn (clStacked <$> layout)
   chosen  <- holdDyn defaultMode userMode
   shown   <- holdUniqDyn (shownMode <$> fits <*> chosen)
   let layout   = cardLayout . maybe 0 fst <$> size
       fits     = maybe True snd <$> size
-      rowNow   = rowHeightNow <$> shown <*> state
+      rowNow   = rowHeightNow <$> shown <*> base <*> state
       changed  = leftmost
-                   [() <$ updated shown, () <$ updated state, () <$ updated stacked, revealed]
+                   [ () <$ updated shown, () <$ updated state, () <$ updated base
+                   , () <$ updated stacked, revealed ]
   pure ()
   where
     controlState :: MonadWidget t m => CState -> m ()
     controlState (Loaded c) = lapHeader c
     controlState _          = blank
 
-    legendState :: MonadWidget t m => CState -> m ()
-    legendState (Loaded c) = legend c
-    legendState _          = blank
-
 -- | El alto de la fila de fronteras pintada: el de su modo si hay fronteras que
 -- nombrar, 0 si no hay fila.
-rowHeightNow :: ChartMode -> CState -> Double
-rowHeightNow m (Loaded c) | not (null (frontierCells (pairDelta c))) = rowHeight m
-rowHeightNow _ _          = 0
+rowHeightNow :: ChartMode -> Baseline -> CState -> Double
+rowHeightNow m b (Loaded c) | not (null (frontierCells (seriesOf b c))) = rowHeight m
+rowHeightNow _ _ _          = 0
+
+-- | La serie que se pinta con una base: la Δ del coche que no es la base
+-- ('Common.Comparison.pairWith'), o @[]@.
+seriesOf :: Baseline -> LapComparison -> [Double]
+seriesOf b = maybe [] pairDelta . pairWith b
+
+-- | La fila de la leyenda: «Δ contra [Referencia ▾]» y la leyenda como un bloque,
+-- repartidos con @space-evenly@ (2026-10-01 (g)), y la base elegida. El desplegable
+-- va fuera del 'dyn_', que lo devolvería a «Referencia» en cada respuesta; la fila
+-- se esconde mientras no hay comparación.
+legendRow :: MonadWidget t m => Dynamic t CState -> m (Dynamic t Baseline)
+legendRow st =
+  elDynAttr "div" (attrs <$> st) $ do
+    b <- elClass "span" "comparison__against" $ do
+      text "Δ contra "
+      baselineSelect
+    elClass "span" "comparison__keys" $ dyn_ (legendState <$> b <*> st)
+    pure b
+  where
+    attrs (Loaded _) = "class" =: "comparison__legend"
+    attrs _          = ("class" =: "comparison__legend") <> ("hidden" =: "")
+    legendState b (Loaded c) = legend b c
+    legendState _ _          = blank
+
+-- | El desplegable «Δ contra», nativo; abre en «Referencia».
+baselineSelect :: MonadWidget t m => m (Dynamic t Baseline)
+baselineSelect = do
+  let cfg = def
+        & selectElementConfig_initialValue .~ baselineKey AgainstReference
+        & selectElementConfig_elementConfig . elementConfig_initialAttributes
+            .~ ("class" =: "car-selector__select comparison__baseline")
+  (sel, _) <- selectElement cfg $ forM_ baselinesInOrder $ \b ->
+    elAttr "option" ("value" =: baselineKey b) $ text (baselineLabel b)
+  pure (fromMaybe AgainstReference . baselineFromKey <$> _selectElement_value sel)
 
 -- | Lo que se mide de la tarjeta: su ancho por dentro, en px, y si caben las dos
 -- líneas de la fila de fronteras sin que pida scroll
@@ -536,13 +571,14 @@ lapLabel e = divClass "comparison__lap" $ do
 -- fronteras con las líneas que pida el modo. El primer argumento se pinta encima
 -- de la curva, dentro de su lienzo: el aviso de la petición. Si la referencia no
 -- tiene vuelta, en lugar de todo eso va el aviso de 'Common.Comparison.missingReference'.
-plotView :: MonadWidget t m => m () -> ChartMode -> CardLayout -> Side -> CState -> m ()
-plotView _ _ _ _ Loading =
+plotView
+  :: MonadWidget t m => m () -> ChartMode -> CardLayout -> Side -> Baseline -> CState -> m ()
+plotView _ _ _ _ _ Loading =
   elClass "p" "status status--loading" $ text "Cargando…"
-plotView _ _ _ _ Failed =
+plotView _ _ _ _ _ Failed =
   elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
-plotView overlay m l axis (Loaded c)
-  | Just note <- missingReference c = elClass "p" "status status--empty" $ text note
+plotView overlay m l axis b (Loaded c)
+  | Just note <- missingReference b c = elClass "p" "status status--empty" $ text note
   | otherwise =
       elAttr "div" (plotRowAttrs axis) $ do
         divClass "comparison__plotarea" $ do
@@ -554,7 +590,7 @@ plotView overlay m l axis (Loaded c)
           frontierRow (showsNames m) (showsValues m) series
         unless (clAxisInside l) $ axisColumn axis series
   where
-    series = pairDelta c
+    series = seriesOf b c
 
 -- | La fila de la gráfica: el lienzo con su fila de valores y, al lado del eje, su
 -- columna.
@@ -645,22 +681,20 @@ frontierCell names values (x, name, value) =
         , ("style", "left: " <> formatFixed 3 x <> "%")
         ]
 
--- | Qué es cada línea: la discontinua es la referencia, y la roja el segundo coche
--- contra ella. Por encima del cero, el segundo va por detrás, porque la serie es
--- comparado − referencia.
+-- | Qué es cada línea: la discontinua (el cero) es la base, y la roja el otro coche
+-- contra ella ('Common.Comparison.pairWith'). Por encima del cero, el otro va por
+-- detrás, porque la serie es comparado − base.
 --
--- Sin serie no hay línea roja que explicar, y queda solo la referencia; si es la
--- referencia la que no tiene vuelta no hay gráfica, y no se pinta nada.
-legend :: DomBuilder t m => LapComparison -> m ()
-legend c = case lcEntries c of
-  ref : rest | Nothing <- missingReference c -> divClass "comparison__legend" $ do
+-- Sin serie no hay línea roja que explicar, y queda solo la base; si va contra la
+-- referencia y es ella la que no tiene vuelta no hay gráfica, y no se pinta nada.
+legend :: DomBuilder t m => Baseline -> LapComparison -> m ()
+legend b c = case pairWith b c of
+  Just p | Nothing <- missingReference b c -> do
     elClass "span" "comparison__key comparison__key--ref" $ text "- - -"
-    text (" " <> ceDriver ref <> " (referencia)")
-    case rest of
-      other : _ | not (null (pairDelta c)) -> do
-        elClass "span" "comparison__key comparison__key--delta" $ text "——"
-        text (" " <> ceDriver other <> ": por encima, va por detrás")
-      _ -> blank
+    text (" " <> ceDriver (pairBase p) <> " (" <> baselineRole b <> ")")
+    unless (null (pairDelta p)) $ do
+      elClass "span" "comparison__key comparison__key--delta" $ text "——"
+      text (" " <> ceDriver (pairOther p) <> ": por encima, va por detrás")
   _ -> blank
 
 -- | Elemento en el namespace de SVG.

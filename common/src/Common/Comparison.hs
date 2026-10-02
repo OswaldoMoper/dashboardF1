@@ -5,6 +5,12 @@ module Common.Comparison
   ( Sectors
   , frontierTimes
   , Baseline (..)
+  , baselinesInOrder
+  , baselineLabel
+  , baselineRole
+  , baselineKey
+  , baselineFromKey
+  , baseIndex
   , deltasAgainst
   , Axis (..)
   , axesInOrder
@@ -15,7 +21,8 @@ module Common.Comparison
   , axisXs
   , anchored
     -- * Lo que pinta el par de hoy
-  , pairDelta
+  , Pair (..)
+  , pairWith
   , lapShown
   , missingReference
   ) where
@@ -23,7 +30,7 @@ module Common.Comparison
 import           Common.Types  (ComparisonEntry (..), LapComparison (..))
 import           Control.Monad (join)
 import           Data.List     (minimumBy)
-import           Data.Maybe    (catMaybes, isNothing, listToMaybe)
+import           Data.Maybe    (isNothing, listToMaybe)
 import           Data.Ord      (comparing)
 import           Data.Text     (Text)
 
@@ -37,24 +44,52 @@ frontierTimes (s1, s2, s3) = [0, s1, s1 + s2, s1 + s2 + s3]
 -- | Contra quién se mide la Δ: la referencia (el primero de la lista), o el más
 -- rápido de los que se comparan.
 data Baseline = AgainstReference | AgainstFastest
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Enum, Bounded)
+
+-- | Las bases en el orden del desplegable «Δ contra».
+baselinesInOrder :: [Baseline]
+baselinesInOrder = [minBound .. maxBound]
+
+-- | El nombre de la base en el desplegable.
+baselineLabel :: Baseline -> Text
+baselineLabel AgainstReference = "Referencia"
+baselineLabel AgainstFastest   = "Más rápido"
+
+-- | Cómo se nombra la base en la leyenda, entre paréntesis tras el piloto.
+baselineRole :: Baseline -> Text
+baselineRole AgainstReference = "referencia"
+baselineRole AgainstFastest   = "más rápido"
+
+-- | El @value@ de cada opción del desplegable.
+baselineKey :: Baseline -> Text
+baselineKey AgainstReference = "reference"
+baselineKey AgainstFastest   = "fastest"
+
+-- | 'baselineKey' al revés.
+baselineFromKey :: Text -> Maybe Baseline
+baselineFromKey k = lookup k [(baselineKey b, b) | b <- baselinesInOrder]
+
+-- | Qué piloto es la base, por su posición: la referencia si tiene sus sectores, o
+-- el más rápido de los que los tienen (un empate se lo queda el primero).
+-- 'Nothing' si la base no tiene sectores.
+baseIndex :: Baseline -> [Maybe Sectors] -> Maybe Int
+baseIndex AgainstReference (Just _ : _) = Just 0
+baseIndex AgainstReference _            = Nothing
+baseIndex AgainstFastest entries =
+  case [(i, s) | (i, Just s) <- zip [0 ..] entries] of
+    [] -> Nothing
+    xs -> Just (fst (minimumBy (comparing (lapOf . snd)) xs))
+  where
+    lapOf (s1, s2, s3) = s1 + s2 + s3
 
 -- | La Δ de cada piloto en las cuatro fronteras, __comparado − base__ (positivo = va
--- por detrás), en el orden de entrada. El más rápido es la vuelta más corta de los
--- que tienen sus tres sectores, y un empate se lo queda el primero. Un piloto sin
+-- por detrás), en el orden de entrada; la base es la de 'baseIndex'. Un piloto sin
 -- sectores da @[]@, y todos dan @[]@ si la base no los tiene.
 deltasAgainst :: Baseline -> [Maybe Sectors] -> [[Double]]
 deltasAgainst baseline entries =
-  case base of
+  case join . listToMaybe . flip drop entries =<< baseIndex baseline entries of
     Nothing -> map (const []) entries
     Just b  -> map (maybe [] (\s -> zipWith (-) (frontierTimes s) (frontierTimes b))) entries
-  where
-    base = case baseline of
-      AgainstReference -> join (listToMaybe entries)
-      AgainstFastest   -> fastest (catMaybes entries)
-    fastest [] = Nothing
-    fastest xs = Just (minimumBy (comparing lapOf) xs)
-    lapOf (s1, s2, s3) = s1 + s2 + s3
 
 -- | El eje X de las trazas.
 data Axis = AxisDistance | AxisFraction | AxisTime | AxisSectors
@@ -122,14 +157,31 @@ anchored (a1, a2) (b1, b2) f
   | f <= a2   = b1 + (f - a1) / (a2 - a1) * (b2 - b1)
   | otherwise = b2 + (f - a2) / (1 - a2) * (1 - b2)
 
--- | La Δ del segundo coche contra el primero, la referencia, en las cuatro
--- fronteras ('deltasAgainst'). @[]@ si no hay segundo o si a alguno de los dos le
--- faltan los sectores.
-pairDelta :: LapComparison -> [Double]
-pairDelta c =
-  case deltasAgainst AgainstReference (map ceSectors (lcEntries c)) of
-    (_ : delta : _) -> delta
-    _               -> []
+-- | El par que pinta la tarjeta con una base: la base (la línea del cero), el otro
+-- coche y su Δ contra ella en las cuatro fronteras.
+data Pair = Pair
+  { pairBase  :: ComparisonEntry
+  , pairOther :: ComparisonEntry
+  , pairDelta :: [Double]  -- ^ @[]@ si a alguno de los dos le faltan los sectores.
+  }
+  deriving stock (Eq, Show)
+
+-- | El par de los dos primeros coches con la base elegida ('baseIndex'). Si la base
+-- no se puede elegir —ninguno tiene vuelta, o la referencia no la tiene— la base es
+-- la referencia. 'Nothing' sin dos coches.
+pairWith :: Baseline -> LapComparison -> Maybe Pair
+pairWith baseline c =
+  case lcEntries c of
+    ref : other : _ ->
+      let sectors        = [ceSectors ref, ceSectors other]
+          (dRef, dOther) = case deltasAgainst baseline sectors of
+            [a, b] -> (a, b)
+            _      -> ([], [])
+       in Just $
+            if baseIndex baseline sectors == Just 1
+              then Pair other ref dRef
+              else Pair ref other dOther
+    _ -> Nothing
 
 -- | El tiempo de vuelta de un coche como se pinta: @«sin vuelta»@ si no tiene sus
 -- tres sectores.
@@ -138,11 +190,16 @@ lapShown e
   | isNothing (ceSectors e) = "sin vuelta"
   | otherwise               = ceLap e
 
--- | El aviso que sustituye a la gráfica cuando la referencia no tiene vuelta, o
--- 'Nothing' si la tiene (o no hay coches).
-missingReference :: LapComparison -> Maybe Text
-missingReference c =
+-- | El aviso que sustituye a la gráfica cuando la Δ va contra la referencia y la
+-- referencia no tiene vuelta; 'Nothing' en cualquier otro caso. Contra el más rápido
+-- no hay aviso: la base es el más rápido de los que tienen vuelta.
+missingReference :: Baseline -> LapComparison -> Maybe Text
+missingReference AgainstFastest _ = Nothing
+missingReference AgainstReference c =
   case lcEntries c of
-    (ref : _) | isNothing (ceSectors ref) ->
-      Just (ceDriver ref <> " no tiene vuelta en esta sesión: elige otra referencia.")
+    (ref : _) | isNothing (ceSectors ref) -> Just (noLapNote ref <> ": elige otra referencia.")
     _ -> Nothing
+
+-- | @«LEC no tiene vuelta en esta sesión»@: el aviso de un coche sin vuelta.
+noLapNote :: ComparisonEntry -> Text
+noLapNote e = ceDriver e <> " no tiene vuelta en esta sesión"

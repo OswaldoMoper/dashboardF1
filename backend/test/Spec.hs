@@ -59,8 +59,11 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               axesInOrder, axisLabel,
                                               axisNotice, axisXs,
                                               defaultAxis, deltasAgainst,
-                                              lapShown, missingReference,
-                                              pairDelta)
+                                              Pair (..), baseIndex,
+                                              baselineFromKey, baselineKey,
+                                              baselineLabel, baselineRole,
+                                              baselinesInOrder, lapShown,
+                                              missingReference, pairWith)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
@@ -2304,34 +2307,63 @@ main = hspec $ do
           | f <- [0, 0.01 .. 1], g <- [0, 0.01 .. 1], f <= g ]
         `shouldBe` True
 
-  -- El par que pinta hoy la tarjeta, sobre el dummy (LEC referencia, NOR comparado)
-  -- y sus variantes sin vuelta (Monza: el 16 no tiene vuelta). Los valores, de GHC.
+  -- El par que pinta hoy la tarjeta, sobre el dummy (LEC referencia, 1:29.512; NOR
+  -- comparado y más rápido, 1:29.345) y sus variantes sin vuelta (Monza: el 16 no
+  -- tiene vuelta). Los valores, de GHC.
   describe "Common.Comparison: el par" $ do
     let near a b = abs (a - b) < 1e-9
+        nearAll xs ys = length xs == length ys && and (zipWith near xs ys)
         (lec, nor) = case lcEntries Comparison.dummy of
           [a, b] -> (a, b)
           _      -> error "el dummy de la comparación ya no son dos coches"
         pair es = Comparison.dummy { lcEntries = es }
         noLap e = e { ceLap = "", ceSectors = Nothing }
-    it "la Δ del segundo contra la referencia, en las cuatro fronteras" $
-      pairDelta Comparison.dummy
-        `shouldSatisfy` (\d -> length d == 4 && and (zipWith near d [0.0, 0.048, -0.081, -0.167]))
+        roles b c = fmap (\p -> (ceDriver (pairBase p), ceDriver (pairOther p))) (pairWith b c)
+        delta b c = maybe [] pairDelta (pairWith b c)
+    it "contra la referencia: la base es la referencia y la Δ, la del otro" $ do
+      roles AgainstReference Comparison.dummy `shouldBe` Just ("LEC", "NOR")
+      delta AgainstReference Comparison.dummy `shouldSatisfy` nearAll [0.0, 0.048, -0.081, -0.167]
 
-    it "sin Δ si a cualquiera de los dos le falta la vuelta, o si no hay segundo" $ do
-      pairDelta (pair [noLap lec, nor]) `shouldBe` []
-      pairDelta (pair [lec, noLap nor]) `shouldBe` []
-      pairDelta (pair [lec]) `shouldBe` []
+    it "contra el más rápido: si es el otro, pasa a ser la base y se pinta la referencia" $ do
+      roles AgainstFastest Comparison.dummy `shouldBe` Just ("NOR", "LEC")
+      delta AgainstFastest Comparison.dummy `shouldSatisfy` nearAll [0.0, -0.048, 0.081, 0.167]
+
+    it "contra el más rápido, si lo es la referencia, igual que contra la referencia" $
+      map (\b -> roles b (pair [nor, lec])) baselinesInOrder `shouldBe` replicate 2 (Just ("NOR", "LEC"))
+
+    it "sin vuelta: no hay Δ, y la base es la que la tiene si va contra el más rápido" $ do
+      roles AgainstReference (pair [noLap lec, nor]) `shouldBe` Just ("LEC", "NOR")
+      delta AgainstReference (pair [noLap lec, nor]) `shouldBe` []
+      roles AgainstFastest (pair [noLap lec, nor]) `shouldBe` Just ("NOR", "LEC")
+      delta AgainstFastest (pair [noLap lec, nor]) `shouldBe` []
+      map (\b -> roles b (pair [lec, noLap nor])) baselinesInOrder `shouldBe` replicate 2 (Just ("LEC", "NOR"))
+      map (\b -> delta b (pair [lec, noLap nor])) baselinesInOrder `shouldBe` [[], []]
+
+    it "sin dos coches no hay par" $
+      pairWith AgainstReference (pair [lec]) `shouldBe` Nothing
 
     it "el tiempo, o «sin vuelta» si le faltan los sectores aunque traiga texto" $ do
       map lapShown [lec, nor] `shouldBe` ["1:29.512", "1:29.345"]
       lapShown (lec { ceSectors = Nothing }) `shouldBe` "sin vuelta"
 
-    it "el aviso solo cuando la que no tiene vuelta es la referencia" $ do
-      missingReference (pair [noLap lec, nor])
+    it "el aviso solo contra la referencia y cuando la que no tiene vuelta es ella" $ do
+      missingReference AgainstReference (pair [noLap lec, nor])
         `shouldBe` Just "LEC no tiene vuelta en esta sesión: elige otra referencia."
-      missingReference (pair [lec, noLap nor]) `shouldBe` Nothing
-      missingReference Comparison.dummy `shouldBe` Nothing
-      missingReference (pair []) `shouldBe` Nothing
+      missingReference AgainstFastest (pair [noLap lec, nor]) `shouldBe` Nothing
+      missingReference AgainstReference (pair [lec, noLap nor]) `shouldBe` Nothing
+      missingReference AgainstReference Comparison.dummy `shouldBe` Nothing
+      missingReference AgainstReference (pair []) `shouldBe` Nothing
+
+    it "el desplegable «Δ contra»: sus dos bases, en orden, y sus claves de ida y vuelta" $ do
+      map baselineLabel baselinesInOrder `shouldBe` ["Referencia", "Más rápido"]
+      map baselineRole baselinesInOrder `shouldBe` ["referencia", "más rápido"]
+      map (baselineFromKey . baselineKey) baselinesInOrder `shouldBe` map Just baselinesInOrder
+      baselineFromKey "otra" `shouldBe` Nothing
+
+    it "la base por posición: el más rápido de los que tienen vuelta" $ do
+      baseIndex AgainstFastest [Nothing, ceSectors nor, ceSectors lec] `shouldBe` Just 1
+      baseIndex AgainstReference [Nothing, ceSectors nor] `shouldBe` Nothing
+      baseIndex AgainstFastest [Nothing, Nothing] `shouldBe` Nothing
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9
