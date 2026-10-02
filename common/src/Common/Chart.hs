@@ -35,6 +35,7 @@ module Common.Chart
   , zeroLineY
     -- * Fronteras
   , frontierCells
+  , frontierCellsAt
     -- * Eje
   , axisRange
   , axisTicks
@@ -127,11 +128,16 @@ zeroLineY xs = scaleY (deltaRange xs) 0
 -- La X sale del mismo escalado que los puntos, así que cada valor queda debajo del
 -- suyo aunque el @\<svg\>@ se estire.
 frontierCells :: [Double] -> [(Double, Text, Text)]
-frontierCells xs
-  | length xs == length names =
-      [ (scaleX (length xs) i / chartWidth * 100, name, formatDelta v)
-      | (i, name, v) <- zip3 [0 ..] names xs
-      ]
+frontierCells xs =
+  frontierCellsAt [scaleX (length xs) i / chartWidth * 100 | i <- [0 .. length xs - 1]] xs
+
+-- | 'frontierCells' con la X de cada frontera dada, en tanto por ciento del ancho:
+-- la de las trazas, donde las fronteras no caen a espacio igual. Vacía si no son
+-- cuatro X y cuatro valores.
+frontierCellsAt :: [Double] -> [Double] -> [(Double, Text, Text)]
+frontierCellsAt at xs
+  | length xs == length names && length at == length names =
+      [(x, name, formatDelta v) | (x, name, v) <- zip3 at names xs]
   | otherwise = []
   where
     names = ["Inicio", "S1", "S2", "S3"]

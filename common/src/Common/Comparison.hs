@@ -33,6 +33,11 @@ module Common.Comparison
   , chartTypeLabel
   , chartTypeReady
   , chartTypeKey
+  , chartTypeFromKey
+  , chartTypeTraces
+  , axisKey
+  , axisFromKey
+  , deltaFormula
   ) where
 
 import           Common.Types  (ComparisonEntry (..), LapComparison (..))
@@ -239,8 +244,9 @@ chartTypeLabel LapDeltaBars    = "Lap Delta"
 
 -- | Si el tipo ya se puede elegir; los demás salen en gris en el desplegable.
 chartTypeReady :: ChartType -> Bool
-chartTypeReady SectorDelta = True
-chartTypeReady _           = False
+chartTypeReady SectorDelta     = True
+chartTypeReady TelemetryTraces = True
+chartTypeReady _               = False
 
 -- | El @value@ de cada opción del desplegable.
 chartTypeKey :: ChartType -> Text
@@ -248,3 +254,26 @@ chartTypeKey SectorDelta     = "sector-delta"
 chartTypeKey LapSpeedTrace   = "lap-speed-trace"
 chartTypeKey TelemetryTraces = "telemetry"
 chartTypeKey LapDeltaBars    = "lap-delta"
+
+-- | 'chartTypeKey' al revés.
+chartTypeFromKey :: Text -> Maybe ChartType
+chartTypeFromKey k = lookup k [(chartTypeKey t, t) | t <- chartTypesInOrder]
+
+-- | Si el tipo pinta trazas y pide muestras al servidor.
+chartTypeTraces :: ChartType -> Bool
+chartTypeTraces = (`elem` [LapSpeedTrace, TelemetryTraces, LapDeltaBars])
+
+-- | El @value@ de cada opción del desplegable del eje.
+axisKey :: Axis -> Text
+axisKey AxisDistance = "distance"
+axisKey AxisFraction = "fraction"
+axisKey AxisTime     = "time"
+axisKey AxisSectors  = "sectors"
+
+-- | 'axisKey' al revés.
+axisFromKey :: Text -> Maybe Axis
+axisFromKey k = lookup k [(axisKey a, a) | a <- axesInOrder]
+
+-- | Qué resta la Δ de un par: @«NOR − LEC»@, el otro coche menos la base.
+deltaFormula :: Pair -> Text
+deltaFormula p = ceDriver (pairOther p) <> " − " <> ceDriver (pairBase p)

@@ -27,6 +27,15 @@ module Common.Traces
   , xPercent
     -- * La curva
   , tracePoints
+    -- * Los rótulos
+  , channelCaption
+  , axisEndLabel
+    -- * El deslizable de muestras
+  , samplesMin
+  , samplesMax
+  , samplesStep
+  , samplesStart
+  , readSamples
   ) where
 
 import           Common.Comparison (Axis (..), LapGeometry (..), axisXs)
@@ -35,6 +44,7 @@ import           Common.Types      (ComparisonEntry (..), TracePoint (..))
 import           Data.Maybe        (fromMaybe)
 import           Data.Text         (Text)
 import qualified Data.Text         as T
+import           Text.Read         (readMaybe)
 
 -- | Un canal de la traza, una fila del lienzo.
 data Channel = Speed | Throttle | Brake
@@ -106,12 +116,16 @@ carGeometry e = case ceTrace e of
   ps -> Just (LapGeometry (ctDistance (last ps)) (fromMaybe (0, 0) (ceFrontiers e)))
 
 -- | La X de cada muestra de un coche en el eje elegido, con la referencia para el eje
--- «Sectores». @[]@ si el coche o la referencia no tienen traza.
+-- «Sectores». @[]@ si el coche no tiene traza, o en «Sectores» si no la tiene la
+-- referencia.
 traceXs :: Axis -> ComparisonEntry -> ComparisonEntry -> [Double]
 traceXs axis ref car =
-  case (carGeometry car, carGeometry ref) of
-    (Just g, Just rg) -> axisXs axis g rg [(ctTime p, ctDistance p) | p <- ceTrace car]
-    _                 -> []
+  case (carGeometry car, axis) of
+    (Nothing, _)          -> []
+    (Just g, AxisSectors) -> maybe [] (\rg -> axisXs axis g rg samples) (carGeometry ref)
+    (Just g, _)           -> axisXs axis g g samples
+  where
+    samples = [(ctTime p, ctDistance p) | p <- ceTrace car]
 
 -- | Dónde acaba la vuelta de un coche en el eje: la X de su última muestra, o 0.
 axisEnd :: Axis -> ComparisonEntry -> ComparisonEntry -> Double
@@ -163,3 +177,32 @@ tracePoints ch (lo, hi) xMax xs ps
     pair a b = formatFixed 1 a <> "," <> formatFixed 1 b
     point xv yv (Just prev) | ch == Brake = [pair (x xv) prev, pair (x xv) yv]
     point xv yv _                         = [pair (x xv) yv]
+
+-- | El rótulo de una fila con su rango: la velocidad dice hasta dónde llega,
+-- @«km/h (0–300)»@; las otras dos, solo su nombre.
+channelCaption :: Channel -> (Double, Double) -> Text
+channelCaption Speed (lo, hi) =
+  channelLabel Speed <> " (" <> formatFixed 0 lo <> "–" <> formatFixed 0 hi <> ")"
+channelCaption ch _ = channelLabel ch
+
+-- | El rótulo del final del eje X: metros enteros, segundos con un decimal, o la
+-- fracción con dos.
+axisEndLabel :: Axis -> Double -> Text
+axisEndLabel AxisDistance x = formatFixed 0 x <> " m"
+axisEndLabel AxisTime x     = formatFixed 1 x <> " s"
+axisEndLabel _ x            = formatFixed 2 x
+
+-- | El deslizable de muestras por coche: de 60 a 250 de 5 en 5, y abre en 100
+-- (2026-09-30 (a)).
+samplesMin, samplesMax, samplesStep, samplesStart :: Int
+samplesMin   = 60
+samplesMax   = 250
+samplesStep  = 5
+samplesStart = 100
+
+-- | El valor del deslizable como muestras, o 'Nothing' si no es un número en su
+-- rango.
+readSamples :: Text -> Maybe Int
+readSamples t = do
+  n <- readMaybe (T.unpack t)
+  if n >= samplesMin && n <= samplesMax then Just n else Nothing

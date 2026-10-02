@@ -987,6 +987,101 @@ body {
   display: none;
 }
 
+/* ── Las trazas (tipo 3) ─────────────────────────────────────────────────── */
+
+/* El título no se parte; los mandos bajan a una segunda línea cuando no caben, y
+   «⇄» se queda arriba a la derecha (2026-10-02). */
+.widget--comparison .widget__head {
+  position: relative;
+  flex-wrap: wrap;
+  row-gap: var(--sp-1);
+  padding-right: 2.75rem;
+}
+
+.widget--comparison .widget__head > h2 {
+  white-space: nowrap;
+}
+
+.widget--comparison .comparison__swap {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+/* Los mandos del título, solo en los tipos con trazas. */
+.comparison__trace-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.comparison__trace-controls[hidden] {
+  display: none;
+}
+
+.comparison__samples,
+.comparison__check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--c-muted);
+  white-space: nowrap;
+}
+
+.comparison__slider {
+  width: 7rem;
+  accent-color: var(--c-accent);
+}
+
+.comparison__samples output {
+  min-width: 2.2em;
+  font-family: var(--font-mono);
+  color: var(--c-text);
+}
+
+.comparison__check input {
+  margin: 0;
+  accent-color: var(--c-accent);
+}
+
+.comparison__traces {
+  display: block;
+}
+
+/* Rótulos encima del lienzo: el canal, S1/S2 de cada coche y los extremos del eje. */
+.comparison__trace-label {
+  position: absolute;
+  font-size: 9px;
+  line-height: 11px;
+  color: var(--c-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.comparison__trace-label--ref,
+.comparison__key--trace-ref {
+  color: #e10600;
+}
+
+.comparison__trace-label--other,
+.comparison__key--trace-other {
+  color: var(--c-text);
+}
+
+.comparison__key--trace-other,
+.comparison__formula {
+  margin-left: var(--sp-4);
+}
+
+/* El aviso del eje, siempre debajo de la leyenda. */
+.comparison__note {
+  margin: var(--sp-1) 0 0;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--c-muted);
+}
+
 .comparison__key {
   font-weight: 600;
 }

@@ -53,7 +53,7 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               axisPoints, axisPolyline,
                                               axisRange, axisTicks, axisZeroY,
                                               deltaRange, frontierCells,
-                                              zeroLineY)
+                                              frontierCellsAt, zeroLineY)
 import           Common.Comparison           (Axis (..), Baseline (..),
                                               LapGeometry (..), anchored,
                                               axesInOrder, axisLabel,
@@ -68,13 +68,18 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               chartTypeKey, chartTypeLabel,
                                               chartTypeReady,
                                               chartTypesInOrder,
-                                              defaultChartType)
+                                              defaultChartType,
+                                              chartTypeFromKey,
+                                              chartTypeTraces, axisKey,
+                                              axisFromKey, deltaFormula)
 import           Common.Traces               (Channel (..), axisEnd,
                                               boundaryXs, channelLabel,
                                               channelRange, channelTop,
                                               channelsInOrder, frontierXs,
                                               traceXs, tracePoints,
-                                              tracesHeight, xPercent)
+                                              tracesHeight, xPercent,
+                                              channelCaption, axisEndLabel,
+                                              readSamples, samplesStart)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
@@ -2382,12 +2387,22 @@ main = hspec $ do
       map (baselineFromKey . baselineKey) baselinesInOrder `shouldBe` map Just baselinesInOrder
       baselineFromKey "otra" `shouldBe` Nothing
 
-    it "el desplegable de tipos: los cuatro, en orden; abre en el de hoy, el único que se elige" $ do
+    it "el desplegable de tipos: los cuatro, en orden; abre en el de hoy y se eligen el 1 y el 3" $ do
       map chartTypeLabel chartTypesInOrder
         `shouldBe` ["Delta por sectores", "Lap Speed Trace", "Telemetría comparativa", "Lap Delta"]
       defaultChartType `shouldBe` SectorDelta
-      filter chartTypeReady chartTypesInOrder `shouldBe` [SectorDelta]
-      length (nub (map chartTypeKey chartTypesInOrder)) `shouldBe` 4
+      filter chartTypeReady chartTypesInOrder `shouldBe` [SectorDelta, TelemetryTraces]
+      map (chartTypeFromKey . chartTypeKey) chartTypesInOrder `shouldBe` map Just chartTypesInOrder
+      chartTypeFromKey "otro" `shouldBe` Nothing
+      filter chartTypeTraces chartTypesInOrder `shouldBe` [LapSpeedTrace, TelemetryTraces, LapDeltaBars]
+
+    it "el desplegable del eje: sus claves de ida y vuelta" $ do
+      map (axisFromKey . axisKey) axesInOrder `shouldBe` map Just axesInOrder
+      axisFromKey "otro" `shouldBe` Nothing
+
+    it "qué resta la Δ: el otro menos la base, según la base elegida" $ do
+      fmap deltaFormula (pairWith AgainstReference Comparison.dummy) `shouldBe` Just "NOR − LEC"
+      fmap deltaFormula (pairWith AgainstFastest Comparison.dummy) `shouldBe` Just "LEC − NOR"
 
     it "la base por posición: el más rápido de los que tienen vuelta" $ do
       baseIndex AgainstFastest [Nothing, ceSectors nor, ceSectors lec] `shouldBe` Just 1
@@ -2426,6 +2441,8 @@ main = hspec $ do
       last (traceXs AxisSectors ref other) `shouldSatisfy` near 1
       axisEnd AxisTime ref other `shouldBe` 110
       traceXs AxisTime ref (other { ceTrace = [] }) `shouldBe` []
+      traceXs AxisTime (ref { ceTrace = [] }) other `shouldBe` [0, 60, 110]
+      traceXs AxisSectors (ref { ceTrace = [] }) other `shouldBe` []
 
     it "las fronteras de cada coche en el eje; en «Sectores», las de la referencia" $ do
       frontierXs AxisTime ref other `shouldBe` Just (35, 75)
@@ -2439,6 +2456,23 @@ main = hspec $ do
       boundaryXs AxisTime ref `shouldBe` Just [0, 30, 70, 100]
       xPercent 200 50 `shouldBe` 25
       xPercent 0 50 `shouldBe` 0
+
+    it "los rótulos: la velocidad con su rango, y el final del eje en su unidad" $ do
+      channelCaption Speed (0, 300) `shouldBe` "km/h (0–300)"
+      channelCaption Brake (0, 1) `shouldBe` "Freno"
+      map (`axisEndLabel` 105.784) [AxisDistance, AxisFraction, AxisTime, AxisSectors]
+        `shouldBe` ["106 m", "105.78", "105.8 s", "105.78"]
+
+    it "el deslizable: solo números entre 60 y 250" $ do
+      map readSamples ["60", "100", "250"] `shouldBe` [Just 60, Just 100, Just 250]
+      map readSamples ["55", "255", "", "abc"] `shouldBe` replicate 4 Nothing
+      samplesStart `shouldBe` 100
+
+    it "la fila Δ en X dadas: las cuatro, o ninguna" $ do
+      map (\(x, n, _) -> (x, n)) (frontierCellsAt [0, 30, 70, 100] [0, 0.1, 0.2, 0.3])
+        `shouldBe` [(0, "Inicio"), (30, "S1"), (70, "S2"), (100, "S3")]
+      frontierCellsAt [0, 50] [0, 0.1, 0.2, 0.3] `shouldBe` []
+      frontierCells [0, 0.1, 0.2, 0.3] `shouldBe` frontierCellsAt (map (\(x, _, _) -> x) (frontierCells [0, 0.1, 0.2, 0.3])) [0, 0.1, 0.2, 0.3]
 
     it "la curva: X hasta la mayor y la Y en la fila del canal; el freno, en escalones" $ do
       tracePoints Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,80.7 300.0,14.0 600.0,47.3"

@@ -5,8 +5,8 @@
 -- | Widget de Comparación de Vueltas (categoría LapComparison).
 --
 -- Consume @GET \/api\/comparison@ en runtime vía 'Client.fetchJson' +
--- 'Common.Route.comparisonPath' al arrancar y 'Common.Route.comparisonPathFor'
--- al elegir coches (relativos, misma-origen), con los tres estados del fetch
+-- 'Common.Route.comparisonPathFor' al arrancar, al elegir coches y al pedir trazas
+-- (relativos, misma-origen), con los tres estados del fetch
 -- ('Loading' \/ 'Failed' \/ 'Loaded') y sin datos dummy locales, igual que
 -- 'Widgets.LiveTiming', 'Widgets.Telemetry' e 'Widgets.Historical'.
 --
@@ -52,7 +52,7 @@ module Widgets.Comparison where
 
 import           Client        (fetchJson)
 import           Common.Chart  (axisPolyline, axisTicks, axisZeroY, chartHeight,
-                                chartWidth, frontierCells)
+                                chartWidth, frontierCells, frontierCellsAt)
 import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         axisColumnWidth, cardLayout, curveInset,
                                         defaultControlSide, defaultMode,
@@ -62,16 +62,25 @@ import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         shownMode, showsNames, showsValues,
                                         valueHeight, valuesFitMeasured,
                                         vsBeside)
-import           Common.Comparison (Baseline (..), Pair (..), baselineFromKey,
+import           Common.Comparison (Axis, Baseline (..), ChartType, Pair (..),
+                                    axesInOrder, axisFromKey, axisKey,
+                                    axisLabel, axisNotice, baselineFromKey,
                                     baselineKey, baselineLabel, baselineRole,
-                                    baselinesInOrder, lapShown,
+                                    baselinesInOrder, chartTypeFromKey,
                                     chartTypeKey, chartTypeLabel,
-                                    chartTypeReady, chartTypesInOrder,
-                                    defaultChartType, missingReference,
-                                    noLapFor, pairWith)
+                                    chartTypeReady, chartTypeTraces,
+                                    chartTypesInOrder, defaultAxis,
+                                    defaultChartType, deltaFormula, lapShown,
+                                    missingReference, noLapFor, pairWith)
 import           Common.Format (formatFixed)
-import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
-                                driversPathFor)
+import           Common.Route  (comparisonPathFor, driversParam, driversPathFor)
+import           Common.Traces (Channel (..), axisEnd, axisEndLabel, boundaryXs,
+                                channelCaption, channelHeight, channelRange,
+                                channelTop, channelsInOrder, frontierXs,
+                                readSamples, samplesMax, samplesMin,
+                                samplesStart, samplesStep, traceXs,
+                                tracePoints, tracesHeight, tracesWidth,
+                                xPercent)
 import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
                                 LapComparison (..))
 import           Control.Monad (forM_, unless, when)
@@ -124,12 +133,14 @@ data CState
 -- mide 0, así que al enseñarse se vuelve a medir.
 comparisonWidget :: MonadWidget t m => Event t () -> m ()
 comparisonWidget revealed = mdo
-  (root, (card, (userMode, state, base))) <-
+  (root, (card, (userMode, state, view))) <-
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
-      swap <- divClass "widget__head" $ do
+      (swap, ty, (axis, frontiers, samples)) <- divClass "widget__head" $ do
         el "h2" $ text "Lap Comparison"
-        typeSelect
-        swapButton (clStacked <$> layout)
+        t  <- typeSelect
+        tc <- traceControls t
+        s  <- swapButton (clStacked <$> layout)
+        pure (s, t, tc)
       side    <- foldDyn (const otherSide) defaultControlSide swap
       pb      <- getPostBuild
       gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
@@ -142,22 +153,30 @@ comparisonWidget revealed = mdo
           pure r'
         divClass "comparison__plot" $
           dyn_ ( plotView (dyn_ (banner <$> zipDyn refresh st))
-                   <$> shown <*> layout <*> (otherSide <$> side) <*> b <*> st )
+                   <$> shown <*> layout <*> (otherSide <$> side) <*> v <*> st )
         pure r
-      b       <- legendRow st
-      resp    <- fetchJson (leftmost [comparisonPath <$ pb, picked])
-      refresh <- holdDyn InFlight (leftmost [InFlight <$ picked, refreshOf <$> resp])
+      b       <- legendRow ty axis st
+      wanted  <- holdUniqDyn ((\t n -> if chartTypeTraces t then n else 0) <$> ty <*> samples)
+      drivers <- holdDyn Nothing (Just <$> picked)
+      let v       = View <$> ty <*> b <*> axis <*> frontiers
+          request = leftmost
+            [ comparisonPathFor Nothing Nothing <$> tag (current wanted) pb
+            , attachWith (\n d -> comparisonPathFor Nothing (Just d) n) (current wanted) picked
+            , attachWith (comparisonPathFor Nothing) (current drivers) (ffilter (> 0) (updated wanted))
+            ]
+      resp    <- fetchJson request
+      refresh <- holdDyn InFlight (leftmost [InFlight <$ request, refreshOf <$> resp])
       st      <- foldDyn step Loading resp
-      pure (chosenE, st, b)
+      pure (chosenE, st, v)
   size    <- cardSize root card (current rowNow) changed
   stacked <- holdUniqDyn (clStacked <$> layout)
   chosen  <- holdDyn defaultMode userMode
   shown   <- holdUniqDyn (shownMode <$> fits <*> chosen)
   let layout   = cardLayout . maybe 0 fst <$> size
       fits     = maybe True snd <$> size
-      rowNow   = rowHeightNow <$> shown <*> base <*> state
+      rowNow   = rowHeightNow <$> shown <*> view <*> state
       changed  = leftmost
-                   [ () <$ updated shown, () <$ updated state, () <$ updated base
+                   [ () <$ updated shown, () <$ updated state, () <$ updated view
                    , () <$ updated stacked, revealed ]
   pure ()
   where
@@ -165,10 +184,20 @@ comparisonWidget revealed = mdo
     controlState (Loaded c) = lapHeader c
     controlState _          = blank
 
+-- | Lo que el usuario eligió para pintar la comparación: el tipo, la base de la Δ, el
+-- eje de las trazas y si van sus fronteras.
+data View = View
+  { vType      :: ChartType
+  , vBase      :: Baseline
+  , vAxis      :: Axis
+  , vFrontiers :: Bool
+  }
+  deriving Eq
+
 -- | El alto de la fila de fronteras pintada: el de su modo si hay fronteras que
 -- nombrar, 0 si no hay fila.
-rowHeightNow :: ChartMode -> Baseline -> CState -> Double
-rowHeightNow m b (Loaded c) | not (null (frontierCells (seriesOf b c))) = rowHeight m
+rowHeightNow :: ChartMode -> View -> CState -> Double
+rowHeightNow m v (Loaded c) | not (null (frontierCells (seriesOf (vBase v) c))) = rowHeight m
 rowHeightNow _ _ _          = 0
 
 -- | La serie que se pinta con una base: la Δ del coche que no es la base
@@ -180,35 +209,95 @@ seriesOf b = maybe [] pairDelta . pairWith b
 -- repartidos con @space-evenly@ (2026-10-01 (g)), y la base elegida. El desplegable
 -- va fuera del 'dyn_', que lo devolvería a «Referencia» en cada respuesta; la fila
 -- se esconde mientras no hay comparación.
-legendRow :: MonadWidget t m => Dynamic t CState -> m (Dynamic t Baseline)
-legendRow st =
-  elDynAttr "div" (attrs <$> st) $ do
-    b <- elClass "span" "comparison__against" $ do
+--
+-- En los tipos con trazas, debajo va siempre el aviso de su eje
+-- ('Common.Comparison.axisNotice', 2026-09-30 (a)).
+legendRow
+  :: MonadWidget t m
+  => Dynamic t ChartType -> Dynamic t Axis -> Dynamic t CState -> m (Dynamic t Baseline)
+legendRow ty axis st = do
+  b <- elDynAttr "div" (attrs <$> st) $ do
+    b' <- elClass "span" "comparison__against" $ do
       text "Δ contra "
       baselineSelect
-    elClass "span" "comparison__keys" $ dyn_ (legendState <$> b <*> st)
-    pure b
+    elClass "span" "comparison__keys" $ dyn_ (legendState <$> ty <*> b' <*> st)
+    pure b'
+  dyn_ (note <$> ty <*> axis <*> st)
+  pure b
   where
     attrs (Loaded _) = "class" =: "comparison__legend"
     attrs _          = ("class" =: "comparison__legend") <> ("hidden" =: "")
-    legendState b (Loaded c) = legend b c
-    legendState _ _          = blank
+    legendState t b (Loaded c)
+      | chartTypeTraces t = traceLegend b c
+      | otherwise         = legend b c
+    legendState _ _ _ = blank
+    note t a (Loaded _)
+      | chartTypeTraces t = elClass "p" "comparison__note" $ text (axisNotice a)
+    note _ _ _ = blank
 
 -- | El desplegable del tipo de gráfica, en el título y nativo: los cuatro tipos,
--- con los que aún no existen en gris ('Common.Comparison.chartTypeReady'). Abre en
--- 'Common.Comparison.defaultChartType'.
-typeSelect :: MonadWidget t m => m ()
+-- con los que aún no existen en gris ('Common.Comparison.chartTypeReady'), y el
+-- tipo elegido. Abre en 'Common.Comparison.defaultChartType'.
+typeSelect :: MonadWidget t m => m (Dynamic t ChartType)
 typeSelect = do
   let cfg = def
         & selectElementConfig_initialValue .~ chartTypeKey defaultChartType
         & selectElementConfig_elementConfig . elementConfig_initialAttributes
             .~ ("class" =: "car-selector__select comparison__type")
-  _ <- selectElement cfg $ forM_ chartTypesInOrder $ \ty ->
+  (sel, _) <- selectElement cfg $ forM_ chartTypesInOrder $ \ty ->
     elAttr "option" (optionAttrs ty) $ text (chartTypeLabel ty)
-  pure ()
+  pure (fromMaybe defaultChartType . chartTypeFromKey <$> _selectElement_value sel)
   where
     optionAttrs ty =
       ("value" =: chartTypeKey ty) <> if chartTypeReady ty then mempty else "disabled" =: "disabled"
+
+-- | Los mandos de las trazas, en el título y solo en los tipos que las pintan
+-- (2026-09-30 (a)): el eje, las muestras y las fronteras. Abren en Tiempo, 100 y
+-- con fronteras. Van siempre montados —escondidos en los otros tipos— para que no
+-- vuelvan a su valor inicial al cambiar de tipo.
+--
+-- Devuelve el eje, si van las fronteras y las muestras que se piden: mientras se
+-- arrastra el deslizable, como mucho una vez cada 200 ms y la última al soltar
+-- (2026-10-01 (e)); el número de al lado cambia al momento.
+traceControls
+  :: MonadWidget t m
+  => Dynamic t ChartType -> m (Dynamic t Axis, Dynamic t Bool, Dynamic t Int)
+traceControls ty =
+  elDynAttr "span" (attrs <$> ty) $ do
+    let axisCfg = def
+          & selectElementConfig_initialValue .~ axisKey defaultAxis
+          & selectElementConfig_elementConfig . elementConfig_initialAttributes
+              .~ Map.fromList [("class", "car-selector__select comparison__axis-select"), ("title", "Eje X")]
+    (axisSel, _) <- selectElement axisCfg $ forM_ axesInOrder $ \a ->
+      elAttr "option" ("value" =: axisKey a) $ text (axisLabel a)
+    picked <- elAttr "label" (Map.fromList [("class", "comparison__samples"), ("title", "Muestras por piloto")]) $ do
+      text "Muestras"
+      slider <- inputElement $
+        def
+          & inputElementConfig_initialValue .~ T.pack (show samplesStart)
+          & initialAttributes .~ Map.fromList
+              [ ("type", "range"), ("class", "comparison__slider")
+              , ("min", T.pack (show samplesMin)), ("max", T.pack (show samplesMax))
+              , ("step", T.pack (show samplesStep)) ]
+      let typed = fmapMaybe readSamples (_inputElement_input slider)
+      now <- holdDyn samplesStart typed
+      el "output" $ dynText (T.pack . show <$> now)
+      throttle 0.2 typed
+    box <- elClass "label" "comparison__check" $ do
+      b <- inputElement $
+        def
+          & inputElementConfig_initialChecked .~ True
+          & initialAttributes .~ ("type" =: "checkbox")
+      text "Fronteras"
+      pure b
+    samples <- holdDyn samplesStart picked
+    pure ( fromMaybe defaultAxis . axisFromKey <$> _selectElement_value axisSel
+         , _inputElement_checked box
+         , samples )
+  where
+    attrs t
+      | chartTypeTraces t = "class" =: "comparison__trace-controls"
+      | otherwise         = ("class" =: "comparison__trace-controls") <> ("hidden" =: "")
 
 -- | El desplegable «Δ contra», nativo; abre en «Referencia».
 baselineSelect :: MonadWidget t m => m (Dynamic t Baseline)
@@ -367,7 +456,8 @@ refreshLine LastFailed =
   elClass "p" "status status--stale" $
     text "No se pudo recargar: se muestra la comparación anterior"
 
--- | Los dos selectores de coche y el botón, y la URL que sale de pulsarlo.
+-- | Los dos selectores de coche y el botón, y el valor de @?drivers=@ que sale de
+-- pulsarlo; la URL la compone 'comparisonWidget' con las muestras del tipo.
 --
 -- __Dos controles separados y no uno solo con @\"16,1\"@:__ así la cardinalidad
 -- es estructural —la tarjeta pinta un par—. El primero es la referencia, y va
@@ -383,7 +473,7 @@ refreshLine LastFailed =
 --
 -- El tercer argumento dice si el «VS» va a la derecha del primer desplegable
 -- ('vsNextTo'). El último se pinta junto a «Comparar», en la misma fila, y su
--- resultado se devuelve con la URL.
+-- resultado se devuelve con los coches.
 carSelector
   :: MonadWidget t m
   => Dynamic t [DriverEntry]
@@ -410,22 +500,21 @@ carSelector grid shown vsNext beside = divClass "car-selector" $ mdo
     pure (r, o)
   (click, a) <- divClass "comparison__actions" $ (,) <$> compareButton <*> beside
   let picked = zipDyn refCar otherCar
-  pure (fmapMaybe urlFor (tagPromptlyDyn picked click), a)
+  pure (fmapMaybe driversFor (tagPromptlyDyn picked click), a)
   where
     -- 'fmapMaybe' es lo que hace que una selección incompleta __no dispare
-    -- nada__, en vez de disparar y confiar en el degradado. Y el 'Just' interior
-    -- no es ruido: 'comparisonPathFor' ya acepta 'Maybe', así que pasarle un
-    -- 'Nothing' daría el path __sin__ query — la comparación por defecto
-    -- presentada como la que se pidió.
+    -- nada__, en vez de disparar y confiar en el degradado: un 'Nothing' que llegara
+    -- a 'comparisonPathFor' daría el path __sin__ coches — la comparación por
+    -- defecto presentada como la que se pidió.
     --
     -- Los dos 'Nothing' que hay que absorber son el mismo: parrilla vacía. Pasa
     -- entre el arranque y la respuesta de @\/api\/drivers@, y ahí un clic no
     -- puede significar nada.
-    urlFor :: (Maybe Text, Maybe Text) -> Maybe Text
-    urlFor (mref, mother) = do
+    driversFor :: (Maybe Text, Maybe Text) -> Maybe Text
+    driversFor (mref, mother) = do
       ref   <- mref
       other <- mother
-      (\d -> comparisonPathFor Nothing (Just d) 0) <$> driversParam ref other
+      driversParam ref other
 
 -- | La parrilla indexada por __posición__, que es la clave de los dos
 -- 'dropdown'.
@@ -599,13 +688,14 @@ lapLabel e = divClass "comparison__lap" $ do
 -- de la curva, dentro de su lienzo: el aviso de la petición. Si la referencia no
 -- tiene vuelta, en lugar de todo eso va el aviso de 'Common.Comparison.missingReference'.
 plotView
-  :: MonadWidget t m => m () -> ChartMode -> CardLayout -> Side -> Baseline -> CState -> m ()
+  :: MonadWidget t m => m () -> ChartMode -> CardLayout -> Side -> View -> CState -> m ()
 plotView _ _ _ _ _ Loading =
   elClass "p" "status status--loading" $ text "Cargando…"
 plotView _ _ _ _ _ Failed =
   elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
-plotView overlay m l axis b (Loaded c)
-  | Just note <- missingReference b c = elClass "p" "status status--empty" $ text note
+plotView overlay m l axis v (Loaded c)
+  | Just note <- missingReference (vBase v) c = elClass "p" "status status--empty" $ text note
+  | chartTypeTraces (vType v) = tracesView overlay m v c
   | otherwise =
       elAttr "div" (plotRowAttrs axis) $ do
         divClass "comparison__plotarea" $ do
@@ -617,7 +707,106 @@ plotView overlay m l axis b (Loaded c)
           frontierRow (showsNames m) (showsValues m) series
         unless (clAxisInside l) $ axisColumn axis series
   where
-    series = seriesOf b c
+    series = seriesOf (vBase v) c
+
+-- | Las trazas de los dos primeros coches (el tipo 3): velocidad, acelerador y freno
+-- en el eje elegido ('Common.Traces'), con las fronteras de cada coche si van y,
+-- debajo, la fila Δ en las fronteras de la referencia. La referencia en rojo y el
+-- otro en blanco, encima la referencia (2026-10-02). Un coche sin traza —sin vuelta,
+-- o el dummy— no se pinta, y sin ninguna quedan los canales vacíos.
+--
+-- Las líneas van en un @\<svg\>@ que se estira a lo ancho, con trazo que no se
+-- estira; los rótulos van en HTML encima, en porcentaje del ancho.
+tracesView :: MonadWidget t m => m () -> ChartMode -> View -> LapComparison -> m ()
+tracesView overlay m v c = case lcEntries c of
+  ref : other : _ -> do
+    let axis  = vAxis v
+        cars  = [(other, traceOtherColor), (ref, traceRefColor)]
+        xMax  = maximum [axisEnd axis ref e | e <- [ref, other]]
+        delta = seriesOf (vBase v) c
+        cells = case boundaryXs axis ref of
+          Just xs | not (null delta) -> frontierCellsAt (map (xPercent xMax) xs) delta
+          _                          -> []
+    divClass "comparison__canvas comparison__canvas--traces" $ do
+      svgEl "svg" tracesAttrs $ do
+        forM_ channelsInOrder $ \ch -> do
+          let range@(lo, hi) = channelRange ch [ref, other]
+          forM_ [lo, hi] $ \y -> svgEl "line" (traceGridAttrs (rowY ch range y)) blank
+          forM_ cars $ \(e, color) -> do
+            let pts = tracePoints ch range xMax (traceXs axis ref e) (ceTrace e)
+            unless (T.null pts) $ svgEl "polyline" (tracePolylineAttrs color pts) blank
+        when (vFrontiers v) $
+          forM_ cars $ \(e, color) ->
+            forM_ (frontierPair (frontierXs axis ref e)) $ \x ->
+              svgEl "line" (traceFrontierAttrs color (tracesWidth * xPercent xMax x / 100)) blank
+      forM_ channelsInOrder $ \ch ->
+        traceLabel ("left: 0; top: " <> px (channelTop ch - 13)) (channelCaption ch (channelRange ch [ref, other]))
+      when (vFrontiers v) $
+        forM_ (zip [0 :: Int ..] cars) $ \(row, (e, _)) ->
+          forM_ (zip ["S1", "S2"] (frontierPair (frontierXs axis ref e))) $ \(name, x) ->
+            traceLabelColored (if row == 0 then "comparison__trace-label--other" else "comparison__trace-label--ref")
+              ("left: calc(" <> formatFixed 3 (xPercent xMax x) <> "% + 2px); top: " <> px (if row == 0 then 10 else 0))
+              name
+      traceLabel ("left: 0; top: " <> px (tracesHeight - 13)) "0"
+      traceLabel ("right: 0; top: " <> px (tracesHeight - 13)) (axisEndLabel axis xMax)
+      overlay
+    frontierRowAt 0 (showsNames m) (showsValues m) cells
+  _ -> blank
+  where
+    frontierPair = maybe [] (\(a, b) -> [a, b])
+    rowY ch (lo, hi) y = channelTop ch + channelHeight ch * (1 - (y - lo) / (hi - lo))
+    px x = formatFixed 1 x <> "px"
+    traceLabel style = traceLabelColored "" style
+    traceLabelColored extra style t =
+      elAttr "span" (Map.fromList [("class", T.strip ("comparison__trace-label " <> extra)), ("style", style)]) $
+        text t
+
+-- | El color de la referencia y el del otro en las trazas.
+traceRefColor, traceOtherColor :: Text
+traceRefColor   = "#e10600"
+traceOtherColor = "#e7e9ee"
+
+-- | El lienzo de las trazas: @viewBox@ de 'Common.Traces' y ancho fluido.
+tracesAttrs :: Map Text Text
+tracesAttrs =
+  Map.fromList
+    [ ("class", "comparison__traces")
+    , ("viewBox", "0 0 " <> num tracesWidth <> " " <> num tracesHeight)
+    , ("width", "100%")
+    , ("height", num tracesHeight)
+    , ("preserveAspectRatio", "none")
+    ]
+
+-- | La curva de un coche en un canal.
+tracePolylineAttrs :: Text -> Text -> Map Text Text
+tracePolylineAttrs color pts =
+  Map.fromList
+    [ ("points", pts)
+    , ("fill", "none")
+    , ("stroke", color)
+    , ("stroke-width", "1.3")
+    , ("stroke-opacity", if color == traceRefColor then "1" else "0.85")
+    , ("vector-effect", "non-scaling-stroke")
+    ]
+
+-- | Las líneas tenues del mínimo y el máximo de un canal.
+traceGridAttrs :: Double -> Map Text Text
+traceGridAttrs y =
+  Map.fromList
+    [ ("x1", "0"), ("x2", num tracesWidth), ("y1", formatFixed 1 y), ("y2", formatFixed 1 y)
+    , ("stroke", "#888888"), ("stroke-opacity", "0.3"), ("vector-effect", "non-scaling-stroke")
+    ]
+
+-- | La raya discontinua de una frontera de un coche, de arriba abajo de los canales.
+traceFrontierAttrs :: Text -> Double -> Map Text Text
+traceFrontierAttrs color x =
+  Map.fromList
+    [ ("x1", formatFixed 1 x), ("x2", formatFixed 1 x)
+    , ("y1", formatFixed 1 (channelTop Speed))
+    , ("y2", formatFixed 1 (channelTop Brake + channelHeight Brake))
+    , ("stroke", color), ("stroke-dasharray", "4 3"), ("stroke-opacity", "0.8")
+    , ("vector-effect", "non-scaling-stroke")
+    ]
 
 -- | La fila de la gráfica: el lienzo con su fila de valores y, al lado del eje, su
 -- columna.
@@ -680,16 +869,21 @@ deltaChart series = do
 -- estira a lo ancho y deformaría el texto. La fila entra 'curveInset' por lado,
 -- como la curva, para que el primero y el último no se salgan.
 frontierRow :: DomBuilder t m => Bool -> Bool -> [Double] -> m ()
-frontierRow names values series = case frontierCells series of
-  []    -> blank
-  cells -> elAttr "div" rowAttrs $ mapM_ (frontierCell names values) cells
+frontierRow names values series = frontierRowAt curveInset names values (frontierCells series)
+
+-- | 'frontierRow' con las celdas ya colocadas y su margen por lado, en px: el de las
+-- trazas, cuyas fronteras no caen a espacio igual y cuya curva no entra.
+frontierRowAt :: DomBuilder t m => Double -> Bool -> Bool -> [(Double, Text, Text)] -> m ()
+frontierRowAt _ _ _ [] = blank
+frontierRowAt margin names values cells =
+  elAttr "div" rowAttrs $ mapM_ (frontierCell names values) cells
   where
     rowAttrs =
       Map.fromList
         [ ("class", rowClass)
         , ("style", "margin-left: " <> inset <> "; margin-right: " <> inset)
         ]
-    inset = formatFixed 1 curveInset <> "px"
+    inset = formatFixed 1 margin <> "px"
     rowClass
       | names && values = "comparison__frontiers"
       | otherwise       = "comparison__frontiers comparison__frontiers--single"
@@ -722,6 +916,20 @@ legend b c = case pairWith b c of
     unless (null (pairDelta p)) $ do
       elClass "span" "comparison__key comparison__key--delta" $ text "——"
       text (" " <> ceDriver (pairOther p) <> ": por encima, va por detrás")
+  _ -> blank
+
+-- | La leyenda de las trazas: el color de cada coche, la referencia en rojo, y qué
+-- resta la fila Δ (@«Δ = NOR − LEC»@, el otro menos la base). Sin la Δ, solo los
+-- colores; con el aviso de la referencia sin vuelta, nada.
+traceLegend :: DomBuilder t m => Baseline -> LapComparison -> m ()
+traceLegend b c = case (lcEntries c, pairWith b c) of
+  (ref : other : _, Just p) | Nothing <- missingReference b c -> do
+    elClass "span" "comparison__key comparison__key--trace-ref" $ text "——"
+    text (" " <> ceDriver ref <> " (referencia)")
+    elClass "span" "comparison__key comparison__key--trace-other" $ text "——"
+    text (" " <> ceDriver other)
+    unless (null (pairDelta p)) $
+      elClass "span" "comparison__formula" $ text ("Δ = " <> deltaFormula p)
   _ -> blank
 
 -- | Elemento en el namespace de SVG.
