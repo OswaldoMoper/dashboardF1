@@ -698,6 +698,12 @@ body {
   border-radius: var(--r-sm);
 }
 
+/* El coche elegido no tiene vuelta en la comparación que se pinta. */
+.car-selector__select--nolap {
+  color: var(--c-warn);
+  border: 2px solid var(--c-warn);
+}
+
 .car-selector__vs,
 .comparison__vs {
   color: var(--c-muted);

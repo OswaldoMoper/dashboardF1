@@ -25,11 +25,12 @@ module Common.Comparison
   , pairWith
   , lapShown
   , missingReference
+  , noLapFor
   ) where
 
 import           Common.Types  (ComparisonEntry (..), LapComparison (..))
 import           Control.Monad (join)
-import           Data.List     (minimumBy)
+import           Data.List     (find, minimumBy)
 import           Data.Maybe    (isNothing, listToMaybe)
 import           Data.Ord      (comparing)
 import           Data.Text     (Text)
@@ -203,3 +204,9 @@ missingReference AgainstReference c =
 -- | @«LEC no tiene vuelta en esta sesión»@: el aviso de un coche sin vuelta.
 noLapNote :: ComparisonEntry -> Text
 noLapNote e = ceDriver e <> " no tiene vuelta en esta sesión"
+
+-- | El aviso de un coche, por su número, si en la comparación aparece sin vuelta;
+-- 'Nothing' si la tiene o no aparece.
+noLapFor :: Text -> LapComparison -> Maybe Text
+noLapFor car c =
+  noLapNote <$> find (\e -> ceCar e == car && isNothing (ceSectors e)) (lcEntries c)

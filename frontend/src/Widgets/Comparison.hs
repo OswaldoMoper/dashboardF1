@@ -65,7 +65,7 @@ import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
 import           Common.Comparison (Baseline (..), Pair (..), baselineFromKey,
                                     baselineKey, baselineLabel, baselineRole,
                                     baselinesInOrder, lapShown,
-                                    missingReference, pairWith)
+                                    missingReference, noLapFor, pairWith)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
                                 driversPathFor)
@@ -371,7 +371,7 @@ carSelector
   -> Dynamic t Bool
   -> m a
   -> m (Event t Text, a)
-carSelector grid shown vsNext beside = divClass "car-selector" $ do
+carSelector grid shown vsNext beside = divClass "car-selector" $ mdo
   let indexed = indexedGrid <$> grid
       labels  = Map.map driverLabel <$> indexed
       -- El prefill de un lado: la posición que ocupa hoy el coche del que habla
@@ -381,14 +381,15 @@ carSelector grid shown vsNext beside = divClass "car-selector" $ do
       -- buscaría el coche en una lista vacía y el prefill se perdería para
       -- siempre.
       setPos i = fmapMaybe id (updated (zipDynWith (positionFor (carOf i)) indexed shown))
+      refCar   = zipDynWith carAt indexed posRef
+      otherCar = zipDynWith carAt indexed posOther
   (posRef, posOther) <- elDynAttr "div" (pairAttrs <$> vsNext) $ do
-    r <- carDropdown 1 labels (setPos 0)
+    r <- carDropdown 1 labels (setPos 0) (carSelectAttrs <$> refCar <*> shown)
     elClass "span" "car-selector__vs" $ text "vs"
-    o <- carDropdown 0 labels (setPos 1)
+    o <- carDropdown 0 labels (setPos 1) (carSelectAttrs <$> otherCar <*> shown)
     pure (r, o)
   (click, a) <- divClass "comparison__actions" $ (,) <$> compareButton <*> beside
-  let picked = zipDyn (zipDynWith carAt indexed posRef)
-                      (zipDynWith carAt indexed posOther)
+  let picked = zipDyn refCar otherCar
   pure (fmapMaybe urlFor (tagPromptlyDyn picked click), a)
   where
     -- 'fmapMaybe' es lo que hace que una selección incompleta __no dispare
@@ -497,17 +498,23 @@ carDropdown
   => Int
   -> Dynamic t (Map Int Text)
   -> Event t Int
+  -> Dynamic t (Map Text Text)
   -> m (Dynamic t Int)
-carDropdown initial options setPos =
+carDropdown initial options setPos attrs =
   fmap _dropdown_value . dropdown initial options $
     def
-      &  dropdownConfig_attributes .~ constDyn carSelectAttrs
+      &  dropdownConfig_attributes .~ attrs
       &  dropdownConfig_setValue   .~ setPos
 
--- | Atributos de un selector de coche. Como en el resto del módulo, no hay hoja
--- de estilos: la clase es el gancho para cuando la haya.
-carSelectAttrs :: Map Text Text
-carSelectAttrs = Map.fromList [("class", "car-selector__select")]
+-- | Atributos de un selector de coche: en amarillo y con el aviso de
+-- 'Common.Comparison.noLapFor' como tooltip mientras el coche que tiene elegido
+-- aparece sin vuelta en la comparación que se pinta (2026-10-02).
+carSelectAttrs :: Maybe Text -> Maybe LapComparison -> Map Text Text
+carSelectAttrs car shown =
+  case (\c -> noLapFor c =<< shown) =<< car of
+    Just note ->
+      Map.fromList [("class", "car-selector__select car-selector__select--nolap"), ("title", note)]
+    Nothing -> Map.fromList [("class", "car-selector__select")]
 
 -- | Botón que dispara la comparación. Replicado aquí en lugar de importado de
 -- 'Widgets.Historical' o 'Widgets.Telemetry': mismo criterio que allí, no

@@ -63,7 +63,8 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               baselineFromKey, baselineKey,
                                               baselineLabel, baselineRole,
                                               baselinesInOrder, lapShown,
-                                              missingReference, pairWith)
+                                              missingReference, noLapFor,
+                                              pairWith)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
@@ -2353,6 +2354,12 @@ main = hspec $ do
       missingReference AgainstReference (pair [lec, noLap nor]) `shouldBe` Nothing
       missingReference AgainstReference Comparison.dummy `shouldBe` Nothing
       missingReference AgainstReference (pair []) `shouldBe` Nothing
+
+    it "el aviso de un coche por su número, solo si aparece sin vuelta" $ do
+      noLapFor "1" (pair [lec, noLap nor]) `shouldBe` Just "NOR no tiene vuelta en esta sesión"
+      noLapFor "16" (pair [noLap lec, nor]) `shouldBe` Just "LEC no tiene vuelta en esta sesión"
+      noLapFor "1" Comparison.dummy `shouldBe` Nothing
+      noLapFor "44" (pair [lec, noLap nor]) `shouldBe` Nothing
 
     it "el desplegable «Δ contra»: sus dos bases, en orden, y sus claves de ida y vuelta" $ do
       map baselineLabel baselinesInOrder `shouldBe` ["Referencia", "Más rápido"]
