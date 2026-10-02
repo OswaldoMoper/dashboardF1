@@ -81,9 +81,9 @@ telemetryPathFor session driver =
 comparisonPath :: Text
 comparisonPath = apiPath ComparisonApi
 
--- | Path de comparación con sesión y\/o coches en el query string, omitiendo los
--- ausentes: sin ninguno devuelve 'comparisonPath' tal cual. Espejo del
--- @QueryParam \"session\" :> QueryParam \"drivers\"@ de @Server.Api@ — ambos
+-- | Path de comparación con sesión, coches y muestras en el query string, omitiendo
+-- los ausentes y unas muestras que no sean positivas: sin nada devuelve
+-- 'comparisonPath' tal cual. Espejo de los tres @QueryParam@ de @Server.Api@,
 -- opcionales en los dos extremos.
 --
 -- Hereda los dos supuestos de 'telemetryPathFor' (sin escapado de query; los
@@ -91,9 +91,13 @@ comparisonPath = apiPath ComparisonApi
 -- de 1 a 5__, separados por coma y con la referencia primero (@\"16,1\"@). El
 -- microservicio responde 400 a cualquier otra cantidad, así que no hay análogo del
 -- @all@ de telemetría.
-comparisonPathFor :: Maybe Text -> Maybe Text -> Text
-comparisonPathFor session drivers =
-  pathWith comparisonPath [("session", session), ("drivers", drivers)]
+comparisonPathFor :: Maybe Text -> Maybe Text -> Int -> Text
+comparisonPathFor session drivers samples =
+  pathWith comparisonPath
+    [ ("session", session)
+    , ("drivers", drivers)
+    , ("samples", if samples > 0 then Just (T.pack (show samples)) else Nothing)
+    ]
 
 -- | El valor de @?drivers=@ a partir de dos entradas de usuario, en ese orden (la
 -- primera es la referencia), o 'Nothing' si alguna no es un número de coche.

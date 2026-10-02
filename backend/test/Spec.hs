@@ -69,6 +69,12 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               chartTypeReady,
                                               chartTypesInOrder,
                                               defaultChartType)
+import           Common.Traces               (Channel (..), axisEnd,
+                                              boundaryXs, channelLabel,
+                                              channelRange, channelTop,
+                                              channelsInOrder, frontierXs,
+                                              traceXs, tracePoints,
+                                              tracesHeight, xPercent)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
@@ -2124,8 +2130,13 @@ main = hspec $ do
     -- es decir, la comparación por defecto presentada como la que se pidió. El
     -- widget tiene que quedarse en el `Maybe` de fuera y no disparar nada.
     it "compone con comparisonPathFor, que es su único uso" $
-      fmap (comparisonPathFor Nothing . Just) (driversParam "44" "63")
+      fmap (\d -> comparisonPathFor Nothing (Just d) 0) (driversParam "44" "63")
         `shouldBe` Just "/api/comparison?drivers=44,63"
+
+    it "las muestras van en el query solo si son positivas" $ do
+      comparisonPathFor Nothing (Just "16,1") 100 `shouldBe` "/api/comparison?drivers=16,1&samples=100"
+      comparisonPathFor Nothing Nothing 0 `shouldBe` "/api/comparison"
+      comparisonPathFor (Just "2026-13-Q") Nothing (-5) `shouldBe` "/api/comparison?session=2026-13-Q"
 
   -- El escalado del gráfico vive en `common` y no en `Widgets.Comparison`
   -- justamente para llegar hasta aquí: el paquete `frontend` no tiene suite
@@ -2382,6 +2393,58 @@ main = hspec $ do
       baseIndex AgainstFastest [Nothing, ceSectors nor, ceSectors lec] `shouldBe` Just 1
       baseIndex AgainstReference [Nothing, ceSectors nor] `shouldBe` Nothing
       baseIndex AgainstFastest [Nothing, Nothing] `shouldBe` Nothing
+
+  -- Las trazas del tipo 3 sobre dos vueltas de juguete: la referencia, 100 s y 4000 m
+  -- con S1 y S2 a los 1200 y 2800 m; el otro, 110 s y 4200 m, a los 1300 y 2900 m.
+  -- Los valores, de GHC.
+  describe "Common.Traces" $ do
+    let near a b = abs (a - b) < 1e-9
+        nearAll xs ys = length xs == length ys && and (zipWith near xs ys)
+        tp t d s th b = MkTracePoint t d s th b
+        car c sectors frontiers trace = MkComparisonEntry
+          { ceCar = c, ceDriver = c, ceLap = "", cePart = Nothing
+          , ceSectors = Just sectors, ceFrontiers = Just frontiers, ceTrace = trace }
+        ref = car "16" (30, 40, 30) (1200, 2800)
+                [tp 0 0 100 1 0, tp 50 2000 300 0.5 1, tp 100 4000 200 0 0]
+        other = car "1" (35, 40, 35) (1300, 2900)
+                  [tp 0 0 90 1 0, tp 60 2100 280 0.4 1, tp 110 4200 190 0 0]
+    it "tres filas de arriba abajo, con la velocidad a 100 px" $ do
+      map channelLabel channelsInOrder `shouldBe` ["km/h", "Acelerador %", "Freno"]
+      map channelTop channelsInOrder `shouldBe` [14, 128, 202]
+      tracesHeight `shouldBe` 248
+
+    it "la velocidad hasta la máxima redondeada a 50; el acelerador y el freno, fijos" $ do
+      channelRange Speed [ref, other] `shouldBe` (0, 300)
+      channelRange Speed [ref { ceTrace = [tp 0 0 310 1 0] }] `shouldBe` (0, 350)
+      channelRange Speed [] `shouldBe` (0, 50)
+      map (`channelRange` []) [Throttle, Brake] `shouldBe` [(0, 100), (0, 1)]
+
+    it "la X de cada muestra en los cuatro ejes, y dónde acaba la vuelta" $ do
+      traceXs AxisTime ref other `shouldBe` [0, 60, 110]
+      traceXs AxisDistance ref other `shouldBe` [0, 2100, 4200]
+      traceXs AxisFraction ref other `shouldSatisfy` nearAll [0, 0.5, 1]
+      last (traceXs AxisSectors ref other) `shouldSatisfy` near 1
+      axisEnd AxisTime ref other `shouldBe` 110
+      traceXs AxisTime ref (other { ceTrace = [] }) `shouldBe` []
+
+    it "las fronteras de cada coche en el eje; en «Sectores», las de la referencia" $ do
+      frontierXs AxisTime ref other `shouldBe` Just (35, 75)
+      frontierXs AxisDistance ref other `shouldBe` Just (1300, 2900)
+      fmap (\(a, b) -> nearAll [a, b] [0.30952380952380953, 0.6904761904761905])
+        (frontierXs AxisFraction ref other) `shouldBe` Just True
+      fmap (\(a, b) -> nearAll [a, b] [0.3, 0.7]) (frontierXs AxisSectors ref other) `shouldBe` Just True
+      frontierXs AxisDistance ref (other { ceFrontiers = Nothing }) `shouldBe` Nothing
+
+    it "la fila Δ en las fronteras de la referencia, y la X en porcentaje" $ do
+      boundaryXs AxisTime ref `shouldBe` Just [0, 30, 70, 100]
+      xPercent 200 50 `shouldBe` 25
+      xPercent 0 50 `shouldBe` 0
+
+    it "la curva: X hasta la mayor y la Y en la fila del canal; el freno, en escalones" $ do
+      tracePoints Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,80.7 300.0,14.0 600.0,47.3"
+      tracePoints Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
+        `shouldBe` "0.0,232.0 300.0,232.0 300.0,202.0 600.0,202.0 600.0,232.0"
+      tracePoints Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9

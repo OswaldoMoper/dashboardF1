@@ -425,7 +425,7 @@ carSelector grid shown vsNext beside = divClass "car-selector" $ mdo
     urlFor (mref, mother) = do
       ref   <- mref
       other <- mother
-      comparisonPathFor Nothing . Just <$> driversParam ref other
+      (\d -> comparisonPathFor Nothing (Just d) 0) <$> driversParam ref other
 
 -- | La parrilla indexada por __posición__, que es la clave de los dos
 -- 'dropdown'.

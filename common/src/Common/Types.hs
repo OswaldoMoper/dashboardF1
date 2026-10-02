@@ -692,8 +692,8 @@ instance FromJSON WidgetType
 -- campo significa __omitir el parámetro__, o sea el default del endpoint.
 --
 -- __Es espejo de 'Common.Route' y no una forma nueva__: @telemetryPathFor@ y
--- @comparisonPathFor@ son @'Maybe' 'Text' -> 'Maybe' 'Text' -> 'Text'@, con el
--- mismo tipo y el mismo significado del 'Nothing' desde el 2026-08-01. El por
+-- @comparisonPathFor@ empiezan por @'Maybe' 'Text' -> 'Maybe' 'Text'@, con el
+-- mismo significado del 'Nothing' desde el 2026-08-01. El por
 -- qué está en la decisión del 2026-09-01 (b).
 --
 -- __Es la semilla del estado del widget, no su sustituto.__ El @driverSwitcher@
