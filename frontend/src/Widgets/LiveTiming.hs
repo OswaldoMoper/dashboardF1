@@ -19,16 +19,15 @@
 -- y si hay sesión rodando. Por eso un fallo puntual no borra la tabla —la conserva
 -- desde el 2026-09-11 (c)— y aun así se ve: lo dice el indicador, no el cuerpo.
 --
--- __La columna de estado se añade al final a propósito__ (2026-08-27). La hoja
--- alinea las columnas numéricas de esta tabla por @nth-child(1,4,5,6)@ —las
--- celdas de las seis primeras no llevan clase, son un @mapM_@ sobre una lista
--- fija—, así que meterla en cualquier otro sitio movería esos índices. La
--- séptima celda sí lleva clase, y la fila también: el @nth-child@ compartido es
--- deuda que el 2026-08-26 acabó de pagar en Historical
--- y lo nuevo no la reabre.
+-- __Cada celda lleva la clase de su columna__ ('Common.Columns.liveColumnClass'):
+-- las columnas se pueden cerrar desde «Columnas ▾», y una regla por posición
+-- (@nth-child@) cambiaría de columna al cerrar otra.
 module Widgets.LiveTiming where
 
 import           Client        (fetchJsonSourced)
+import           Common.Columns (LiveColumn (..), canClose, liveColumnClass,
+                                 liveColumnLabel, menuColumns, shownColumns,
+                                 toggleColumn)
 import           Common.Origin (Sourced (..))
 import           Common.Route  (livePath)
 import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
@@ -41,6 +40,9 @@ import           Common.Types  (DriverStatus (..), LiveTable (..),
                                 LiveTimingRow (..), SessionInfo (..),
                                 StateReading (..), bestLapMarks,
                                 sessionInProgress, statusLabel, waitingTable)
+import           Control.Monad (forM_)
+import           Data.Set      (Set)
+import qualified Data.Set      as Set
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           Reflex.Dom
@@ -156,11 +158,12 @@ delayedLive delay poll = do
 -- | Tabla de live timing, alimentada por el directo que le pasa quien la monta.
 liveTimingWidget :: MonadWidget t m => LiveView t -> m ()
 liveTimingWidget live = divClass "widget widget--live-timing" $ do
-  divClass "widget__head" $ do
+  closed <- divClass "widget__head" $ do
     el "h2" $ text "Live Timing"
     liveBadge (lvDelay live) (indicatorOf <$> lvPoll live)
+    columnsMenu
   state <- holdUniqDyn (viewOf <$> lvDelay live <*> lvWait live <*> lvPoll live)
-  dyn_ (renderState <$> state)
+  dyn_ (renderState <$> closed <*> state)
   where
     viewOf n (Just wait) _ = Waiting (delayWaitLabel n wait)
     viewOf _ Nothing p     = liveStateOf p
@@ -178,46 +181,44 @@ liveTimingWidget live = divClass "widget widget--live-timing" $ do
         attrsFor n i =
           "class" =: indicatorClass i <> "title" =: delayNote n (indicatorTooltip i)
 
-    renderState :: DomBuilder t m => LiveState -> m ()
-    renderState Loading =
+    renderState :: DomBuilder t m => Set LiveColumn -> LiveState -> m ()
+    renderState _ Loading =
       elClass "p" "status status--loading" $ text "Cargando…"
-    renderState Failed =
+    renderState _ Failed =
       elClass "p" "status status--error" $ text "Error al cargar /api/live"
-    renderState (Waiting label) =
+    renderState _ (Waiting label) =
       elClass "p" "status status--loading" $ text label
-    renderState (Loaded rows) =
+    renderState closed (Loaded rows) =
       elClass "table" "live-timing" $ do
-        el "thead" $ el "tr" $ do
-          mapM_ (el "th" . text) headers
-          elClass "th" "live-timing__best" $ text "Best Lap"
-          el "th" $ text "Estado"
-        el "tbody" $ mapM_ row (zip rows (bestLapMarks rows))
+        el "thead" $ el "tr" $
+          forM_ cols $ \c -> elClass "th" (liveColumnClass c) $ text (liveColumnLabel c)
+        el "tbody" $ mapM_ (row cols) (zip rows (bestLapMarks rows))
+      where
+        cols = shownColumns closed
 
-    headers :: [Text]
-    headers =
-      ["Pos", "Driver", "Team", "Gap", "Interval", "Last Lap"]
+    row :: DomBuilder t m => [LiveColumn] -> (LiveTimingRow, (Bool, Bool)) -> m ()
+    row cols (r, marks) = elClass "tr" (rowClass (ltStatus r)) $
+      forM_ cols $ \c -> elClass "td" (cellClass c marks) $ text (cellText c r)
 
-    row :: DomBuilder t m => (LiveTimingRow, (Bool, Bool)) -> m ()
-    row (r, marks) = elClass "tr" (rowClass (ltStatus r)) $ do
-      mapM_ (el "td" . text)
-        [ T.pack (show (ltPosition r))
-        , ltDriver r
-        , ltTeam r
-        , ltGap r
-        , ltInterval r
-        , ltLastLap r
-        ]
-      elClass "td" (bestClass marks) $ text (ltBestLap r)
-      elClass "td" "live-timing__state" $ text (statusLabel (ltStatus r))
+    cellText :: LiveColumn -> LiveTimingRow -> Text
+    cellText ColPos      = T.pack . show . ltPosition
+    cellText ColDriver   = ltDriver
+    cellText ColTeam     = ltTeam
+    cellText ColGap      = ltGap
+    cellText ColInterval = ltInterval
+    cellText ColLastLap  = ltLastLap
+    cellText ColBestLap  = ltBestLap
+    cellText ColState    = statusLabel . ltStatus
 
     -- La más rápida de la sesión, en negrita; la de la parte en curso, en morado
     -- ('Common.Types.bestLapMarks').
-    bestClass :: (Bool, Bool) -> Text
-    bestClass (session, part) =
+    cellClass :: LiveColumn -> (Bool, Bool) -> Text
+    cellClass ColBestLap (session, part) =
       T.unwords $
-        ["live-timing__best"]
+        [liveColumnClass ColBestLap]
           <> ["live-timing__best--session" | session]
           <> ["live-timing__best--part" | part]
+    cellClass c _ = liveColumnClass c
 
     -- Modificador solo cuando hay algo que señalar: 16 de las 22 filas de una
     -- carrera son 'Running', y emitir un modificador que no modifica nada
@@ -232,3 +233,40 @@ liveTimingWidget live = divClass "widget widget--live-timing" $ do
     rowClass :: DriverStatus -> Text
     rowClass Running = "live-timing__row"
     rowClass _       = "live-timing__row live-timing__row--out"
+
+-- | «Columnas ▾»: un botón en el título que abre, flotando encima de la tabla, una
+-- casilla por columna que se puede cerrar ('Common.Columns.menuColumns'), y las
+-- columnas cerradas. Se cierra con el botón o pulsando fuera: mientras está abierto,
+-- una capa transparente fija cubre la página y pulsarla lo cierra (2026-10-02).
+--
+-- Una casilla se apaga cuando cerrarla dejaría sin ninguna de las que cuentan
+-- ('Common.Columns.canClose'). Lo elegido no se recuerda al recargar (hasta el 18).
+columnsMenu :: MonadWidget t m => m (Dynamic t (Set LiveColumn))
+columnsMenu = elClass "div" "live-timing__columns" $ mdo
+  (btn, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "live-timing__columns-btn") $
+    text "Columnas ▾"
+  backdrop <- dyn (layer <$> open)
+  outside  <- switchHold never backdrop
+  open     <- foldDyn ($) False (leftmost [not <$ domEvent Click btn, const False <$ outside])
+  toggles  <- elDynAttr "div" (panelAttrs <$> open) $
+    leftmost <$> mapM (box closed) menuColumns
+  closed   <- foldDyn (\(c, on) -> toggleColumn c on) Set.empty toggles
+  pure closed
+  where
+    layer True = do
+      (e, _) <- elClass' "div" "live-timing__backdrop" blank
+      pure (domEvent Click e)
+    layer False = pure never
+    panelAttrs True  = "class" =: "live-timing__columns-panel"
+    panelAttrs False = "class" =: "live-timing__columns-panel" <> "hidden" =: ""
+    box closed c = elClass "label" "live-timing__column" $ do
+      input <- inputElement $
+        def
+          & inputElementConfig_initialChecked .~ True
+          & initialAttributes .~ ("type" =: "checkbox")
+          & inputElementConfig_elementConfig . elementConfig_modifyAttributes
+              .~ (disabledFor c <$> updated closed)
+      text (liveColumnLabel c)
+      pure ((,) c <$> _inputElement_checkedChange input)
+    disabledFor c closedNow =
+      "disabled" =: if Set.notMember c closedNow && not (canClose closedNow c) then Just "disabled" else Nothing

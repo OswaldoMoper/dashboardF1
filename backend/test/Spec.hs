@@ -72,6 +72,11 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               chartTypeFromKey,
                                               chartTypeTraces, axisKey,
                                               axisFromKey, deltaFormula)
+import           Common.Columns              (LiveColumn (..), canClose,
+                                              liveColumnClass,
+                                              liveColumnLabel,
+                                              liveColumnsInOrder, menuColumns,
+                                              shownColumns, toggleColumn)
 import           Common.Traces               (Channel (..), axisEnd,
                                               boundaryXs, channelLabel,
                                               channelRange, channelTop,
@@ -164,6 +169,7 @@ import qualified Data.ByteString.Char8       as BC
 import           Data.Either                 (isLeft)
 import           Data.List                   (nub)
 import qualified Data.Map.Strict             as Map
+import qualified Data.Set                    as Set
 import           Data.Maybe                  (fromMaybe)
 import           Data.Proxy                 (Proxy (..))
 import qualified Data.Text                   as T
@@ -2444,6 +2450,36 @@ main = hspec $ do
 
     it "sin ningún tiempo no se marca nada" $
       bestLapMarks [row "-" "", row "" ""] `shouldBe` [(False, False), (False, False)]
+
+  -- «Columnas ▾» de Live Timing: Pos y Driver no se cierran, y de Gap, Interval, Last
+  -- Lap, Best Lap y Estado siempre queda una; Team, libre.
+  describe "Common.Columns" $ do
+    let countsForOne = [ColGap, ColInterval, ColLastLap, ColBestLap, ColState]
+    it "las ocho columnas en orden, y en el menú todas menos Pos y Driver" $ do
+      map liveColumnLabel liveColumnsInOrder
+        `shouldBe` ["Pos", "Driver", "Team", "Gap", "Interval", "Last Lap", "Best Lap", "Estado"]
+      menuColumns `shouldBe` [ColTeam, ColGap, ColInterval, ColLastLap, ColBestLap, ColState]
+      length (nub (map liveColumnClass liveColumnsInOrder)) `shouldBe` 8
+
+    it "Pos y Driver no se cierran nunca; Team, siempre" $ do
+      map (canClose Set.empty) [ColPos, ColDriver, ColTeam] `shouldBe` [False, False, True]
+      canClose (Set.fromList (drop 1 countsForOne)) ColTeam `shouldBe` True
+
+    it "la última abierta de las que cuentan no se cierra, y cerrarla no cambia nada" $ do
+      let closed = Set.fromList (drop 1 countsForOne)
+      canClose closed ColGap `shouldBe` False
+      toggleColumn ColGap False closed `shouldBe` closed
+      shownColumns closed `shouldBe` [ColPos, ColDriver, ColTeam, ColGap]
+
+    it "abrir una columna la vuelve a pintar en su sitio" $
+      shownColumns (toggleColumn ColInterval True (Set.fromList [ColInterval, ColTeam]))
+        `shouldBe` [ColPos, ColDriver, ColGap, ColInterval, ColLastLap, ColBestLap, ColState]
+
+    prop "cierre lo que se cierre, en el orden que sea, siempre queda una de las que cuentan" $ \order ->
+      let cols = [toEnum (abs n `mod` 8) | n <- order :: [Int]]
+          closed = foldl (\h c -> toggleColumn c False h) Set.empty cols
+       in any (`Set.notMember` closed) countsForOne
+            && Set.notMember ColPos closed && Set.notMember ColDriver closed
 
   describe "Common.Traces" $ do
     let near a b = abs (a - b) < 1e-9

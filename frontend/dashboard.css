@@ -490,57 +490,101 @@ body {
    Las columnas se eligen por posición porque las celdas no llevan clase: son
    `mapM_ (el "td" . text)` sobre una lista fija de cada widget. */
 
-/* Live timing: Pos | Driver | Team | Gap | Interval | Last Lap */
-.live-timing td:nth-child(1),
-.live-timing td:nth-child(4),
-.live-timing td:nth-child(5),
-.live-timing td:nth-child(6),
-.live-timing th:nth-child(1),
-.live-timing th:nth-child(4),
-.live-timing th:nth-child(5),
-.live-timing th:nth-child(6) {
+/* Live timing, por clase y no por posición: las columnas se cierran desde
+   «Columnas ▾», y un `nth-child` cambiaría de columna al cerrar otra. */
+.live-timing .live-timing__pos,
+.live-timing .live-timing__gap,
+.live-timing .live-timing__interval,
+.live-timing .live-timing__last,
+.live-timing .live-timing__best {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
-.live-timing th:nth-child(1),
-.live-timing th:nth-child(4),
-.live-timing th:nth-child(5),
-.live-timing th:nth-child(6) {
+.live-timing th.live-timing__pos,
+.live-timing th.live-timing__gap,
+.live-timing th.live-timing__interval,
+.live-timing th.live-timing__last,
+.live-timing th.live-timing__best {
   font-family: var(--font-ui);
 }
 
-/* Best Lap va por clase, como Estado. La más rápida de la sesión, en negrita; la de
-   la parte en curso, en morado (2026-10-02). */
-.live-timing__best {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-th.live-timing__best {
-  font-family: var(--font-ui);
-}
-
+/* Best Lap: la más rápida de la sesión, en negrita gruesa; la de la parte en curso,
+   en morado (2026-10-02). */
 .live-timing__best--session {
-  font-weight: 700;
+  font-weight: 800;
+  -webkit-text-stroke: 0.4px currentColor;
 }
 
 .live-timing__best--part {
   color: var(--c-fastest);
 }
 
-/* La séptima columna (Estado) va **por clase** y no por `nth-child`: es lo que
-   2026-08-26 acabó de pagar en Historical y no conviene reabrir con la primera
-   columna que se añade después. La celda lleva clase propia; la fila, un
-   modificador único para las tres marcas —la sigla ya las distingue—. */
-.live-timing__state {
+/* Estado: la celda lleva la sigla; la fila, un modificador único para las tres
+   marcas —la sigla ya las distingue—. */
+.live-timing td.live-timing__state {
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: var(--fs-xs);
   letter-spacing: 0.06em;
   color: var(--c-warn);
+}
+
+/* «Columnas ▾»: el panel flota encima de la tabla, y la capa transparente de debajo
+   lo cierra al pulsar fuera. */
+.live-timing__columns {
+  position: relative;
+  margin-left: auto;
+}
+
+.live-timing__columns-btn {
+  padding: var(--sp-1) var(--sp-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.live-timing__columns-panel {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+
+.live-timing__columns-panel[hidden] {
+  display: none;
+}
+
+.live-timing__column {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.live-timing__column input {
+  margin: 0;
+  accent-color: var(--c-accent);
+}
+
+.live-timing__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
 }
 
 /* El abandono se apaga en vez de encenderse: son ~6 de 22 filas, así que
@@ -560,8 +604,8 @@ th.live-timing__best {
    describen la carrera de ahora: el coche 22 de la 11353 sale con `+5.672`
    habiendo hecho 0 vueltas. Se atenúan más que el resto de la fila para que no se
    lean como un dato vivo — la sigla de Estado es la que explica por qué. */
-.live-timing__row--out td:nth-child(4),
-.live-timing__row--out td:nth-child(5) {
+.live-timing__row--out .live-timing__gap,
+.live-timing__row--out .live-timing__interval {
   opacity: 0.55;
 }
 
