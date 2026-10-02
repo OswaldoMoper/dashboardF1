@@ -58,7 +58,9 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               LapGeometry (..), anchored,
                                               axesInOrder, axisLabel,
                                               axisNotice, axisXs,
-                                              defaultAxis, deltasAgainst)
+                                              defaultAxis, deltasAgainst,
+                                              lapShown, missingReference,
+                                              pairDelta)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
@@ -108,7 +110,8 @@ import           Common.Shown                (Indicator (..), Kept (..),
                                               delayedPoll, delayedShown,
                                               delayFromUrl, landed, readDelay,
                                               recordArrival, shownAge)
-import           Common.Types                (DriverEntry (..),
+import           Common.Types                (ComparisonEntry (..),
+                                              DriverEntry (..),
                                               DriverStatus (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
@@ -120,6 +123,7 @@ import           Common.Types                (DriverEntry (..),
                                               StatEntity (..), StateBasis (..),
                                               StateReading (..),
                                               TelemetryPoint (..),
+                                              TracePoint (..),
                                               TyreStint (..), UpNext (..),
                                               WidgetConfig (..), WidgetId (..),
                                               WidgetType (..), bandNote,
@@ -148,7 +152,8 @@ import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
                                               addUTCTime)
 import           GHC.TypeLits                (symbolVal)
 import qualified Handler.Comparison.Context  as Comparison
-import           Handler.Comparison.Helper   (RawComparison, assembleComparison)
+import           Handler.Comparison.Helper   (RawComparison, assembleComparison,
+                                              comparable)
 import qualified Handler.Comparison.Helper   as Comparison
 import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
@@ -319,59 +324,78 @@ main = hspec $ do
         `shouldBe` Left (BadRequest "driver está vacío: omítelo para pedir todos los coches")
 
   describe "assembleComparison" $ do
-    it "mapea las siete claves del objeto conservando el orden de la serie del delta" $
+    it "mapea los coches en el orden pedido, la referencia primero, con sus sectores y su traza" $
       comparisonOf comparisonObject
         `shouldBe`
           MkLapComparison
-            { lcDriverA = "VER"
-            , lcDriverB = "LEC"
-            , lcCarA = "1"
-            , lcCarB = "16"
-            , lcLapA = "1:29.345"
-            , lcLapB = "1:29.512"
-            , lcDelta = [0.0, -0.048, 0.081, 0.167]
+            { lcEntries =
+                [ MkComparisonEntry
+                    { ceCar = "16", ceDriver = "LEC", ceLap = "1:29.512", cePart = Just "Q3"
+                    , ceSectors = Just (29.0, 31.0, 29.512)
+                    , ceFrontiers = Just (1210.5, 2650.25)
+                    , ceTrace =
+                        [ MkTracePoint 0.0 0.0 287.0 1.0 0.0
+                        , MkTracePoint 89.512 5100.0 301.0 1.0 0.0
+                        ]
+                    }
+                , MkComparisonEntry
+                    { ceCar = "1", ceDriver = "NOR", ceLap = "1:29.345", cePart = Just "Q3"
+                    , ceSectors = Just (29.048, 30.871, 29.426)
+                    , ceFrontiers = Nothing
+                    , ceTrace = []
+                    }
+                ]
+            , lcSamples = 2
+            , lcNotice = ""
             }
 
-    it "decodifica la sesión sin vueltas comparables en vez de fallar el parseo" $
-      -- Es este objeto el que hace que el criterio de fallo del Context sea
-      -- `null . lcDelta`: llega bien formado, así que el `try` no lo ve, y sin
-      -- delta no hay nada que dibujar.
-      comparisonOf comparisonWithoutDelta
-        `shouldBe`
-          MkLapComparison
-            { lcDriverA = "VER"
-            , lcDriverB = "LEC"
-            , lcCarA = "1"
-            , lcCarB = "16"
-            , lcLapA = ""
-            , lcLapB = ""
-            , lcDelta = []
-            }
+    it "decodifica un coche sin vuelta en vez de tumbar el objeto" $ do
+      -- El caso medido en Monza (el 16) y Zandvoort (el 87 y el 3): el servicio
+      -- emite el coche sin sectores ni tiempo, y decidir es del Context.
+      let c = comparisonOf comparisonWithoutLap
+      map ceSectors (lcEntries c) `shouldBe` [Nothing, Just (29.048, 30.871, 29.426)]
+      map ceLap (lcEntries c) `shouldBe` ["", "1:29.345"]
+      comparable c `shouldBe` True
 
-    it "trata la clave lcDelta ausente igual que la serie vacía" $
-      lcDelta (comparisonOf comparisonWithoutDeltaKey) `shouldBe` []
+    it "no da por comparable una comparación en la que ningún coche tiene vuelta" $
+      comparable (comparisonOf comparisonWithoutLaps) `shouldBe` False
 
-    it "decodifica la respuesta de un servicio sin números de coche en vez de tumbar el objeto" $ do
-      -- El caso del microservicio viejo todavía en pie: con `.:` la comparación
-      -- entera caería al dummy en silencio. Se pierde el viaje de vuelta, no la
-      -- comparación.
-      let old = comparisonOf comparisonWithoutCars
-      (lcCarA old, lcCarB old) `shouldBe` ("", "")
-      lcDriverA old `shouldBe` "VER"
-      lcDelta old `shouldBe` [0.0, -0.048, 0.081, 0.167]
+  describe "Comparison.adjustSamples" $ do
+    it "deja tal cual 0 y lo que ya está en 60–250 de 5 en 5, sin aviso" $
+      map Comparison.adjustSamples [0, 60, 100, 250] `shouldBe` [(0, ""), (60, ""), (100, ""), (250, "")]
+
+    it "lleva lo de fuera al borde y lo negativo a 0, con el aviso" $ do
+      Comparison.adjustSamples 30 `shouldBe` (60, "samples=30 fuera de 60–250 de 5 en 5: se usó 60")
+      Comparison.adjustSamples 1 `shouldBe` (60, "samples=1 fuera de 60–250 de 5 en 5: se usó 60")
+      Comparison.adjustSamples 300 `shouldBe` (250, "samples=300 fuera de 60–250 de 5 en 5: se usó 250")
+      Comparison.adjustSamples (-5) `shouldBe` (0, "samples=-5 fuera de 60–250 de 5 en 5: se usó 0")
+
+    it "lleva lo que no es múltiplo de 5 al más cercano" $
+      map (fst . Comparison.adjustSamples) [61, 62, 63, 64, 248, 249] `shouldBe` [60, 60, 65, 65, 250, 250]
+
+    prop "siempre da 0 o un múltiplo de 5 entre 60 y 250, y ajustarlo otra vez no lo mueve" $ \n ->
+      let used = fst (Comparison.adjustSamples n)
+       in (used == 0 || (used >= 60 && used <= 250 && used `mod` 5 == 0))
+            && Comparison.adjustSamples used == (used, "")
 
   describe "Comparison.resolveParams" $ do
-    it "sin parámetros compara los dos coches del dummy, en números y no en acrónimos" $
-      Comparison.resolveParams Nothing Nothing `shouldBe` Right ("latest", "1,16")
+    it "sin parámetros compara los dos coches del dummy, la referencia primero y sin trazas" $
+      Comparison.resolveParams Nothing Nothing Nothing `shouldBe` Right (("latest", "16,1", 0), "")
 
     it "respeta el parámetro presente y deja el ausente en su defecto" $ do
-      Comparison.resolveParams (Just "2026-13-Q") Nothing `shouldBe` Right ("2026-13-Q", "1,16")
-      Comparison.resolveParams Nothing (Just "44,63") `shouldBe` Right ("latest", "44,63")
+      Comparison.resolveParams (Just "2026-13-Q") Nothing Nothing
+        `shouldBe` Right (("2026-13-Q", "16,1", 0), "")
+      Comparison.resolveParams Nothing (Just "44,63") (Just 100)
+        `shouldBe` Right (("latest", "44,63", 100), "")
+
+    it "ajusta las muestras en la clave y devuelve el aviso aparte" $
+      Comparison.resolveParams Nothing Nothing (Just 30)
+        `shouldBe` Right (("latest", "16,1", 60), "samples=30 fuera de 60–250 de 5 en 5: se usó 60")
 
     it "rechaza un parámetro escrito pero vacío con su motivo, aunque el otro sea bueno" $ do
-      Comparison.resolveParams (Just "") (Just "44,63")
+      Comparison.resolveParams (Just "") (Just "44,63") Nothing
         `shouldBe` Left (BadRequest "session está vacío: omítelo para usar la sesión por defecto")
-      Comparison.resolveParams Nothing (Just "")
+      Comparison.resolveParams Nothing (Just "") Nothing
         `shouldBe` Left (BadRequest "drivers está vacío: omítelo para comparar los coches por defecto")
 
   describe "Outcome.rejectionFor" $ do
@@ -437,7 +461,7 @@ main = hspec $ do
 
     it "devuelve [] sobre una sesión sin parrilla publicada" $
       -- Es este [] el que hace que el criterio de fallo del Context vuelva a ser
-      -- el simple, a diferencia del `null . lcDelta` de Comparison.
+      -- el simple, a diferencia del `comparable` de Comparison.
       driversOf emptyArray `shouldBe` []
 
   describe "Drivers.resolveParams" $ do
@@ -2043,18 +2067,28 @@ main = hspec $ do
   -- widgets se miran a la vez, así que un coche que el de comparación pinta y el
   -- selector no lista sería una contradicción visible con el servicio apagado.
   describe "los dummies de Drivers y Comparison" $ do
-    it "la parrilla de respaldo contiene los dos coches que la comparación de respaldo pinta" $ do
+    it "la parrilla de respaldo contiene los coches que la comparación de respaldo pinta" $ do
       let numbers = map deNumber Drivers.dummy
-      lcCarA Comparison.dummy `shouldSatisfy` (`elem` numbers)
-      lcCarB Comparison.dummy `shouldSatisfy` (`elem` numbers)
+      map ceCar (lcEntries Comparison.dummy) `shouldSatisfy` all (`elem` numbers)
 
     it "y les da el mismo acrónimo que la parrilla, no uno distinto para el mismo coche" $ do
       -- La mitad que faltaba, y la que se había desincronizado: el dummy de
       -- comparación decía que el coche 1 era VER desde la Fase 1, y la primera
       -- parrilla real (2026-08-06) mostró que es NOR. Contener el número no basta
       -- si las dos áreas lo nombran distinto.
-      codeOfCar (lcCarA Comparison.dummy) `shouldBe` Just (lcDriverA Comparison.dummy)
-      codeOfCar (lcCarB Comparison.dummy) `shouldBe` Just (lcDriverB Comparison.dummy)
+      [codeOfCar (ceCar e) | e <- lcEntries Comparison.dummy]
+        `shouldBe` [Just (ceDriver e) | e <- lcEntries Comparison.dummy]
+
+    it "los coches de la comparación de respaldo son los del defecto, en su orden" $
+      T.intercalate "," (map ceCar (lcEntries Comparison.dummy)) `shouldBe` Comparison.defaultDrivers
+
+    it "los sectores de la comparación de respaldo suman sus tiempos de vuelta" $
+      -- Lo que el dummy anterior incumplía: NOR más rápido en la cabecera y «por
+      -- detrás» en la curva. Con la Δ calculada desde los sectores, la cabecera y la
+      -- curva solo cuadran si los sectores suman la vuelta.
+      let near a b = abs (a - b) < 1e-9
+       in [fmap (\(a, b, c) -> a + b + c) (ceSectors e) | e <- lcEntries Comparison.dummy]
+            `shouldSatisfy` and . zipWith near [89.512, 89.345] . map (fromMaybe 0)
 
   -- Lógica del __widget__, probada aquí porque `frontend` no tiene suite
   -- (2026-08-04). Es lo único que impide que un acrónimo
@@ -2269,6 +2303,35 @@ main = hspec $ do
       and [ anchored (0.3, 0.7) (0.25, 0.6) f <= anchored (0.3, 0.7) (0.25, 0.6) g
           | f <- [0, 0.01 .. 1], g <- [0, 0.01 .. 1], f <= g ]
         `shouldBe` True
+
+  -- El par que pinta hoy la tarjeta, sobre el dummy (LEC referencia, NOR comparado)
+  -- y sus variantes sin vuelta (Monza: el 16 no tiene vuelta). Los valores, de GHC.
+  describe "Common.Comparison: el par" $ do
+    let near a b = abs (a - b) < 1e-9
+        (lec, nor) = case lcEntries Comparison.dummy of
+          [a, b] -> (a, b)
+          _      -> error "el dummy de la comparación ya no son dos coches"
+        pair es = Comparison.dummy { lcEntries = es }
+        noLap e = e { ceLap = "", ceSectors = Nothing }
+    it "la Δ del segundo contra la referencia, en las cuatro fronteras" $
+      pairDelta Comparison.dummy
+        `shouldSatisfy` (\d -> length d == 4 && and (zipWith near d [0.0, 0.048, -0.081, -0.167]))
+
+    it "sin Δ si a cualquiera de los dos le falta la vuelta, o si no hay segundo" $ do
+      pairDelta (pair [noLap lec, nor]) `shouldBe` []
+      pairDelta (pair [lec, noLap nor]) `shouldBe` []
+      pairDelta (pair [lec]) `shouldBe` []
+
+    it "el tiempo, o «sin vuelta» si le faltan los sectores aunque traiga texto" $ do
+      map lapShown [lec, nor] `shouldBe` ["1:29.512", "1:29.345"]
+      lapShown (lec { ceSectors = Nothing }) `shouldBe` "sin vuelta"
+
+    it "el aviso solo cuando la que no tiene vuelta es la referencia" $ do
+      missingReference (pair [noLap lec, nor])
+        `shouldBe` Just "LEC no tiene vuelta en esta sesión: elige otra referencia."
+      missingReference (pair [lec, noLap nor]) `shouldBe` Nothing
+      missingReference Comparison.dummy `shouldBe` Nothing
+      missingReference (pair []) `shouldBe` Nothing
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9
@@ -3799,8 +3862,8 @@ decodePoints raw =
 
 -- | Espejo de 'pointsOf' para el área Comparison. Aquí el par decode + ensamblado
 -- importa __más__ que en las otras dos: el criterio del área vive precisamente en
--- que el objeto sin delta __decodifique__ (@.:? … .!= []@) para que el @Context@
--- pueda tratarlo como fallo. Probar 'assembleComparison' sobre un
+-- que el coche sin vuelta __decodifique__ (@.:?@) para que el @Context@ decida con
+-- 'comparable'. Probar 'assembleComparison' sobre un
 -- 'RawComparison' construido a mano no cubriría eso.
 comparisonOf :: ByteString -> LapComparison
 comparisonOf = assembleComparison . decodeComparison
@@ -4028,51 +4091,36 @@ sampleWithoutCarData =
 emptyArray :: ByteString
 emptyArray = "[]"
 
--- | Recorte de @GET \/fastf1\/comparison\/{session_key}?drivers=1,16@: __un
--- objeto__, no un arreglo, con las cinco claves. Es la única respuesta del repo
--- que no es una colección, y de ahí que el área necesite su propio criterio de
--- fallo.
+-- | Recorte de @GET \/fastf1\/comparison\/{session_key}?drivers=16,1&samples=…@:
+-- __un objeto__ con los coches en el orden pedido, la referencia primero. La
+-- traza y las fronteras del primero están recortadas a mano; el segundo llega sin
+-- ellas, como con @samples=0@.
 comparisonObject :: ByteString
 comparisonObject =
-  "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
-  \\"lcCarA\":\"1\",\"lcCarB\":\"16\",\
-  \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\",\
-  \\"lcDelta\":[0.0,-0.048,0.081,0.167]}"
+  "{\"lcSamples\":2,\"lcEntries\":[\
+  \{\"ceCar\":\"16\",\"ceDriver\":\"LEC\",\"ceLap\":\"1:29.512\",\"cePart\":\"Q3\",\
+  \\"ceSectors\":[29.0,31.0,29.512],\"ceFrontiers\":[1210.5,2650.25],\
+  \\"ceTrace\":[{\"ctTime\":0.0,\"ctDistance\":0.0,\"ctSpeed\":287.0,\"ctThrottle\":1.0,\"ctBrake\":0.0},\
+  \{\"ctTime\":89.512,\"ctDistance\":5100.0,\"ctSpeed\":301.0,\"ctThrottle\":1.0,\"ctBrake\":0.0}]},\
+  \{\"ceCar\":\"1\",\"ceDriver\":\"NOR\",\"ceLap\":\"1:29.345\",\"cePart\":\"Q3\",\
+  \\"ceSectors\":[29.048,30.871,29.426],\"ceFrontiers\":null,\"ceTrace\":[]}]}"
 
--- | Sesión sin vueltas comparables: el servicio emite el objeto completo con
--- @lcDelta@ vacío y los tiempos en @\"\"@ en vez de un error, porque degradar es
--- trabajo del backend (2026-07-31).
--- Los números de coche __sí__ están aquí: el servicio los conoce antes de mirar
--- las vueltas (son la entrada del query), así que una sesión sin vueltas
--- comparables sigue sabiendo de qué dos coches habla.
-comparisonWithoutDelta :: ByteString
-comparisonWithoutDelta =
-  "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
-  \\"lcCarA\":\"1\",\"lcCarB\":\"16\",\
-  \\"lcLapA\":\"\",\"lcLapB\":\"\",\"lcDelta\":[]}"
+-- | Un coche sin vuelta (la referencia), tal como lo emite el servicio: los
+-- sectores a @null@ y el tiempo vacío, y el otro coche entero.
+comparisonWithoutLap :: ByteString
+comparisonWithoutLap =
+  "{\"lcSamples\":0,\"lcEntries\":[\
+  \{\"ceCar\":\"16\",\"ceDriver\":\"LEC\",\"ceLap\":\"\",\"cePart\":null,\
+  \\"ceSectors\":null,\"ceFrontiers\":null,\"ceTrace\":[]},\
+  \{\"ceCar\":\"1\",\"ceDriver\":\"NOR\",\"ceLap\":\"1:29.345\",\"cePart\":null,\
+  \\"ceSectors\":[29.048,30.871,29.426],\"ceFrontiers\":null,\"ceTrace\":[]}]}"
 
--- | La clave @lcDelta@ __ausente__, no vacía. El servicio de hoy siempre la emite,
--- así que este caso protege contra un cambio futuro del contrato: con @.:@ tumbaría
--- el decode del objeto completo y el degradado ocurriría por excepción de parseo en
--- vez de por el criterio del 'Handler.Comparison.Context'.
-comparisonWithoutDeltaKey :: ByteString
-comparisonWithoutDeltaKey =
-  "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
-  \\"lcCarA\":\"1\",\"lcCarB\":\"16\",\
-  \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\"}"
-
--- | La respuesta de un microservicio __anterior__ a los números de coche: sin
--- @lcCarA@\/@lcCarB@. No es un caso hipotético — el servicio corre en un @venv@
--- arrancado a mano y no se despliega con el backend, así que un @uvicorn@ viejo
--- todavía en pie emite exactamente esto. Con @.:@ tumbaría el objeto completo y
--- __toda__ comparación caería al dummy en silencio; con @.:?@ llega la
--- comparación entera y solo falta el viaje de vuelta
--- (2026-08-05).
-comparisonWithoutCars :: ByteString
-comparisonWithoutCars =
-  "{\"lcDriverA\":\"VER\",\"lcDriverB\":\"LEC\",\
-  \\"lcLapA\":\"1:29.345\",\"lcLapB\":\"1:29.512\",\
-  \\"lcDelta\":[0.0,-0.048,0.081,0.167]}"
+-- | Ningún coche con vuelta, y las claves opcionales __ausentes__ y no a @null@:
+-- tiene que decodificar para que sea 'comparable' quien la descarte, y no una
+-- excepción de parseo.
+comparisonWithoutLaps :: ByteString
+comparisonWithoutLaps =
+  "{\"lcEntries\":[{\"ceCar\":\"16\",\"ceDriver\":\"LEC\"},{\"ceCar\":\"1\",\"ceDriver\":\"NOR\"}]}"
 
 -- | Recorte de @GET \/fastf1\/drivers\/{session_key}@ — los tres primeros coches
 -- de la parrilla real de la sesión del 2026-08-06, en el orden que los da
@@ -4095,8 +4143,7 @@ gridWithUnresolvedCode =
   \{\"deNumber\":\"44\",\"deCode\":\"44\",\"deTeam\":\"\"}]"
 
 -- | La respuesta de un microservicio __anterior__ al equipo: sin @deTeam@.
--- Mismo caso que 'comparisonWithoutCars' y por el mismo motivo — el servicio
--- corre en un @venv@ arrancado a mano y no se despliega con el backend
+-- El servicio corre en un @venv@ arrancado a mano y no se despliega con el backend
 -- (2026-07-31), así que un @uvicorn@ viejo en pie emite
 -- exactamente esto. Con @.:@ tumbaría la lista completa y la parrilla entera
 -- caería al dummy en silencio.

@@ -1,8 +1,9 @@
 -- | Escalado de una serie a coordenadas de un @\<svg\>@ de tamaño fijo.
 --
 -- Primer gráfico del repo. Los cuatro widgets anteriores pintan tablas, así que
--- no había nada que escalar; 'Common.Types.LapComparison' trae @lcDelta@, que es
--- una serie, y una columna de 60 números no comunica una vuelta.
+-- no había nada que escalar; la Δ de Lap Comparison
+-- ('Common.Comparison.deltasAgainst') es una serie, y una columna de números no
+-- comunica una vuelta.
 --
 -- __Por qué esto vive en @common@ y no en el widget que lo usa.__ Es lógica de
 -- presentación en el paquete de tipos, y conviene admitir que es un desvío. La
@@ -85,10 +86,10 @@ deltaRange xs
 -- | La serie como coordenadas del @viewBox@, en el mismo orden.
 --
 -- El índice da la X, y no hay eje X que calcular: la posición en la lista es el
--- __orden a lo largo de la vuelta__, que es lo único que @lcDelta@ garantiza.
+-- __orden a lo largo de la vuelta__, que es lo único que la Δ garantiza.
 --
 -- __Cuidado con leer la X como distancia.__ Desde el 2026-08-11
--- @lcDelta@ son las cuatro __fronteras de sector__ —meta, fin de S1, fin de S2,
+-- la Δ son las cuatro __fronteras de sector__ —meta, fin de S1, fin de S2,
 -- fin de vuelta—, y los sectores de un circuito no miden lo mismo, así que
 -- repartirlas a espacio igual estira unos tramos y encoge otros. Es deliberado:
 -- el eje X real exigiría que viajara en el DTO, y lo que el gráfico afirma —el

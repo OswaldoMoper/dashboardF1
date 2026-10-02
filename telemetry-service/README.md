@@ -59,29 +59,33 @@ Contrato con el lado Haskell (decidido el 2026-07-31):
 
 Nota operativa: las sesiones cargadas se memorizan en proceso, así que **`latest` se congela mientras `uvicorn` viva**. Reiniciarlo para volver a resolverlo.
 
-### `GET /fastf1/comparison/{session_key}?drivers=1,16` — implementado
+### `GET /fastf1/comparison/{session_key}?drivers=16,1&samples=0` — implementado
 
 - **`session_key`**: igual que en telemetría.
-- **`drivers`**: **exactamente dos** números de coche. Obligatorio. `all`, uno solo o tres son **`400`**: `LapComparison` tiene A y B, no una lista, así que no hay respuesta parcial que dar.
-- **Vuelta**: la **más rápida** de cada coche, igual que en telemetría.
+- **`drivers`**: **de 1 a 5** números de coche, **la referencia primero**. Obligatorio. `all` o más de cinco son **`400`**.
+- **`samples`**: muestras por coche de la traza, **0** (sin traza, por defecto) o **de 60 a 250 de 5 en 5**; lo demás es **`400`**. El backend ajusta antes lo que pide el usuario (`Handler.Comparison.Helper.adjustSamples`).
+- **Vuelta**: la **más rápida** de cada coche, igual que en telemetría, y **la misma** para los sectores, las fronteras y la traza.
 
-Devuelve **un objeto** (no un arreglo) con las siete claves de `Common.Types.LapComparison`:
+Devuelve **un objeto** (no un arreglo) con las claves de `Common.Types.LapComparison`:
 
 ```sh
-curl 'localhost:8000/fastf1/comparison/latest?drivers=1,16'
+curl 'localhost:8000/fastf1/comparison/latest?drivers=16,1'
 ```
 
 ```json
-{"lcDriverA":"NOR","lcDriverB":"LEC","lcCarA":"1","lcCarB":"16",
- "lcLapA":"1:22.491","lcLapB":"1:22.000","lcDelta":[0.0,0.051,0.484,0.491]}
+{"lcSamples":0,"lcEntries":[
+  {"ceCar":"16","ceDriver":"LEC","ceLap":"1:22.000","cePart":null,
+   "ceSectors":[27.1,30.4,24.5],"ceFrontiers":null,"ceTrace":[]},
+  {"ceCar":"1","ceDriver":"NOR","ceLap":"1:22.491","cePart":null,
+   "ceSectors":[27.151,30.833,24.507],"ceFrontiers":null,"ceTrace":[]}]}
 ```
 
-- **`lcDelta` son cuatro valores en las cuatro fronteras de sector** —línea de meta, fin de S1, fin de S2, fin de vuelta—: el tiempo acumulado de A menos el de B en cada una. Positivo = A va por detrás. **Son sectores y no una curva de vuelta a propósito** (2026-08-11): un delta por distancia exige un eje que diga «el mismo punto de la pista» en los dos coches, y FastF1 no publica ninguno — los tiempos de sector, en cambio, los publica en vez de integrarlos.
-- **Los cuatro valores son exactos**, y con ellos los dos invariantes: `lcDelta[0] == 0.0` (los dos coches en la línea) y `lcDelta[-1] == lcLapA - lcLapB` al milisegundo. El precio es que **son cuatro puntos y no sesenta**, así que el gráfico es una quebrada de tres tramos: dentro de un sector no se dice nada, que es exactamente lo que se sabe. `TELEMETRY_MAX_POINTS` **no** afecta a este endpoint desde el 2026-08-11.
-- Saneado con el mismo criterio de `NaN` que la telemetría (un solo `NaN` tumbaría el decode del objeto **completo**).
-- **El servicio formatea los tiempos** (`M:SS.mmm`): `lcLapA`/`lcLapB` son `Text` en el DTO, y un `Timedelta` por `str()` daría `0 days 00:01:29.345000`.
-- **Entra número de coche, sale acrónimo**: la traducción la sabe hacer solo este servicio (`session.get_driver`). Mismo vocabulario que `/fastf1/telemetry`. `lcCarA`/`lcCarB` devuelven los números tal como entraron, que es lo que permite al widget pedir **otra** comparación (2026-08-05).
-- **Degradar es del backend.** Una sesión sin vueltas comparables devuelve `lcDelta: []` y los tiempos en `""`, no un error: `Handler.Comparison.Context` es quien cae a su cache o al dummy. Las siete claves están siempre.
+- **La Δ no viaja**: la calcula `common` desde `ceSectors` (`Common.Comparison.deltasAgainst`), contra la referencia o contra el más rápido. Los sectores son **exactos** porque FastF1 los **publica** en vez de integrarlos (2026-08-11): un delta a lo largo de la vuelta exige un eje que diga «el mismo punto de la pista» en todos los coches, y FastF1 no publica ninguno.
+- **Con `samples` > 0**, cada coche lleva **`ceFrontiers`** —dónde cruzó S1 y S2, en metros, calculado con la vuelta completa— y **`ceTrace`**: `samples` muestras (`ctTime`, `ctDistance`, `ctSpeed`, `ctThrottle` de 0 a 1, `ctBrake` 0 o 1) repartidas por posición, con la primera y la última. Con 0 no se toca la telemetría.
+- **`cePart`**: `Q1`, `Q2` o `Q3` en una clasificación (`split_qualifying_sessions`); `null` en lo demás.
+- **Un coche sin vuelta no es un error**: sale con `ceSectors: null`, `ceLap: ""` y sin fronteras ni traza. Degradar es del backend: `Handler.Comparison.Context` cae a su cache o al dummy solo si **ninguno** tiene vuelta.
+- **El servicio formatea los tiempos** (`M:SS.mmm`), y sanea con el mismo criterio de `NaN` que la telemetría.
+- **Entra número de coche, sale acrónimo**: `ceCar` devuelve el número tal como entró, que es lo que permite al widget pedir **otra** comparación (2026-08-05).
 
 ### `GET /fastf1/drivers/{session_key}` — implementado
 
@@ -116,6 +120,6 @@ curl 'localhost:8000/fastf1/laps/latest?driver=1' | head -c 220
 
 - **Es el único de los cuatro sin DTO en `common`**, y el prefijo `le` es el que un futuro `LapEntry` usaría (2026-08-13). Hoy ningún `/api/*` lo consume: el DTO fija el contrato para quien decodifica, y el precedente es `/fastf1/drivers`, que esperó al widget.
 - **Una vuelta sin tiempo se emite**, con `leTime` en `""`: las de entrada a boxes, de salida y las cortadas por bandera roja son vueltas reales, y filtrarlas sería decidir por el consumidor cuáles cuentan. Igual con los sectores ausentes (`null`) y el compuesto que FastF1 no publica (`""`, incluida la cadena `'None'` que escribe en esa columna). **Degradar es del backend.**
-- **`leTime` y los sectores son coherentes**: sobre `latest`, `leTime == leSector1 + leSector2 + leSector3` en las 1407 vueltas que traen los tres, al milisegundo — y el `leTime` de la vuelta rápida de un coche coincide con el `lcLapA`/`lcLapB` que publica `/fastf1/comparison`.
+- **`leTime` y los sectores son coherentes**: sobre `latest`, `leTime == leSector1 + leSector2 + leSector3` en las 1407 vueltas que traen los tres, al milisegundo — y el `leTime` de la vuelta rápida de un coche coincide con el `ceLap` que publica `/fastf1/comparison`.
 - **El orden es el de FastF1**: vueltas de cada coche contiguas y en orden de vuelta, coches en el orden de `driver` (o de la parrilla con `all`). No se reordena.
 - `TELEMETRY_MAX_POINTS` **no** aplica: una vuelta es una fila, no una serie. Un coche que no está en la sesión devuelve `[]` con **200**; una sesión sin vueltas, `[]`. `driver` vacío → `400`.

@@ -88,16 +88,16 @@ comparisonPath = apiPath ComparisonApi
 --
 -- Hereda los dos supuestos de 'telemetryPathFor' (sin escapado de query; los
 -- valores son números de coche, no acrónimos) y añade uno propio: __@drivers@ son
--- exactamente dos__, separados por coma (@\"1,16\"@). El microservicio responde
--- 400 a cualquier otra cantidad, así que no hay análogo del @all@ de telemetría —
--- 'Common.Types.LapComparison' tiene A y B, no una lista.
+-- de 1 a 5__, separados por coma y con la referencia primero (@\"16,1\"@). El
+-- microservicio responde 400 a cualquier otra cantidad, así que no hay análogo del
+-- @all@ de telemetría.
 comparisonPathFor :: Maybe Text -> Maybe Text -> Text
 comparisonPathFor session drivers =
   pathWith comparisonPath [("session", session), ("drivers", drivers)]
 
--- | El valor de @?drivers=@ a partir de dos entradas de usuario, o 'Nothing' si
--- alguna no es un número de coche. Pensada para alimentar directamente el
--- segundo argumento de 'comparisonPathFor'.
+-- | El valor de @?drivers=@ a partir de dos entradas de usuario, en ese orden (la
+-- primera es la referencia), o 'Nothing' si alguna no es un número de coche.
+-- Pensada para alimentar directamente el segundo argumento de 'comparisonPathFor'.
 --
 -- __Es el guardián del desajuste de vocabularios__, no una comodidad de
 -- formateo. El microservicio traduce a número un acrónimo que la sesión

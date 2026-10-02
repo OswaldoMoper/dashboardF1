@@ -14,11 +14,16 @@ module Common.Comparison
   , LapGeometry (..)
   , axisXs
   , anchored
+    -- * Lo que pinta el par de hoy
+  , pairDelta
+  , lapShown
+  , missingReference
   ) where
 
+import           Common.Types  (ComparisonEntry (..), LapComparison (..))
 import           Control.Monad (join)
 import           Data.List     (minimumBy)
-import           Data.Maybe    (catMaybes, listToMaybe)
+import           Data.Maybe    (catMaybes, isNothing, listToMaybe)
 import           Data.Ord      (comparing)
 import           Data.Text     (Text)
 
@@ -116,3 +121,28 @@ anchored (a1, a2) (b1, b2) f
   | f <= a1   = f / a1 * b1
   | f <= a2   = b1 + (f - a1) / (a2 - a1) * (b2 - b1)
   | otherwise = b2 + (f - a2) / (1 - a2) * (1 - b2)
+
+-- | La Δ del segundo coche contra el primero, la referencia, en las cuatro
+-- fronteras ('deltasAgainst'). @[]@ si no hay segundo o si a alguno de los dos le
+-- faltan los sectores.
+pairDelta :: LapComparison -> [Double]
+pairDelta c =
+  case deltasAgainst AgainstReference (map ceSectors (lcEntries c)) of
+    (_ : delta : _) -> delta
+    _               -> []
+
+-- | El tiempo de vuelta de un coche como se pinta: @«sin vuelta»@ si no tiene sus
+-- tres sectores.
+lapShown :: ComparisonEntry -> Text
+lapShown e
+  | isNothing (ceSectors e) = "sin vuelta"
+  | otherwise               = ceLap e
+
+-- | El aviso que sustituye a la gráfica cuando la referencia no tiene vuelta, o
+-- 'Nothing' si la tiene (o no hay coches).
+missingReference :: LapComparison -> Maybe Text
+missingReference c =
+  case lcEntries c of
+    (ref : _) | isNothing (ceSectors ref) ->
+      Just (ceDriver ref <> " no tiene vuelta en esta sesión: elige otra referencia.")
+    _ -> Nothing

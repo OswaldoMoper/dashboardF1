@@ -16,9 +16,10 @@ Los cuatro de FastF1:
   muestras de telemetría, cada una **etiquetada con el acrónimo del piloto**
   (``tpDriver``), con exactamente las claves de
   ``Common.Types.TelemetryPoint``.
-* ``GET /fastf1/comparison/{session_key}?drivers=1,16`` — **un objeto** (no una
-  lista) con las siete claves de ``Common.Types.LapComparison``, comparando la
-  vuelta rápida de exactamente **dos** coches.
+* ``GET /fastf1/comparison/{session_key}?drivers=16,1&samples=0`` — **un objeto**
+  (no una lista) con las claves de ``Common.Types.LapComparison``: la vuelta
+  rápida de **1 a 5** coches, en el orden pedido, con sus sectores y, si
+  ``samples`` no es 0, sus fronteras y su traza.
 * ``GET /fastf1/drivers/{session_key}`` — la **parrilla** de la sesión como
   lista de pares número↔acrónimo, con las claves de
   ``Common.Types.DriverEntry``. Es el único endpoint que **publica** la
@@ -308,7 +309,7 @@ def _car_number(session: Any, part: str) -> str:
     piloto si es un acrónimo que la sesión reconoce; tal cual si no.
 
     Es la traducción inversa de ``_driver_label``, y por eso quien pide con
-    acrónimos recibe números en ``lcCarA``/``lcCarB`` y ``leNumber``.
+    acrónimos recibe números en ``ceCar`` y ``leNumber``.
     """
     if part.isdigit():
         return part
@@ -364,7 +365,7 @@ def _lap_time(value: Any) -> Optional[str]:
     """Un tiempo de vuelta de FastF1 como ``M:SS.mmm``, o ``None``.
 
     Formatear es trabajo de este servicio y no del ``Helper`` de Haskell
-    (2026-07-31): ``lcLapA``\\ /``lcLapB`` son ``Text`` en
+    (2026-07-31): ``ceLap`` es ``Text`` en
     el DTO, y un ``Timedelta`` de pandas pasado por ``str()`` daría
     ``0 days 00:01:29.345000``.
     """
@@ -379,24 +380,15 @@ def _lap_time(value: Any) -> Optional[str]:
 def _interp(x: float, xs: List[float], ys: List[float]) -> Optional[float]:
     """``y`` en ``x`` por interpolación lineal sobre ``xs``, que debe crecer.
 
-    **Sin uso desde el 2026-08-11**: el delta lo construye ``_lap_sectors`` y no
-    hay eje que interpolar. Se conserva —con ``_lap_trace``, su único llamador—
-    para la rama que publique los sectores en el DTO
-    (2026-08-11). Lo que sigue describe el mecanismo tal como quedó.
-
-    Fuera del rango devuelve ``None`` — **no satura y no extrapola**. Saturar
-    era peor que no contestar: devolvía el valor del extremo como si fuera una
-    medida, así que un delta mal alineado salía **correcto justo en los dos
-    puntos que se miran primero** y el fallo quedaba plausible en vez de
-    visible. Quien recibe ``None`` (el bucle de ``comparison``) deja el punto
-    fuera del delta, que es lo honesto: de ese tramo de pista no hay traza del
-    otro coche.
+    Fuera del rango devuelve ``None`` — **no satura y no extrapola**: el valor
+    del extremo saldría como si fuera una medida. Quien lo llama
+    (``_lap_trace``, para las fronteras) deja la frontera vacía.
 
     A mano y no con ``numpy.interp`` a propósito: este módulo evita las
     dependencias científicas en la superficie (ver ``_latest_race``, que detecta
-    ``NaT`` con ``date != date`` para no importar pandas), y con ≤60 puntos la
-    bisección es gratis. Además ``requirements.txt`` no está pineado, así que
-    cada API de librería que se usa es superficie que puede cambiar sola.
+    ``NaT`` con ``date != date`` para no importar pandas). Además
+    ``requirements.txt`` no está pineado, así que cada API de librería que se usa
+    es superficie que puede cambiar sola.
     """
     if not xs or x < xs[0] or x > xs[-1]:
         return None
@@ -509,122 +501,43 @@ def telemetry(session_key: str, driver: str) -> List[Dict[str, Any]]:
 
 # ── Comparación de vueltas ────────────────────────────────────────────────────
 
+# Cuántos coches caben en una comparación.
+COMPARISON_MAX_CARS = 5
 
-def _lap_trace(
-    session: Any, number: str
-) -> Optional[Tuple[str, str, List[float], List[float]]]:
-    """``(acrónimo, tiempo de vuelta, fracciones de vuelta, tiempos)`` de la rápida.
+# Las muestras por coche que acepta ``comparison``: 0 (sin trazas) o de 60 a 250
+# de 5 en 5. El backend ya las ajusta (``Handler.Comparison.Helper.adjustSamples``);
+# aquí se rechaza lo demás.
+COMPARISON_SAMPLES = frozenset([0, *range(60, 251, 5)])
 
-    **Sin uso desde el 2026-08-11**: ``comparison`` construye el delta con
-    ``_lap_sectors``, que no necesita telemetría. Se conserva para la rama que
-    publique los sectores en el DTO (2026-08-11); lo que
-    sigue describe el eje por fracción de vuelta tal como quedó medido, que es la
-    razón por la que se guarda y no se borra.
+# Las partes de una clasificación, en el orden de ``split_qualifying_sessions``.
+_QUALIFYING_PARTS = ("Q1", "Q2", "Q3")
 
-    Espejo estructural de ``_driver_points``, pero devuelve la vuelta como **dos
-    series paralelas** en vez de muestras: es la forma que necesita ``_interp``
-    para leer el tiempo de un coche al mismo punto de pista que el otro.
 
-    **El eje es la fracción de vuelta en ``[0, 1]``, no el metro**, y eso es
-    correctitud y no comodidad (2026-08-10). ``Distance``
-    no lo mide FastF1: lo **integra** ``add_distance()`` a partir de ``Speed``
-    muestreada de forma irregular, así que el metro que sale es una estimación
-    con error acumulado. Medido en Hungría 2026 con ``fastf1`` 3.8.3, la misma
-    vuelta del mismo circuito (~4381 m reales) da **4721 m** para un coche y
-    **4089 m** para el otro: los dos ejes están mal en absoluto y, lo que
-    arruina la comparación, están mal **en distinta escala**. Dividir cada serie
-    por su propio total no normaliza a ciegas — descarta la única parte del
-    número que es falsa y conserva la que no lo es, la posición relativa a lo
-    largo de la vuelta.
-
-    **``interpolate_edges=True`` es lo que hace exactos los dos bordes.** Sin
-    él, la primera muestra cae ya pasada la línea y ``Distance[0]`` arranca en el
-    rectángulo ``Speed[0]/3.6 · Time[0]`` que FastF1 usa para estimar el tramo
-    que no midió (3.7 m y 7.8 m en la medición de arriba, despreciable aquí pero
-    no si hay un hueco de telemetría). Con él, ``Distance[0]`` es ``0.0``,
-    ``Time`` recorre la vuelta entera y ``times[-1]`` coincide con el ``LapTime``
-    publicado — que es lo que convierte el último punto del delta en una
-    comprobación y no en una casualidad.
-
-    ``None`` si el coche no tiene vuelta comparable (no salió, sin telemetría,
-    ``LapTime`` ausente, o menos de dos puntos útiles). Quien decide qué hacer
-    con eso es el endpoint, no esta función.
-    """
+def _fastest_lap(session: Any, number: str) -> Any:
+    """La vuelta rápida de un coche, o ``None`` si no tiene (no salió, abandonó
+    en la primera, la vuelta borrada)."""
     try:
         lap = session.laps.pick_drivers([number]).pick_fastest()
     except Exception:
         return None
     if lap is None or getattr(lap, "empty", False):
         return None
-
-    lap_time = _lap_time(lap["LapTime"])
-    if lap_time is None:
-        return None
-
-    try:
-        telemetry = lap.get_car_data(interpolate_edges=True).add_distance()
-    except Exception:
-        return None
-
-    distances: List[float] = []
-    times: List[float] = []
-    for _, row in telemetry.iterrows():
-        distance = _num(row.get("Distance"))
-        elapsed = _seconds(row.get("Time"))
-        if distance is None or elapsed is None:
-            continue
-        # `Distance` tiene que ser estrictamente creciente: `_interp` busca por
-        # bisección y un retroceso (ruido de GPS, muestra repetida) rompería el
-        # invariante en silencio. En la medición del 2026-08-10 no descartó
-        # ninguna muestra en ninguno de los dos coches, así que es un seguro, no
-        # el filtro que estaba deformando el delta.
-        if distances and distance <= distances[-1]:
-            continue
-        distances.append(distance)
-        times.append(elapsed)
-
-    if len(distances) < 2:
-        return None
-
-    # A fracción de vuelta. El total es positivo: la serie es estrictamente
-    # creciente y arranca en 0.0 (`interpolate_edges=True`), así que el último
-    # elemento es mayor que el primero.
-    total = distances[-1]
-    if total <= 0:
-        return None
-    fractions = [distance / total for distance in distances]
-
-    return _driver_label(session, number), lap_time, fractions, times
+    return lap
 
 
-def _lap_sectors(
-    session: Any, number: str
-) -> Optional[Tuple[str, str, List[float]]]:
-    """``(acrónimo, tiempo de vuelta, [s1, s2, s3])`` de la vuelta rápida.
+def _lap_sectors(lap: Any) -> Optional[Tuple[str, List[float]]]:
+    """``(tiempo de vuelta, [s1, s2, s3])`` de una vuelta.
 
-    Es lo que sustituye a ``_lap_trace`` como fuente del delta desde el
-    2026-08-11, y la diferencia que importa es que **no
-    toca telemetría**: los tres sectores los **publica** FastF1 con el resto de
-    la vuelta, mientras que el eje de distancia había que integrarlo a partir de
-    ``Speed`` — que es de donde salía todo el error. De paso, la comparación deja
-    de descargar y recorrer dos vueltas de canales de coche.
+    Los tres sectores los **publica** FastF1 con el resto de la vuelta; no se
+    integran desde la telemetría, que es de donde salía todo el error del delta a lo
+    largo de la vuelta (2026-08-10 y 2026-08-11).
 
-    ``None`` si el coche no tiene vuelta comparable (no salió, ``LapTime``
-    ausente) **o si le falta cualquiera de los tres sectores**: un delta con dos
-    de tres no es un delta acumulado más corto, es uno mal sumado. Quien decide
-    qué hacer con ese ``None`` es el endpoint, no esta función.
+    ``None`` si falta el ``LapTime`` **o cualquiera de los tres sectores**: una Δ
+    con dos de tres no es una Δ más corta, es una mal sumada.
     """
-    try:
-        lap = session.laps.pick_drivers([number]).pick_fastest()
-    except Exception:
-        return None
-    if lap is None or getattr(lap, "empty", False):
-        return None
-
     lap_time = _lap_time(lap["LapTime"])
     if lap_time is None:
         return None
-
     sectors: List[float] = []
     for column in ("Sector1Time", "Sector2Time", "Sector3Time"):
         try:
@@ -634,109 +547,163 @@ def _lap_sectors(
         if value is None:
             return None
         sectors.append(value)
+    return lap_time, sectors
 
-    return _driver_label(session, number), lap_time, sectors
+
+def _lap_trace(
+    lap: Any, sectors: List[float], samples: int
+) -> Tuple[Optional[List[float]], List[Dict[str, float]]]:
+    """``(fronteras, traza)`` de una vuelta: dónde cruzó S1 y S2, en metros, y
+    ``samples`` muestras repartidas por posición, con la primera y la última.
+
+    Las fronteras salen de la **vuelta completa**, no de las muestras: con 60
+    muestras la frontera interpolada se iba hasta 8,5 m y se movería con el
+    deslizable (2026-10-01). Son la distancia integrada por FastF1 en el instante
+    en que acaba cada sector.
+
+    ``interpolate_edges=True`` hace exactos los dos bordes: la primera muestra está
+    en la línea (``Distance`` 0) y la última en el ``LapTime`` publicado.
+
+    Una muestra con algún canal ausente se descarta, y el tiempo tiene que crecer
+    estrictamente (lo pide ``_interp``). Sin telemetría, ``(None, [])``.
+    """
+    try:
+        telemetry = lap.get_car_data(interpolate_edges=True).add_distance()
+    except Exception:
+        return None, []
+
+    rows: List[Dict[str, float]] = []
+    for _, row in telemetry.iterrows():
+        elapsed = _seconds(row.get("Time"))
+        distance = _num(row.get("Distance"))
+        speed = _num(row.get("Speed"))
+        throttle = _num(row.get("Throttle"))
+        brake = row.get("Brake")
+        if None in (elapsed, distance, speed, throttle) or brake is None or brake != brake:
+            continue
+        if rows and elapsed <= rows[-1]["ctTime"]:
+            continue
+        rows.append(
+            {
+                "ctTime": elapsed,
+                "ctDistance": distance,
+                "ctSpeed": speed,
+                # FastF1 publica el acelerador en 0–100 y el freno como booleano.
+                "ctThrottle": throttle / 100.0,
+                "ctBrake": 1.0 if bool(brake) else 0.0,
+            }
+        )
+    if len(rows) < 2:
+        return None, []
+
+    times = [r["ctTime"] for r in rows]
+    distances = [r["ctDistance"] for r in rows]
+    s1 = _interp(sectors[0], times, distances)
+    s2 = _interp(sectors[0] + sectors[1], times, distances)
+    frontiers = None if s1 is None or s2 is None else [s1, s2]
+
+    if len(rows) <= samples:
+        return frontiers, rows
+    last = len(rows) - 1
+    picked = sorted({round(k * last / (samples - 1)) for k in range(samples)})
+    return frontiers, [rows[i] for i in picked]
+
+
+def _qualifying_parts(session: Any) -> List[Any]:
+    """Las vueltas de cada parte de una clasificación (Q1, Q2 y Q3), o ``[]`` si la
+    sesión no es una clasificación o FastF1 no la sabe partir."""
+    if "Qualifying" not in str(getattr(session, "name", "")) and "Shootout" not in str(
+        getattr(session, "name", "")
+    ):
+        return []
+    try:
+        return list(session.laps.split_qualifying_sessions())
+    except Exception:
+        return []
+
+
+def _part_of(parts: List[Any], lap: Any) -> Optional[str]:
+    """En qué parte de la clasificación cae una vuelta, o ``None``. Medido en Bakú
+    (2026-10-01): la mejor vuelta de cada piloto cae en exactamente una."""
+    for name, laps in zip(_QUALIFYING_PARTS, parts):
+        if laps is None or getattr(laps, "empty", True):
+            continue
+        same = (laps["DriverNumber"] == lap["DriverNumber"]) & (
+            laps["LapNumber"] == lap["LapNumber"]
+        )
+        if bool(same.any()):
+            return name
+    return None
+
+
+def _comparison_entry(
+    session: Any, number: str, samples: int, parts: List[Any]
+) -> Dict[str, Any]:
+    """Un coche de la comparación. Sin vuelta comparable sale con ``ceSectors`` a
+    ``null``, ``ceLap`` vacío y sin fronteras ni traza: decidir qué hacer con eso es
+    del backend y de la página."""
+    entry: Dict[str, Any] = {
+        "ceCar": number,
+        "ceDriver": _driver_label(session, number),
+        "ceLap": "",
+        "cePart": None,
+        "ceSectors": None,
+        "ceFrontiers": None,
+        "ceTrace": [],
+    }
+    lap = _fastest_lap(session, number)
+    if lap is None:
+        return entry
+    timed = _lap_sectors(lap)
+    if timed is None:
+        return entry
+    lap_time, sectors = timed
+    entry["ceLap"] = lap_time
+    entry["ceSectors"] = sectors
+    entry["cePart"] = _part_of(parts, lap)
+    if samples > 0:
+        entry["ceFrontiers"], entry["ceTrace"] = _lap_trace(lap, sectors, samples)
+    return entry
 
 
 @app.get("/fastf1/comparison/{session_key}")
-def comparison(session_key: str, drivers: str) -> Dict[str, Any]:
-    """Comparación de la vuelta rápida de **exactamente dos** coches.
+def comparison(session_key: str, drivers: str, samples: int = 0) -> Dict[str, Any]:
+    """La vuelta rápida de **1 a 5** coches, en el orden pedido: el primero es la
+    referencia.
 
-    Devuelve **un objeto**, no una lista: ``LapComparison`` tiene A y B, así que
-    ``?drivers=1`` o ``?drivers=1,4,16`` (y ``all``) son un **400**, no una
-    respuesta parcial.
+    Devuelve **un objeto**: ``lcSamples`` y ``lcEntries``, un coche por número
+    pedido. La Δ no viaja: la calcula ``common`` desde ``ceSectors``
+    (``Common.Comparison.deltasAgainst``), contra la referencia o contra el más
+    rápido. Con ``samples`` > 0, cada coche lleva además dónde cruzó S1 y S2
+    (``ceFrontiers``) y su traza (``ceTrace``); con 0 no se toca la telemetría.
 
-    ``lcDelta`` son **cuatro valores en las cuatro fronteras de sector** —línea
-    de meta, fin de S1, fin de S2, fin de vuelta—: el tiempo acumulado de A menos
-    el de B en cada una. Positivo = A va por detrás. Saneado con ``_num``, porque
-    un solo ``NaN`` tumba el decode del objeto **completo** en aeson.
+    ``drivers`` fuera de 1 a 5 coches (``all`` incluido) o ``samples`` que no sea 0
+    o de 60 a 250 de 5 en 5 son un **400**. Un coche sin vuelta **no** es un error:
+    sale sin sectores (``_comparison_entry``).
 
-    **Son sectores y no una curva de vuelta a propósito**
-    (2026-08-11). Un delta por distancia exige un eje que diga "el mismo punto de
-    la pista" en los dos coches, y FastF1 no publica ninguno: se midieron cinco
-    —el metro integrado, la fracción de vuelta, el trapecio, la telemetría
-    fusionada y el camino GPS— y **ninguno** deja el delta dentro de lo
-    físicamente posible, porque el canal ``Speed`` del que todos derivan trae un
-    sesgo de +8 % en un coche y −6.5 % en el otro (ver 2026-08-10). Los tiempos
-    de sector, en cambio, FastF1 los **publica** en vez de integrarlos.
-
-    Los cuatro valores son **exactos**, y con ellos los dos invariantes que antes
-    solo se cumplían en las puntas: el primero es ``0.0`` (los dos coches en la
-    línea) y el último es ``lcLapA - lcLapB`` — ya no "del orden de", sino la
-    misma diferencia al milisegundo, porque los tres sectores suman el
-    ``LapTime``. Para el par medido el 2026-08-10 en Hungría:
-    ``[0.0, +0.051, +0.484, +0.491]``.
-
-    El precio, dicho aquí porque el consumidor lo va a ver: **son cuatro puntos y
-    no sesenta**, así que el gráfico es una línea quebrada de tres tramos y no
-    una curva. Dentro de un sector no se dice nada, que es exactamente lo que se
-    sabe.
-
-    Una sesión sin vueltas comparables devuelve ``lcDelta: []`` y los tiempos en
-    ``""``, **no un error**: degradar es trabajo del backend
-    (2026-07-31), y las siete claves están siempre.
-
-    ``lcCarA``/``lcCarB`` son los **números de coche** tal como entraron, junto a
-    los acrónimos que salen. Es el viaje de vuelta: el consumidor habla acrónimos
-    y el query pide números, y solo este servicio conoce la traducción
-    (``_driver_label``), así que devolver el número es lo que permite al widget
-    pedir **otra** comparación (2026-08-05).
+    ``ceCar`` es el número de coche tal como entró, junto al acrónimo que sale. Es
+    el viaje de vuelta: el consumidor habla acrónimos y el query pide números, y
+    solo este servicio conoce la traducción (``_driver_label``, 2026-08-05).
     """
     session = _resolve_session(session_key)
     numbers = _resolve_drivers(session, drivers)
-    if len(numbers) != 2:
+    if not 1 <= len(numbers) <= COMPARISON_MAX_CARS:
         raise HTTPException(
             status_code=400,
             detail=(
-                "drivers debe ser exactamente dos números de coche "
-                "(p. ej. '1,16'); la comparación es de A contra B"
+                "drivers debe ser de 1 a 5 números de coche (p. ej. '16,1'); "
+                "el primero es la referencia"
             ),
         )
-
-    lap_a_data = _lap_sectors(session, numbers[0])
-    lap_b_data = _lap_sectors(session, numbers[1])
-    if lap_a_data is None or lap_b_data is None:
-        return {
-            "lcDriverA": _driver_label(session, numbers[0]),
-            "lcDriverB": _driver_label(session, numbers[1]),
-            "lcCarA": numbers[0],
-            "lcCarB": numbers[1],
-            "lcLapA": "",
-            "lcLapB": "",
-            "lcDelta": [],
-        }
-
-    label_a, lap_a, sectors_a = lap_a_data
-    label_b, lap_b, sectors_b = lap_b_data
-
-    # El `0.0` de la línea de meta no sale de ningún sector: es la frontera
-    # cero, donde los dos coches están empatados por definición. Va delante para
-    # que el delta tenga las **cuatro** fronteras y no solo los tres finales, y
-    # es lo que hace que el gráfico arranque en la línea del cero en vez de en el
-    # primer parcial.
-    delta: List[float] = [0.0]
-    accumulated_a, accumulated_b = 0.0, 0.0
-    for sector_a, sector_b in zip(sectors_a, sectors_b):
-        accumulated_a += sector_a
-        accumulated_b += sector_b
-        value = _num(accumulated_a - accumulated_b)
-        # Un `None` aquí no puede recortar la serie como hacía `_interp`: los
-        # cuatro valores son fronteras y saltarse una desplazaría las de detrás.
-        # `_lap_sectors` ya garantiza tres sectores finitos, así que esto es un
-        # seguro contra el desbordamiento de la suma, no un camino esperado.
-        if value is None:
-            delta = []
-            break
-        delta.append(value)
-
+    if samples not in COMPARISON_SAMPLES:
+        raise HTTPException(
+            status_code=400,
+            detail="samples debe ser 0 o de 60 a 250 de 5 en 5",
+        )
+    parts = _qualifying_parts(session)
     return {
-        "lcDriverA": label_a,
-        "lcDriverB": label_b,
-        "lcCarA": numbers[0],
-        "lcCarB": numbers[1],
-        "lcLapA": lap_a,
-        "lcLapB": lap_b,
-        "lcDelta": delta,
+        "lcSamples": samples,
+        "lcEntries": [_comparison_entry(session, n, samples, parts) for n in numbers],
     }
 
 
@@ -835,7 +802,7 @@ def _lap_entry(label: str, number: str, row: Any) -> Dict[str, Any]:
     Composición de lo que ya está —``_lap_time``, ``_seconds``, ``_num``— y por
     eso no repite el saneado: ningún valor sale ``NaN`` (aeson lo rechazaría),
     los tiempos van formateados por el servicio y no por el consumidor, y los
-    sectores van en segundos como ``lcDelta``.
+    sectores van en segundos como ``ceSectors``.
 
     **Siempre devuelve un objeto**, nunca ``None``: a diferencia de ``_sample``,
     aquí no hay campo cuya ausencia impida situar la fila. Una vuelta sin
@@ -847,7 +814,7 @@ def _lap_entry(label: str, number: str, row: Any) -> Dict[str, Any]:
     return {
         "leDriver": label,
         # El número tal como entró, junto al acrónimo que sale: es el mismo
-        # viaje de vuelta que `lcCarA`/`lcCarB`
+        # viaje de vuelta que `ceCar`
         # (2026-08-05), lo que permite pedir otra vuelta de este coche.
         "leNumber": number,
         "leLap": None if lap_number is None else int(lap_number),

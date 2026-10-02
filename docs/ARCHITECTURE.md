@@ -96,16 +96,18 @@ Endpoints (los **cuatro** implementados desde el 2026-08-13):
 
 - `/fastf1/telemetry/{session_key}/{driver}`
 - `/fastf1/laps/{session_key}?driver=all`
-- `/fastf1/comparison/{session_key}?drivers=1,16`
+- `/fastf1/comparison/{session_key}?drivers=16,1&samples=0`
 - `/fastf1/drivers/{session_key}`
 
 `driver`/`drivers` son **números de coche** (o `all` en telemetría), no acrónimos: la traducción
 número→acrónimo la conoce solo el microservicio, así que entra número y **sale acrónimo**
-(2026-08-01 y 2026-08-03). La comparación es de **exactamente dos** coches.
+(2026-08-01 y 2026-08-03). La comparación es de **1 a 5** coches, **la referencia primero**, y trae los
+sectores de cada uno; la Δ la calcula `common`. Con `samples` (0, o de 60 a 250 de 5 en 5) trae también las
+fronteras S1/S2 y la traza de la misma vuelta.
 Un acrónimo que la sesión reconoce se acepta y **se traduce a número a la entrada**, así que la respuesta
 lleva números también en ese caso (2026-09-23); lo que no reconoce pasa tal cual.
 
-La comparación devuelve **también el número de coche** (`lcCarA`/`lcCarB`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**.
+La comparación devuelve **también el número de coche** (`ceCar`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**.
 
 **Se arranca desde el flake** (`nix run .#telemetry`, o `nix develop .#telemetry` para iterar), con las
 dependencias de Python pineadas por él y sin venv que reconstruir (2026-08-12). La

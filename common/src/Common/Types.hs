@@ -531,28 +531,53 @@ data TelemetryPoint = TelemetryPoint
 instance ToJSON TelemetryPoint
 instance FromJSON TelemetryPoint
 
--- | Comparación de una vuelta entre dos drivers.
---
--- La identidad va __por partida doble__: el acrónimo (@lcDriverA@) y el número
--- de coche (@lcCarA@). No es redundancia. La API de FastF1 habla __números de
--- coche__ y los widgets hablan __acrónimos__ (2026-08-01 y
--- 2026-08-03), y el acrónimo no permite reconstruir el número: solo el
--- microservicio conoce esa traducción. Sin @lcCarA@\/@lcCarB@ el consumidor
--- puede leer la comparación pero no puede pedir __otra__ — que es exactamente lo
--- que le faltaba a 'Widgets.Comparison' (2026-08-05).
+-- | La vuelta rápida de 1 a 5 coches de una sesión, __en el orden pedido__: el
+-- primero es la referencia. La Δ no viaja: se calcula con
+-- 'Common.Comparison.deltasAgainst' desde 'ceSectors'.
 data LapComparison = MkLapComparison
-  { lcDriverA :: Text
-  , lcDriverB :: Text
-  , lcCarA    :: Text        -- ^ Número de coche de A (p. ej. @"1"@), el que acepta el query.
-  , lcCarB    :: Text        -- ^ Número de coche de B (p. ej. @"16"@).
-  , lcLapA    :: Text        -- ^ Tiempo de vuelta del driver A.
-  , lcLapB    :: Text        -- ^ Tiempo de vuelta del driver B.
-  , lcDelta   :: [Double]    -- ^ Delta acumulado A-B a lo largo de la vuelta.
+  { lcEntries :: [ComparisonEntry]
+  , lcSamples :: Int   -- ^ Muestras por coche en 'ceTrace', ya ajustadas; 0 sin trazas.
+  , lcNotice  :: Text  -- ^ Qué se ajustó de lo pedido, o vacío.
   }
   deriving stock (Eq, Show, Generic)
 
 instance ToJSON LapComparison
 instance FromJSON LapComparison
+
+-- | Un coche de la comparación.
+--
+-- La identidad va __por partida doble__: el número de coche, que es lo que acepta
+-- el query, y el acrónimo, que es lo que se pinta; solo el microservicio conoce la
+-- traducción (2026-08-05).
+--
+-- Un coche __sin vuelta__ llega con 'ceSectors' a 'Nothing', 'ceLap' vacío y sin
+-- fronteras ni trazas.
+data ComparisonEntry = MkComparisonEntry
+  { ceCar       :: Text                           -- ^ Número de coche (p. ej. @"16"@).
+  , ceDriver    :: Text                           -- ^ Acrónimo (p. ej. @"LEC"@).
+  , ceLap       :: Text                           -- ^ Tiempo de vuelta ya formateado, o vacío.
+  , cePart      :: Maybe Text                     -- ^ @"Q1"@, @"Q2"@ o @"Q3"@ en una clasificación.
+  , ceSectors   :: Maybe (Double, Double, Double) -- ^ Los tres sectores publicados, en segundos.
+  , ceFrontiers :: Maybe (Double, Double)         -- ^ Dónde cruzó S1 y S2, en metros; solo con trazas.
+  , ceTrace     :: [TracePoint]                   -- ^ 'lcSamples' muestras repartidas por posición.
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON ComparisonEntry
+instance FromJSON ComparisonEntry
+
+-- | Una muestra de la vuelta de un coche, contada desde la línea.
+data TracePoint = MkTracePoint
+  { ctTime     :: Double  -- ^ Segundos.
+  , ctDistance :: Double  -- ^ Metros, integrados por FastF1 desde la velocidad.
+  , ctSpeed    :: Double  -- ^ km\/h.
+  , ctThrottle :: Double  -- ^ 0–1.
+  , ctBrake    :: Double  -- ^ 0 o 1.
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON TracePoint
+instance FromJSON TracePoint
 
 -- | Un coche de la parrilla de una sesión: el par número↔acrónimo, con el equipo.
 --
@@ -688,10 +713,9 @@ data WidgetParams = WidgetParams
     -- @"1"@), no un acrónimo — el desajuste de vocabularios es el de
     -- 'LapComparison'.
   , wpDrivers :: Maybe Text
-    -- ^ Valor de @?drivers=@ de comparación, __ya compuesto__: dos números de
-    -- coche separados por coma (@"1,16"@). Que sean exactamente dos no lo
-    -- impide el tipo; lo garantiza @Common.Route.driversParam@, que es quien
-    -- compone este valor.
+    -- ^ Valor de @?drivers=@ de comparación, __ya compuesto__: números de
+    -- coche separados por coma, la referencia primero (@"16,1"@). El tipo no
+    -- limita cuántos; hoy lo compone @Common.Route.driversParam@, con dos.
   }
   deriving stock (Eq, Show, Generic)
 

@@ -32,7 +32,7 @@ import           Network.HTTP.Req
 comparisonBase :: Text -> Url 'Http
 comparisonBase host = http host /: "fastf1" /: "comparison"
 
--- | @GET \/fastf1\/comparison\/{session_key}?drivers=…@, decodificado al tipo
+-- | @GET \/fastf1\/comparison\/{session_key}?drivers=…&samples=…@, decodificado al tipo
 -- crudo 'RawComparison'. Sin lógica de negocio: el mapeo a
 -- 'Common.Types.LapComparison' es de 'Handler.Comparison.Helper' y la
 -- orquestación (cache, degradado) del 'Handler.Comparison.Context'.
@@ -40,19 +40,21 @@ comparisonBase host = http host /: "fastf1" /: "comparison"
 -- __La diferencia con 'Handler.Telemetry.Manager.fetchTelemetry'__: allí el
 -- piloto es un segmento de path; aquí los coches van en el __query string__
 -- (@\"drivers\" =: drivers@), porque así lo expone el servicio — la comparación
--- es de dos coches y una lista en el path se confundiría con la jerarquía de
--- recursos. Por eso la 'Option' lleva el puerto __y__ el parámetro.
+-- es de varios coches y una lista en el path se confundiría con la jerarquía de
+-- recursos. Por eso la 'Option' lleva el puerto __y__ los parámetros.
 --
--- Lanza si el servicio está apagado, si @drivers@ no son exactamente dos números
--- de coche (400 del servicio) o si la respuesta trae otra forma; es el @try@ del
--- 'Context' quien decide qué hacer con eso.
-fetchComparison :: Config -> Text -> Text -> IO RawComparison
-fetchComparison cfg sessionKey drivers = runFastF1 cfg $ do
+-- @samples@ llega ya ajustado ('Handler.Comparison.Helper.adjustSamples').
+--
+-- Lanza si el servicio está apagado, si @drivers@ no son de 1 a 5 números de
+-- coche o @samples@ está fuera de rango (400 del servicio) o si la respuesta trae
+-- otra forma; es el @try@ del 'Context' quien decide qué hacer con eso.
+fetchComparison :: Config -> Text -> Text -> Int -> IO RawComparison
+fetchComparison cfg sessionKey drivers samples = runFastF1 cfg $ do
   res <-
     req
       GET
       (comparisonBase (cfgTelemetryHost cfg) /: sessionKey)
       NoReqBody
       jsonResponse
-      (fastf1Options cfg <> "drivers" =: drivers)
+      (fastf1Options cfg <> "drivers" =: drivers <> "samples" =: samples)
   pure (responseBody res)

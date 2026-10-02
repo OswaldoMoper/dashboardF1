@@ -107,16 +107,17 @@ data Env = Env
     -- última respuesta buena de @all@ a quien pidió un piloto concreto — datos
     -- de otros coches presentados como suyos. Con clave, una combinación nunca
     -- pedida degrada al dummy, que es honesto.
-  , envComparisonCache :: TVar (Map (Text, Text) LapComparison)
+  , envComparisonCache :: TVar (Map (Text, Text, Int) LapComparison)
     -- ^ Última respuesta buena de @/api/comparison@ __por clave__ @(sesión,
-    -- coches)@ ya resuelta (respaldo si el microservicio FastF1 no responde).
+    -- coches, muestras)@ ya resuelta (respaldo si el microservicio FastF1 no
+    -- responde).
     --
     -- Nace con clave, sin pasar por la caja única de las tres primeras: el
     -- endpoint acepta parámetros desde el primer día, así que la decisión del
     -- 2026-08-01 se __aplica__, no se vuelve a discutir. Es también la única caja
     -- cuyo valor no es una lista — 'LapComparison' es un objeto, y de ahí que el
-    -- criterio de fallo del 'Handler.Comparison.Context' sea @null . lcDelta@ y no
-    -- \"lista vacía\".
+    -- criterio de fallo del 'Handler.Comparison.Context' sea «ningún coche con
+    -- sectores» y no \"lista vacía\".
   , envFeedWindow      :: TVar FeedWindow
     -- ^ Lo que el backend sabe sobre __cuándo merece la pena pedirle la foto al
     -- feed__ —que cuesta 16-23 s y fuera de sesión no trae nada que servir— y

@@ -6,8 +6,8 @@
 --
 -- __El criterio de fallo vuelve a ser el simple__ —la lista vacía—, y conviene
 -- decirlo porque la última área en llegar hizo lo contrario. El
--- @'null' . 'Common.Types.lcDelta'@ de 'Handler.Comparison.Context'
--- (2026-08-03) fue la __excepción__ que impuso un DTO que
+-- «ningún coche con sectores» de 'Handler.Comparison.Context'
+-- (2026-08-03) es la __excepción__ que impuso un DTO que
 -- era un objeto y no una colección: sin lista que mirar, hubo que elegir un
 -- campo. Aquí la respuesta vuelve a ser una lista, así que @null@ basta y no hay
 -- nada que inventar.

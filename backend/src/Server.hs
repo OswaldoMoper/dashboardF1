@@ -52,8 +52,10 @@ instance ToJSON Home
 -- 'Common.Route.comparisonPathFor'.
 --
 -- Nótese que el parámetro de comparación es @drivers@ en plural y no @driver@:
--- la comparación es de __exactamente dos__ coches y el microservicio responde
--- 400 a cualquier otra cantidad, mientras que el de telemetría admite @all@.
+-- la comparación es de __1 a 5__ coches y el microservicio responde 400 a
+-- cualquier otra cantidad, mientras que el de telemetría admite @all@. @samples@
+-- es un 'Int': lo que no es número lo rechaza Servant con 400, y lo que está
+-- fuera de rango lo ajusta 'Handler.Comparison.Helper.adjustSamples'.
 --
 -- @/api/live@ y @/api/tyre-strategy@ responden con cabeceras propias: la
 -- procedencia del dato ('Provenance'). Cada tipo vive en su 'Handler' y no aquí
@@ -69,6 +71,7 @@ type Api =
   :<|> "api" :> "comparison"
          :> QueryParam "session" Text
          :> QueryParam "drivers" Text
+         :> QueryParam "samples" Int
          :> Get '[JSON] LapComparison
   :<|> "api" :> "drivers"
          :> QueryParam "session" Text

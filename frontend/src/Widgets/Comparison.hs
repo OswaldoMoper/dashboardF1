@@ -10,11 +10,10 @@
 -- ('Loading' \/ 'Failed' \/ 'Loaded') y sin datos dummy locales, igual que
 -- 'Widgets.LiveTiming', 'Widgets.Telemetry' e 'Widgets.Historical'.
 --
--- __Es el primer widget del repo que pinta una serie y no una tabla.__ De los
--- siete campos de 'Common.Types.LapComparison', seis son etiquetas
--- —@lcLapA@\/@lcLapB@ vienen __ya formateadas__ desde el microservicio
--- (2026-07-31), así que aquí no se parsea ni se calcula
--- nada con ellas— y todo el interés está en @lcDelta@.
+-- __Es el primer widget del repo que pinta una serie y no una tabla.__ Pinta el
+-- par de los dos primeros coches de 'Common.Types.LapComparison': el primero es la
+-- referencia y la serie es la Δ del segundo contra él ('Common.Comparison.pairDelta').
+-- Los tiempos vienen __ya formateados__ desde el microservicio (2026-07-31).
 --
 -- __El gráfico es SVG a mano, sin librería.__ El escalado vive en 'Common.Chart',
 -- puro y probado por @backend-test@; este módulo solo monta el DOM. La
@@ -36,8 +35,8 @@
 -- __Se eligen coches de la parrilla, no se teclean números.__ Es el desajuste de
 -- vocabularios del repo (la API habla números, los widgets acrónimos,
 -- 2026-08-01) cerrado por los dos extremos:
--- 'Common.Types.LapComparison' trae desde el 2026-08-05 los números junto a los
--- acrónimos —de qué coches habla lo que se está pintando— y @\/api\/drivers@
+-- cada coche de 'Common.Types.LapComparison' trae su número junto al acrónimo
+-- —de qué coches habla lo que se está pintando— y @\/api\/drivers@
 -- publica desde el 2026-08-06 la parrilla entera —qué otros hay—. Este módulo es
 -- el primer consumidor de las dos cosas: el usuario ve @\"1 · NOR — McLaren\"@ y
 -- lo que sale hacia el endpoint sigue siendo el @1@.
@@ -62,15 +61,17 @@ import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         shownMode, showsNames, showsValues,
                                         valueHeight, valuesFitMeasured,
                                         vsBeside)
+import           Common.Comparison (lapShown, missingReference, pairDelta)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
                                 driversPathFor)
-import           Common.Types  (DriverEntry (..), LapComparison (..))
+import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
+                                LapComparison (..))
 import           Control.Monad (forM_, unless, when)
 import           Data.List     (find)
 import           Data.Map      (Map)
 import qualified Data.Map      as Map
-import           Data.Maybe    (fromMaybe)
+import           Data.Maybe    (fromMaybe, listToMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import qualified GHCJS.DOM     as DOM (currentWindowUnchecked)
@@ -162,7 +163,7 @@ comparisonWidget revealed = mdo
 -- | El alto de la fila de fronteras pintada: el de su modo si hay fronteras que
 -- nombrar, 0 si no hay fila.
 rowHeightNow :: ChartMode -> CState -> Double
-rowHeightNow m (Loaded c) | not (null (frontierCells (lcDelta c))) = rowHeight m
+rowHeightNow m (Loaded c) | not (null (frontierCells (pairDelta c))) = rowHeight m
 rowHeightNow _ _          = 0
 
 -- | Lo que se mide de la tarjeta: su ancho por dentro, en px, y si caben las dos
@@ -313,19 +314,17 @@ refreshLine LastFailed =
 
 -- | Los dos selectores de coche y el botón, y la URL que sale de pulsarlo.
 --
--- __Dos controles separados y no uno solo con @\"1,16\"@:__ así la cardinalidad
--- es estructural. El microservicio responde 400 a cualquier cantidad que no sea
--- dos, y ese 400 lo absorbe el @try@ del backend y vuelve como 200 con el dummy
--- (2026-08-01), así que impedir mandar uno o tres tiene que
--- ser cosa del widget y no del degradado. Es lo único que sobrevive intacto del
--- par de @\<input\>@ que había aquí hasta el 2026-08-07.
+-- __Dos controles separados y no uno solo con @\"16,1\"@:__ así la cardinalidad
+-- es estructural —la tarjeta pinta un par—. El primero es la referencia, y va
+-- primero en el query. Es lo único que sobrevive intacto del par de @\<input\>@ que
+-- había aquí hasta el 2026-08-07.
 --
--- __Las posiciones iniciales, 0 y 1, no son la selección de verdad:__ son lo que
+-- __Las posiciones iniciales, 1 y 0, no son la selección de verdad:__ son lo que
 -- se ve durante el instante que va del arranque a la primera respuesta. El par
 -- que el gráfico pinta lo marca el prefill, y tiene que ser así porque
--- @Handler.Comparison.Helper.defaultDrivers@ son los coches @1@ y @16@ y sus
--- posiciones dependen de la parrilla: en el dummy son la 0 y la 1 —está ordenado
--- justamente así— y en la parrilla real son la 0 y la __3__.
+-- @Handler.Comparison.Helper.defaultDrivers@ son los coches @16@ y @1@ y sus
+-- posiciones dependen de la parrilla: en el dummy son la 1 y la 0 y en la parrilla
+-- real la __3__ y la 0.
 --
 -- El tercer argumento dice si el «VS» va a la derecha del primer desplegable
 -- ('vsNextTo'). El último se pinta junto a «Comparar», en la misma fila, y su
@@ -346,15 +345,15 @@ carSelector grid shown vsNext beside = divClass "car-selector" $ do
       -- cualquier orden: con solo la respuesta, la que se adelante a la parrilla
       -- buscaría el coche en una lista vacía y el prefill se perdería para
       -- siempre.
-      setPos car = fmapMaybe id (updated (zipDynWith (positionFor car) indexed shown))
-  (posB, posA) <- elDynAttr "div" (pairAttrs <$> vsNext) $ do
-    b <- carDropdown 1 labels (setPos lcCarB)
+      setPos i = fmapMaybe id (updated (zipDynWith (positionFor (carOf i)) indexed shown))
+  (posRef, posOther) <- elDynAttr "div" (pairAttrs <$> vsNext) $ do
+    r <- carDropdown 1 labels (setPos 0)
     elClass "span" "car-selector__vs" $ text "vs"
-    a' <- carDropdown 0 labels (setPos lcCarA)
-    pure (b, a')
+    o <- carDropdown 0 labels (setPos 1)
+    pure (r, o)
   (click, a) <- divClass "comparison__actions" $ (,) <$> compareButton <*> beside
-  let picked = zipDyn (zipDynWith carAt indexed posA)
-                      (zipDynWith carAt indexed posB)
+  let picked = zipDyn (zipDynWith carAt indexed posRef)
+                      (zipDynWith carAt indexed posOther)
   pure (fmapMaybe urlFor (tagPromptlyDyn picked click), a)
   where
     -- 'fmapMaybe' es lo que hace que una selección incompleta __no dispare
@@ -367,10 +366,10 @@ carSelector grid shown vsNext beside = divClass "car-selector" $ do
     -- entre el arranque y la respuesta de @\/api\/drivers@, y ahí un clic no
     -- puede significar nada.
     urlFor :: (Maybe Text, Maybe Text) -> Maybe Text
-    urlFor (mcarA, mcarB) = do
-      carA <- mcarA
-      carB <- mcarB
-      comparisonPathFor Nothing . Just <$> driversParam carA carB
+    urlFor (mref, mother) = do
+      ref   <- mref
+      other <- mother
+      comparisonPathFor Nothing . Just <$> driversParam ref other
 
 -- | La parrilla indexada por __posición__, que es la clave de los dos
 -- 'dropdown'.
@@ -415,15 +414,19 @@ positionOf indexed car =
 -- comparación, o el coche del que habla __no está en la parrilla__.
 --
 -- El segundo caso no es hipotético: con el microservicio apagado la comparación
--- es el dummy (@1@ vs @16@) y la parrilla puede ser la real de otra sesión
+-- es el dummy (@16@ y @1@) y la parrilla puede ser la real de otra sesión
 -- cacheada. Que el selector se quede donde estaba y el @#n@ de 'lapLabel'
 -- discrepe es justo la señal de que lo pintado no es lo pedido.
 positionFor
-  :: (LapComparison -> Text)
+  :: (LapComparison -> Maybe Text)
   -> Map Int DriverEntry
   -> Maybe LapComparison
   -> Maybe Int
-positionFor car indexed = (positionOf indexed . car =<<)
+positionFor car indexed shown = positionOf indexed =<< (car =<< shown)
+
+-- | El número del coche @i@ de la comparación (0, la referencia), si lo hay.
+carOf :: Int -> LapComparison -> Maybe Text
+carOf i = fmap ceCar . listToMaybe . drop i . lcEntries
 
 -- | La etiqueta de una opción: @\"1 · NOR — McLaren\"@.
 --
@@ -501,57 +504,57 @@ modeSelect fits shown = do
     optionAttrs m f =
       ("value" =: modeKey m) <> if modeEnabled f m then mempty else "disabled" =: "disabled"
 
--- | Los dos pilotos con su tiempo de vuelta, tal cual llegan. @lcLapA@\/@lcLapB@
--- son 'Text' ya formateado (@M:SS.mmm@) por el microservicio: intentar
--- reformatearlos aquí sería reintroducir en el widget un trabajo que el servicio
--- ya hizo.
+-- | Los dos primeros coches con su tiempo de vuelta, la referencia primero. El
+-- tiempo llega ya formateado (@M:SS.mmm@) por el microservicio, y un coche sin
+-- vuelta dice «sin vuelta» ('Common.Comparison.lapShown').
 lapHeader :: DomBuilder t m => LapComparison -> m ()
-lapHeader c = divClass "comparison__header" $ do
-  lapLabel (lcDriverB c) (lcCarB c) (lcLapB c)
-  elClass "span" "comparison__vs" $ text "vs"
-  lapLabel (lcDriverA c) (lcCarA c) (lcLapA c)
+lapHeader c = divClass "comparison__header" $
+  case lcEntries c of
+    ref : other : _ -> do
+      lapLabel ref
+      elClass "span" "comparison__vs" $ text "vs"
+      lapLabel other
+    [ref] -> lapLabel ref
+    []    -> blank
 
 -- | Un piloto, su coche y su tiempo.
 --
--- El número de coche es __el único consumidor de @lcCarA@\/@lcCarB@__ y no es
--- decoración: es lo que confirma el viaje de vuelta. El widget pide números y
--- recibe acrónimos, así que sin el @#n@ no hay forma de ver que lo que volvió
--- corresponde a lo que se pidió — y en el caso del respaldo, de ver que __no__
--- corresponde: el dummy siempre habla de @1@ y @16@, así que pedir @44@ y leer
--- @#1@ es exactamente la señal de que el microservicio no contestó.
---
--- Se omite cuando viene vacío, que es la respuesta de un servicio anterior a
--- que la clave existiera (2026-08-05).
-lapLabel :: DomBuilder t m => Text -> Text -> Text -> m ()
-lapLabel driver car lap = divClass "comparison__lap" $ do
+-- El número de coche no es decoración: es lo que confirma el viaje de vuelta. El
+-- widget pide números y recibe acrónimos, así que sin el @#n@ no hay forma de ver
+-- que lo que volvió corresponde a lo que se pidió — y en el caso del respaldo, de
+-- ver que __no__ corresponde: el dummy siempre habla de @16@ y @1@, así que pedir
+-- @44@ y leer @#16@ es exactamente la señal de que el microservicio no contestó.
+lapLabel :: DomBuilder t m => ComparisonEntry -> m ()
+lapLabel e = divClass "comparison__lap" $ do
   elClass "span" "comparison__who" $ do
-    elClass "span" "comparison__driver" $ text driver
-    if T.null car
-      then blank
-      else elClass "span" "comparison__car" $ text ("#" <> car)
-  elClass "span" "comparison__time" $ text lap
+    elClass "span" "comparison__driver" $ text (ceDriver e)
+    elClass "span" "comparison__car" $ text ("#" <> ceCar e)
+  elClass "span" "comparison__time" $ text (lapShown e)
 
 -- | La gráfica según el reparto, el lado del eje y el modo que se ve: la curva, el
 -- eje vertical (en su columna o dentro, según 'clAxisInside') y la fila de
 -- fronteras con las líneas que pida el modo. El primer argumento se pinta encima
--- de la curva, dentro de su lienzo: el aviso de la petición.
+-- de la curva, dentro de su lienzo: el aviso de la petición. Si la referencia no
+-- tiene vuelta, en lugar de todo eso va el aviso de 'Common.Comparison.missingReference'.
 plotView :: MonadWidget t m => m () -> ChartMode -> CardLayout -> Side -> CState -> m ()
 plotView _ _ _ _ Loading =
   elClass "p" "status status--loading" $ text "Cargando…"
 plotView _ _ _ _ Failed =
   elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
-plotView overlay m l axis (Loaded c) =
-  elAttr "div" (plotRowAttrs axis) $ do
-    divClass "comparison__plotarea" $ do
-      divClass "comparison__canvas" $ do
-        deltaChart series
-        when (clAxisInside l) $
-          mapM_ insideTick (insideAxisLabels axis (clChart l) series)
-        overlay
-      frontierRow (showsNames m) (showsValues m) series
-    unless (clAxisInside l) $ axisColumn axis series
+plotView overlay m l axis (Loaded c)
+  | Just note <- missingReference c = elClass "p" "status status--empty" $ text note
+  | otherwise =
+      elAttr "div" (plotRowAttrs axis) $ do
+        divClass "comparison__plotarea" $ do
+          divClass "comparison__canvas" $ do
+            deltaChart series
+            when (clAxisInside l) $
+              mapM_ insideTick (insideAxisLabels axis (clChart l) series)
+            overlay
+          frontierRow (showsNames m) (showsValues m) series
+        unless (clAxisInside l) $ axisColumn axis series
   where
-    series = lcDelta c
+    series = pairDelta c
 
 -- | La fila de la gráfica: el lienzo con su fila de valores y, al lado del eje, su
 -- columna.
@@ -596,19 +599,17 @@ topAt y = "top: " <> formatFixed 1 (y - valueHeight / 2) <> "px"
 -- en un lienzo; la curva, en otro encima que entra 'curveInset' por lado.
 --
 -- La línea del cero se pinta __siempre__, incluso sin serie: es la referencia que
--- da sentido al eje ("iban empatados"), no una decoración de los datos. Con
--- @lcDelta@ vacío no se emite @\<polyline\>@ y se dice por qué; no debería
--- ocurrir —el @Context@ del backend degrada a dummy cuando lo está
--- (2026-08-03)— pero el widget no puede darlo por hecho.
+-- da sentido al eje ("iban empatados"), no una decoración de los datos. Sin serie
+-- —el comparado no tiene vuelta— no se emite @\<polyline\>@ ni se dice nada: lo
+-- dice su cabecera, «sin vuelta» (2026-10-02).
 deltaChart :: MonadWidget t m => [Double] -> m ()
 deltaChart series = do
   svgEl "svg" chartAttrs $ do
     mapM_ (\y -> svgEl "line" (gridLineAttrs y) blank)
       [y | (v, y, _) <- axisTicks series, v /= 0]
     svgEl "line" (zeroLineAttrs series) blank
-  case series of
-    [] -> elClass "p" "status status--empty" $ text "Sin delta que dibujar"
-    _  -> svgEl "svg" curveAttrs $ svgEl "polyline" (polylineAttrs series) blank
+  unless (null series) $
+    svgEl "svg" curveAttrs $ svgEl "polyline" (polylineAttrs series) blank
 
 -- | Debajo del gráfico, el nombre y el valor de cada frontera —o solo uno de los
 -- dos, según los dos primeros argumentos—, cada uno centrado en la X de su punto
@@ -644,19 +645,23 @@ frontierCell names values (x, name, value) =
         , ("style", "left: " <> formatFixed 3 x <> "%")
         ]
 
--- | Qué es cada línea: la discontinua es el coche de la derecha, la referencia, y
--- la roja el de la izquierda contra él. Por encima del cero, el de la izquierda va
--- por detrás, porque la serie es A − B.
+-- | Qué es cada línea: la discontinua es la referencia, y la roja el segundo coche
+-- contra ella. Por encima del cero, el segundo va por detrás, porque la serie es
+-- comparado − referencia.
 --
--- Sin serie no hay línea roja que explicar, y no se pinta.
+-- Sin serie no hay línea roja que explicar, y queda solo la referencia; si es la
+-- referencia la que no tiene vuelta no hay gráfica, y no se pinta nada.
 legend :: DomBuilder t m => LapComparison -> m ()
-legend c
-  | null (lcDelta c) = blank
-  | otherwise = divClass "comparison__legend" $ do
-      elClass "span" "comparison__key comparison__key--ref" $ text "- - -"
-      text (" " <> lcDriverB c <> " (referencia)")
-      elClass "span" "comparison__key comparison__key--delta" $ text "——"
-      text (" " <> lcDriverA c <> ": por encima, va por detrás")
+legend c = case lcEntries c of
+  ref : rest | Nothing <- missingReference c -> divClass "comparison__legend" $ do
+    elClass "span" "comparison__key comparison__key--ref" $ text "- - -"
+    text (" " <> ceDriver ref <> " (referencia)")
+    case rest of
+      other : _ | not (null (pairDelta c)) -> do
+        elClass "span" "comparison__key comparison__key--delta" $ text "——"
+        text (" " <> ceDriver other <> ": por encima, va por detrás")
+      _ -> blank
+  _ -> blank
 
 -- | Elemento en el namespace de SVG.
 --
