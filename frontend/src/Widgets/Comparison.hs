@@ -65,7 +65,10 @@ import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
 import           Common.Comparison (Baseline (..), Pair (..), baselineFromKey,
                                     baselineKey, baselineLabel, baselineRole,
                                     baselinesInOrder, lapShown,
-                                    missingReference, noLapFor, pairWith)
+                                    chartTypeKey, chartTypeLabel,
+                                    chartTypeReady, chartTypesInOrder,
+                                    defaultChartType, missingReference,
+                                    noLapFor, pairWith)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPath, comparisonPathFor, driversParam,
                                 driversPathFor)
@@ -125,6 +128,7 @@ comparisonWidget revealed = mdo
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
       swap <- divClass "widget__head" $ do
         el "h2" $ text "Lap Comparison"
+        typeSelect
         swapButton (clStacked <$> layout)
       side    <- foldDyn (const otherSide) defaultControlSide swap
       pb      <- getPostBuild
@@ -189,6 +193,22 @@ legendRow st =
     attrs _          = ("class" =: "comparison__legend") <> ("hidden" =: "")
     legendState b (Loaded c) = legend b c
     legendState _ _          = blank
+
+-- | El desplegable del tipo de gráfica, en el título y nativo: los cuatro tipos,
+-- con los que aún no existen en gris ('Common.Comparison.chartTypeReady'). Abre en
+-- 'Common.Comparison.defaultChartType'.
+typeSelect :: MonadWidget t m => m ()
+typeSelect = do
+  let cfg = def
+        & selectElementConfig_initialValue .~ chartTypeKey defaultChartType
+        & selectElementConfig_elementConfig . elementConfig_initialAttributes
+            .~ ("class" =: "car-selector__select comparison__type")
+  _ <- selectElement cfg $ forM_ chartTypesInOrder $ \ty ->
+    elAttr "option" (optionAttrs ty) $ text (chartTypeLabel ty)
+  pure ()
+  where
+    optionAttrs ty =
+      ("value" =: chartTypeKey ty) <> if chartTypeReady ty then mempty else "disabled" =: "disabled"
 
 -- | El desplegable «Δ contra», nativo; abre en «Referencia».
 baselineSelect :: MonadWidget t m => m (Dynamic t Baseline)

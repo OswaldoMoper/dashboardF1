@@ -26,6 +26,13 @@ module Common.Comparison
   , lapShown
   , missingReference
   , noLapFor
+    -- * El tipo de gráfica
+  , ChartType (..)
+  , chartTypesInOrder
+  , defaultChartType
+  , chartTypeLabel
+  , chartTypeReady
+  , chartTypeKey
   ) where
 
 import           Common.Types  (ComparisonEntry (..), LapComparison (..))
@@ -210,3 +217,34 @@ noLapNote e = ceDriver e <> " no tiene vuelta en esta sesión"
 noLapFor :: Text -> LapComparison -> Maybe Text
 noLapFor car c =
   noLapNote <$> find (\e -> ceCar e == car && isNothing (ceSectors e)) (lcEntries c)
+
+-- | El tipo de gráfica de Lap Comparison, elegido en el título.
+data ChartType = SectorDelta | LapSpeedTrace | TelemetryTraces | LapDeltaBars
+  deriving stock (Eq, Show, Enum, Bounded)
+
+-- | Los tipos en el orden del desplegable.
+chartTypesInOrder :: [ChartType]
+chartTypesInOrder = [minBound .. maxBound]
+
+-- | El tipo con el que abre la tarjeta.
+defaultChartType :: ChartType
+defaultChartType = SectorDelta
+
+-- | El nombre del tipo en el desplegable.
+chartTypeLabel :: ChartType -> Text
+chartTypeLabel SectorDelta     = "Delta por sectores"
+chartTypeLabel LapSpeedTrace   = "Lap Speed Trace"
+chartTypeLabel TelemetryTraces = "Telemetría comparativa"
+chartTypeLabel LapDeltaBars    = "Lap Delta"
+
+-- | Si el tipo ya se puede elegir; los demás salen en gris en el desplegable.
+chartTypeReady :: ChartType -> Bool
+chartTypeReady SectorDelta = True
+chartTypeReady _           = False
+
+-- | El @value@ de cada opción del desplegable.
+chartTypeKey :: ChartType -> Text
+chartTypeKey SectorDelta     = "sector-delta"
+chartTypeKey LapSpeedTrace   = "lap-speed-trace"
+chartTypeKey TelemetryTraces = "telemetry"
+chartTypeKey LapDeltaBars    = "lap-delta"

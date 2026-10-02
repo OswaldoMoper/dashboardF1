@@ -64,7 +64,11 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               baselineLabel, baselineRole,
                                               baselinesInOrder, lapShown,
                                               missingReference, noLapFor,
-                                              pairWith)
+                                              pairWith, ChartType (..),
+                                              chartTypeKey, chartTypeLabel,
+                                              chartTypeReady,
+                                              chartTypesInOrder,
+                                              defaultChartType)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
@@ -2366,6 +2370,13 @@ main = hspec $ do
       map baselineRole baselinesInOrder `shouldBe` ["referencia", "más rápido"]
       map (baselineFromKey . baselineKey) baselinesInOrder `shouldBe` map Just baselinesInOrder
       baselineFromKey "otra" `shouldBe` Nothing
+
+    it "el desplegable de tipos: los cuatro, en orden; abre en el de hoy, el único que se elige" $ do
+      map chartTypeLabel chartTypesInOrder
+        `shouldBe` ["Delta por sectores", "Lap Speed Trace", "Telemetría comparativa", "Lap Delta"]
+      defaultChartType `shouldBe` SectorDelta
+      filter chartTypeReady chartTypesInOrder `shouldBe` [SectorDelta]
+      length (nub (map chartTypeKey chartTypesInOrder)) `shouldBe` 4
 
     it "la base por posición: el más rápido de los que tienen vuelta" $ do
       baseIndex AgainstFastest [Nothing, ceSectors nor, ceSectors lec] `shouldBe` Just 1
