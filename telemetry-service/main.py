@@ -1042,6 +1042,21 @@ def _feed_gaps(line: Dict[str, Any], part: Any) -> Tuple[str, str]:
     )
 
 
+def _feed_part_best(line: Dict[str, Any], part: Any) -> str:
+    """La mejor vuelta de un coche en la parte en curso de una clasificación.
+
+    Vive en ``BestLapTimes``, una lista **por parte** (Q1, Q2, Q3), y ``SessionPart``
+    dice cuál; medido en la clasificación del 2026-09-12. Fuera de una clasificación
+    no hay lista, y sale **vacío**: «esta sesión no tiene partes». Un coche sin
+    vuelta en la parte sale ``"-"``.
+    """
+    bests = line.get("BestLapTimes")
+    if not isinstance(bests, list) or not isinstance(part, int) or not 1 <= part <= len(bests):
+        return ""
+    entry = bests[part - 1]
+    return _feed_text(entry if isinstance(entry, dict) else None)
+
+
 def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     """El snapshot del feed como las filas de ``Common.Types.LiveTimingRow``.
 
@@ -1087,6 +1102,8 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "ltStatus": (
                     "Dnf" if line.get("Retired") or line.get("Stopped") else "Running"
                 ),
+                "ltBestLap": _feed_text(line.get("BestLapTime")),
+                "ltPartBestLap": _feed_part_best(line, part),
             }
         )
 

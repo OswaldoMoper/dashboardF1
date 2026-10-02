@@ -135,7 +135,8 @@ import           Common.Types                (ComparisonEntry (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
                                               LapProgress (..), LiveTable (..),
-                                              LiveTimingRow (..),
+                                              LiveTimingRow (..), bestLapMarks,
+                                              lapSeconds,
                                               SessionClock (..),
                                               SessionInfo (..),
                                               SessionState (..),
@@ -660,8 +661,8 @@ main = hspec $ do
       -- `date`, no la primera.
       rowsOf openF1Grid positionArray intervalArray lapArray resultArray
         `shouldBe`
-          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running
-          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Running
+          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" ""
+          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Running "1:16.001" ""
           ]
 
     it "marca el DNF que sí trae posición, y la fila sigue en la tabla" $
@@ -671,8 +672,8 @@ main = hspec $ do
       -- dato engañoso que la marca contextualiza.
       rowsOf openF1Grid positionArray intervalArray lapArray resultWithDnf
         `shouldBe`
-          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running
-          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Dnf
+          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" ""
+          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Dnf "1:16.001" ""
           ]
 
     it "sirve la tabla entera como Running si `/session_result` llega vacía" $
@@ -711,7 +712,7 @@ main = hspec $ do
       -- prueba aquí porque el dato de hoy no la alcanza y vive para la sesión __en
       -- curso__, donde un coche puede no tener posición publicada todavía.
       rowsOf openF1Grid positionOfLecOnly intervalArray lapArray resultWithDnf
-        `shouldBe` [LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running]
+        `shouldBe` [LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" ""]
 
     it "devuelve [] cuando la parrilla llega vacía, aunque haya posiciones" $
       -- Simétrico del caso de 'assembleStints': la unidad de la fila es el piloto
@@ -742,6 +743,15 @@ main = hspec $ do
       -- filtro, NOR mostraría la raya de una in-lap teniendo tiempo de la anterior.
       map ltLastLap (rowsOf openF1Grid positionArray intervalArray lapWithNullDuration resultArray)
         `shouldBe` ["1:15.265", "1:16.001"]
+
+    it "la vuelta rápida es la más corta de las cronometradas, no la última; sin ninguna, la raya" $ do
+      let laps = "[" <> lap 1 1 "75.0" <> "," <> lap 1 2 "76.001" <> "," <> lap 16 1 "75.265"
+                   <> "," <> lap 16 2 "null" <> "]"
+      map (\r -> (ltLastLap r, ltBestLap r, ltPartBestLap r))
+          (rowsOf openF1Grid positionArray intervalArray laps resultArray)
+        `shouldBe` [("1:15.265", "1:15.265", ""), ("1:16.001", "1:15.000", "")]
+      map ltBestLap (rowsOf openF1Grid positionArray intervalArray emptyArray resultArray)
+        `shouldBe` ["-", "-"]
 
     it "pone `-` en la última vuelta del piloto sin ninguna cronometrada" $
       -- El coche que abandonó en la vuelta 0 (el 3 de la 11353): está en la
@@ -897,7 +907,7 @@ main = hspec $ do
       -- entera. Aquí degradar es lo correcto porque el precio de no hacerlo es la
       -- tabla de la sesión en marcha, que es el único momento en que OpenF1 calla.
       fmap feedRows (tryFeedRows feedTableMinimal)
-        `shouldBe` Right [LiveTimingRow 4 "ANT" "" "" "" "" Running]
+        `shouldBe` Right [LiveTimingRow 4 "ANT" "" "" "" "" Running "" ""]
 
     it "sin ltPosition no decodifica, y eso tumba la tabla entera" $
       -- Sin posición no hay fila que ordenar, que es el criterio que ya aplican
@@ -2412,6 +2422,29 @@ main = hspec $ do
   -- Las trazas del tipo 3 sobre dos vueltas de juguete: la referencia, 100 s y 4000 m
   -- con S1 y S2 a los 1200 y 2800 m; el otro, 110 s y 4200 m, a los 1300 y 2900 m.
   -- Los valores, de GHC.
+  -- La columna Best Lap: qué se marca en negrita (la más rápida de la sesión) y en
+  -- morado (la más rápida de la parte en curso, o de la sesión si no hay partes).
+  describe "las marcas de Best Lap" $ do
+    let row best part = LiveTimingRow 1 "X" "" "" "" "" Running best part
+    it "lee los tiempos de vuelta, y no lo que no lo es" $ do
+      map lapSeconds ["1:23.456", "59.876", " 1:00.000 "] `shouldBe` [Just 83.456, Just 59.876, Just 60]
+      map lapSeconds ["-", "", "LAP 3", "1:2:3"] `shouldBe` replicate 4 Nothing
+
+    it "sin partes, las dos marcas van juntas en la más rápida" $
+      bestLapMarks [row "1:31.0" "", row "1:30.5" "", row "-" ""]
+        `shouldBe` [(False, False), (True, True), (False, False)]
+
+    it "con partes, la negrita es la de la sesión y el morado el de la parte en curso" $
+      bestLapMarks [row "1:30.0" "1:31.2", row "1:30.4" "1:30.9", row "1:31.0" "-"]
+        `shouldBe` [(True, False), (False, True), (False, False)]
+
+    it "si la de la parte es también la de la sesión, las dos en la misma fila; un empate marca a los dos" $ do
+      bestLapMarks [row "1:30.0" "1:30.0", row "1:30.4" "1:30.9"] `shouldBe` [(True, True), (False, False)]
+      bestLapMarks [row "1:30.0" "", row "1:30.0" ""] `shouldBe` [(True, True), (True, True)]
+
+    it "sin ningún tiempo no se marca nada" $
+      bestLapMarks [row "-" "", row "" ""] `shouldBe` [(False, False), (False, False)]
+
   describe "Common.Traces" $ do
     let near a b = abs (a - b) < 1e-9
         nearAll xs ys = length xs == length ys && and (zipWith near xs ys)
@@ -4383,8 +4416,8 @@ feedLiveFinalised =
 -- microservicio, y el segundo con su abandono.
 feedRowsFixture :: [LiveTimingRow]
 feedRowsFixture =
-  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running
-  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Dnf
+  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running "" ""
+  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Dnf "" ""
   ]
 
 -- El instante en que se sirve la sesión de carrera: media hora después de que el
@@ -4985,8 +5018,8 @@ resultWithoutFlagKeys =
 -- sino lo que 'withProvenance' pone alrededor, así que no pasan por ningún fixture JSON.
 liveRowsFixture :: [LiveTimingRow]
 liveRowsFixture =
-  [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:21.004" Running
-  , LiveTimingRow 2 "NOR" "McLaren" "+0.412" "+0.412" "1:21.390" Running
+  [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:21.004" Running "-" ""
+  , LiveTimingRow 2 "NOR" "McLaren" "+0.412" "+0.412" "1:21.390" Running "-" ""
   ]
 
 -- | La sesión de la carrera 11369 ya mapeada, con los valores que

@@ -16,6 +16,7 @@
   --c-warn:      #e0a90b;
   --c-error:     #ff5a52;
   --c-sample:    #3b8eea;  /* dato de ejemplo: azul, porque nunca fue cierto */
+  --c-fastest:   #b36bff;  /* la vuelta más rápida de la parte en curso: el morado de la F1 */
 
   /* Escala tipográfica. */
   --fs-xs: 0.75rem;
@@ -508,6 +509,26 @@ body {
 .live-timing th:nth-child(5),
 .live-timing th:nth-child(6) {
   font-family: var(--font-ui);
+}
+
+/* Best Lap va por clase, como Estado. La más rápida de la sesión, en negrita; la de
+   la parte en curso, en morado (2026-10-02). */
+.live-timing__best {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+th.live-timing__best {
+  font-family: var(--font-ui);
+}
+
+.live-timing__best--session {
+  font-weight: 700;
+}
+
+.live-timing__best--part {
+  color: var(--c-fastest);
 }
 
 /* La séptima columna (Estado) va **por clase** y no por `nth-child`: es lo que

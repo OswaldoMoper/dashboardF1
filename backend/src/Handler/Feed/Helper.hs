@@ -66,6 +66,8 @@ data FeedRow = FeedRow
   , frInterval :: Text
   , frLastLap  :: Text
   , frStatus   :: Text
+  , frBestLap  :: Text
+  , frPartBestLap :: Text
   }
   deriving (Eq, Show)
 
@@ -79,6 +81,8 @@ instance FromJSON FeedRow where
       <*> o .:? "ltInterval" .!= ""
       <*> o .:? "ltLastLap"  .!= ""
       <*> o .:? "ltStatus"   .!= "Running"
+      <*> o .:? "ltBestLap"  .!= ""
+      <*> o .:? "ltPartBestLap" .!= ""
 
 -- | Qué sesión anuncia el feed, tal como el microservicio la entrega.
 --

@@ -39,8 +39,8 @@ import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
                                 recordArrival, shownAge)
 import           Common.Types  (DriverStatus (..), LiveTable (..),
                                 LiveTimingRow (..), SessionInfo (..),
-                                StateReading (..), sessionInProgress,
-                                statusLabel, waitingTable)
+                                StateReading (..), bestLapMarks,
+                                sessionInProgress, statusLabel, waitingTable)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           Reflex.Dom
@@ -187,15 +187,18 @@ liveTimingWidget live = divClass "widget widget--live-timing" $ do
       elClass "p" "status status--loading" $ text label
     renderState (Loaded rows) =
       elClass "table" "live-timing" $ do
-        el "thead" $ el "tr" $ mapM_ (el "th" . text) headers
-        el "tbody" $ mapM_ row rows
+        el "thead" $ el "tr" $ do
+          mapM_ (el "th" . text) headers
+          elClass "th" "live-timing__best" $ text "Best Lap"
+          el "th" $ text "Estado"
+        el "tbody" $ mapM_ row (zip rows (bestLapMarks rows))
 
     headers :: [Text]
     headers =
-      ["Pos", "Driver", "Team", "Gap", "Interval", "Last Lap", "Estado"]
+      ["Pos", "Driver", "Team", "Gap", "Interval", "Last Lap"]
 
-    row :: DomBuilder t m => LiveTimingRow -> m ()
-    row r = elClass "tr" (rowClass (ltStatus r)) $ do
+    row :: DomBuilder t m => (LiveTimingRow, (Bool, Bool)) -> m ()
+    row (r, marks) = elClass "tr" (rowClass (ltStatus r)) $ do
       mapM_ (el "td" . text)
         [ T.pack (show (ltPosition r))
         , ltDriver r
@@ -204,7 +207,17 @@ liveTimingWidget live = divClass "widget widget--live-timing" $ do
         , ltInterval r
         , ltLastLap r
         ]
+      elClass "td" (bestClass marks) $ text (ltBestLap r)
       elClass "td" "live-timing__state" $ text (statusLabel (ltStatus r))
+
+    -- La más rápida de la sesión, en negrita; la de la parte en curso, en morado
+    -- ('Common.Types.bestLapMarks').
+    bestClass :: (Bool, Bool) -> Text
+    bestClass (session, part) =
+      T.unwords $
+        ["live-timing__best"]
+          <> ["live-timing__best--session" | session]
+          <> ["live-timing__best--part" | part]
 
     -- Modificador solo cuando hay algo que señalar: 16 de las 22 filas de una
     -- carrera son 'Running', y emitir un modificador que no modifica nada

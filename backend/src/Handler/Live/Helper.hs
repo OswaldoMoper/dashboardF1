@@ -317,6 +317,8 @@ feedRows = map toRow . sortOn frPosition
         , ltInterval = frInterval r
         , ltLastLap  = frLastLap r
         , ltStatus   = feedStatus (frStatus r)
+        , ltBestLap  = frBestLap r
+        , ltPartBestLap = frPartBestLap r
         }
 
 -- | El estado del feed, que viaja como el nombre del constructor.
@@ -957,9 +959,8 @@ assembleRows drivers positions intervals laps results =
   where
     posByDrv = latestByDriver opNumber opDate positions
     intByDrv = latestByDriver oiNumber oiDate intervals
-    lapByDrv =
-      latestByDriver olNumber olLapNum $
-        filter (maybe False (> 0) . olDuration) laps
+    timedLaps = filter (maybe False (> 0) . olDuration) laps
+    lapByDrv  = latestByDriver olNumber olLapNum timedLaps
 
     derived = classificationGaps results
 
@@ -984,6 +985,9 @@ assembleRows drivers positions intervals laps results =
             | pos == 1  = "-"
             | otherwise = maybe "-" snd mg
           lastLap = maybe "-" (formatLap . fromMaybe 0 . olDuration) ml
+          bestLap = case mapMaybe olDuration (filter ((== odNumber d) . olNumber) timedLaps) of
+            [] -> "-"
+            ds -> formatLap (minimum ds)
       pure
         LiveTimingRow
           { ltPosition = pos
@@ -993,4 +997,6 @@ assembleRows drivers positions intervals laps results =
           , ltInterval = intv
           , ltLastLap  = lastLap
           , ltStatus   = maybe Running statusOf mr
+          , ltBestLap  = bestLap
+          , ltPartBestLap = ""
           }

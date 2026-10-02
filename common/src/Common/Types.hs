@@ -4,7 +4,7 @@ module Common.Types where
 
 import           Common.Format (ClockForm (..), formatClock, formatCountdown)
 import           Data.Aeson    (FromJSON (..), ToJSON (..), withText)
-import           Data.Maybe    (catMaybes, fromMaybe)
+import           Data.Maybe    (catMaybes, fromMaybe, isJust)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           GHC.Generics  (Generic)
@@ -74,11 +74,42 @@ data LiveTimingRow = LiveTimingRow
     -- Sin él una fila de abandono es indistinguible de una normal, y sus
     -- 'ltGap' e 'ltInterval' son los de su última muestra: el coche 3 de la
     -- 11353 sale en P22 con @"+5.672"@ habiendo hecho 0 vueltas.
+  , ltBestLap  :: Text  -- ^ Mejor vuelta de la sesión, o @"-"@.
+  , ltPartBestLap :: Text
+    -- ^ Mejor vuelta en la parte en curso de una clasificación (Q1, Q2 o Q3), o
+    -- @"-"@; __vacío__ si la sesión no tiene partes o la fuente no las sabe.
   }
   deriving stock (Eq, Show, Generic)
 
 instance ToJSON LiveTimingRow
 instance FromJSON LiveTimingRow
+
+-- | Qué vueltas rápidas se marcan en cada fila, en el orden de entrada: la más rápida
+-- de la sesión (en negrita) y la más rápida de la parte en curso (en morado). Sin
+-- partes —ninguna fila trae 'ltPartBestLap'— la parte es la sesión entera, y las dos
+-- marcas van juntas (2026-10-02). Un empate marca a todos los empatados.
+bestLapMarks :: [LiveTimingRow] -> [(Bool, Bool)]
+bestLapMarks rows = zip (marks ltBestLap) (if hasParts then marks ltPartBestLap else marks ltBestLap)
+  where
+    hasParts = any (not . T.null . ltPartBestLap) rows
+    marks field =
+      let times = map (lapSeconds . field) rows
+          best  = minimumMaybe (catMaybes times)
+       in map (\t -> isJust t && t == best) times
+    minimumMaybe [] = Nothing
+    minimumMaybe xs = Just (minimum xs)
+
+-- | Un tiempo de vuelta en segundos: @«1:23.456»@ o @«59.876»@; 'Nothing' si no lo es
+-- (la raya, vacío).
+lapSeconds :: Text -> Maybe Double
+lapSeconds t = case T.splitOn ":" (T.strip t) of
+  [m, s] -> (+) <$> ((* 60) <$> readNum m) <*> readNum s
+  [s]    -> readNum s
+  _      -> Nothing
+  where
+    readNum x = case reads (T.unpack x) of
+      [(v, "")] | v >= 0 -> Just v
+      _                  -> Nothing
 
 -- | En qué punto de su vida está una sesión.
 --
