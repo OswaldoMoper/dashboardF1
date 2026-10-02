@@ -467,23 +467,28 @@ feedWindowLead = 45 * 60
 -- acabó, así que __una carrera alargada por bandera roja sigue cubierta__ sin que
 -- nadie haya tenido que inventar cuánto puede alargarse.
 --
--- __La señal se compara contra la apertura de la sesión vigente, no se consume__, y
--- eso es lo que hace que la repetición no muerda: el campo de estado emite
--- @Finalised@ más de una vez (2026-09-14 (k)), y aplicar esto dos veces da lo mismo
--- que aplicarlo una. Un «avanza a la siguiente» se habría saltado una sesión.
+-- __La señal se compara contra la hora prevista de arranque de la sesión vigente__,
+-- y no contra su apertura: ninguna sesión acaba antes de empezar, así que una
+-- finalización vista antes de esa hora es de la sesión anterior, que el feed sigue
+-- enseñando hasta anunciar la nueva, y no cierra nada.
 --
--- __Y se reabre sola:__ cuando la sesión siguiente cruza su apertura, esa apertura
--- pasa a ser posterior a la finalización vista, así que vuelve a dar abierto sin
+-- __Y no se consume__, que es lo que hace que la repetición no muerda: el campo de
+-- estado emite @Finalised@ más de una vez (2026-09-14 (k)), y aplicar esto dos veces
+-- da lo mismo que aplicarlo una. Un «avanza a la siguiente» se habría saltado una
+-- sesión.
+--
+-- __Y se reabre sola:__ cuando la sesión siguiente cruza su apertura, su hora de
+-- arranque es posterior a la finalización vista, así que vuelve a dar abierto sin
 -- necesidad de olvidar nada.
 feedWindowOpen :: UTCTime -> [UTCTime] -> Maybe UTCTime -> Bool
 feedWindowOpen now starts finalisedAt
   | null starts = True
-  | otherwise   = maybe False stillLive latestOpening
+  | otherwise   = maybe False stillLive current
   where
-    latestOpening =
-      listToMaybe (sortOn Down (filter (<= now) (map opensAt starts)))
+    current =
+      listToMaybe (sortOn Down (filter ((<= now) . opensAt) starts))
     opensAt = addUTCTime (negate feedWindowLead)
-    stillLive opened = maybe True (< opened) finalisedAt
+    stillLive start = maybe True (< start) finalisedAt
 
 -- | Cuánto se espera __tras la hora de fin prevista__ antes de dar una sesión por
 -- acabada.

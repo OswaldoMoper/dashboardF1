@@ -1711,14 +1711,14 @@ main = hspec $ do
 
     it "y verla dos veces cierra igual, que es lo que la repetición exige" $
       -- El campo de estado emite `Finalised` más de una vez (2026-09-14 (k)). Aquí
-      -- la señal se COMPARA contra la apertura y no se consume, así que un segundo
+      -- la señal se COMPARA contra la hora de arranque y no se consume, así que un segundo
       -- aviso de la misma sesión no adelanta nada. Un «avanza a la siguiente» se
       -- habría saltado una sesión entera.
       feedWindowOpen bakuAfterP1 [bakuP1, bakuP2] (Just bakuP1FinalisedAgain)
         `shouldBe` False
 
     it "y se reabre sola cuando la siguiente sesión cruza su apertura" $
-      -- Sin olvidar la señal ni mover ningún puntero: la apertura de P2 es
+      -- Sin olvidar la señal ni mover ningún puntero: la hora de arranque de P2 es
       -- posterior a la finalización de P1, y con eso basta.
       feedWindowOpen bakuInLeadP2 [bakuP1, bakuP2] (Just bakuP1Finalised)
         `shouldBe` True
@@ -1728,6 +1728,21 @@ main = hspec $ do
       -- nadie promete: lo que manda es la apertura más reciente, no la última fila.
       feedWindowOpen bakuInLeadP2 [bakuP2, bakuP1] (Just bakuP1Finalised)
         `shouldBe` True
+
+    it "la finalización de la sesión anterior, vista con la ventana ya abierta, no la cierra" $
+      -- La P1 de Malasia: hasta anunciarla, el feed siguió dando la carrera de Bakú
+      -- por finalizada, y esa señal cerró la ventana de la P1 hasta la de la P2.
+      -- Ninguna sesión acaba antes de empezar: lo visto antes de su hora es de otra.
+      feedWindowOpen malasiaInLeadP1 [malasiaP1] (Just malasiaBakuStillShown)
+        `shouldBe` True
+
+    it "y la de la propia sesión, vista después de su hora, sí la cierra" $
+      -- El control del caso anterior: una regla que nunca cerrara también lo pasaría.
+      feedWindowOpen malasiaAfterP1 [malasiaP1] (Just malasiaP1Finalised)
+        `shouldBe` False
+
+    prop "abierta la ventana, solo la cierra una finalización desde la hora de arranque"
+      closesOnlyFromStart
 
   -- Lo que `GET /fastf1/live` entrega: la tabla y la sesión en la MISMA foto, así
   -- que hablan del mismo instante. Los fixtures llevan las claves que el
@@ -3543,6 +3558,17 @@ ticksReadable xs =
 -- OpenF1 contesta @401@ y cada bajada sería gasto en balde. Los casos de ejemplo
 -- fijan dos instantes; esto recorre los pares que a nadie se le ocurriría escribir,
 -- incluidos los que ponen al lector en el futuro.
+-- | Con una sola sesión cuya ventana ya abrió, la ventana está abierta si y solo si
+-- no se vio finalización o se vio antes de la hora de arranque. Los desplazamientos
+-- son segundos: desde la apertura para el instante, desde la hora para la señal.
+closesOnlyFromStart :: NonNegative Int -> Maybe Int -> Property
+closesOnlyFromStart (NonNegative sinceOpening) finalisedOffset =
+  feedWindowOpen now [malasiaP1] finalisedAt === maybe True (< 0) finalisedOffset
+  where
+    now         = addUTCTime (fromIntegral sinceOpening) opening
+    opening     = addUTCTime (negate feedWindowLead) malasiaP1
+    finalisedAt = (\s -> addUTCTime (fromIntegral s) malasiaP1) <$> finalisedOffset
+
 neverAsksInsideFeedWindow :: Int -> Maybe Int -> Bool
 neverAsksInsideFeedWindow nowOffset askedOffset =
   clockVerdict now True lastAsked == ClockFeedOpen
@@ -4355,6 +4381,19 @@ bakuAfterP1 = UTCTime (fromGregorian 2026 9 24) (10 * 3600)
 -- | 11:20 — dentro del margen de P2, con la finalización de P1 ya vista.
 bakuInLeadP2 :: UTCTime
 bakuInLeadP2 = UTCTime (fromGregorian 2026 9 24) (11 * 3600 + 20 * 60)
+
+-- | La P1 de Malasia, el 2 de octubre a las 04:30 UTC, y lo que el feed dijo
+-- alrededor (grabado esa noche): la carrera de Bakú por finalizada hasta anunciar
+-- la P1 a las 04:16:59. 'malasiaBakuStillShown' es 04:16, aún con Bakú.
+malasiaP1, malasiaBakuStillShown, malasiaInLeadP1 :: UTCTime
+malasiaP1 = UTCTime (fromGregorian 2026 10 2) (4 * 3600 + 30 * 60)
+malasiaBakuStillShown = UTCTime (fromGregorian 2026 10 2) (4 * 3600 + 16 * 60)
+malasiaInLeadP1 = UTCTime (fromGregorian 2026 10 2) (4 * 3600 + 20 * 60)
+
+-- | 05:35 y 05:40 — la P1 dada por finalizada, y un instante después.
+malasiaP1Finalised, malasiaAfterP1 :: UTCTime
+malasiaP1Finalised = UTCTime (fromGregorian 2026 10 2) (5 * 3600 + 35 * 60)
+malasiaAfterP1 = UTCTime (fromGregorian 2026 10 2) (5 * 3600 + 40 * 60)
 
 -- | @GET \/sessions?session_key=latest@ __verbatim__, medido el 2026-09-15 con la
 -- carrera 11369 como última sesión. Las quince claves son las que OpenF1 emite; el
