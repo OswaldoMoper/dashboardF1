@@ -1451,11 +1451,11 @@ main = hspec $ do
         `shouldBe` NextSilent
 
     it "con la sesión aún sin empezar, cuenta a ELLA y sin etiqueta" $
-      -- El feed publica la parrilla hasta cuarenta minutos antes, así que este caso
-      -- se ve de verdad. Lo que hace falta saber entonces es cuándo arranca lo que
+      -- Desde que se le pregunta, el feed enseña la sesión sin empezar, así que este
+      -- caso se ve de verdad. Lo que hace falta saber entonces es cuándo arranca lo que
       -- se está mirando, no lo de después — y nombrarlo sobraría: ya está al lado.
       upNext bakuInLead (Just (stateOf SessionInactive)) bakuWeekend
-        `shouldBe` NextStartsIn (40 * 60)
+        `shouldBe` NextStartsIn (10 * 60)
 
     it "acabada, cuenta a la siguiente y la nombra por su gran premio" $
       -- Fuera del fin de semana la izquierda dice otro gran premio, así que el de la
@@ -1684,12 +1684,11 @@ main = hspec $ do
       feedWindowOpen bakuDuringP1 [] Nothing `shouldBe` True
 
     it "con la sesión aún lejos, no se pregunta" $
-      -- Hora y media antes de Bakú P1, o sea 45 min antes de que la ventana abra.
+      -- Hora y media antes de Bakú P1, con la ventana aún sin abrir.
       feedWindowOpen bakuLongBefore [bakuP1, bakuP2] Nothing `shouldBe` False
 
     it "dentro del margen, antes de la hora prevista, ya se pregunta" $
-      -- Cuarenta minutos antes. Está medido que el feed publica mucho antes de su
-      -- hora —39 min 59 s en la carrera 11369— y que su foto ya trae la parrilla.
+      -- Diez minutos antes, dentro del margen.
       feedWindowOpen bakuInLead [bakuP1, bakuP2] Nothing `shouldBe` True
 
     it "justo en la apertura ya se pregunta, no un instante después" $
@@ -4314,8 +4313,8 @@ scheduledIn key sType name start end = Of1Session sType name key start end Nothi
 -- día a las 12:00.
 --
 -- __Se usan horas reales y no redondas inventadas__ para que los casos de la
--- ventana hablen del calendario que el backend va a leer. Con el margen de 45 min,
--- P1 abre a las 07:45 y P2 a las 11:15, y los instantes de abajo caen a cada lado
+-- ventana hablen del calendario que el backend va a leer. Con el margen de 15 min,
+-- P1 abre a las 08:15 y P2 a las 11:45, y los instantes de abajo caen a cada lado
 -- de esas dos fronteras.
 bakuP1, bakuP2 :: UTCTime
 bakuP1 = UTCTime (fromGregorian 2026 9 24) (8 * 3600 + 30 * 60)
@@ -4356,13 +4355,13 @@ sessionAt gp st = (stateless gp) {siState = Just (StateReading st Heard)}
 stateless :: T.Text -> SessionInfo
 stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing Nothing
 
--- | 07:00 — cuarenta y cinco minutos __antes__ de que la ventana de P1 abra.
+-- | 07:00 — hora y cuarto __antes__ de que la ventana de P1 abra.
 bakuLongBefore :: UTCTime
 bakuLongBefore = UTCTime (fromGregorian 2026 9 24) (7 * 3600)
 
--- | 07:50 — dentro del margen y aún antes de la hora prevista de P1.
+-- | 08:20 — dentro del margen y aún antes de la hora prevista de P1.
 bakuInLead :: UTCTime
-bakuInLead = UTCTime (fromGregorian 2026 9 24) (7 * 3600 + 50 * 60)
+bakuInLead = UTCTime (fromGregorian 2026 9 24) (8 * 3600 + 20 * 60)
 
 -- | 09:00 — P1 rodando.
 bakuDuringP1 :: UTCTime
@@ -4378,9 +4377,9 @@ bakuP1FinalisedAgain = UTCTime (fromGregorian 2026 9 24) (9 * 3600 + 26 * 60)
 bakuAfterP1 :: UTCTime
 bakuAfterP1 = UTCTime (fromGregorian 2026 9 24) (10 * 3600)
 
--- | 11:20 — dentro del margen de P2, con la finalización de P1 ya vista.
+-- | 11:50 — dentro del margen de P2, con la finalización de P1 ya vista.
 bakuInLeadP2 :: UTCTime
-bakuInLeadP2 = UTCTime (fromGregorian 2026 9 24) (11 * 3600 + 20 * 60)
+bakuInLeadP2 = UTCTime (fromGregorian 2026 9 24) (11 * 3600 + 50 * 60)
 
 -- | La P1 de Malasia, el 2 de octubre a las 04:30 UTC, y lo que el feed dijo
 -- alrededor (grabado esa noche): la carrera de Bakú por finalizada hasta anunciar

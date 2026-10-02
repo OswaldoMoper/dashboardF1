@@ -439,17 +439,11 @@ sessionClock now fs = do
 
 -- | Cuánto antes de la hora prevista se empieza a mirar el feed.
 --
--- __Es el único número inventado de la ventana, y aun así tiene dos mediciones
--- detrás.__ El feed publica mucho antes de la hora oficial: en la carrera 11369 su
--- foto ya acumulaba dato de 39 min 59 s antes, y en la clasificación 11365 de
--- 13 min 42 s antes. Las dos son cotas inferiores —la grabación empezó después—,
--- así que 45 min cubre lo observado con holgura.
---
--- __Quedarse corto no rompe nada, solo llega tarde:__ la tabla de parrilla que el
--- feed ya publica antes de arrancar —22 coches a 1 min 51 s de la hora prevista—
--- se enseñaría desde OpenF1 en vez de desde el feed.
+-- __Es el momento desde el que se enseña la sesión nueva__ (2026-09-24 (d)), no una
+-- cota de cuándo publica el feed: antes no se le pregunta aunque ya tenga algo, y
+-- lo que publique por delante —la parrilla— se ve desde OpenF1 o su caché.
 feedWindowLead :: NominalDiffTime
-feedWindowLead = 45 * 60
+feedWindowLead = 15 * 60
 
 -- | Si merece la pena pedirle la foto al feed en este instante.
 --
