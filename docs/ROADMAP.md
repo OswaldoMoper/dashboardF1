@@ -683,12 +683,22 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       Cuatro tipos —Delta por sectores, Lap Speed Trace, Telemetría comparativa (velocidad, acelerador y freno) y
       Lap Delta—, elegidos en el título, con la Δ **solo en las fronteras**, que es lo único exacto. Hasta cinco
       pilotos de una sesión, o un piloto en cinco sesiones; esta segunda forma llega con el selector de sesión.
-      **Una sola respuesta** del microservicio elige la vuelta y trae tiempos, Δ y curvas, así que el cambio cruza
-      microservicio, `LapComparison` (hoy `lcCarA`/`lcCarB` fijos), backend y widget a la vez. En los tipos con
-      trazas el usuario elige el eje, las fronteras y las muestras (de 60 a 250, en N exactas: el paso de hoy,
-      `len // N`, no las da). Una tarjeta más baja que el mínimo del tipo elegido hace scroll dentro hasta que
-      exista el modo edición, y el deslizable pide como mucho una vez cada ~200 ms mientras se arrastra, más la
-      del final (2026-10-01). **Sin decidir:** contra quién se mide la Δ con tres o más pilotos. Falta el código.
+      **Una sola respuesta** del microservicio elige la vuelta y trae tiempos, sectores, fronteras y curvas
+      (2026-10-02 (b)). En los tipos con trazas el usuario elige el eje, las fronteras y las muestras (de 60 a 250,
+      en N exactas). Una tarjeta más baja que el mínimo del tipo elegido hace scroll dentro hasta que exista el modo
+      edición, y el deslizable pide como mucho una vez cada ~200 ms mientras se arrastra, más la del final
+      (2026-10-01). **Hecho:** la respuesta de 1 a 5 coches, «Δ contra» en la leyenda (2026-10-02 (c)), el piloto
+      sin vuelta (2026-10-02 (d)), el tipo en el título y la Telemetría comparativa (2026-10-02 (e)). **Falta:**
+      Lap Speed Trace y Lap Delta, elegir hasta cinco pilotos, comparar sesiones (con el selector de sesión) y el
+      directo. **Sin decidir:** contra quién se mide la Δ con tres o más pilotos.
+- [x] **Live Timing: la vuelta rápida y las columnas a elegir** (2026-10-02 (f) y (g)). «Best Lap» con la más
+      rápida de la sesión en negrita y la de la parte en curso en morado, y un panel «Columnas ▾» que cierra
+      cualquier columna salvo «Pos» y «Driver», dejando siempre una de las de tiempo o estado. Por tarjeta y sin
+      recordarse hasta el modo edición. Es un adelanto del catálogo de KPIs, que sigue pendiente.
+- [ ] **Lap Comparison y las tablas de campeonato, en vivo.** Sin decidir: la comparación con lo que está en
+      marcha (los sectores llegan en el directo; las trazas, solo con cuenta de F1TV) y las tablas de pilotos y
+      constructores con las posiciones actuales (pide la tabla de puntos del reglamento). Antes, la posición en
+      esas tablas, que hoy no se enseña.
 
 **Lo que NO es de esta fase**, aunque se pida junto con lo de arriba y se le parezca:
 
