@@ -43,6 +43,8 @@ module Handler.Live.Helper
   , openf1Session
   , sessionClock
   , freezeClock
+  , finaliseBox
+  , inheritFinalised
   , openf1MinGap
   , stillRecent
   , ClockVerdict (..)
@@ -63,7 +65,7 @@ module Handler.Live.Helper
   ) where
 
 import           App                   (ScheduledSession (..))
-import           Common.Origin         (Origin (..))
+import           Common.Origin         (Origin (..), Source (..))
 import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         LiveTable (..), LiveTimingRow (..),
                                         SessionClock (..), SessionInfo (..),
@@ -694,6 +696,39 @@ freezeClock :: SessionInfo -> SessionInfo
 freezeClock info = info { siClock = stop <$> siClock info }
   where
     stop clock = clock { scRunning = False }
+
+-- | Lo guardado, con la sesión dada por finalizada tal como acaba de decirlo el feed.
+--
+-- __Solo toca lo que salió del feed__: es la sesión de la que el feed habla. El
+-- instante y las filas no cambian, así que lo servido sigue diciendo de cuándo es
+-- la tabla. Sin sesión no hay a quién ponérselo.
+finaliseBox :: (UTCTime, Source, LiveTable) -> (UTCTime, Source, LiveTable)
+finaliseBox (fetchedAt, Feed, table) =
+  (fetchedAt, Feed, table { liveSession = finalised <$> liveSession table })
+  where
+    finalised s = s { siState = Just finalisedHeard }
+finaliseBox entry = entry
+
+-- | La sesión que trae OpenF1, con el «finalizada» que el feed ya dijo de ella.
+--
+-- Recibe la sesión de lo guardado. Hereda si esa sesión está finalizada __de oídas__
+-- y es la misma: el mismo nombre y el mismo gran premio, salvo que uno de los dos
+-- venga en blanco. __Gana al estado deducido__ ('derivedState'), porque alguien lo
+-- dijo; un estado oído de la propia sesión no se toca.
+inheritFinalised :: Maybe SessionInfo -> SessionInfo -> SessionInfo
+inheritFinalised kept fresh
+  | maybe False carries kept && not heard = fresh { siState = Just finalisedHeard }
+  | otherwise                             = fresh
+  where
+    carries k = siState k == Just finalisedHeard && sameSession k
+    sameSession k =
+      siName k == siName fresh && meetingsAgree (siMeeting k) (siMeeting fresh)
+    meetingsAgree a b = T.null a || T.null b || a == b
+    heard = maybe False ((== Heard) . srBasis) (siState fresh)
+
+-- | Finalizada, y dicho por la fuente.
+finalisedHeard :: StateReading
+finalisedHeard = StateReading SessionFinalised Heard
 
 -- | Cuánto tiene que haber pasado desde el último __intento__ de llenar la caja
 -- vacía para volver a intentarlo.

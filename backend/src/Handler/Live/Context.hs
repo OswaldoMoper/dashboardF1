@@ -70,7 +70,8 @@ import           Handler.Live.Helper     (ClockVerdict (..), FeedVerdict (..),
                                           Of1Session (..), assembleRows,
                                           clockVerdict, feedVerdict,
                                           feedWindowOpen, fetchFailure,
-                                          freezeClock, meetingNames,
+                                          finaliseBox, freezeClock,
+                                          inheritFinalised, meetingNames,
                                           openf1ClockPeriod, openf1Session,
                                           schedule, servedFromBox, stillRecent,
                                           upNext)
@@ -236,14 +237,18 @@ fetchSchedule cfg now = do
 --
 -- Bajar a OpenF1 __no refresca la cache con lo del feed__, y es lo que se quiere:
 -- si OpenF1 tampoco contesta, lo guardado sigue siendo la última tabla buena con su
--- sesión, y es lo que 'fromCache' sirve.
+-- sesión, y es lo que 'fromCache' sirve. Con la sesión finalizada, esa tabla pasa a
+-- decirlo ('finaliseBox').
 fromFeed :: Env -> FeedLive -> IO LiveResult
 fromFeed env live = do
   now <- getCurrentTime
   case feedVerdict now live of
     FeedServes table -> serveFresh env now Feed table
     FeedEmpty        -> fromOpenF1 env
-    FeedFinalised    -> noteFinalised env now >> fromOpenF1 env
+    FeedFinalised    -> do
+      atomically $ modifyTVar' (envLiveCache env) (fmap finaliseBox)
+      noteFinalised env now
+      fromOpenF1 env
 
 -- | El peldaño de OpenF1: __lee la caja y no baja__, salvo que esté vacía.
 --
@@ -375,6 +380,8 @@ tick env = do
 -- __La sesión que sale es la suya y no la del feed.__ Aunque el feed acabe de
 -- anunciar una, no se hereda: OpenF1 pide siempre @session_key=latest@, y que su
 -- «última» y la que el feed anuncia sean la misma no se puede comprobar desde aquí.
+-- Lo único que pasa de lo guardado es el «finalizada» que el feed dijo de la misma
+-- sesión ('inheritFinalised').
 --
 -- __El instante se toma una vez y sirve para las dos cosas__, igual que en
 -- 'fromFeed': deducir el estado de la sesión y sellar la cache. Tomarlo dos veces
@@ -387,7 +394,10 @@ askOpenF1 env = do
     Right rows | not (null rows) -> do
       now <- getCurrentTime
       session <- fetchSessionOrNothing env now
-      serveFresh env now OpenF1 (LiveTable session rows NextUnknown)
+      kept <- readTVarIO (envLiveCache env)
+      let keptSession = (\(_, _, table) -> liveSession table) =<< kept
+          heard = inheritFinalised keptSession <$> session
+      serveFresh env now OpenF1 (LiveTable heard rows NextUnknown)
     Right _                      -> fromCache env
     Left e                       -> noteFailure "las filas" e >> fromCache env
 

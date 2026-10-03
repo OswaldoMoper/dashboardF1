@@ -201,7 +201,8 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               feedSession, feedStatus,
                                               feedVerdict, feedWindowLead,
                                               feedWindowOpen, fetchFailure,
-                                              freezeClock, lapProgress,
+                                              finaliseBox, freezeClock,
+                                              inheritFinalised, lapProgress,
                                               latestByDriver, meetingNames,
                                               openf1ClockIdle,
                                               openf1ClockPeriod, openf1MinGap,
@@ -1248,6 +1249,75 @@ main = hspec $ do
       -- Es lo que pasa al servir desde la cache algo que ya salió de ella.
       (freezeClock . freezeClock) raceSessionFixture
         `shouldBe` freezeClock raceSessionFixture
+
+  -- La otra punta del 59: entre el «finalizada» del feed y la vuelta de OpenF1 se sirve
+  -- lo guardado, que era la última tabla del feed con «en marcha».
+  describe "finaliseBox" $ do
+    it "lo guardado del feed pasa a finalizada de oídas, con su instante y sus filas" $
+      -- El instante no se mueve: lo servido sigue diciendo de cuándo es la tabla.
+      finaliseBox (raceStartsAt, Feed, liveTableFixture)
+        `shouldBe`
+          ( raceStartsAt
+          , Feed
+          , liveTableFixture
+              { liveSession = Just raceSessionFixture { siState = Just finalisedHeard' } }
+          )
+
+    it "lo que salió de OpenF1 no se toca, porque el feed no habla de esa tabla" $
+      finaliseBox (raceStartsAt, OpenF1, liveTableFixture)
+        `shouldBe` (raceStartsAt, OpenF1, liveTableFixture)
+
+    it "sin sesión no hay a quién ponérselo, y la tabla sigue igual" $
+      let bare = liveTableFixture { liveSession = Nothing }
+       in finaliseBox (raceStartsAt, Feed, bare) `shouldBe` (raceStartsAt, Feed, bare)
+
+  -- Los minutos en que OpenF1 vuelve sin estado: la sesión es la que el feed ya dio
+  -- por finalizada, y eso se oyó.
+  describe "inheritFinalised" $ do
+    let quali meeting st =
+          (namedSession "Qualifying" "Qualifying" meeting) { siState = st }
+        kept = quali "Bahrain Grand Prix" (Just finalisedHeard')
+        fresh = quali "Bahrain Grand Prix"
+
+    it "la misma sesión sin estado hereda la finalizada que dijo el feed" $
+      inheritFinalised (Just kept) (fresh Nothing)
+        `shouldBe` fresh (Just finalisedHeard')
+
+    it "gana a la deducida del calendario, así que no lleva asterisco" $
+      inheritFinalised (Just kept) (fresh (Just (StateReading SessionFinalised Derived)))
+        `shouldBe` fresh (Just finalisedHeard')
+
+    it "otra sesión no hereda nada" $
+      let practice = kept { siType = "Practice", siName = "Practice 3" }
+       in inheritFinalised (Just practice) (fresh Nothing) `shouldBe` fresh Nothing
+
+    it "otro gran premio no hereda; uno en blanco no desempata y hereda" $
+      map (\m -> inheritFinalised (Just kept) (quali m Nothing))
+          ["Azerbaijan Grand Prix", ""]
+        `shouldBe`
+          [quali "Azerbaijan Grand Prix" Nothing, quali "" (Just finalisedHeard')]
+
+    it "lo guardado sin finalizar, o finalizado por deducción, no deja nada" $
+      -- Se siembra también el caso que sí hereda, para que la aserción no pase con la
+      -- función rota en el sentido de no heredar nunca.
+      map (\st -> inheritFinalised (Just (quali "Bahrain Grand Prix" st)) (fresh Nothing))
+          [ Just (StateReading SessionStarted Heard)
+          , Just (StateReading SessionFinalised Derived)
+          , Just finalisedHeard'
+          ]
+        `shouldBe` [fresh Nothing, fresh Nothing, fresh (Just finalisedHeard')]
+
+    it "un estado oído de la propia sesión no se toca, y sin nada guardado tampoco" $
+      ( inheritFinalised (Just kept) (fresh (Just (StateReading SessionStarted Heard)))
+      , inheritFinalised Nothing (fresh Nothing)
+      )
+        `shouldBe` (fresh (Just (StateReading SessionStarted Heard)), fresh Nothing)
+
+    it "aplicarlo dos veces es aplicarlo una" $
+      -- Es lo que pasa en cada tic del reloj: lo que heredó se guarda y vuelve a ser
+      -- lo guardado del tic siguiente.
+      let once = inheritFinalised (Just kept) (fresh Nothing)
+       in inheritFinalised (Just once) once `shouldBe` once
 
   -- El freno a OpenF1. Su número sale del presupuesto que el propio servicio publica
   -- en su rechazo —30 peticiones por minuto—, y lo que se ancla aquí es la cuenta,
@@ -5082,6 +5152,10 @@ namedSession :: T.Text -> T.Text -> T.Text -> SessionInfo
 namedSession sType sName sMeeting =
   raceSessionFixture
     { siType = sType, siName = sName, siMeeting = sMeeting, siCircuit = Nothing }
+
+-- | Finalizada y dicho por la fuente, que es lo que la otra punta pone en lo guardado.
+finalisedHeard' :: StateReading
+finalisedHeard' = StateReading SessionFinalised Heard
 
 -- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
 liveTableFixture :: LiveTable
