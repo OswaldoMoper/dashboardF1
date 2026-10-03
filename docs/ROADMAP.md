@@ -697,8 +697,18 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       recordarse hasta el modo edición. Es un adelanto del catálogo de KPIs, que sigue pendiente.
 - [ ] **Lap Comparison y las tablas de campeonato, en vivo.** Sin decidir: la comparación con lo que está en
       marcha (los sectores llegan en el directo; las trazas, solo con cuenta de F1TV) y las tablas de pilotos y
-      constructores con las posiciones actuales (pide la tabla de puntos del reglamento). Antes, la posición en
-      esas tablas, que hoy no se enseña.
+      constructores con las posiciones actuales (pide la tabla de puntos del reglamento). **Hecho:** la posición en
+      esas tablas, la oficial de Jolpica (2026-10-03 (e)).
+- [x] **El final de una sesión, dicho como es** (2026-10-03 (a) y (b)). Tras cada bandera a cuadros la banda dice
+      «Bandera a cuadros» —también entre las partes de una clasificación— y el punto del directo se apaga; con el
+      `Finalised`, «Finalizada», también mientras se sirve la última tabla del feed y cuando vuelve OpenF1. La
+      bandera sale de los avisos de control de carrera, contados desde la hora de inicio de la sesión.
+- [ ] **Todo lo que el feed sabe de una clasificación** (2026-10-03 (c) y (d)). Decidido: la parte en la banda,
+      los descansos con la cuenta atrás que anuncia control de carrera, los eliminados aparte y en gris, la zona de
+      eliminación con una raya roja, el 107 % en Q1, la bandera roja y el estado de pista en la banda, y Best Lap
+      como la menor de todas las partes. Falta el código.
+- [ ] **Columnas nuevas en Live Timing, Radio, Tiempo, avisos de control de carrera y la dependencia de OpenF1.**
+      Cada una con lo medido y sus decisiones por tomar; sin decidir.
 
 **Lo que NO es de esta fase**, aunque se pida junto con lo de arriba y se le parezca:
 
