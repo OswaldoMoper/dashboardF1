@@ -73,8 +73,8 @@ module Common.Shown
   ) where
 
 import           Common.Format (ClockForm (..), formatClock, formatCountdown)
-import           Common.Origin (Origin (..), Source, Sourced (..), originNotice,
-                                sourceName)
+import           Common.Origin (Origin (..), Source (..), Sourced (..),
+                                originNotice, sourceName)
 import           Data.Char     (isDigit)
 import           Data.List     (find)
 import           Data.Maybe    (fromMaybe, isJust, listToMaybe)
@@ -189,23 +189,28 @@ data Indicator = Indicator
     -- ^ Consta que hay una sesión en curso. __No sale de los otros campos__: un
     -- dato recién traído fuera de sesión sigue siendo fresco, y el sello no dice
     -- nada de si hay carrera.
+  , indFinalised :: Bool
+    -- ^ Consta que la sesión de lo que se ve está finalizada. Solo cambia el
+    -- tooltip de lo guardado del feed.
   }
   deriving stock (Eq, Show)
 
 -- | El indicador que corresponde al estado del refresco y al de la sesión.
 --
--- __Si la sesión rueda entra por argumento y no se saca del 'Poll'__, que es lo que
--- mantiene esto genérico en @a@ y sin conocer el dominio: quien llama tiene la tabla
--- y sabe proyectarla ('Widgets.LiveTiming.stateOf'), y aquí solo se decide qué
--- pintar con la respuesta.
-indicatorFrom :: Bool -> Poll (Sourced a) -> Indicator
-indicatorFrom running p = Indicator
-  { indShown   = isJust (pollShown p)
-  , indOrigin  = srcOrigin =<< pollShown p
-  , indSource  = srcSource =<< pollShown p
-  , indFetched = srcFetchedAt =<< pollShown p
-  , indFailed  = pollLastFailed p
-  , indRunning = running
+-- __Si la sesión rueda, y si está finalizada, entran por argumento y no se sacan del
+-- 'Poll'__, que es lo que mantiene esto genérico en @a@ y sin conocer el dominio:
+-- quien llama tiene la tabla y sabe proyectarla ('Widgets.LiveTiming.stateOf'), y
+-- aquí solo se decide qué pintar con la respuesta. Primero la que rueda, después la
+-- finalizada.
+indicatorFrom :: Bool -> Bool -> Poll (Sourced a) -> Indicator
+indicatorFrom running finalised p = Indicator
+  { indShown     = isJust (pollShown p)
+  , indOrigin    = srcOrigin =<< pollShown p
+  , indSource    = srcSource =<< pollShown p
+  , indFetched   = srcFetchedAt =<< pollShown p
+  , indFailed    = pollLastFailed p
+  , indRunning   = running
+  , indFinalised = finalised
   }
 
 -- | Clase de la etiqueta, bloque y modificador.
@@ -263,6 +268,9 @@ indicatorClass i = "widget__badge widget__badge--" <> modifier
 -- solo aparece al apuntarlo, y ahí decir de cuándo es el dato y por qué salió de lo
 -- guardado vale más que repetir que no hay carrera.
 --
+-- __Lo guardado del feed con la sesión finalizada no acusa a la fuente__: el feed sí
+-- responde, y quien todavía no publica es OpenF1.
+--
 -- __La fuente va delante y como etiqueta__, separada por @·@ y no por un punto: es
 -- lo primero que se lee y no alarga la cadena de frases, que en el peor caso ya son
 -- dos. El respaldo estático no lleva ninguna porque no salió de ninguna fuente.
@@ -274,7 +282,16 @@ indicatorTooltip i = maybe body (\s -> sourceName s <> " · " <> body) (indSourc
         (Just Fresh, False) | indRunning i -> liveNotice
                             | otherwise    -> idleNotice
         (Just Fresh, True)  -> retryFailedNotice
+        (Just Cached, failed)
+          | indFinalised i && indSource i == Just Feed ->
+              withFailure failed finalisedNotice
         (origin, failed)    -> withFailure failed (noticeOf origin)
+
+    -- La otra punta: el feed ya dio la sesión por finalizada, y quien no publica
+    -- todavía es OpenF1, no el feed.
+    finalisedNotice =
+      withHour "Sesión finalizada: la última tabla del feed" <> ". OpenF1 todavía no publica"
+    withHour t = maybe t (\h -> t <> " (" <> h <> ")") (fetchedAtLabel =<< indFetched i)
 
     noticeOf (Just origin) =
       fromMaybe unknownNotice (originNotice origin (fetchedAtLabel =<< indFetched i))

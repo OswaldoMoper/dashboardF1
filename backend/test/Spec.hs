@@ -3531,20 +3531,20 @@ main = hspec $ do
   -- de decirse.
   describe "Common.Shown (indicador)" $ do
     it "recoge la procedencia, la fuente, el instante y el fallo de lo que se está enseñando" $
-      indicatorFrom True
+      indicatorFrom True True
         (Poll False (Just (Sourced (Just Cached) (Just OpenF1) (Just fetchedAtIso) [1 :: Int])) True)
-        `shouldBe` Indicator True (Just Cached) (Just OpenF1) (Just fetchedAtIso) True True
+        `shouldBe` Indicator True (Just Cached) (Just OpenF1) (Just fetchedAtIso) True True True
 
     it "antes de la primera respuesta no hay nada que enseñar ni procedencia" $
-      indicatorFrom False (pollIdle :: Poll (Sourced [Int]))
-        `shouldBe` Indicator False Nothing Nothing Nothing False False
+      indicatorFrom False False (pollIdle :: Poll (Sourced [Int]))
+        `shouldBe` Indicator False Nothing Nothing Nothing False False False
 
     it "la sesión rodando entra por argumento y no sale del refresco" $
       -- El mismo `Poll` con las dos respuestas: nada de lo que el refresco trae lo
       -- decide, que es lo que permite que `Common.Shown` no conozca el dominio.
-      map (`indicatorFrom` (pollIdle :: Poll (Sourced [Int]))) [True, False]
-        `shouldBe` [ Indicator False Nothing Nothing Nothing False True
-                   , Indicator False Nothing Nothing Nothing False False
+      map (\r -> indicatorFrom r False (pollIdle :: Poll (Sourced [Int]))) [True, False]
+        `shouldBe` [ Indicator False Nothing Nothing Nothing False True False
+                   , Indicator False Nothing Nothing Nothing False False False
                    ]
 
     it "con la sesión rodando, los seis estados del punto con su modificador" $
@@ -3683,6 +3683,37 @@ main = hspec $ do
       indicatorTooltip (shownAs (Just Cached) (Just fetchedAtIso) True)
         `shouldBe` "Dato guardado: la fuente no responde ahora mismo (14:03 UTC). \
                    \No se pudo recargar: se muestra la tabla anterior"
+
+    -- La otra punta del 59: el feed ya dio la sesión por finalizada y lo guardado es
+    -- su última tabla. El feed sí responde; quien todavía no publica es OpenF1.
+    it "lo guardado del feed con la sesión finalizada lo dice, y no acusa a la fuente" $
+      indicatorTooltip (finalisedFeed False)
+        `shouldBe` "Feed oficial · Sesión finalizada: la última tabla del feed (14:03 UTC). \
+                   \OpenF1 todavía no publica"
+
+    it "finalizada pero de OpenF1, o del feed sin finalizar, sigue con el aviso de siempre" $
+      -- Se siembra también el caso que sí cambia, para que la aserción no pase con la
+      -- rama nueva sin escribir.
+      map indicatorTooltip
+          [ (shownFrom OpenF1 (Just Cached) (Just fetchedAtIso) False) {indFinalised = True}
+          , shownFrom Feed (Just Cached) (Just fetchedAtIso) False
+          , finalisedFeed False
+          ]
+        `shouldBe`
+          [ "OpenF1 · Dato guardado: la fuente no responde ahora mismo (14:03 UTC)"
+          , "Feed oficial · Dato guardado: la fuente no responde ahora mismo (14:03 UTC)"
+          , "Feed oficial · Sesión finalizada: la última tabla del feed (14:03 UTC). \
+            \OpenF1 todavía no publica"
+          ]
+
+    it "con el refresco caído son dos hechos, y se componen como los demás" $
+      indicatorTooltip (finalisedFeed True)
+        `shouldBe` "Feed oficial · Sesión finalizada: la última tabla del feed (14:03 UTC). \
+                   \OpenF1 todavía no publica. No se pudo recargar: se muestra la tabla anterior"
+
+    it "el punto no cambia: sigue siendo el de lo guardado" $
+      map (indicatorClass . finalisedFeed) [False, True]
+        `shouldBe` replicate 2 "widget__badge widget__badge--saved"
 
     it "el dato de ejemplo avisa de que lo es, falle o no el refresco" $
       map (indicatorTooltip . shownAs (Just Sample) Nothing) [False, True]
@@ -4071,12 +4102,13 @@ fetchedAtIso = "2026-09-11T14:03:22Z"
 shownAs :: Maybe Origin -> Maybe T.Text -> Bool -> Indicator
 shownAs origin fetched failed =
   Indicator
-    { indShown   = True
-    , indOrigin  = origin
-    , indSource  = Nothing
-    , indFetched = fetched
-    , indFailed  = failed
-    , indRunning = True
+    { indShown     = True
+    , indOrigin    = origin
+    , indSource    = Nothing
+    , indFetched   = fetched
+    , indFailed    = failed
+    , indRunning   = True
+    , indFinalised = False
     }
 
 shownFrom :: Source -> Maybe Origin -> Maybe T.Text -> Bool -> Indicator
@@ -4087,6 +4119,12 @@ shownFrom source origin fetched failed =
 -- premios.
 offAir :: Indicator -> Indicator
 offAir i = i {indRunning = False}
+
+-- | Lo que el punto ve en la otra punta: lo guardado del feed, con la sesión
+-- finalizada y sin rodar, según si el último refresco falló.
+finalisedFeed :: Bool -> Indicator
+finalisedFeed failed =
+  (offAir (shownFrom Feed (Just Cached) (Just fetchedAtIso) failed)) {indFinalised = True}
 
 -- | Todos los estados que el __punto__ distingue: las cuatro procedencias (contando
 -- la desconocida) y el hueco de antes de la primera respuesta, cada uno por si el

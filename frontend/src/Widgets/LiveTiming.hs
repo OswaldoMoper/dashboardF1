@@ -38,8 +38,9 @@ import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
                                 recordArrival, shownAge)
 import           Common.Types  (DriverStatus (..), LiveTable (..),
                                 LiveTimingRow (..), SessionInfo (..),
-                                StateReading (..), bestLapMarks,
-                                sessionInProgress, statusLabel, waitingTable)
+                                SessionState (..), StateReading (..),
+                                bestLapMarks, sessionInProgress, statusLabel,
+                                waitingTable)
 import           Control.Monad (forM_)
 import           Data.Set      (Set)
 import qualified Data.Set      as Set
@@ -98,10 +99,12 @@ stateOf p = siState =<< sessionOf p
 -- sesión que la tabla trae al lado.
 --
 -- __Es este módulo quien lo junta y no 'Common.Shown'__, que no conoce el
--- dominio: allí la sesión rodando entra como un 'Bool' y aquí es donde está el
--- 'Common.Types.LiveTable' del que sacarlo.
+-- dominio: allí la sesión rodando y la finalizada entran como 'Bool' y aquí es
+-- donde está el 'Common.Types.LiveTable' del que sacarlas.
 indicatorOf :: Poll (Sourced LiveTable) -> Indicator
-indicatorOf p = indicatorFrom (sessionInProgress (srState <$> stateOf p)) p
+indicatorOf p = indicatorFrom (sessionInProgress state) (state == Just SessionFinalised) p
+  where
+    state = srState <$> stateOf p
 
 -- | El refresco de @\/api\/live@: lo monta la página __una vez__ y lo reparte entre
 -- quienes lo pintan.
