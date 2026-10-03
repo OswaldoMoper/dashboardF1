@@ -16,6 +16,7 @@ module Handler.Feed.Helper
   ( FeedLive (..)
   , FeedRow (..)
   , FeedSession (..)
+  , FeedFlag (..)
   ) where
 
 import           Data.Aeson (FromJSON (..), withObject, (.!=), (.:), (.:?))
@@ -112,6 +113,9 @@ data FeedSession = FeedSession
   , fsClockUtc       :: Maybe Text  -- ^ Instante en que el feed publicó el reloj, ISO 8601.
   , fsClockRemaining :: Maybe Text  -- ^ Lo que quedaba entonces, @\"HH:MM:SS\"@.
   , fsClockRunning   :: Bool        -- ^ Si descontaba desde ese instante.
+  , fsStartDate      :: Maybe Text  -- ^ Inicio previsto, en hora local del circuito y sin zona.
+  , fsGmtOffset      :: Maybe Text  -- ^ Desfase del circuito: @\"08:00:00\"@, @\"-04:00:00\"@.
+  , fsFlags          :: [FeedFlag]  -- ^ Los avisos de bandera de control de carrera.
   }
   deriving (Eq, Show)
 
@@ -128,3 +132,25 @@ instance FromJSON FeedSession where
       <*> o .:? "siClockUtc"
       <*> o .:? "siClockRemaining"
       <*> o .:? "siClockRunning"   .!= False
+      <*> o .:? "siStartDate"
+      <*> o .:? "siGmtOffset"
+      <*> o .:? "siFlags"          .!= []
+
+-- | Un aviso de bandera de control de carrera, tal como llega.
+--
+-- __Trae los de toda la foto, también los de la sesión anterior__: el feed no vacía
+-- la lista hasta el primer aviso de la sesión nueva. Quién cuenta lo decide
+-- 'Handler.Live.Helper.feedSession'.
+data FeedFlag = FeedFlag
+  { ffUtc   :: Text  -- ^ En UTC y sin zona: @\"2026-10-03T09:00:00\"@.
+  , ffFlag  :: Text  -- ^ @\"CHEQUERED\"@, @\"GREEN\"@, @\"RED\"@, @\"YELLOW\"@…
+  , ffScope :: Text  -- ^ @\"Track\"@ para toda la pista; @\"Sector\"@ para uno.
+  }
+  deriving (Eq, Show)
+
+instance FromJSON FeedFlag where
+  parseJSON = withObject "FeedFlag" $ \o ->
+    FeedFlag
+      <$> o .:? "utc"   .!= ""
+      <*> o .:? "flag"  .!= ""
+      <*> o .:? "scope" .!= ""

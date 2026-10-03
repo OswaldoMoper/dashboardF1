@@ -40,6 +40,7 @@ module Handler.Live.Helper
   , feedRows
   , feedStatus
   , feedSession
+  , chequeredGrace
   , openf1Session
   , sessionClock
   , freezeClock
@@ -90,8 +91,8 @@ import           Data.Text.Read        (decimal)
 import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime,
                                         diffUTCTime)
 import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
-import           Handler.Feed.Helper   (FeedLive (..), FeedRow (..),
-                                        FeedSession (..))
+import           Handler.Feed.Helper   (FeedFlag (..), FeedLive (..),
+                                        FeedRow (..), FeedSession (..))
 import           Handler.OpenF1.Helper (Of1Driver (..))
 import           Provenance            (isoInstant)
 import           Text.Printf           (printf)
@@ -340,17 +341,14 @@ feedStatus raw =
 -- | La sesión que el feed anuncia, traducida a 'SessionInfo'.
 --
 -- __Recibe el instante por argumento__ y no lo pide al reloj: esta capa es pura, y
--- el único campo que depende de «ahora» es el restante ('sessionClock'). Quien
--- llama pasa el mismo instante que va a servir, de modo que la sesión y las filas
--- hablan del mismo momento.
+-- los dos campos que dependen de «ahora» son el restante ('sessionClock') y el
+-- estado tras una bandera ('feedState'). Quien llama pasa el mismo instante que va
+-- a servir, de modo que la sesión y las filas hablan del mismo momento.
 --
 -- __El estado sale siempre en 'Just'__, aunque 'Common.Types.siState' admita su
 -- ausencia: el feed siempre dice algo, y lo que no se reconozca —la cadena vacía
 -- incluida— entra como desconocido con su texto dentro. El hueco del tipo es para
 -- quien no publica estado ninguno.
---
--- __Y siempre sale como 'Common.Types.Heard'__: por definición es lo que el feed
--- dijo. Aquí no se deduce nada, ni cuando lo que dijo no se reconoce.
 feedSession :: UTCTime -> FeedSession -> SessionInfo
 feedSession now fs =
   SessionInfo
@@ -358,10 +356,93 @@ feedSession now fs =
     , siName    = fsName fs
     , siMeeting = fsMeeting fs
     , siCircuit = fsCircuit fs
-    , siState   = Just (StateReading (sessionStateFrom (fsState fs)) Heard)
+    , siState   = Just (feedState now fs)
     , siLaps    = lapProgress fs
     , siClock   = sessionClock now fs
     }
+
+-- | El estado de la sesión del feed, con la bandera a cuadros que su campo no tiene.
+--
+-- Lo que diga el campo sale tal cual y como 'Common.Types.Heard', salvo mientras
+-- diga «en marcha». Entonces manda el último aviso de pista entre la bandera a
+-- cuadros y la verde, __contando solo los de desde la hora de inicio de la sesión__
+-- (la foto arrastra los de la anterior):
+--
+-- * la verde, o ninguno: «en marcha»;
+-- * la bandera: 'SessionChequered', oída;
+-- * la bandera con 'chequeredGrace' sin otra salida: 'SessionFinalised', y como
+--   nadie lo dijo, 'Common.Types.Derived'.
+--
+-- Sin hora de inicio no cuenta ningún aviso.
+feedState :: UTCTime -> FeedSession -> StateReading
+feedState now fs =
+  case (field, lastTrackFlag) of
+    (SessionStarted, Just (at, True))
+      | diffUTCTime now at >= chequeredGrace -> StateReading SessionFinalised Derived
+      | otherwise                           -> StateReading SessionChequered Heard
+    _                                       -> StateReading field Heard
+  where
+    field = sessionStateFrom (fsState fs)
+
+    -- El último aviso de pista que cuenta, con 'True' si es la bandera.
+    lastTrackFlag = listToMaybe (sortOn (Down . fst) counted)
+
+    counted =
+      [ (at, chequered)
+      | start <- maybe [] pure (sessionStart fs)
+      , flag <- fsFlags fs
+      , T.toLower (T.strip (ffScope flag)) == "track"
+      , chequered <- maybe [] pure (flagKind (ffFlag flag))
+      , at <- maybe [] pure (parseNaiveInstant (ffUtc flag))
+      , at >= start
+      ]
+
+    flagKind raw =
+      case T.toUpper (T.strip raw) of
+        "CHEQUERED" -> Just True
+        "GREEN"     -> Just False
+        _           -> Nothing
+
+-- | Cuánto lleva una bandera a cuadros sin otra salida para dar la sesión por
+-- finalizada aunque el feed no lo diga.
+--
+-- Más que un descanso entre partes de una clasificación (7:00 en los seis medidos)
+-- y que el tramo más largo medido entre la bandera y el @Finalised@ (10:30): en lo
+-- medido nunca se adelanta a la fuente (2026-10-03).
+chequeredGrace :: NominalDiffTime
+chequeredGrace = 12 * 60
+
+-- | El inicio previsto de la sesión del feed, en UTC: su hora local menos el
+-- desfase del circuito. 'Nothing' si falta cualquiera de las dos o no se lee.
+sessionStart :: FeedSession -> Maybe UTCTime
+sessionStart fs = do
+  local <- parseNaiveInstant =<< fsStartDate fs
+  offset <- parseOffset =<< fsGmtOffset fs
+  pure (addUTCTime (negate offset) local)
+  where
+    parseOffset raw =
+      case T.uncons (T.strip raw) of
+        Just ('-', rest) -> negate <$> hms rest
+        Just ('+', rest) -> hms rest
+        Just _           -> hms (T.strip raw)
+        Nothing          -> Nothing
+
+    hms t =
+      case mapM readInt (T.splitOn ":" t) of
+        Just [h, m, s] -> Just (fromIntegral (h * 3600 + m * 60 + s))
+        _              -> Nothing
+
+    readInt t =
+      case decimal t of
+        Right (n, "") -> Just (n :: Int)
+        _             -> Nothing
+
+-- | Un instante del feed escrito sin zona, que control de carrera publica en UTC y
+-- la hora de inicio en hora local: @\"2026-10-03T09:00:00\"@. La zona la pone quien
+-- llama.
+parseNaiveInstant :: Text -> Maybe UTCTime
+parseNaiveInstant =
+  parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%S%Q" . T.unpack . T.strip
 
 -- | La sesión que OpenF1 describe, traducida a 'SessionInfo'.
 --
@@ -597,7 +678,8 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 --   hace falta para lo que está pasando, y la siguiente sería el gran premio de
 --   dentro de quince días. Qué cuenta como rodando lo decide
 --   'Common.Types.sessionInProgress', que es el mismo criterio que enciende la
---   etiqueta del directo en la página.
+--   etiqueta del directo en la página. __Con bandera a cuadros también calla__,
+--   aunque la etiqueta se apague: la derecha sigue con el reloj de la parte, parado.
 -- * __Sin calendario, no se sabe__ ('Common.Types.NextUnknown'): es el estado con el
 --   que arranca el proceso, y dura lo que tarde la primera petición.
 -- * __Sin empezar, se cuenta a ELLA__ ('Common.Types.NextStartsIn'): con la parrilla
@@ -615,10 +697,12 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 upNext :: UTCTime -> Maybe SessionInfo -> [ScheduledSession] -> UpNext
 upNext now shown sessions
   | null sessions            = NextUnknown
-  | sessionInProgress state  = NextSilent
+  | silences state           = NextSilent
   | otherwise                = maybe NextUnknown answer soonest
   where
     state = srState <$> (siState =<< shown)
+
+    silences s = sessionInProgress s || s == Just SessionChequered
 
     soonest = listToMaybe (sortOn ssStart (filter ((> now) . ssStart) sessions))
 
@@ -645,7 +729,8 @@ upNext now shown sessions
 data FeedVerdict
   = FeedServes LiveTable  -- ^ Sesión en marcha y con filas: esto es el directo.
   | FeedEmpty             -- ^ Contestó sin filas, o sea que no hay sesión rodando.
-  | FeedFinalised         -- ^ Trae filas, pero de una sesión que ya terminó.
+  | FeedFinalised StateReading
+    -- ^ Trae filas, pero de una sesión que ya terminó; con el estado que lo dice.
   deriving (Eq, Show)
 
 -- | La decisión de la escalera sobre el feed, sin efectos.
@@ -655,9 +740,9 @@ data FeedVerdict
 -- disciplina de código ciego —colocarlo donde nace con cobertura— y no una
 -- verificación añadida después.
 --
--- __El instante entra por argumento__ por lo mismo que en 'feedSession': el único
--- campo que depende de «ahora» es el restante del reloj, y quien llama pasa el
--- mismo instante que va a servir.
+-- __El instante entra por argumento__ por lo mismo que en 'feedSession': lo que
+-- depende de «ahora» es el restante del reloj y el estado tras una bandera, y quien
+-- llama pasa el mismo instante que va a servir.
 --
 -- __Sin filas no hay tabla, se anuncie lo que se anuncie.__ La sesión que venga al
 -- lado no cambia el desenlace, así que ese caso se mira primero.
@@ -672,7 +757,7 @@ feedVerdict now live
   | null (flRows live) = FeedEmpty
   | keepsGoing         =
       FeedServes (LiveTable session (feedRows (flRows live)) NextUnknown)
-  | otherwise          = FeedFinalised
+  | otherwise          = FeedFinalised (fromMaybe finalisedHeard (siState =<< session))
   where
     session   = feedSession now <$> flSession live
     -- Sin sesión que lo desmienta se sirve, y sin estado dentro de ella también: la
@@ -697,17 +782,18 @@ freezeClock info = info { siClock = stop <$> siClock info }
   where
     stop clock = clock { scRunning = False }
 
--- | Lo guardado, con la sesión dada por finalizada tal como acaba de decirlo el feed.
+-- | Lo guardado, con la sesión dada por finalizada con el estado que acaba de dar el
+-- feed: oída si la dijo él, deducida si salió de 'chequeredGrace'.
 --
 -- __Solo toca lo que salió del feed__: es la sesión de la que el feed habla. El
 -- instante y las filas no cambian, así que lo servido sigue diciendo de cuándo es
 -- la tabla. Sin sesión no hay a quién ponérselo.
-finaliseBox :: (UTCTime, Source, LiveTable) -> (UTCTime, Source, LiveTable)
-finaliseBox (fetchedAt, Feed, table) =
+finaliseBox :: StateReading -> (UTCTime, Source, LiveTable) -> (UTCTime, Source, LiveTable)
+finaliseBox reading (fetchedAt, Feed, table) =
   (fetchedAt, Feed, table { liveSession = finalised <$> liveSession table })
   where
-    finalised s = s { siState = Just finalisedHeard }
-finaliseBox entry = entry
+    finalised s = s { siState = Just reading }
+finaliseBox _ entry = entry
 
 -- | La sesión que trae OpenF1, con el «finalizada» que el feed ya dijo de ella.
 --

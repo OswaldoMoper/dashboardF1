@@ -1111,13 +1111,39 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
+def _feed_flags(snapshot: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Los avisos de bandera de control de carrera, tal como llegan.
+
+    Solo los transporta: quién cuenta y qué estado sale lo decide el backend
+    (``Handler.Live.Helper.feedState``). **La lista trae también los de la
+    sesión anterior** hasta el primer aviso de la nueva; los descarta el
+    backend con la hora de inicio.
+    """
+    race_control = snapshot.get("RaceControlMessages")
+    messages = race_control.get("Messages") if isinstance(race_control, dict) else None
+    if isinstance(messages, dict):
+        messages = list(messages.values())
+    if not isinstance(messages, list):
+        return []
+    return [
+        {
+            "utc": _text(message.get("Utc")),
+            "flag": _text(message.get("Flag")),
+            "scope": _text(message.get("Scope")),
+        }
+        for message in messages
+        if isinstance(message, dict) and _text(message.get("Category")) == "Flag"
+    ]
+
+
 def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Qué sesión anuncia el feed, con las claves de ``Handler.Feed.Helper``.
 
-    Sale de tres topics y ninguno de los tres se reordena ni se calcula: el
-    reloj viaja **crudo** —el instante, el restante como texto y la marca— porque
-    quien lo resuelve necesita saber cuándo está sirviendo, y eso no se sabe
-    aquí.
+    Sale de cuatro topics y ninguno se reordena ni se calcula: el reloj viaja
+    **crudo** —el instante, el restante como texto y la marca— porque quien lo
+    resuelve necesita saber cuándo está sirviendo, y eso no se sabe aquí. Lo
+    mismo la hora de inicio (local, con su desfase aparte) y los avisos de
+    bandera (``_feed_flags``): qué estado sale de ellos lo decide el backend.
 
     ``None`` si la foto no trae ``SessionInfo``, y eso significa «el feed no
     anunció sesión», que no es lo mismo que anunciarla con los campos vacíos.
@@ -1149,6 +1175,9 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "siName": _text(info.get("Name")),
         "siMeeting": _text(meeting.get("Name")),
         "siState": _text(info.get("SessionStatus")),
+        "siStartDate": _text(info.get("StartDate")) or None,
+        "siGmtOffset": _text(info.get("GmtOffset")) or None,
+        "siFlags": _feed_flags(snapshot),
     }
 
     circuit = meeting.get("Circuit")

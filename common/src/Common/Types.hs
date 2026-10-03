@@ -128,6 +128,10 @@ lapSeconds t = case T.splitOn ":" (T.strip t) of
 data SessionState
   = SessionInactive       -- ^ Anunciada y todavía sin empezar.
   | SessionStarted        -- ^ En marcha.
+  | SessionChequered      -- ^ Bandera a cuadros: acaba de terminar una parte o la
+                          -- sesión, y el resultado aún puede cambiar. El campo
+                          -- del feed no la tiene: la deduce el backend de los
+                          -- avisos de control de carrera.
   | SessionFinalised      -- ^ Terminada, y su resultado ya no cambia.
   | SessionUnknown Text   -- ^ Un valor que el feed emite y aquí no se reconoce.
   deriving stock (Eq, Show, Generic)
@@ -136,6 +140,7 @@ data SessionState
 sessionStateLabel :: SessionState -> Text
 sessionStateLabel SessionInactive    = "Inactive"
 sessionStateLabel SessionStarted     = "Started"
+sessionStateLabel SessionChequered   = "Chequered"
 sessionStateLabel SessionFinalised   = "Finalised"
 sessionStateLabel (SessionUnknown t) = t
 
@@ -151,6 +156,7 @@ sessionStateFrom raw =
   case T.toLower (T.strip raw) of
     "inactive"  -> SessionInactive
     "started"   -> SessionStarted
+    "chequered" -> SessionChequered
     "finalised" -> SessionFinalised
     _           -> SessionUnknown raw
 
@@ -208,13 +214,17 @@ sessionIsLive _                = True
 -- parrilla hasta cuarenta minutos antes de empezar, así que anunciada y en marcha
 -- son cosas distintas y solo la segunda está pasando.
 --
+-- __'SessionChequered' también apaga__: tras la bandera no rueda nadie, aunque la
+-- sesión siga viva para el feed.
+--
 -- __Lo desconocido enciende__, compuesto de 'sessionIsLive' en vez de repetido: un
 -- estado nuevo del feed llega durante una sesión, no después.
 sessionInProgress :: Maybe SessionState -> Bool
 sessionInProgress = maybe False inProgress
   where
-    inProgress SessionInactive = False
-    inProgress s               = sessionIsLive s
+    inProgress SessionInactive  = False
+    inProgress SessionChequered = False
+    inProgress s                = sessionIsLive s
 
 -- | De dónde salió un estado.
 --
@@ -298,6 +308,7 @@ isDerived = maybe False ((== Derived) . srBasis)
 sessionStateWord :: SessionState -> Text
 sessionStateWord SessionInactive    = "Por empezar"
 sessionStateWord SessionStarted     = "En marcha"
+sessionStateWord SessionChequered   = "Bandera a cuadros"
 sessionStateWord SessionFinalised   = "Finalizada"
 sessionStateWord (SessionUnknown t) = t
 

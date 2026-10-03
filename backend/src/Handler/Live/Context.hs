@@ -243,10 +243,10 @@ fromFeed :: Env -> FeedLive -> IO LiveResult
 fromFeed env live = do
   now <- getCurrentTime
   case feedVerdict now live of
-    FeedServes table -> serveFresh env now Feed table
-    FeedEmpty        -> fromOpenF1 env
-    FeedFinalised    -> do
-      atomically $ modifyTVar' (envLiveCache env) (fmap finaliseBox)
+    FeedServes table      -> serveFresh env now Feed table
+    FeedEmpty             -> fromOpenF1 env
+    FeedFinalised reading -> do
+      atomically $ modifyTVar' (envLiveCache env) (fmap (finaliseBox reading))
       noteFinalised env now
       fromOpenF1 env
 

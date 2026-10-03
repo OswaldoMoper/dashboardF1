@@ -154,6 +154,7 @@ import           Common.Types                (ComparisonEntry (..),
                                               WidgetType (..), bandNote,
                                               bandStateLabel, noParams,
                                               sessionInProgress, sessionIsLive,
+                                              sessionStateFrom, sessionStateLabel,
                                               sessionStateWord, sessionTitle,
                                               statusLabel, tickDown, catchUp,
                                               upNextLabel, lapLabel,
@@ -184,8 +185,8 @@ import qualified Handler.Comparison.Helper   as Comparison
 import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import qualified Handler.Drivers.Helper      as Drivers
-import           Handler.Feed.Helper         (FeedLive (..), FeedRow (..),
-                                              FeedSession (..))
+import           Handler.Feed.Helper         (FeedFlag (..), FeedLive (..),
+                                              FeedRow (..), FeedSession (..))
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
@@ -195,7 +196,8 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               Of1Lap, Of1Meeting (..),
                                               Of1Position, Of1Result (..),
                                               Of1Session (..), advanceClock,
-                                              assembleRows, classificationGaps,
+                                              assembleRows, chequeredGrace,
+                                              classificationGaps,
                                               classificationTime, clockVerdict,
                                               derivedState, endMargin, feedRows,
                                               feedSession, feedStatus,
@@ -1101,7 +1103,7 @@ main = hspec $ do
       -- El feed sigue devolviendo la clasificación final durante horas, y servirla
       -- como `fresh` es afirmar que es de ahora.
       fmap (feedVerdict raceServedAt) (tryLive feedLiveFinalised)
-        `shouldBe` Right FeedFinalised
+        `shouldBe` Right (FeedFinalised finalisedHeard')
 
     it "sin filas no hay tabla, anuncie lo que anuncie la sesión" $
       -- Se mira antes que el estado: la sesión que venga al lado no cambia que no
@@ -1255,7 +1257,7 @@ main = hspec $ do
   describe "finaliseBox" $ do
     it "lo guardado del feed pasa a finalizada de oídas, con su instante y sus filas" $
       -- El instante no se mueve: lo servido sigue diciendo de cuándo es la tabla.
-      finaliseBox (raceStartsAt, Feed, liveTableFixture)
+      finaliseBox finalisedHeard' (raceStartsAt, Feed, liveTableFixture)
         `shouldBe`
           ( raceStartsAt
           , Feed
@@ -1264,12 +1266,107 @@ main = hspec $ do
           )
 
     it "lo que salió de OpenF1 no se toca, porque el feed no habla de esa tabla" $
-      finaliseBox (raceStartsAt, OpenF1, liveTableFixture)
+      finaliseBox finalisedHeard' (raceStartsAt, OpenF1, liveTableFixture)
         `shouldBe` (raceStartsAt, OpenF1, liveTableFixture)
 
     it "sin sesión no hay a quién ponérselo, y la tabla sigue igual" $
       let bare = liveTableFixture { liveSession = Nothing }
-       in finaliseBox (raceStartsAt, Feed, bare) `shouldBe` (raceStartsAt, Feed, bare)
+       in finaliseBox finalisedHeard' (raceStartsAt, Feed, bare) `shouldBe` (raceStartsAt, Feed, bare)
+
+    it "una finalizada deducida tras la bandera sigue deducida, y lleva su asterisco" $
+      let derived = StateReading SessionFinalised Derived
+       in finaliseBox derived (raceStartsAt, Feed, liveTableFixture)
+            `shouldBe`
+              ( raceStartsAt
+              , Feed
+              , liveTableFixture
+                  { liveSession = Just raceSessionFixture { siState = Just derived } }
+              )
+
+  -- La bandera a cuadros, con los avisos REALES de control de carrera de la
+  -- clasificación de Malasia (2026-10-03): la foto de las 07:50 aún traía la bandera
+  -- de la P3, y la sesión empezaba a las 16:00 locales, 08:00 UTC.
+  describe "feedSession con la bandera a cuadros" $ do
+    let stateAt upTo field now =
+          siState (feedSession now (malaysiaQuali upTo field))
+
+    it "antes de empezar, la bandera de la sesión anterior no cuenta" $
+      -- El estado del campo manda igual (Inactive), pero se comprueba también con
+      -- «en marcha» para que la aserción no pase solo porque el campo no lo sea.
+      map (\field -> stateAt "2026-10-03T07:50:00" field (malaysiaAt 7 50 0))
+          ["Inactive", "Started"]
+        `shouldBe`
+          [ Just (StateReading SessionInactive Heard)
+          , Just (StateReading SessionStarted Heard)
+          ]
+
+    it "tras la bandera de Q1, bandera a cuadros; con la verde de Q2, en marcha" $
+      [ stateAt "2026-10-03T08:18:30" "Started" (malaysiaAt 8 18 30)
+      , stateAt "2026-10-03T08:26:00" "Started" (malaysiaAt 8 26 0)
+      ]
+        `shouldBe`
+          [ Just (StateReading SessionChequered Heard)
+          , Just (StateReading SessionStarted Heard)
+          ]
+
+    it "sin otra salida en 12 min, finalizada y deducida; un segundo antes, todavía no" $
+      -- La bandera de Q3 cayó a las 09:00:00. En la grabación el feed dijo
+      -- «Finalised» a las 09:04:01, así que esto solo salta si no lo dice.
+      map (stateAt "2026-10-03T09:01:00" "Started" . (\(h, m, s) -> malaysiaAt h m s))
+          [(9, 1, 0), (9, 11, 59), (9, 12, 0)]
+        `shouldBe`
+          [ Just (StateReading SessionChequered Heard)
+          , Just (StateReading SessionChequered Heard)
+          , Just (StateReading SessionFinalised Derived)
+          ]
+
+    it "el 12 min está por encima de los descansos y del tramo hasta el Finalised" $
+      -- 7:00 en los seis descansos medidos; 10:30 el tramo más largo medido entre
+      -- la bandera y el «Finalised» (P2 de Bakú).
+      (chequeredGrace > 7 * 60, chequeredGrace > 10 * 60 + 30) `shouldBe` (True, True)
+
+    it "si el campo ya dice finalizada, gana el campo" $
+      stateAt "2026-10-03T09:04:01" "Finalised" (malaysiaAt 9 4 1)
+        `shouldBe` Just (StateReading SessionFinalised Heard)
+
+    it "sin hora de inicio no cuenta ningún aviso" $
+      let fs = (malaysiaQuali "2026-10-03T08:18:30" "Started") { fsStartDate = Nothing }
+       in siState (feedSession (malaysiaAt 8 18 30) fs)
+            `shouldBe` Just (StateReading SessionStarted Heard)
+
+    it "una bandera de sector no es la de la pista" $
+      let fs = (malaysiaQuali "2026-10-03T08:00:00" "Started")
+                 { fsFlags = [FeedFlag "2026-10-03T08:10:00" "CHEQUERED" "Sector"] }
+       in siState (feedSession (malaysiaAt 8 11 0) fs)
+            `shouldBe` Just (StateReading SessionStarted Heard)
+
+    it "un desfase negativo también se resta: 09:00 a −4 h es 13:00 UTC" $
+      let fs flagAt = (malaysiaQuali "" "Started")
+                        { fsStartDate = Just "2026-10-03T09:00:00"
+                        , fsGmtOffset = Just "-04:00:00"
+                        , fsFlags     = [FeedFlag flagAt "CHEQUERED" "Track"]
+                        }
+       in map (\flagAt -> siState (feedSession (malaysiaAt 13 31 0) (fs flagAt)))
+              ["2026-10-03T12:59:00", "2026-10-03T13:30:00"]
+            `shouldBe`
+              [ Just (StateReading SessionStarted Heard)
+              , Just (StateReading SessionChequered Heard)
+              ]
+
+    it "con bandera a cuadros la derecha de la banda calla, como rodando" $
+      upNext (malaysiaAt 9 1 0)
+          (Just raceSessionFixture { siState = Just (StateReading SessionChequered Heard) })
+          [ScheduledSession "Race" 1308 "Bahrain Grand Prix" (malaysiaAt 31 0 0) (malaysiaAt 33 0 0)]
+        `shouldBe` NextSilent
+
+    it "la bandera viaja como «Chequered», se lee y se dice «Bandera a cuadros»" $
+      ( sessionStateLabel SessionChequered
+      , sessionStateFrom "Chequered"
+      , sessionStateWord SessionChequered
+      , sessionInProgress (Just SessionChequered)
+      , sessionIsLive SessionChequered
+      )
+        `shouldBe` ("Chequered", SessionChequered, "Bandera a cuadros", False, True)
 
   -- Los minutos en que OpenF1 vuelve sin estado: la sesión es la que el feed ya dio
   -- por finalizada, y eso se oyó.
@@ -5194,6 +5291,38 @@ namedSession sType sName sMeeting =
 -- | Finalizada y dicho por la fuente, que es lo que la otra punta pone en lo guardado.
 finalisedHeard' :: StateReading
 finalisedHeard' = StateReading SessionFinalised Heard
+
+-- | Un instante del sábado 3 de octubre de 2026 en UTC, el día de la clasificación de
+-- Malasia. Las horas pueden pasar de 24, y caen en los días siguientes.
+malaysiaAt :: Int -> Int -> Int -> UTCTime
+malaysiaAt h m s =
+  addUTCTime (fromIntegral (h * 3600 + m * 60 + s)) (UTCTime (fromGregorian 2026 10 3) 0)
+
+-- | La clasificación de Malasia tal como la entrega el microservicio, con el estado
+-- del campo que se pida y los avisos de pista que habían llegado hasta un instante.
+--
+-- Los avisos son los REALES de la grabación, incluida la bandera de la P3 que la foto
+-- arrastraba; los de sector se omiten porque la regla no los mira.
+malaysiaQuali :: T.Text -> T.Text -> FeedSession
+malaysiaQuali upTo field =
+  decoded { fsState = field, fsFlags = filter ((<= upTo) . ffUtc) (fsFlags decoded) }
+  where
+    decoded = either error id (trySession feedSessionMalaysiaQuali)
+
+feedSessionMalaysiaQuali :: ByteString
+feedSessionMalaysiaQuali =
+  "{\"siType\":\"Qualifying\",\"siName\":\"Qualifying\",\
+  \\"siMeeting\":\"Bahrain Grand Prix\",\"siState\":\"Started\",\
+  \\"siStartDate\":\"2026-10-03T16:00:00\",\"siGmtOffset\":\"08:00:00\",\
+  \\"siFlags\":[\
+  \{\"utc\":\"2026-10-03T04:59:00\",\"flag\":\"GREEN\",\"scope\":\"Track\"},\
+  \{\"utc\":\"2026-10-03T05:30:00\",\"flag\":\"CHEQUERED\",\"scope\":\"Track\"},\
+  \{\"utc\":\"2026-10-03T08:00:00\",\"flag\":\"GREEN\",\"scope\":\"Track\"},\
+  \{\"utc\":\"2026-10-03T08:18:00\",\"flag\":\"CHEQUERED\",\"scope\":\"Track\"},\
+  \{\"utc\":\"2026-10-03T08:25:00\",\"flag\":\"GREEN\",\"scope\":\"Track\"},\
+  \{\"utc\":\"2026-10-03T08:40:00\",\"flag\":\"CHEQUERED\",\"scope\":\"Track\"},\
+  \{\"utc\":\"2026-10-03T08:47:00\",\"flag\":\"GREEN\",\"scope\":\"Track\"},\
+  \{\"utc\":\"2026-10-03T09:00:00\",\"flag\":\"CHEQUERED\",\"scope\":\"Track\"}]}"
 
 -- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
 liveTableFixture :: LiveTable
