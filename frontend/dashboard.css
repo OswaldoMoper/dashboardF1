@@ -628,36 +628,42 @@ body {
 /* Históricos: las dos tablas ya NO comparten posiciones, y por eso cada una lleva su
    modificador desde 2026-08-26.
 
-     .historical--drivers        Clave | Piloto | Puntos | Victorias   → numéricas 3 y 4
-     .historical--constructors   Constructor | Puntos | Victorias      → numéricas 2 y 3
+     .historical--drivers        Pos | Clave | Piloto | Puntos | Victorias   → numéricas 1, 4 y 5
+     .historical--constructors   Pos | Constructor | Puntos | Victorias      → numéricas 1, 3 y 4
 
    Es la tercera vez que el riesgo de 2026-08-21 (b) —el `nth-child` no sabe qué
    columna es— se cobra: en 2026-08-24 la tabla pasó de 4 columnas a 3 y hubo que
    mover el selector compartido. Esta vez se cierra dando **clase a la tabla** en vez
    de contar columnas, que es lo que aquella nota pedía: el día que una de las dos
    gane o pierda una columna, la otra no se entera. */
-.historical--drivers td:nth-child(3),
+.historical--drivers td:nth-child(1),
 .historical--drivers td:nth-child(4),
-.historical--drivers th:nth-child(3),
+.historical--drivers td:nth-child(5),
+.historical--drivers th:nth-child(1),
 .historical--drivers th:nth-child(4),
-.historical--constructors td:nth-child(2),
+.historical--drivers th:nth-child(5),
+.historical--constructors td:nth-child(1),
 .historical--constructors td:nth-child(3),
-.historical--constructors th:nth-child(2),
-.historical--constructors th:nth-child(3) {
+.historical--constructors td:nth-child(4),
+.historical--constructors th:nth-child(1),
+.historical--constructors th:nth-child(3),
+.historical--constructors th:nth-child(4) {
   text-align: right;
 }
 
-.historical--drivers td:nth-child(3),
+.historical--drivers td:nth-child(1),
 .historical--drivers td:nth-child(4),
-.historical--constructors td:nth-child(2),
-.historical--constructors td:nth-child(3) {
+.historical--drivers td:nth-child(5),
+.historical--constructors td:nth-child(1),
+.historical--constructors td:nth-child(3),
+.historical--constructors td:nth-child(4) {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
 /* La clave del piloto es un acrónimo de tres letras y se lee como un identificador,
    no como texto: monoespaciada, pero alineada a la izquierda como el nombre. */
-.historical--drivers td:nth-child(1) {
+.historical--drivers td:nth-child(2) {
   font-family: var(--font-mono);
 }
 

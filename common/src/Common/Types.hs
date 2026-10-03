@@ -695,6 +695,8 @@ data HistoricalStat = HistoricalStat
   , hsFamilyName :: Text    -- ^ Apellido (p. ej. @"Verstappen"@).
   , hsPoints     :: Double  -- ^ Puntos de la temporada en curso.
   , hsWins       :: Maybe Double  -- ^ Victorias, @Nothing@ si Jolpica no las publica.
+  , hsPosition   :: Maybe Int     -- ^ Puesto oficial, con los empates ya resueltos;
+                                  -- @Nothing@ si Jolpica no da un número (un excluido).
   }
   deriving stock (Eq, Show, Generic)
 

@@ -30,12 +30,15 @@ module Handler.Historical.Helper
   , parseNum
   ) where
 
-import           Common.Types (HistoricalStat (..), StatEntity (..))
-import           Data.Aeson   (FromJSON (..), withObject, (.!=), (.:), (.:?))
-import           Data.Maybe   (fromMaybe, mapMaybe)
-import           Data.Text    (Text)
-import qualified Data.Text    as T
-import           Text.Read    (readMaybe)
+import           Common.Types        (HistoricalStat (..), StatEntity (..))
+import           Control.Applicative ((<|>))
+import           Data.Aeson          (FromJSON (..), Object, withObject, (.!=),
+                                      (.:), (.:?))
+import           Data.Aeson.Types    (Parser)
+import           Data.Maybe          (fromMaybe, mapMaybe)
+import           Data.Text           (Text)
+import qualified Data.Text           as T
+import           Text.Read           (readMaybe)
 
 -- | Raíz de la respuesta: @{ "MRData": … }@.
 newtype Root = Root { rootMRData :: MRData }
@@ -86,9 +89,10 @@ instance FromJSON StandingsList where
 -- completo a cache\/dummy. El defecto es @\"\"@ y no @\"0\"@ porque declarar cero
 -- victorias sería __inventar un dato__ que Jolpica no publicó.
 data DriverStanding = DriverStanding
-  { dsPoints :: Text
-  , dsWins   :: Text
-  , dsDriver :: JolpicaDriver
+  { dsPoints   :: Text
+  , dsWins     :: Text
+  , dsPosition :: Text
+  , dsDriver   :: JolpicaDriver
   }
   deriving (Eq, Show)
 
@@ -97,7 +101,17 @@ instance FromJSON DriverStanding where
     DriverStanding
       <$> o .: "points"
       <*> o .:? "wins" .!= ""
+      <*> standingPosition o
       <*> o .: "Driver"
+
+-- | El puesto de una fila tal como lo escribe Jolpica: @positionText@, que es el que
+-- dice «D» o «-» cuando no hay número (un excluido), y si falta, @position@. Sin
+-- ninguno de los dos, la cadena vacía, que 'parsePosition' no lee.
+standingPosition :: Object -> Parser Text
+standingPosition o = do
+  written <- o .:? "positionText"
+  number  <- o .:? "position"
+  pure (fromMaybe "" (written <|> number))
 
 -- | @Driver@: identidad del piloto tal como la publica Jolpica — código
 -- (acrónimo, p. ej. @"VER"@), nombre y apellido. Los tres se consumen para poblar
@@ -132,6 +146,7 @@ instance FromJSON JolpicaDriver where
 data ConstructorStanding = ConstructorStanding
   { csPoints      :: Text
   , csWins        :: Text
+  , csPosition    :: Text
   , csConstructor :: Constructor
   }
   deriving (Eq, Show)
@@ -141,6 +156,7 @@ instance FromJSON ConstructorStanding where
     ConstructorStanding
       <$> o .: "points"
       <*> o .:? "wins" .!= ""
+      <*> standingPosition o
       <*> o .: "Constructor"
 
 -- | @Constructor@: identidad del equipo tal como la publica Jolpica — identificador
@@ -184,7 +200,8 @@ assembleStats root =
                      (jdGivenName drv)
                      (jdFamilyName drv)
                      pts
-                     (parseNum (dsWins ds)))
+                     (parseNum (dsWins ds))
+                     (parsePosition (dsPosition ds)))
             <$> parseNum (dsPoints ds)
 
 -- | Espejo de 'assembleStats' para la clasificación de constructores: una fila por
@@ -206,9 +223,15 @@ assembleConstructorStats root =
                      ""
                      (cnName con)
                      pts
-                     (parseNum (csWins cs)))
+                     (parseNum (csWins cs))
+                     (parsePosition (csPosition cs)))
             <$> parseNum (csPoints cs)
 
 -- | Parsea un campo numérico de Ergast (cadena) a 'Double'.
 parseNum :: Text -> Maybe Double
 parseNum = readMaybe . T.unpack
+
+-- | El puesto, si es un número; lo que no lo es («D», «-», la cadena vacía) queda
+-- sin puesto en vez de inventarle uno.
+parsePosition :: Text -> Maybe Int
+parsePosition = readMaybe . T.unpack

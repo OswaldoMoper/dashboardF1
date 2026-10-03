@@ -54,8 +54,8 @@ fetchStats cfg = do
 -- faltan las victorias sería editar código.
 dummy :: [HistoricalStat]
 dummy =
-  [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 (Just 9)
-  , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 Nothing
-  , HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 (Just 12)
-  , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 (Just 9)
+  [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 (Just 9) (Just 1)
+  , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 Nothing (Just 2)
+  , HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 (Just 12) (Just 1)
+  , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 (Just 9) (Just 2)
   ]

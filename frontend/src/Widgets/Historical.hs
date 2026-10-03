@@ -61,7 +61,7 @@ data HState
   | Failed
   | Loaded [HistoricalStat]
 
--- | Clasificación de __pilotos__: @Clave | Piloto | Puntos | Victorias@.
+-- | Clasificación de __pilotos__: @Pos | Clave | Piloto | Puntos | Victorias@.
 --
 -- Las dos proyecciones de la identidad —el acrónimo y el nombre completo— van en
 -- __columnas distintas__ y no en una sola conmutable: es lo que la identidad
@@ -82,20 +82,21 @@ driverStatsWidget = divClass "widget widget--driver-stats" $ do
     renderState (Loaded stats) =
       elClass "table" "historical historical--drivers" $ do
         el "thead" $ el "tr" $
-          mapM_ (el "th" . text) ["Clave", "Piloto", "Puntos", "Victorias"]
+          mapM_ (el "th" . text) ["Pos", "Clave", "Piloto", "Puntos", "Victorias"]
         el "tbody" $ mapM_ row (onlyEntity DriverStat stats)
 
     row :: DomBuilder t m => HistoricalStat -> m ()
     row s = el "tr" $ mapM_ (el "td" . text)
-      [ hsCode s
+      [ positionLabel s
+      , hsCode s
       , hsGivenName s <> " " <> hsFamilyName s
       , pointsLabel s
       , winsLabel s
       ]
 
--- | Clasificación de __constructores__: @Constructor | Puntos | Victorias@.
+-- | Clasificación de __constructores__: @Pos | Constructor | Puntos | Victorias@.
 --
--- Tres columnas y no cuatro: Jolpica no publica acrónimo ni nombre\/apellido para un
+-- Sin clave ni nombre: Jolpica no publica acrónimo ni nombre\/apellido para un
 -- equipo, y la convención del DTO deja 'hsCode' con el @constructorId@
 -- (@"red_bull"@), que es un identificador interno y no se muestra. La etiqueta es
 -- 'hsFamilyName', el nombre legible.
@@ -113,12 +114,13 @@ constructorStatsWidget = divClass "widget widget--constructor-stats" $ do
     renderState (Loaded stats) =
       elClass "table" "historical historical--constructors" $ do
         el "thead" $ el "tr" $
-          mapM_ (el "th" . text) ["Constructor", "Puntos", "Victorias"]
+          mapM_ (el "th" . text) ["Pos", "Constructor", "Puntos", "Victorias"]
         el "tbody" $ mapM_ row (onlyEntity ConstructorStat stats)
 
     row :: DomBuilder t m => HistoricalStat -> m ()
     row s = el "tr" $ mapM_ (el "td" . text)
-      [ hsFamilyName s
+      [ positionLabel s
+      , hsFamilyName s
       , pointsLabel s
       , winsLabel s
       ]
@@ -163,3 +165,8 @@ pointsLabel = formatTrimmed 1 . hsPoints
 -- esta cifra»— y el carácter se define una sola vez en el repo.
 winsLabel :: HistoricalStat -> Text
 winsLabel = maybe noData (formatFixed 0) . hsWins
+
+-- | Puesto de la fila, o la raya cuando Jolpica no da un número (un excluido): la
+-- misma raya que 'winsLabel', porque las dos son «nadie dio esta cifra».
+positionLabel :: HistoricalStat -> Text
+positionLabel = maybe noData (formatFixed 0 . fromIntegral) . hsPosition

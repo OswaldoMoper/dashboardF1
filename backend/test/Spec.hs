@@ -264,8 +264,8 @@ main = hspec $ do
     it "emite una fila por piloto, en el orden de la clasificación y con la identidad completa" $
       driverStatsOf driverStandings
         `shouldBe`
-          [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 (Just 9)
-          , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 (Just 3)
+          [ HistoricalStat DriverStat "VER" "Max" "Verstappen" 393 (Just 9) (Just 1)
+          , HistoricalStat DriverStat "NOR" "Lando" "Norris" 331 (Just 3) (Just 2)
           ]
 
     -- Las dos métricas dejaron de descartarse igual el 2026-08-24: con una fila
@@ -275,18 +275,35 @@ main = hspec $ do
 
     it "conserva al piloto con hsWins en Nothing cuando `wins` no parsea" $
       driverStatsOf unparseableWins
-        `shouldBe` [HistoricalStat DriverStat "HAM" "Lewis" "Hamilton" 183 Nothing]
+        `shouldBe` [HistoricalStat DriverStat "HAM" "Lewis" "Hamilton" 183 Nothing (Just 5)]
 
     it "usa el apellido como código cuando Jolpica omite `code`" $
       driverStatsOf driverWithoutCode
-        `shouldBe` [HistoricalStat DriverStat "Bortoleto" "Gabriel" "Bortoleto" 12 (Just 0)]
+        `shouldBe` [HistoricalStat DriverStat "Bortoleto" "Gabriel" "Bortoleto" 12 (Just 0) (Just 18)]
 
     it "deja hsWins en Nothing cuando Jolpica no publica `wins`" $
       driverStatsOf driverWithoutWins
-        `shouldBe` [HistoricalStat DriverStat "ALO" "Fernando" "Alonso" 24 Nothing]
+        `shouldBe` [HistoricalStat DriverStat "ALO" "Fernando" "Alonso" 24 Nothing (Just 9)]
 
     it "devuelve [] cuando la respuesta no trae la clave DriverStandings" $
       driverStatsOf standingsListWithoutKeys `shouldBe` []
+
+    -- El puesto oficial de Jolpica, con los empates ya resueltos (en la ronda 16 de
+    -- 2026, tres pilotos con 7 puntos salen 15.º, 16.º y 17.º).
+    it "el puesto sale de `positionText`; uno que no es número queda sin puesto" $
+      -- «D» es como Ergast escribe a un excluido. Se siembra también el que sí es
+      -- número, para que la aserción no pase con el puesto siempre vacío.
+      map (fmap hsPosition . driverStatsOf . withPosition)
+          [ "\"position\":\"15\",\"positionText\":\"15\""
+          , "\"position\":\"22\",\"positionText\":\"D\""
+          , "\"positionText\":\"-\""
+          ]
+        `shouldBe` [[Just 15], [Nothing], [Nothing]]
+
+    it "sin `positionText` vale `position`, y sin ninguno no hay puesto" $
+      map (fmap hsPosition . driverStatsOf . withPosition)
+          ["\"position\":\"16\"", ""]
+        `shouldBe` [[Just 16], [Nothing]]
 
     it "ignora la clasificación de constructores" $
       driverStatsOf constructorStandings `shouldBe` []
@@ -295,8 +312,8 @@ main = hspec $ do
     it "emite una fila por constructor, con `constructorId` en hsCode y `name` en hsFamilyName" $
       constructorStatsOf constructorStandings
         `shouldBe`
-          [ HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 (Just 12)
-          , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 (Just 9)
+          [ HistoricalStat ConstructorStat "red_bull" "" "Red Bull" 712 (Just 12) (Just 1)
+          , HistoricalStat ConstructorStat "mclaren" "" "McLaren" 640 (Just 9) (Just 2)
           ]
 
     it "devuelve [] cuando la respuesta no trae la clave ConstructorStandings" $
@@ -4395,6 +4412,18 @@ decodeDrivers raw =
 -- | Envoltura de Ergast (@MRData.StandingsTable.StandingsLists[0]@) alrededor del
 -- cuerpo interesante de cada caso. Se declara una sola vez para que los fixtures
 -- muestren solo lo que están probando.
+-- | Un solo piloto con los campos de puesto que se le pasen (vacío: ninguno). Es
+-- HUL con sus 7 puntos de la ronda 16, el primero de los tres empatados.
+withPosition :: ByteString -> ByteString
+withPosition fields =
+  envelope $
+    ",\"DriverStandings\":[{"
+      <> fields
+      <> (if fields == "" then "" else ",")
+      <> "\"points\":\"7\",\"wins\":\"0\",\"Driver\":\
+         \{\"driverId\":\"hulkenberg\",\"code\":\"HUL\",\
+         \\"givenName\":\"Nico\",\"familyName\":\"H\\u00fclkenberg\"}}]"
+
 envelope :: ByteString -> ByteString
 envelope body =
   "{\"MRData\":{\"StandingsTable\":{\"StandingsLists\":\
