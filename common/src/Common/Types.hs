@@ -132,6 +132,8 @@ data SessionState
                           -- sesión, y el resultado aún puede cambiar. El campo
                           -- del feed no la tiene: la deduce el backend de los
                           -- avisos de control de carrera.
+  | SessionRedFlag        -- ^ Parada con bandera roja, hasta la verde. También la
+                          -- deduce el backend de control de carrera.
   | SessionFinalised      -- ^ Terminada, y su resultado ya no cambia.
   | SessionUnknown Text   -- ^ Un valor que el feed emite y aquí no se reconoce.
   deriving stock (Eq, Show, Generic)
@@ -141,6 +143,7 @@ sessionStateLabel :: SessionState -> Text
 sessionStateLabel SessionInactive    = "Inactive"
 sessionStateLabel SessionStarted     = "Started"
 sessionStateLabel SessionChequered   = "Chequered"
+sessionStateLabel SessionRedFlag     = "Red"
 sessionStateLabel SessionFinalised   = "Finalised"
 sessionStateLabel (SessionUnknown t) = t
 
@@ -157,6 +160,7 @@ sessionStateFrom raw =
     "inactive"  -> SessionInactive
     "started"   -> SessionStarted
     "chequered" -> SessionChequered
+    "red"       -> SessionRedFlag
     "finalised" -> SessionFinalised
     _           -> SessionUnknown raw
 
@@ -214,8 +218,8 @@ sessionIsLive _                = True
 -- parrilla hasta cuarenta minutos antes de empezar, así que anunciada y en marcha
 -- son cosas distintas y solo la segunda está pasando.
 --
--- __'SessionChequered' también apaga__: tras la bandera no rueda nadie, aunque la
--- sesión siga viva para el feed.
+-- __'SessionChequered' y 'SessionRedFlag' también apagan__: tras la bandera no rueda
+-- nadie, aunque la sesión siga viva para el feed.
 --
 -- __Lo desconocido enciende__, compuesto de 'sessionIsLive' en vez de repetido: un
 -- estado nuevo del feed llega durante una sesión, no después.
@@ -224,6 +228,7 @@ sessionInProgress = maybe False inProgress
   where
     inProgress SessionInactive  = False
     inProgress SessionChequered = False
+    inProgress SessionRedFlag   = False
     inProgress s                = sessionIsLive s
 
 -- | De dónde salió un estado.
@@ -258,25 +263,79 @@ data StateReading = StateReading
 instance ToJSON StateReading
 instance FromJSON StateReading
 
--- | Lo que se lee en el sitio del estado: la palabra, si se sabe, con su marca.
+-- | Una bandera que la banda dibuja en vez de nombrar.
+data BandFlag = YellowFlag | RedFlag | ChequeredFlag
+  deriving stock (Eq, Show)
+
+-- | Lo que se lee al pasar el ratón por encima de una bandera.
+flagName :: BandFlag -> Text
+flagName YellowFlag    = "Bandera amarilla"
+flagName RedFlag       = "Bandera roja"
+flagName ChequeredFlag = "Bandera a cuadros"
+
+-- | Una pieza del sitio del estado: lo que tiene símbolo va dibujado y lo demás,
+-- con palabra.
+data BandPiece = PieceWord Text | PieceFlag BandFlag
+  deriving stock (Eq, Show)
+
+-- | Lo que se enseña en el sitio del estado: el estado de la sesión y, detrás, el de
+-- la pista.
+--
+-- __La pista solo con la sesión por empezar o en marcha__: con la bandera, la roja o
+-- la sesión acabada no rueda nadie, y la foto del feed arrastra hasta el anuncio de
+-- la siguiente la última amarilla de la anterior (medido el 2026-10-05).
+--
+-- Sin estado, nada: la marca de 'bandMark' sale sola.
+bandPieces :: Maybe SessionState -> Maybe TrackCondition -> [BandPiece]
+bandPieces state track = maybe [] statePiece state <> trackPieces
+  where
+    statePiece SessionChequered = [PieceFlag ChequeredFlag]
+    statePiece SessionRedFlag   = [PieceFlag RedFlag]
+    statePiece s                = [PieceWord (sessionStateWord s)]
+
+    trackPieces
+      | state `elem` [Just SessionInactive, Just SessionStarted] = maybe [] (pure . trackPiece) track
+      | otherwise                                                 = []
+
+    trackPiece TrackYellow    = PieceFlag YellowFlag
+    trackPiece TrackRed       = PieceFlag RedFlag
+    trackPiece TrackSafetyCar = PieceWord "Safety Car"
+    trackPiece TrackVsc       = PieceWord "VSC"
+    trackPiece TrackVscEnding = PieceWord "VSC termina"
+
+-- | La palabra de un hueco del sitio del estado; vacía si el hueco es una bandera o
+-- no hay nada.
+pieceWord :: Maybe BandPiece -> Text
+pieceWord (Just (PieceWord t)) = t
+pieceWord _                    = ""
+
+-- | La bandera de un hueco del sitio del estado, si es una.
+pieceFlag :: Maybe BandPiece -> Maybe BandFlag
+pieceFlag (Just (PieceFlag f)) = Just f
+pieceFlag _                    = Nothing
+
+-- | El separador entre las piezas: solo cuando hay dos.
+pieceSeparator :: [BandPiece] -> Text
+pieceSeparator ps
+  | length ps > 1 = " · "
+  | otherwise     = ""
+
+-- | La marca que va detrás de las piezas del sitio del estado.
 --
 -- __La marca se cuenta y no se suma__: un asterisco es un estado deducido y dos es
 -- una sesión conservada, y cuando concurren manda la segunda. Lo que significa cada
 -- una no cabe en un carácter: lo dice 'bandNote'.
 --
--- __Sin palabra la marca sale sola__, para que el aviso siempre tenga dónde
+-- __Sin piezas la marca sale sola__, para que el aviso siempre tenga dónde
 -- colgarse: una sesión conservada puede no traer estado.
 --
 -- __Lo desconocido no lleva marca de deducido__ aunque sea una palabra rara: llegó
--- de la fuente, así que es tan oído como los otros tres.
-bandStateLabel :: Bool -> Maybe StateReading -> Text
-bandStateLabel kept reading = word <> mark
-  where
-    word = maybe "" (sessionStateWord . srState) reading
-    mark
-      | kept                = "**"
-      | isDerived reading   = "*"
-      | otherwise           = ""
+-- de la fuente, así que es tan oído como los otros.
+bandMark :: Bool -> Maybe StateReading -> Text
+bandMark kept reading
+  | kept              = "**"
+  | isDerived reading = "*"
+  | otherwise         = ""
 
 -- | Qué aclara la marca. __Cadena vacía cuando no hay nada que aclarar__, y eso es
 -- lo que deja el botón inerte.
@@ -309,6 +368,7 @@ sessionStateWord :: SessionState -> Text
 sessionStateWord SessionInactive    = "Por empezar"
 sessionStateWord SessionStarted     = "En marcha"
 sessionStateWord SessionChequered   = "Bandera a cuadros"
+sessionStateWord SessionRedFlag     = "Bandera roja"
 sessionStateWord SessionFinalised   = "Finalizada"
 sessionStateWord (SessionUnknown t) = t
 
@@ -378,11 +438,28 @@ data SessionInfo = SessionInfo
   , siPart    :: Maybe Int
     -- ^ La parte de una clasificación, de @1@ en adelante. 'Nothing' fuera de
     -- clasificación y antes de que el feed anuncie la primera.
+  , siTrack   :: Maybe TrackCondition
+    -- ^ Lo que pasa en la pista. 'Nothing' con la pista despejada y cuando la fuente
+    -- no lo publica.
   }
   deriving stock (Eq, Show, Generic)
 
 instance ToJSON SessionInfo
 instance FromJSON SessionInfo
+
+-- | Lo que pasa en la pista, de los códigos que el feed publica (medidos en once
+-- grabaciones). __La roja de la pista no es el estado «Bandera roja»__, que sale de
+-- control de carrera: la pista la dio sola con una salida suspendida.
+data TrackCondition
+  = TrackYellow
+  | TrackRed
+  | TrackSafetyCar
+  | TrackVsc
+  | TrackVscEnding
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON TrackCondition
+instance FromJSON TrackCondition
 
 -- | De qué sesión habla la página, para enseñárselo a alguien.
 --
@@ -515,9 +592,11 @@ tickClock c
   | otherwise   = c
 
 -- | La sesión mientras la página espera a tener algo con el retraso pedido: se sabe
--- cuál es, pero su estado, su vuelta, su reloj y su parte todavía no se enseñan.
+-- cuál es, pero su estado, su vuelta, su reloj, su parte y su pista todavía no se
+-- enseñan.
 waitingSession :: SessionInfo -> SessionInfo
-waitingSession s = s {siState = Nothing, siLaps = Nothing, siClock = Nothing, siPart = Nothing}
+waitingSession s =
+  s {siState = Nothing, siLaps = Nothing, siClock = Nothing, siPart = Nothing, siTrack = Nothing}
 
 -- | La tabla mientras la página espera: la sesión según 'waitingSession' y sin filas.
 -- __Lo que viene después sí se dice__: solo cuenta cómo acabó la sesión si la página se

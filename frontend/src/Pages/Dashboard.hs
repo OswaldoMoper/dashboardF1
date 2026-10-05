@@ -33,15 +33,17 @@ import           Common.Origin      (Sourced (..))
 import           Common.Shown       (Kept (..), Poll (..), delayDefaultSeconds,
                                      delayFromUrl, keepLast, keptNothing,
                                      landed, readDelay)
-import           Common.Types       (Layout (..), LayoutId (..), LiveTable (..),
+import           Common.Types       (BandFlag (..), BandPiece, Layout (..),
+                                     LayoutId (..), LiveTable (..),
                                      SessionClock, SessionInfo (..),
-                                     StateReading (..),
+                                     StateReading (..), TrackCondition,
                                      UpNext (..), WidgetConfig (..),
-                                     WidgetId (..), WidgetType (..), bandNote,
-                                     bandRight, bandStateLabel, isDerived,
-                                     noParams, sessionTitle, shownClock,
-                                     tickClock, tickDown, catchUp)
-import           Data.Maybe         (fromMaybe, isJust)
+                                     WidgetId (..), WidgetType (..), bandMark,
+                                     bandNote, bandPieces, bandRight, flagName,
+                                     isDerived, noParams, pieceFlag,
+                                     pieceSeparator, pieceWord, sessionTitle,
+                                     shownClock, tickClock, tickDown, catchUp)
+import           Data.Maybe         (fromMaybe, isJust, listToMaybe)
 import qualified Data.Text          as T
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
@@ -184,13 +186,14 @@ sessionBand openDyn poll lag = mdo
   age     <- sessionAge tick arrived
   title   <- holdUniqDyn (maybe "" sessionTitle . keptValue <$> kept)
   reading <- holdUniqDyn ((\k -> siState =<< keptValue k) <$> kept)
+  track   <- holdUniqDyn ((\k -> siTrack =<< keptValue k) <$> kept)
   next    <- countdown tick lag (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
   clock   <- sessionClock tick ((shownClock =<<) . sessionOf <$> poll)
   let laps = (siLaps =<<) . sessionOf <$> poll
   asCard  <- toggle True lookClick
   lookClick <- elDynClass "div" (bandClass <$> openDyn <*> asCard) $ do
     dynText title
-    sessionState reading (keptStale <$> kept) age
+    sessionState reading track (keptStale <$> kept) age
     elClass "span" "session-band__next" $ dynText (bandRight <$> next <*> laps <*> clock)
     lookSwitch asCard
   pure ()
@@ -216,12 +219,15 @@ sessionBand openDyn poll lag = mdo
       | card      = "Ver como barra"
       | otherwise = "Ver como tarjeta"
 
--- | En qué punto está la sesión, con la marca que la califica y su aviso.
+-- | En qué punto está la sesión y su pista ('bandPieces'), con la marca que la
+-- califica y su aviso.
 --
 -- __Todo el DOM se monta una vez y solo cambian clases y texto__, sin 'dyn_'. Es
 -- deliberado: el aviso guarda si está abierto, y re-montar lo cerraría cada vez que
 -- cambiara el estado. De paso es lo único de Reflex que se puede escribir sin verlo
--- compilar y seguir estando seguro de lo que hace.
+-- compilar y seguir estando seguro de lo que hace. Por eso las piezas van en __dos
+-- huecos fijos__ —las que 'bandPieces' puede dar—, cada uno con su palabra y su
+-- bandera, y lo que no toca se queda vacío o escondido.
 --
 -- __El botón es la etiqueta entera y no solo los asteriscos.__ Un carácter es un
 -- blanco de un par de milímetros en un teléfono, que es justo donde el aviso solo
@@ -236,17 +242,37 @@ sessionBand openDyn poll lag = mdo
 -- marcas posibles, preguntar por una de ellas dejaría la otra inerte.
 sessionState :: MonadWidget t m
              => Dynamic t (Maybe StateReading)
+             -> Dynamic t (Maybe TrackCondition)
              -> Dynamic t Bool
              -> Dynamic t Int
              -> m ()
-sessionState reading stale age = do
+sessionState reading track stale age = do
   note <- holdUniqDyn (bandNote <$> ageWhenStale <*> (isDerived <$> reading))
+  pieces <- holdUniqDyn (bandPieces <$> (fmap srState <$> reading) <*> track)
   (markEl, _) <-
-    elDynClass' "button" (stateClass <$> note) $
-      dynText (bandStateLabel <$> stale <*> reading)
+    elDynClass' "button" (stateClass <$> note) $ do
+      piece (listToMaybe <$> pieces)
+      dynText (pieceSeparator <$> pieces)
+      piece (listToMaybe . drop 1 <$> pieces)
+      dynText (bandMark <$> stale <*> reading)
   noteOpen <- toggle False (domEvent Click markEl)
   elDynClass "span" (noteClass <$> noteOpen <*> note) $ dynText note
   where
+    -- Un hueco: la bandera, escondida si no la hay, y la palabra, vacía si no la hay.
+    piece :: MonadWidget t m => Dynamic t (Maybe BandPiece) -> m ()
+    piece p = do
+      elDynAttr "span" (flagAttrs . pieceFlag <$> p) blank
+      dynText (pieceWord <$> p)
+
+    flagAttrs Nothing  = "class" =: "session-band__flag session-band__flag--none"
+    flagAttrs (Just f) =
+      "class" =: ("session-band__flag session-band__flag--" <> flagClass f)
+        <> "title" =: flagName f
+
+    flagClass YellowFlag    = "yellow"
+    flagClass RedFlag       = "red"
+    flagClass ChequeredFlag = "chequered"
+
     -- La edad solo se dice de lo conservado: sobre lo que acaba de llegar sería
     -- cierta y no significaría nada.
     ageWhenStale = (\s n -> if s then Just n else Nothing) <$> stale <*> age

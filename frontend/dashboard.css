@@ -296,6 +296,53 @@ body {
   pointer-events: none;
 }
 
+/* Una bandera en el sitio del estado: el mástil y el paño. Recibe el ratón aunque
+   el botón no lo reciba, para que su `title` diga qué bandera es. */
+.session-band__flag {
+  position: relative;
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  vertical-align: -3px;
+  pointer-events: auto;
+}
+
+.session-band__flag::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.6px;
+  height: 15px;
+  background: var(--c-muted);
+}
+
+.session-band__flag::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0;
+  width: 13px;
+  height: 9px;
+}
+
+.session-band__flag--none {
+  display: none;
+}
+
+.session-band__flag--yellow::after {
+  background: var(--c-warn);
+}
+
+.session-band__flag--red::after {
+  background: var(--c-accent);
+}
+
+/* Cuatro por tres casillas, con la de arriba a la izquierda oscura. */
+.session-band__flag--chequered::after {
+  background: repeating-conic-gradient(#f2f2f2 0 25%, #111 0 50%) 0 0 / 6.5px 6px;
+}
+
 /* Lo que lleva aviso se ve atenuado y SÍ se puede pulsar. Los asteriscos los pone
    el texto (`Common.Types.bandStateLabel`), no esta regla: quien los lee es también
    quien los prueba, y una marca de CSS no la alcanza ninguna suite. */

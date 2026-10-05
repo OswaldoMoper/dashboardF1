@@ -152,7 +152,10 @@ import           Common.Types                (ComparisonEntry (..),
                                               TyreStint (..), UpNext (..),
                                               WidgetConfig (..), WidgetId (..),
                                               WidgetType (..), bandNote,
-                                              bandStateLabel, noParams,
+                                              BandFlag (..), BandPiece (..),
+                                              TrackCondition (..), bandMark,
+                                              bandPieces, flagName, pieceFlag,
+                                              pieceSeparator, pieceWord, noParams,
                                               sessionInProgress, sessionIsLive,
                                               sessionStateFrom, sessionStateLabel,
                                               sessionStateWord, sessionTitle,
@@ -171,7 +174,7 @@ import           Data.Either                 (isLeft)
 import           Data.List                   (nub)
 import qualified Data.Map.Strict             as Map
 import qualified Data.Set                    as Set
-import           Data.Maybe                  (fromMaybe)
+import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Proxy                 (Proxy (..))
 import qualified Data.Text                   as T
 import           Data.Time.Calendar          (fromGregorian)
@@ -202,6 +205,7 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               classificationTime, clockVerdict,
                                               derivedState, endMargin, feedRows,
                                               feedSession, feedStatus,
+                                              trackCondition,
                                               feedVerdict, feedWindowLead,
                                               feedWindowOpen, fetchFailure,
                                               finaliseBox, freezeClock,
@@ -987,6 +991,7 @@ main = hspec $ do
               -- es lo que hace que la cuenta no sea la media hora redonda.
             , siClock   = Just (SessionClock 5400 True)
             , siPart    = Nothing
+            , siTrack   = Nothing
             }
 
     it "una clasificación no cuenta vueltas, y eso no es un fallo" $
@@ -1019,6 +1024,7 @@ main = hspec $ do
             , siLaps    = Nothing
             , siClock   = Nothing
             , siPart    = Nothing
+            , siTrack   = Nothing
             }
 
     it "una vuelta sin su total no es medio progreso: es ninguno" $
@@ -1379,6 +1385,58 @@ main = hspec $ do
           [ScheduledSession "Race" 1308 "Bahrain Grand Prix" (malaysiaAt 31 0 0) (malaysiaAt 33 0 0)]
         `shouldBe` NextSilent
 
+  -- La roja, con los avisos REALES de control de carrera de la P3 de Malasia
+  -- (2026-10-03, 12:30 locales, 04:30 UTC): «RED FLAG» a las 04:54:23, «TRACK
+  -- CLEAR» a las 04:56:59 y la verde a las 04:59:00.
+  describe "feedSession con bandera roja" $ do
+    let p3 = (malaysiaQuali "" "Started")
+               { fsName      = "Practice 3"
+               , fsStartDate = Just "2026-10-03T12:30:00"
+               , fsFlags     =
+                   [ FeedFlag "2026-10-03T04:54:23" "RED"   "Track"
+                   , FeedFlag "2026-10-03T04:56:59" "CLEAR" "Track"
+                   , FeedFlag "2026-10-03T04:59:00" "GREEN" "Track"
+                   ]
+               }
+        -- Los avisos que habían llegado hasta `upTo`, servidos en ese instante.
+        stateAt (upTo, (h, m, s)) =
+          siState (feedSession (malaysiaAt h m s) p3 { fsFlags = filter ((<= upTo) . ffUtc) (fsFlags p3) })
+
+    it "de la roja a la verde dice «Bandera roja», también tras «TRACK CLEAR»" $
+      map stateAt
+          [ ("2026-10-03T04:54:30", (4, 54, 30))
+          , ("2026-10-03T04:57:30", (4, 57, 30))
+          , ("2026-10-03T04:59:30", (4, 59, 30))
+          ]
+        `shouldBe`
+          [ Just (StateReading SessionRedFlag Heard)
+          , Just (StateReading SessionRedFlag Heard)
+          , Just (StateReading SessionStarted Heard)
+          ]
+
+    it "con la roja la derecha de la banda calla, y el punto no dice «en curso»" $ do
+      upNext (malaysiaAt 4 55 0)
+          (Just raceSessionFixture { siState = Just (StateReading SessionRedFlag Heard) })
+          [ScheduledSession "Qualifying" 1308 "Bahrain Grand Prix" (malaysiaAt 8 0 0) (malaysiaAt 9 0 0)]
+        `shouldBe` NextSilent
+      sessionInProgress (Just SessionRedFlag) `shouldBe` False
+
+    it "la roja viaja como «Red» y vuelve igual" $
+      (sessionStateLabel SessionRedFlag, sessionStateFrom "Red")
+        `shouldBe` ("Red", SessionRedFlag)
+
+  describe "trackCondition" $ do
+    it "nombra amarilla, Safety Car, roja, VSC y VSC terminando; lo despejado no dice nada" $
+      map (trackCondition . (`FeedTrack` "")) ["1", "2", "4", "5", "6", "7", "3", ""]
+        `shouldBe`
+          [ Nothing, Just TrackYellow, Just TrackSafetyCar, Just TrackRed
+          , Just TrackVsc, Just TrackVscEnding, Nothing, Nothing ]
+
+    it "la sesión servida lleva la pista" $
+      fmap (siTrack . feedSession raceServedAt)
+           (trySession "{\"siTrack\":{\"status\":\"2\",\"message\":\"Yellow\"}}")
+        `shouldBe` Right (Just TrackYellow)
+
     it "la bandera viaja como «Chequered», se lee y se dice «Bandera a cuadros»" $
       ( sessionStateLabel SessionChequered
       , sessionStateFrom "Chequered"
@@ -1560,6 +1618,7 @@ main = hspec $ do
           , siLaps    = Nothing
           , siClock   = Nothing
           , siPart    = Nothing
+          , siTrack   = Nothing
           }
 
     it "pasado el margen sí dice que acabó, y lo dice MARCADO como deducido" $
@@ -1604,6 +1663,7 @@ main = hspec $ do
           , siLaps    = Nothing
           , siClock   = Nothing
           , siPart    = Nothing
+          , siTrack   = Nothing
           }
 
   -- Cómo el backend guarda el calendario: cada sesión con su gran premio, juntados
@@ -2262,7 +2322,7 @@ main = hspec $ do
       \(NonNegative a) (NonNegative b) (NonNegative n) ->
         catchUp a (catchUp b (NextStartsIn n)) === catchUp (a + b) (NextStartsIn n)
 
-  describe "sessionStateWord y bandStateLabel" $ do
+  describe "sessionStateWord y bandMark" $ do
     it "da la palabra de los tres estados publicados" $
       map sessionStateWord [SessionInactive, SessionStarted, SessionFinalised]
         `shouldBe` ["Por empezar", "En marcha", "Finalizada"]
@@ -2278,36 +2338,81 @@ main = hspec $ do
       -- Mismo criterio que `statusLabel`: dos estados con la misma palabra serían
       -- indistinguibles en la banda.
       let words' = map sessionStateWord
-                     [SessionInactive, SessionStarted, SessionFinalised]
+                     [ SessionInactive, SessionStarted, SessionChequered
+                     , SessionRedFlag, SessionFinalised ]
        in length (nub words') `shouldBe` length words'
 
     it "el asterisco sale solo en lo deducido" $
-      map (bandStateLabel False . Just)
+      map (bandMark False . Just)
           [ StateReading SessionFinalised Heard
           , StateReading SessionFinalised Derived
           ]
-        `shouldBe` ["Finalizada", "Finalizada*"]
+        `shouldBe` ["", "*"]
 
     it "lo desconocido no lleva marca: llegó de la fuente, así que es oído" $
       -- El cuarto caso del estado y la marca de procedencia son preguntas
       -- distintas. Un valor raro sigue siendo lo que el feed dijo.
-      bandStateLabel False (Just (StateReading (SessionUnknown "Aborted") Heard))
-        `shouldBe` "Aborted"
+      bandMark False (Just (StateReading (SessionUnknown "Aborted") Heard))
+        `shouldBe` ""
 
     it "los dos asteriscos de lo conservado mandan sobre el uno de lo deducido" $
       -- No se suman: tres asteriscos no significan nada, y de las dos cosas la que
       -- decide si el dato es de ahora es que sea conservado.
-      map (`bandStateLabel` Just (StateReading SessionFinalised Derived))
+      map (`bandMark` Just (StateReading SessionFinalised Derived))
           [False, True]
-        `shouldBe` ["Finalizada*", "Finalizada**"]
+        `shouldBe` ["*", "**"]
 
     it "una sesión conservada sin estado deja los dos asteriscos solos" $
       -- Es lo que le da ancla al aviso: sin ellos, el caso que esto arregla sería
       -- el único que no se avisa.
-      bandStateLabel True Nothing `shouldBe` "**"
+      (bandPieces Nothing Nothing, bandMark True Nothing) `shouldBe` ([], "**")
 
     it "sin estado y sin conservar no hay nada que leer" $
-      bandStateLabel False Nothing `shouldBe` ""
+      (bandPieces Nothing Nothing, bandMark False Nothing) `shouldBe` ([], "")
+
+  -- Lo que tiene símbolo va dibujado y lo demás, con palabra (decidido el
+  -- 2026-10-05).
+  describe "bandPieces" $ do
+    it "la bandera a cuadros y la roja se dibujan; los demás estados se nombran" $
+      map (\s -> bandPieces (Just s) Nothing)
+          [SessionChequered, SessionRedFlag, SessionStarted, SessionFinalised]
+        `shouldBe`
+          [ [PieceFlag ChequeredFlag], [PieceFlag RedFlag]
+          , [PieceWord "En marcha"], [PieceWord "Finalizada"] ]
+
+    it "la pista va detrás del estado, dibujada o nombrada" $
+      map (bandPieces (Just SessionStarted) . Just)
+          [TrackYellow, TrackRed, TrackSafetyCar, TrackVsc, TrackVscEnding]
+        `shouldBe`
+          [ [PieceWord "En marcha", PieceFlag YellowFlag]
+          , [PieceWord "En marcha", PieceFlag RedFlag]
+          , [PieceWord "En marcha", PieceWord "Safety Car"]
+          , [PieceWord "En marcha", PieceWord "VSC"]
+          , [PieceWord "En marcha", PieceWord "VSC termina"]
+          ]
+
+    it "con la sesión por empezar también: la roja de la salida suspendida de Malasia" $
+      bandPieces (Just SessionInactive) (Just TrackRed)
+        `shouldBe` [PieceWord "Por empezar", PieceFlag RedFlag]
+
+    it "con la bandera, la roja o la sesión acabada, la pista no se enseña" $
+      -- La amarilla de la sesión anterior viaja en la foto hasta el anuncio de la
+      -- siguiente; y con la roja de control de carrera la pista también dice roja.
+      map (\s -> bandPieces (Just s) (Just TrackYellow))
+          [SessionChequered, SessionRedFlag, SessionFinalised]
+        `shouldBe`
+          [[PieceFlag ChequeredFlag], [PieceFlag RedFlag], [PieceWord "Finalizada"]]
+
+    it "los huecos: la palabra o la bandera de cada pieza, y el separador solo entre dos" $ do
+      let two = bandPieces (Just SessionStarted) (Just TrackYellow)
+      (pieceWord (listToMaybe two), pieceFlag (listToMaybe (drop 1 two)), pieceSeparator two)
+        `shouldBe` ("En marcha", Just YellowFlag, " · ")
+      pieceSeparator (bandPieces (Just SessionStarted) Nothing) `shouldBe` ""
+      (pieceWord Nothing, pieceFlag Nothing) `shouldBe` ("", Nothing)
+
+    it "cada bandera se nombra al pasar el ratón" $
+      map flagName [YellowFlag, RedFlag, ChequeredFlag]
+        `shouldBe` ["Bandera amarilla", "Bandera roja", "Bandera a cuadros"]
 
     it "la marca es lo ÚNICO que distingue un estado oído de uno deducido" $
       -- El control negativo de la afirmación de arriba: sin `srBasis` los dos
@@ -4913,7 +5018,7 @@ sessionAt gp st = (stateless gp) {siState = Just (StateReading st Heard)}
 
 -- | Y una sin estado ninguno, que es lo que sirve OpenF1 en el borde.
 stateless :: T.Text -> SessionInfo
-stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing Nothing Nothing
+stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing Nothing Nothing Nothing
 
 -- | 07:00 — hora y cuarto __antes__ de que la ventana de P1 abra.
 bakuLongBefore :: UTCTime
@@ -5368,6 +5473,7 @@ raceSessionFixture =
     , siLaps    = Just (LapProgress 12 57)
     , siClock   = Just (SessionClock 5400 True)
     , siPart    = Nothing
+    , siTrack   = Nothing
     }
 
 -- | Una sesión con el tipo, el nombre y el gran premio que se le pidan, __sin

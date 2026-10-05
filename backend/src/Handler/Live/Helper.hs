@@ -40,6 +40,7 @@ module Handler.Live.Helper
   , feedRows
   , feedStatus
   , feedSession
+  , trackCondition
   , chequeredGrace
   , openf1Session
   , sessionClock
@@ -71,9 +72,9 @@ import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         LiveTable (..), LiveTimingRow (..),
                                         SessionClock (..), SessionInfo (..),
                                         SessionState (..), StateBasis (..),
-                                        StateReading (..), UpNext (..),
-                                        sessionInProgress, sessionIsLive,
-                                        sessionStateFrom)
+                                        StateReading (..), TrackCondition (..),
+                                        UpNext (..), sessionInProgress,
+                                        sessionIsLive, sessionStateFrom)
 import           Control.Monad         (mfilter)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
@@ -93,7 +94,8 @@ import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime,
                                         diffUTCTime)
 import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
 import           Handler.Feed.Helper   (FeedFlag (..), FeedLive (..),
-                                        FeedRow (..), FeedSession (..))
+                                        FeedRow (..), FeedSession (..),
+                                        FeedTrack (..))
 import           Handler.OpenF1.Helper (Of1Driver (..))
 import           Provenance            (isoInstant)
 import           Text.Printf           (printf)
@@ -361,16 +363,30 @@ feedSession now fs =
     , siLaps    = lapProgress fs
     , siClock   = sessionClock now fs
     , siPart    = mfilter (>= 1) (fsPart fs)
+    , siTrack   = trackCondition =<< fsTrack fs
     }
 
--- | El estado de la sesión del feed, con la bandera a cuadros que su campo no tiene.
+-- | Lo que pasa en la pista, por el código que publica el feed. La pista despejada
+-- (@\"1\"@) y lo que no se conoce no dicen nada.
+trackCondition :: FeedTrack -> Maybe TrackCondition
+trackCondition track =
+  case T.strip (ftStatus track) of
+    "2" -> Just TrackYellow
+    "4" -> Just TrackSafetyCar
+    "5" -> Just TrackRed
+    "6" -> Just TrackVsc
+    "7" -> Just TrackVscEnding
+    _   -> Nothing
+
+-- | El estado de la sesión del feed, con las banderas que su campo no tiene.
 --
 -- Lo que diga el campo sale tal cual y como 'Common.Types.Heard', salvo mientras
 -- diga «en marcha». Entonces manda el último aviso de pista entre la bandera a
--- cuadros y la verde, __contando solo los de desde la hora de inicio de la sesión__
--- (la foto arrastra los de la anterior):
+-- cuadros, la roja y la verde, __contando solo los de desde la hora de inicio de la
+-- sesión__ (la foto arrastra los de la anterior):
 --
 -- * la verde, o ninguno: «en marcha»;
+-- * la roja: 'SessionRedFlag', oída, hasta la verde;
 -- * la bandera: 'SessionChequered', oída;
 -- * la bandera con 'chequeredGrace' sin otra salida: 'SessionFinalised', y como
 --   nadie lo dijo, 'Common.Types.Derived'.
@@ -379,31 +395,36 @@ feedSession now fs =
 feedState :: UTCTime -> FeedSession -> StateReading
 feedState now fs =
   case (field, lastTrackFlag) of
-    (SessionStarted, Just (at, True))
+    (SessionStarted, Just (at, Chequered))
       | diffUTCTime now at >= chequeredGrace -> StateReading SessionFinalised Derived
       | otherwise                           -> StateReading SessionChequered Heard
+    (SessionStarted, Just (_, Red))         -> StateReading SessionRedFlag Heard
     _                                       -> StateReading field Heard
   where
     field = sessionStateFrom (fsState fs)
 
-    -- El último aviso de pista que cuenta, con 'True' si es la bandera.
+    -- El último aviso de pista que cuenta.
     lastTrackFlag = listToMaybe (sortOn (Down . fst) counted)
 
     counted =
-      [ (at, chequered)
+      [ (at, kind)
       | start <- maybe [] pure (sessionStart fs)
       , flag <- fsFlags fs
       , T.toLower (T.strip (ffScope flag)) == "track"
-      , chequered <- maybe [] pure (flagKind (ffFlag flag))
+      , kind <- maybe [] pure (flagKind (ffFlag flag))
       , at <- maybe [] pure (parseNaiveInstant (ffUtc flag))
       , at >= start
       ]
 
     flagKind raw =
       case T.toUpper (T.strip raw) of
-        "CHEQUERED" -> Just True
-        "GREEN"     -> Just False
+        "CHEQUERED" -> Just Chequered
+        "RED"       -> Just Red
+        "GREEN"     -> Just Green
         _           -> Nothing
+
+-- | Los avisos de pista que cuentan para 'feedState'.
+data TrackFlag = Chequered | Red | Green
 
 -- | Cuánto lleva una bandera a cuadros sin otra salida para dar la sesión por
 -- finalizada aunque el feed no lo diga.
@@ -483,6 +504,7 @@ openf1Session now os grandPrix =
     , siLaps    = Nothing
     , siClock   = Nothing
     , siPart    = Nothing
+    , siTrack   = Nothing
     }
 
 -- | Por qué vuelta va y de cuántas, si la sesión las cuenta.
@@ -681,8 +703,8 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 --   hace falta para lo que está pasando, y la siguiente sería el gran premio de
 --   dentro de quince días. Qué cuenta como rodando lo decide
 --   'Common.Types.sessionInProgress', que es el mismo criterio que enciende la
---   etiqueta del directo en la página. __Con bandera a cuadros también calla__,
---   aunque la etiqueta se apague: la derecha sigue con el reloj de la parte, parado.
+--   etiqueta del directo en la página. __Con bandera a cuadros o roja también
+--   calla__, aunque la etiqueta se apague: la derecha sigue con el reloj, parado.
 -- * __Sin calendario, no se sabe__ ('Common.Types.NextUnknown'): es el estado con el
 --   que arranca el proceso, y dura lo que tarde la primera petición.
 -- * __Sin empezar, se cuenta a ELLA__ ('Common.Types.NextStartsIn'): con la parrilla
@@ -705,7 +727,7 @@ upNext now shown sessions
   where
     state = srState <$> (siState =<< shown)
 
-    silences s = sessionInProgress s || s == Just SessionChequered
+    silences s = sessionInProgress s || s `elem` [Just SessionChequered, Just SessionRedFlag]
 
     soonest = listToMaybe (sortOn ssStart (filter ((> now) . ssStart) sessions))
 
