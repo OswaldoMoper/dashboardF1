@@ -986,6 +986,7 @@ main = hspec $ do
               -- quedan 5400. El centésimo es del instante REAL de la grabación, y
               -- es lo que hace que la cuenta no sea la media hora redonda.
             , siClock   = Just (SessionClock 5400 True)
+            , siPart    = Nothing
             }
 
     it "una clasificación no cuenta vueltas, y eso no es un fallo" $
@@ -1017,6 +1018,7 @@ main = hspec $ do
             , siState   = Just (StateReading (SessionUnknown "") Heard)
             , siLaps    = Nothing
             , siClock   = Nothing
+            , siPart    = Nothing
             }
 
     it "una vuelta sin su total no es medio progreso: es ninguno" $
@@ -1557,6 +1559,7 @@ main = hspec $ do
           , siState   = Nothing
           , siLaps    = Nothing
           , siClock   = Nothing
+          , siPart    = Nothing
           }
 
     it "pasado el margen sí dice que acabó, y lo dice MARCADO como deducido" $
@@ -1600,6 +1603,7 @@ main = hspec $ do
           , siState   = Nothing
           , siLaps    = Nothing
           , siClock   = Nothing
+          , siPart    = Nothing
           }
 
   -- Cómo el backend guarda el calendario: cada sesión con su gran premio, juntados
@@ -2054,6 +2058,14 @@ main = hspec $ do
           , ("ANT", ["-", "-", "-"], False, True)
           ]
 
+    it "la sesión servida lleva la parte, y el 0 de antes de empezar no es una parte" $ do
+      fmap (siPart . feedSession raceServedAt) (trySession feedSessionMalaysiaQ2)
+        `shouldBe` Right (Just 2)
+      fmap (siPart . feedSession raceServedAt) (trySession "{\"siPart\":0}")
+        `shouldBe` Right Nothing
+      fmap (siPart . feedSession raceServedAt) (trySession "{}")
+        `shouldBe` Right Nothing
+
     it "sin esos campos la fila es la de siempre: ni eliminada ni fuera del 107 %" $
       fmap (map (\r -> (frPartBests r, frKnockedOut r, frCutoff r)))
            (tryFeedRows feedTableMinimal)
@@ -2158,6 +2170,17 @@ main = hspec $ do
           , raceSessionFixture {siCircuit = Nothing}
           ]
         `shouldBe` ["Spanish Grand Prix · Race", "Spanish Grand Prix · Race"]
+
+    it "la parte de una clasificación va al final, con SQ en la clasificación Sprint" $
+      map sessionTitle
+          [ (namedSession "Qualifying" "Qualifying"        "Singapore Grand Prix") {siPart = Just 2}
+          , (namedSession "Qualifying" "Sprint Qualifying" "Singapore Grand Prix") {siPart = Just 2}
+          , (namedSession "Qualifying" "Qualifying"        "Singapore Grand Prix") {siPart = Nothing}
+          ]
+        `shouldBe` [ "Singapore Grand Prix · Qualifying · Q2"
+                   , "Singapore Grand Prix · Sprint Qualifying · SQ2"
+                   , "Singapore Grand Prix · Qualifying"
+                   ]
 
   describe "formatCountdown" $ do
     it "da las tres unidades mayores y no la cuarta" $
@@ -3573,8 +3596,8 @@ main = hspec $ do
       tickClock (SessionClock 60 False) `shouldBe` SessionClock 60 False
       tickClock (SessionClock 0 True) `shouldBe` SessionClock 0 True
 
-    it "mientras espera, la sesión se nombra pero no dice estado, vuelta ni reloj" $
-      waitingSession raceSessionFixture
+    it "mientras espera, la sesión se nombra pero no dice estado, vuelta, reloj ni parte" $
+      waitingSession raceSessionFixture {siPart = Just 2}
         `shouldBe` raceSessionFixture {siState = Nothing, siLaps = Nothing, siClock = Nothing}
 
     it "la banda calla el reloj donde showsClock lo calla" $ do
@@ -4890,7 +4913,7 @@ sessionAt gp st = (stateless gp) {siState = Just (StateReading st Heard)}
 
 -- | Y una sin estado ninguno, que es lo que sirve OpenF1 en el borde.
 stateless :: T.Text -> SessionInfo
-stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing Nothing
+stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing Nothing Nothing
 
 -- | 07:00 — hora y cuarto __antes__ de que la ventana de P1 abra.
 bakuLongBefore :: UTCTime
@@ -5344,6 +5367,7 @@ raceSessionFixture =
     , siState   = Just (StateReading SessionStarted Heard)
     , siLaps    = Just (LapProgress 12 57)
     , siClock   = Just (SessionClock 5400 True)
+    , siPart    = Nothing
     }
 
 -- | Una sesión con el tipo, el nombre y el gran premio que se le pidan, __sin

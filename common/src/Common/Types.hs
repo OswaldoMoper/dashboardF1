@@ -375,6 +375,9 @@ data SessionInfo = SessionInfo
   , siClock   :: Maybe SessionClock
     -- ^ Ya resuelto al instante de servir, no como el feed lo publicó: el feed lo
     -- emite dos veces en una carrera entera, así que su valor crudo envejece horas.
+  , siPart    :: Maybe Int
+    -- ^ La parte de una clasificación, de @1@ en adelante. 'Nothing' fuera de
+    -- clasificación y antes de que el feed anuncie la primera.
   }
   deriving stock (Eq, Show, Generic)
 
@@ -394,10 +397,22 @@ instance FromJSON SessionInfo
 -- __Un campo en blanco no deja separador suelto:__ el gran premio llega vacío
 -- cuando quien publica la sesión no lo sabe, y entonces esto es el nombre a secas.
 -- Un circuito ausente o vacío se salta igual.
+--
+-- __La parte de una clasificación va al final__ ('partLabel'): @… · Qualifying · Q2@.
 sessionTitle :: SessionInfo -> Text
 sessionTitle s =
   T.intercalate " · " $
-    filter (not . T.null) [siMeeting s, fromMaybe "" (siCircuit s), siName s]
+    filter (not . T.null)
+      [siMeeting s, fromMaybe "" (siCircuit s), siName s, maybe "" (partLabel s) (siPart s)]
+
+-- | Cómo se nombra una parte: @Q2@, y @SQ2@ en la clasificación Sprint, que es la
+-- única sesión con «Sprint» en el nombre que tiene partes.
+partLabel :: SessionInfo -> Int -> Text
+partLabel s n = prefix <> T.pack (show n)
+  where
+    prefix
+      | "Sprint" `T.isPrefixOf` siName s = "SQ"
+      | otherwise                        = "Q"
 
 -- | Qué viene después de la sesión que se está enseñando.
 --
@@ -500,9 +515,9 @@ tickClock c
   | otherwise   = c
 
 -- | La sesión mientras la página espera a tener algo con el retraso pedido: se sabe
--- cuál es, pero su estado, su vuelta y su reloj todavía no se enseñan.
+-- cuál es, pero su estado, su vuelta, su reloj y su parte todavía no se enseñan.
 waitingSession :: SessionInfo -> SessionInfo
-waitingSession s = s {siState = Nothing, siLaps = Nothing, siClock = Nothing}
+waitingSession s = s {siState = Nothing, siLaps = Nothing, siClock = Nothing, siPart = Nothing}
 
 -- | La tabla mientras la página espera: la sesión según 'waitingSession' y sin filas.
 -- __Lo que viene después sí se dice__: solo cuenta cómo acabó la sesión si la página se

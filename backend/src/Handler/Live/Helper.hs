@@ -74,6 +74,7 @@ import           Common.Types          (DriverStatus (..), LapProgress (..),
                                         StateReading (..), UpNext (..),
                                         sessionInProgress, sessionIsLive,
                                         sessionStateFrom)
+import           Control.Monad         (mfilter)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
@@ -359,6 +360,7 @@ feedSession now fs =
     , siState   = Just (feedState now fs)
     , siLaps    = lapProgress fs
     , siClock   = sessionClock now fs
+    , siPart    = mfilter (>= 1) (fsPart fs)
     }
 
 -- | El estado de la sesión del feed, con la bandera a cuadros que su campo no tiene.
@@ -480,6 +482,7 @@ openf1Session now os grandPrix =
     , siState   = flip StateReading Derived <$> derivedState now os
     , siLaps    = Nothing
     , siClock   = Nothing
+    , siPart    = Nothing
     }
 
 -- | Por qué vuelta va y de cuántas, si la sesión las cuenta.
