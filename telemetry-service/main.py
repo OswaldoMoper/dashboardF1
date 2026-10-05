@@ -1057,6 +1057,18 @@ def _feed_part_best(line: Dict[str, Any], part: Any) -> str:
     return _feed_text(entry if isinstance(entry, dict) else None)
 
 
+def _feed_part_bests(line: Dict[str, Any]) -> List[str]:
+    """La mejor vuelta de un coche en cada parte de una clasificación, en orden.
+
+    Una entrada por parte que el feed publica, ``"-"`` en la que no tiene vuelta.
+    Fuera de una clasificación no hay ``BestLapTimes`` y sale la lista vacía.
+    """
+    bests = line.get("BestLapTimes")
+    if not isinstance(bests, list):
+        return []
+    return [_feed_text(entry if isinstance(entry, dict) else None) for entry in bests]
+
+
 def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     """El snapshot del feed como las filas de ``Common.Types.LiveTimingRow``.
 
@@ -1104,6 +1116,9 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
                 ),
                 "ltBestLap": _feed_text(line.get("BestLapTime")),
                 "ltPartBestLap": _feed_part_best(line, part),
+                "ltPartBests": _feed_part_bests(line),
+                "ltKnockedOut": bool(line.get("KnockedOut")),
+                "ltCutoff": bool(line.get("Cutoff")),
             }
         )
 
@@ -1136,14 +1151,47 @@ def _feed_flags(snapshot: Dict[str, Any]) -> List[Dict[str, str]]:
     ]
 
 
+def _feed_notices(snapshot: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Los avisos de control de carrera que no son de bandera, tal como llegan.
+
+    Los de bandera viajan aparte (``_feed_flags``). Como allí, **la lista trae
+    también los de la sesión anterior**, y cuáles cuentan lo decide el backend.
+    """
+    race_control = snapshot.get("RaceControlMessages")
+    messages = race_control.get("Messages") if isinstance(race_control, dict) else None
+    if isinstance(messages, dict):
+        messages = list(messages.values())
+    if not isinstance(messages, list):
+        return []
+    return [
+        {
+            "utc": _text(message.get("Utc")),
+            "category": _text(message.get("Category")),
+            "message": _text(message.get("Message")),
+        }
+        for message in messages
+        if isinstance(message, dict) and _text(message.get("Category")) != "Flag"
+    ]
+
+
+def _feed_track(snapshot: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """El estado de la pista tal como llega: el código (``"1"`` a ``"7"``) y su
+    nombre (``"AllClear"``, ``"Yellow"``, ``"Red"``…). ``None`` sin el tema."""
+    track = snapshot.get("TrackStatus")
+    if not isinstance(track, dict):
+        return None
+    return {"status": _text(track.get("Status")), "message": _text(track.get("Message"))}
+
+
 def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Qué sesión anuncia el feed, con las claves de ``Handler.Feed.Helper``.
 
-    Sale de cuatro topics y ninguno se reordena ni se calcula: el reloj viaja
+    Sale de seis topics y ninguno se reordena ni se calcula: el reloj viaja
     **crudo** —el instante, el restante como texto y la marca— porque quien lo
     resuelve necesita saber cuándo está sirviendo, y eso no se sabe aquí. Lo
-    mismo la hora de inicio (local, con su desfase aparte) y los avisos de
-    bandera (``_feed_flags``): qué estado sale de ellos lo decide el backend.
+    mismo la hora de inicio (local, con su desfase aparte), los avisos de
+    control de carrera (``_feed_flags``, ``_feed_notices``) y el estado de la
+    pista (``_feed_track``): qué sale de ellos lo decide el backend.
 
     ``None`` si la foto no trae ``SessionInfo``, y eso significa «el feed no
     anunció sesión», que no es lo mismo que anunciarla con los campos vacíos.
@@ -1159,6 +1207,10 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     * ``ExtrapolatedClock`` puede faltar, y su marca puede faltar dentro de él;
       ausente se trata como **parado**, que es lo que el feed emitió en los dos
       únicos mensajes medidos sin ella.
+    * La parte (``siPart``; ``0`` antes de empezar), cuántos entran en cada parte
+      (``siEntries``) y el tiempo del 107 % (``siCutOffTime``) **solo existen en
+      clasificación**. El tiempo se publica durante la primera parte, y la foto
+      **conserva el último en las siguientes**: quién lo enseñe mira la parte.
 
     Y el estado sale del **campo** ``SessionStatus`` de ``SessionInfo``, no del
     topic homónimo, que es otro y cicla por segmento.
@@ -1178,6 +1230,7 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "siStartDate": _text(info.get("StartDate")) or None,
         "siGmtOffset": _text(info.get("GmtOffset")) or None,
         "siFlags": _feed_flags(snapshot),
+        "siNotices": _feed_notices(snapshot),
     }
 
     circuit = meeting.get("Circuit")
@@ -1199,6 +1252,22 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         session["siClockUtc"] = _text(clock.get("Utc")) or None
         session["siClockRemaining"] = _text(clock.get("Remaining")) or None
         session["siClockRunning"] = bool(clock.get("Extrapolating"))
+
+    timing = snapshot.get("TimingData")
+    timing = timing if isinstance(timing, dict) else {}
+    part = _num(timing.get("SessionPart"))
+    if part is not None:
+        session["siPart"] = int(part)
+    entries = timing.get("NoEntries")
+    if isinstance(entries, list):
+        session["siEntries"] = [int(n) for n in map(_num, entries) if n is not None]
+    cutoff = _text(timing.get("CutOffTime"))
+    if cutoff:
+        session["siCutOffTime"] = cutoff
+
+    track = _feed_track(snapshot)
+    if track is not None:
+        session["siTrack"] = track
 
     return session
 

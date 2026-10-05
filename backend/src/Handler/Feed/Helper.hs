@@ -17,6 +17,8 @@ module Handler.Feed.Helper
   , FeedRow (..)
   , FeedSession (..)
   , FeedFlag (..)
+  , FeedNotice (..)
+  , FeedTrack (..)
   ) where
 
 import           Data.Aeson (FromJSON (..), withObject, (.!=), (.:), (.:?))
@@ -69,6 +71,13 @@ data FeedRow = FeedRow
   , frStatus   :: Text
   , frBestLap  :: Text
   , frPartBestLap :: Text
+  , frPartBests :: [Text]
+    -- ^ La mejor de cada parte de una clasificación, en orden, @\"-\"@ en la que no
+    -- tiene vuelta. Vacía fuera de clasificación.
+  , frKnockedOut :: Bool  -- ^ Eliminado en una parte anterior de la clasificación.
+  , frCutoff     :: Bool
+    -- ^ Sin tiempo dentro del 107 %. __No es la zona de eliminación__ (medido el
+    -- 2026-10-03): al empezar la Q1 lo llevan los veintidós.
   }
   deriving (Eq, Show)
 
@@ -84,6 +93,9 @@ instance FromJSON FeedRow where
       <*> o .:? "ltStatus"   .!= "Running"
       <*> o .:? "ltBestLap"  .!= ""
       <*> o .:? "ltPartBestLap" .!= ""
+      <*> o .:? "ltPartBests"   .!= []
+      <*> o .:? "ltKnockedOut"  .!= False
+      <*> o .:? "ltCutoff"      .!= False
 
 -- | Qué sesión anuncia el feed, tal como el microservicio la entrega.
 --
@@ -116,6 +128,18 @@ data FeedSession = FeedSession
   , fsStartDate      :: Maybe Text  -- ^ Inicio previsto, en hora local del circuito y sin zona.
   , fsGmtOffset      :: Maybe Text  -- ^ Desfase del circuito: @\"08:00:00\"@, @\"-04:00:00\"@.
   , fsFlags          :: [FeedFlag]  -- ^ Los avisos de bandera de control de carrera.
+  , fsNotices        :: [FeedNotice]  -- ^ Los demás avisos de control de carrera.
+  , fsPart           :: Maybe Int
+    -- ^ La parte de una clasificación: @0@ antes de empezar, después @1@ a @3@.
+    -- 'Nothing' fuera de clasificación.
+  , fsEntries        :: [Int]
+    -- ^ Cuántos entran en cada parte, en orden (@[22, 16, 10]@). Vacía fuera de
+    -- clasificación.
+  , fsCutOffTime     :: Maybe Text
+    -- ^ El tiempo del 107 % (@\"1:45.800\"@), desde que alguien marca vuelta en la
+    -- primera parte. __En las siguientes sigue llegando el último__ (medido en
+    -- Malasia): quien lo enseñe mira 'fsPart'.
+  , fsTrack          :: Maybe FeedTrack  -- ^ El estado de la pista; 'Nothing' sin el tema.
   }
   deriving (Eq, Show)
 
@@ -135,6 +159,11 @@ instance FromJSON FeedSession where
       <*> o .:? "siStartDate"
       <*> o .:? "siGmtOffset"
       <*> o .:? "siFlags"          .!= []
+      <*> o .:? "siNotices"        .!= []
+      <*> o .:? "siPart"
+      <*> o .:? "siEntries"        .!= []
+      <*> o .:? "siCutOffTime"
+      <*> o .:? "siTrack"
 
 -- | Un aviso de bandera de control de carrera, tal como llega.
 --
@@ -154,3 +183,35 @@ instance FromJSON FeedFlag where
       <$> o .:? "utc"   .!= ""
       <*> o .:? "flag"  .!= ""
       <*> o .:? "scope" .!= ""
+
+-- | Un aviso de control de carrera que no es de bandera, tal como llega.
+--
+-- __Trae también los de la sesión anterior__, como 'FeedFlag'. Los que anuncian una
+-- hora la escriben en hora local del circuito: @\"RACE WILL START AT 16:33\"@.
+data FeedNotice = FeedNotice
+  { fnUtc      :: Text  -- ^ En UTC y sin zona, como 'ffUtc'.
+  , fnCategory :: Text  -- ^ @\"Other\"@ o @\"SafetyCar\"@ en lo grabado.
+  , fnMessage  :: Text
+  }
+  deriving (Eq, Show)
+
+instance FromJSON FeedNotice where
+  parseJSON = withObject "FeedNotice" $ \o ->
+    FeedNotice
+      <$> o .:? "utc"      .!= ""
+      <*> o .:? "category" .!= ""
+      <*> o .:? "message"  .!= ""
+
+-- | El estado de la pista, tal como llega. __Puede volver a @AllClear@ con la sesión
+-- todavía parada por una roja__ (medido en la P3 de Malasia).
+data FeedTrack = FeedTrack
+  { ftStatus  :: Text  -- ^ El código: @\"1\"@ a @\"7\"@.
+  , ftMessage :: Text  -- ^ @\"AllClear\"@, @\"Yellow\"@, @\"SCDeployed\"@, @\"Red\"@…
+  }
+  deriving (Eq, Show)
+
+instance FromJSON FeedTrack where
+  parseJSON = withObject "FeedTrack" $ \o ->
+    FeedTrack
+      <$> o .:? "status"  .!= ""
+      <*> o .:? "message" .!= ""

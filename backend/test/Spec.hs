@@ -186,7 +186,8 @@ import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import qualified Handler.Drivers.Helper      as Drivers
 import           Handler.Feed.Helper         (FeedFlag (..), FeedLive (..),
-                                              FeedRow (..), FeedSession (..))
+                                              FeedNotice (..), FeedRow (..),
+                                              FeedSession (..), FeedTrack (..))
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
@@ -2018,6 +2019,45 @@ main = hspec $ do
       -- legítima, y una sin el campo entero es un contrato roto. Fundirlos haría
       -- que un microservicio averiado se leyera como «no hay sesión».
       isLeft (tryLive feedLiveRowsAbsent) `shouldBe` True
+
+  -- Los valores son los que el microservicio emitió sobre la clasificación de Malasia
+  -- reconstruida a las 08:30 UTC, ya en la Q2.
+  describe "lo que el feed sabe de una clasificación" $ do
+    it "la sesión trae la parte, cuántos entran, el corte y la pista" $
+      fmap (\s -> (fsPart s, fsEntries s, fsCutOffTime s, fsTrack s))
+           (trySession feedSessionMalaysiaQ2)
+        `shouldBe` Right (Just 2, [22, 16, 10], Just "1:43.230", Just (FeedTrack "1" "AllClear"))
+
+    it "y los avisos que no son de bandera, con su hora en UTC y su texto" $
+      fmap fsNotices (trySession feedSessionMalaysiaQ2)
+        `shouldBe` Right
+          [ FeedNotice "2026-10-03T08:22:15" "Other"
+              "FIA STEWARDS: Q1 INCIDENT INVOLVING CAR 18 (STR) NOTED - FAILING TO FOLLOW \
+              \RACE DIRECTORS INSTRUCTIONS - MAXIMUM DELTA TIME"
+          ]
+
+    it "sin nada de eso decodifica igual: fuera de clasificación no existe" $
+      -- Una práctica no trae parte, ni entradas, ni corte; y un microservicio viejo
+      -- no trae ni los avisos ni la pista. Ninguna de las dos cosas es un fallo.
+      fmap (\s -> (fsPart s, fsEntries s, fsCutOffTime s, fsTrack s, fsNotices s))
+           (trySession "{}")
+        `shouldBe` Right (Nothing, [], Nothing, Nothing, [])
+
+    it "una fila trae la mejor de cada parte, si está eliminada y si va sin 107 %" $
+      -- VER lidera la Q2 sin vuelta en ella: su BestLapTime ya se vació, y la de la
+      -- Q1 solo sobrevive en la lista por partes.
+      fmap (map (\r -> (frDriver r, frPartBests r, frKnockedOut r, frCutoff r)))
+           (tryFeedRows feedRowsMalaysiaQ2)
+        `shouldBe` Right
+          [ ("VER", ["1:36.477", "-", "-"], False, False)
+          , ("PER", ["1:38.933", "-", "-"], True, False)
+          , ("ANT", ["-", "-", "-"], False, True)
+          ]
+
+    it "sin esos campos la fila es la de siempre: ni eliminada ni fuera del 107 %" $
+      fmap (map (\r -> (frPartBests r, frKnockedOut r, frCutoff r)))
+           (tryFeedRows feedTableMinimal)
+        `shouldBe` Right [([], False, False)]
 
   describe "parseRemaining y parseFeedInstant" $ do
     it "lee las dos longitudes que una duración puede tener" $
@@ -5352,6 +5392,28 @@ feedSessionMalaysiaQuali =
   \{\"utc\":\"2026-10-03T08:40:00\",\"flag\":\"CHEQUERED\",\"scope\":\"Track\"},\
   \{\"utc\":\"2026-10-03T08:47:00\",\"flag\":\"GREEN\",\"scope\":\"Track\"},\
   \{\"utc\":\"2026-10-03T09:00:00\",\"flag\":\"CHEQUERED\",\"scope\":\"Track\"}]}"
+
+-- | La clasificación de Malasia a las 08:30 UTC, en la Q2, como la emite el
+-- microservicio: solo lo que no estaba antes, con el último aviso de la foto.
+feedSessionMalaysiaQ2 :: ByteString
+feedSessionMalaysiaQ2 =
+  "{\"siType\":\"Qualifying\",\"siName\":\"Qualifying\",\
+  \\"siPart\":2,\"siEntries\":[22,16,10],\"siCutOffTime\":\"1:43.230\",\
+  \\"siTrack\":{\"status\":\"1\",\"message\":\"AllClear\"},\
+  \\"siNotices\":[{\"utc\":\"2026-10-03T08:22:15\",\"category\":\"Other\",\
+  \\"message\":\"FIA STEWARDS: Q1 INCIDENT INVOLVING CAR 18 (STR) NOTED - FAILING TO FOLLOW \
+  \RACE DIRECTORS INSTRUCTIONS - MAXIMUM DELTA TIME\"}]}"
+
+-- | Tres filas de la misma foto: el líder de la Q2, un eliminado en la Q1 y uno sin
+-- tiempo dentro del 107 % (este último, de las 07:50, cuando nadie lo tenía).
+feedRowsMalaysiaQ2 :: ByteString
+feedRowsMalaysiaQ2 =
+  "[{\"ltPosition\":1,\"ltDriver\":\"VER\",\"ltBestLap\":\"-\",\
+  \\"ltPartBests\":[\"1:36.477\",\"-\",\"-\"],\"ltKnockedOut\":false,\"ltCutoff\":false},\
+  \{\"ltPosition\":22,\"ltDriver\":\"PER\",\"ltBestLap\":\"1:38.933\",\
+  \\"ltPartBests\":[\"1:38.933\",\"-\",\"-\"],\"ltKnockedOut\":true,\"ltCutoff\":false},\
+  \{\"ltPosition\":1,\"ltDriver\":\"ANT\",\"ltBestLap\":\"-\",\
+  \\"ltPartBests\":[\"-\",\"-\",\"-\"],\"ltKnockedOut\":false,\"ltCutoff\":true}]"
 
 -- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
 liveTableFixture :: LiveTable
