@@ -166,7 +166,7 @@ import           Common.Types                (ComparisonEntry (..),
                                               showsClock, clockLabel,
                                               tickClock, waitingSession,
                                               waitingTable, bandRight,
-                                              shownClock)
+                                              shownClock, shownNext)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (Value (..), eitherDecodeStrict,
                                               toJSON)
@@ -2462,6 +2462,15 @@ main = hspec $ do
     prop "ponerse al día en dos saltos es ponerse al día en uno" $
       \(NonNegative a) (NonNegative b) (NonNegative n) ->
         catchUp a (catchUp b (NextStartsIn n)) === catchUp (a + b) (NextStartsIn n)
+
+  describe "shownNext" $ do
+    it "sin tabla todavía no se sabe, que es con lo que arranca la cuenta" $
+      shownNext Nothing `shouldBe` NextUnknown
+
+    it "la primera tabla que pide callar es un cambio y no se pierde" $
+      -- Abrir con la sesión rodando: si antes de la primera respuesta ya valiera
+      -- callar, la cuenta no vería el cambio y se quedaría en «Próxima: …».
+      shownNext (Just liveTableFixture {liveNext = NextSilent}) `shouldBe` NextSilent
 
   describe "sessionStateWord y bandMark" $ do
     it "da la palabra de los tres estados publicados" $

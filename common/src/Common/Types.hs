@@ -616,6 +616,13 @@ catchUp k (NextAfter l n)  = NextAfter l (max 0 (n - max 0 k))
 catchUp k (NextAnnounced c) = NextAnnounced (countdownAfter k c)
 catchUp _ other            = other
 
+-- | Lo que dice la derecha de la banda según la tabla que se enseña: 'NextUnknown'
+-- mientras no ha llegado ninguna, que es también con lo que arranca la cuenta de la
+-- página. Si antes de la primera respuesta valiera otra cosa, una primera respuesta
+-- igual a ella no se vería como cambio y la cuenta se quedaría en «Próxima: …».
+shownNext :: Maybe LiveTable -> UpNext
+shownNext = maybe NextUnknown liveNext
+
 -- | La vuelta en la banda: @Vuelta 23/57@.
 lapLabel :: LapProgress -> Text
 lapLabel lp = "Vuelta " <> T.pack (show (lpCurrent lp)) <> "/" <> T.pack (show (lpTotal lp))

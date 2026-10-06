@@ -44,6 +44,7 @@ import           Common.Types       (BandFlag (..), BandPiece, Countdown,
                                      countdownText, flagName, isDerived,
                                      noParams, pieceFlag, pieceSeparator,
                                      pieceWord, sessionTitle, shownClock,
+                                     shownNext,
                                      tickClock, catchUp)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Maybe         (fromMaybe, isJust, listToMaybe)
@@ -194,7 +195,7 @@ sessionBand openDyn poll lag = mdo
   title   <- holdUniqDyn (maybe "" sessionTitle . keptValue <$> kept)
   reading <- holdUniqDyn ((\k -> siState =<< keptValue k) <$> kept)
   track   <- holdUniqDyn ((\k -> siTrack =<< keptValue k) <$> kept)
-  next    <- countdown tick lag (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
+  next    <- countdown tick lag (shownNext . fmap srcValue . pollShown <$> poll)
   restart <- ticked Nothing (fmap . countdownAfter) tick lag
                ((siCountdown =<<) . sessionOf <$> poll)
   clock   <- sessionClock tick ((shownClock =<<) . sessionOf <$> poll)
