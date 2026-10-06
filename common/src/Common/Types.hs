@@ -4,7 +4,7 @@ module Common.Types where
 
 import           Common.Format (ClockForm (..), formatClock, formatCountdown)
 import           Data.Aeson    (FromJSON (..), ToJSON (..), withText)
-import           Data.Maybe    (catMaybes, fromMaybe, isJust)
+import           Data.Maybe    (catMaybes, fromMaybe, isJust, listToMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import           GHC.Generics  (Generic)
@@ -105,6 +105,33 @@ bestLapMarks rows = zip (marks ltBestLap) (if hasParts then marks ltPartBestLap 
        in map (\t -> isJust t && t == best) times
     minimumMaybe [] = Nothing
     minimumMaybe xs = Just (minimum xs)
+
+-- | Una raya de la tabla de una clasificación, encima de una fila.
+data RowBreak
+  = BreakKnockedOut Text
+    -- ^ Empiezan los eliminados de una parte; trae su texto: @fuera en Q1@.
+  | BreakCut
+    -- ^ La raya roja: empieza la zona de eliminación de la parte en curso.
+  deriving stock (Eq, Show)
+
+-- | Las rayas de la tabla, una por fila y en el orden de entrada; 'Nothing' donde no
+-- va ninguna, y en todas fuera de clasificación.
+--
+-- __Quién cae lo dice la posición y no el corte del 107 %__ ('ltCutoff'): con
+-- 'siEntries' @[22, 16, 10]@, la Q1 elimina desde el 17 y la Q2 desde el 11. __Los
+-- eliminados son los que el feed marca__ ('ltKnockedOut'): tras la bandera el orden
+-- todavía cambia, y hasta que los marca sigue la raya roja.
+rowBreaks :: Maybe SessionInfo -> [LiveTimingRow] -> [Maybe RowBreak]
+rowBreaks session = map (\r -> session >>= breakAbove r)
+  where
+    breakAbove r s = do
+      part <- siPart s
+      let passing q = listToMaybe (drop q (siEntries s))
+          above n   = Just (ltPosition r - 1) == passing n
+      if ltKnockedOut r
+        then (\q -> BreakKnockedOut ("fuera en " <> partLabel s q))
+               <$> listToMaybe (filter above [1 .. part - 1])
+        else if above part then Just BreakCut else Nothing
 
 -- | Un tiempo de vuelta en segundos: @«1:23.456»@ o @«59.876»@; 'Nothing' si no lo es
 -- (la raya, vacío).

@@ -37,9 +37,11 @@ import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
                                 liveRefreshSeconds, pollIdle, pollStep,
                                 recordArrival, shownAge)
 import           Common.Types  (DriverStatus (..), LiveTable (..),
-                                LiveTimingRow (..), SessionInfo (..),
+                                LiveTimingRow (..), RowBreak (..),
+                                SessionInfo (..),
                                 SessionState (..), StateReading (..),
-                                bestLapMarks, sessionInProgress, statusLabel,
+                                bestLapMarks, rowBreaks, sessionInProgress,
+                                statusLabel,
                                 waitingTable)
 import           Control.Monad (forM_)
 import           Data.Set      (Set)
@@ -53,7 +55,8 @@ import           Reflex.Dom
 data LiveState
   = Loading
   | Failed
-  | Loaded [LiveTimingRow]
+  | Loaded [LiveTimingRow] [Maybe RowBreak]
+    -- ^ Las filas y la raya que va encima de cada una ('Common.Types.rowBreaks').
   | Waiting Text
     -- ^ Con retraso, mientras nada es tan viejo: el aviso de la espera.
   deriving (Eq)
@@ -65,17 +68,19 @@ data LiveState
 -- diez segundos— aunque el dato no hubiera cambiado. Con 'holdUniqDyn' encima, se
 -- monta solo cuando cambia lo que se ve.
 --
--- __Se queda con las filas y descarta la sesión__ que 'Common.Types.LiveTable'
--- trae al lado: de la sesión se encarga la banda de la página
--- ('Pages.Dashboard.sessionBand'), y meterla aquí haría remontar la tabla entera
+-- __Se queda con las filas y, de la sesión, solo con sus rayas__
+-- ('Common.Types.rowBreaks'): de la sesión se encarga la banda de la página
+-- ('Pages.Dashboard.sessionBand'), y meterla entera aquí haría remontar la tabla
 -- cada vez que avanzara el reloj.
 liveStateOf :: Poll (Sourced LiveTable) -> LiveState
 liveStateOf p =
   case pollShown p of
-    Just shown           -> Loaded (liveRows (srcValue shown))
+    Just shown           -> loaded (srcValue shown)
     Nothing
       | pollLastFailed p -> Failed
       | otherwise        -> Loading
+  where
+    loaded t = Loaded (liveRows t) (rowBreaks (liveSession t) (liveRows t))
 
 -- | De qué sesión son las filas que se están enseñando, si se sabe.
 --
@@ -192,17 +197,24 @@ liveTimingWidget live = divClass "widget widget--live-timing" $ do
       elClass "p" "status status--error" $ text "Error al cargar /api/live"
     renderState _ (Waiting label) =
       elClass "p" "status status--loading" $ text label
-    renderState closed (Loaded rows) =
+    renderState closed (Loaded rows breaks) =
       elClass "table" "live-timing" $ do
         el "thead" $ el "tr" $
           forM_ cols $ \c -> elClass "th" (liveColumnClass c) $ text (liveColumnLabel c)
-        el "tbody" $ mapM_ (row cols) (zip rows (bestLapMarks rows))
+        el "tbody" $ mapM_ (row cols) (zip3 rows (bestLapMarks rows) breaks)
       where
         cols = shownColumns closed
 
-    row :: DomBuilder t m => [LiveColumn] -> (LiveTimingRow, (Bool, Bool)) -> m ()
-    row cols (r, marks) = elClass "tr" (rowClass (ltStatus r)) $
-      forM_ cols $ \c -> elClass "td" (cellClass c marks) $ text (cellText c r)
+    row :: DomBuilder t m
+        => [LiveColumn] -> (LiveTimingRow, (Bool, Bool), Maybe RowBreak) -> m ()
+    row cols (r, marks, brk) = do
+      case brk of
+        Just (BreakKnockedOut label) ->
+          elClass "tr" "live-timing__break" $
+            elAttr "td" ("colspan" =: T.pack (show (length cols))) $ text label
+        _ -> blank
+      elClass "tr" (rowClass r brk) $
+        forM_ cols $ \c -> elClass "td" (cellClass c marks) $ text (cellText c r)
 
     cellText :: LiveColumn -> LiveTimingRow -> Text
     cellText ColPos      = T.pack . show . ltPosition
@@ -234,9 +246,16 @@ liveTimingWidget live = divClass "widget widget--live-timing" $ do
     -- mismo en los tres casos. Tres reglas de color para tres estados que el
     -- usuario ya distingue leyendo serían tres cosas que mantener sincronizadas
     -- con el tipo de 'common'.
-    rowClass :: DriverStatus -> Text
-    rowClass Running = "live-timing__row"
-    rowClass _       = "live-timing__row live-timing__row--out"
+    --
+    -- El eliminado y la raya roja van aparte: un eliminado no ha dejado de correr
+    -- por avería, y la raya marca dónde empieza la zona, no una fila distinta.
+    rowClass :: LiveTimingRow -> Maybe RowBreak -> Text
+    rowClass r brk =
+      T.unwords $
+        ["live-timing__row"]
+          <> ["live-timing__row--out" | ltStatus r /= Running]
+          <> ["live-timing__row--knocked" | ltKnockedOut r]
+          <> ["live-timing__row--cut" | brk == Just BreakCut]
 
 -- | «Columnas ▾»: un botón en el título que abre, flotando encima de la tabla, una
 -- casilla por columna que se puede cerrar ('Common.Columns.menuColumns'), y las

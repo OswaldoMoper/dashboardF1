@@ -141,6 +141,7 @@ import           Common.Types                (ComparisonEntry (..),
                                               LapComparison (..),
                                               LapProgress (..), LiveTable (..),
                                               LiveTimingRow (..), bestLapMarks,
+                                              RowBreak (..), rowBreaks,
                                               lapSeconds,
                                               SessionClock (..),
                                               SessionInfo (..),
@@ -2994,6 +2995,35 @@ main = hspec $ do
 
     it "sin ningún tiempo no se marca nada" $
       bestLapMarks [row "-" "", row "" ""] `shouldBe` [(False, False), (False, False)]
+
+  -- Las rayas de la tabla de una clasificación, con la forma de la Q de Malasia: 22
+  -- coches, [22, 16, 10] por parte, y los eliminados abajo cuando el feed los marca.
+  describe "rowBreaks" $ do
+    let quali name part = Just raceSessionFixture
+          {siType = "Qualifying", siName = name, siPart = Just part, siEntries = [22, 16, 10]}
+        grid knocked = [ LiveTimingRow n "X" "" "" "" "" Running "-" "" [] (n > knocked) False
+                       | n <- [1 .. 22] ]
+        breaks s rows = [ (ltPosition r, b) | (r, Just b) <- zip rows (rowBreaks s rows) ]
+    it "en la Q1, y tras su bandera hasta que el feed marca, la raya roja encima del 17" $
+      -- El orden cambia durante ~1:40 tras la bandera; el feed marca a los seis unos
+      -- seis minutos después, a la vez que la parte pasa a la Q2.
+      breaks (quali "Qualifying" 1) (grid 22) `shouldBe` [(17, BreakCut)]
+
+    it "en la Q2, los de la Q1 bajo su raya y la roja encima del 11" $
+      breaks (quali "Qualifying" 2) (grid 16)
+        `shouldBe` [(11, BreakCut), (17, BreakKnockedOut "fuera en Q1")]
+
+    it "en la Q3, una raya por parte y ninguna roja" $
+      breaks (quali "Qualifying" 3) (grid 10)
+        `shouldBe` [(11, BreakKnockedOut "fuera en Q2"), (17, BreakKnockedOut "fuera en Q1")]
+
+    it "en la Sprint, la parte con su nombre" $
+      breaks (quali "Sprint Qualifying" 2) (grid 16)
+        `shouldBe` [(11, BreakCut), (17, BreakKnockedOut "fuera en SQ1")]
+
+    it "fuera de clasificación, sin parte o sin sesión, ninguna raya" $ do
+      breaks (Just raceSessionFixture) (grid 22) `shouldBe` []
+      breaks Nothing (grid 16) `shouldBe` []
 
   -- «Columnas ▾» de Live Timing: Pos y Driver no se cierran, y de Gap, Interval, Last
   -- Lap, Best Lap y Estado siempre queda una; Team, libre.
