@@ -60,17 +60,18 @@ channelLabel Speed    = "km/h"
 channelLabel Throttle = "Acelerador %"
 channelLabel Brake    = "Freno"
 
--- | El alto de cada fila, en px (2026-10-02: la velocidad a 100).
+-- | El alto de cada fila, en px. Con los rótulos, la tarjeta cabe en 55 u de Race
+-- Overview a 1912 × 914 (2026-10-06).
 channelHeight :: Channel -> Double
 channelHeight Speed    = 100
-channelHeight Throttle = 60
-channelHeight Brake    = 30
+channelHeight Throttle = 50
+channelHeight Brake    = 20
 
 -- | Lo que hay encima de la primera fila (su rótulo) y debajo de la última (el
 -- principio y el final del eje X), y entre dos filas, en px.
 tracesTop, tracesGap, tracesBottom :: Double
-tracesTop    = 14
-tracesGap    = 14
+tracesTop    = 19
+tracesGap    = 19
 tracesBottom = 16
 
 -- | El ancho del @viewBox@; el lienzo se estira al de la tarjeta.

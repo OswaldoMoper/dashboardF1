@@ -3097,10 +3097,10 @@ main = hspec $ do
                 [tp 0 0 100 1 0, tp 50 2000 300 0.5 1, tp 100 4000 200 0 0]
         other = car "1" (35, 40, 35) (1300, 2900)
                   [tp 0 0 90 1 0, tp 60 2100 280 0.4 1, tp 110 4200 190 0 0]
-    it "tres filas de arriba abajo, con la velocidad a 100 px" $ do
+    it "tres filas de arriba abajo: velocidad 100, acelerador 50 y freno 20, con 19 de rótulo" $ do
       map channelLabel channelsInOrder `shouldBe` ["km/h", "Acelerador %", "Freno"]
-      map channelTop channelsInOrder `shouldBe` [14, 128, 202]
-      tracesHeight `shouldBe` 248
+      map channelTop channelsInOrder `shouldBe` [19, 138, 207]
+      tracesHeight `shouldBe` 243
 
     it "la velocidad hasta la máxima redondeada a 50; el acelerador y el freno, fijos" $ do
       channelRange Speed [ref, other] `shouldBe` (0, 300)
@@ -3149,9 +3149,9 @@ main = hspec $ do
       frontierCells [0, 0.1, 0.2, 0.3] `shouldBe` frontierCellsAt (map (\(x, _, _) -> x) (frontierCells [0, 0.1, 0.2, 0.3])) [0, 0.1, 0.2, 0.3]
 
     it "la curva: X hasta la mayor y la Y en la fila del canal; el freno, en escalones" $ do
-      tracePoints Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,80.7 300.0,14.0 600.0,47.3"
+      tracePoints Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
       tracePoints Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
-        `shouldBe` "0.0,232.0 300.0,232.0 300.0,202.0 600.0,202.0 600.0,232.0"
+        `shouldBe` "0.0,227.0 300.0,227.0 300.0,207.0 600.0,207.0 600.0,227.0"
       tracePoints Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
 
   describe "Common.ComparisonCard" $ do
