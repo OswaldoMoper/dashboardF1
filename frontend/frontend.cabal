@@ -31,9 +31,11 @@ executable frontend
       , common
       , containers
       , ghcjs-dom
+      , jsaddle
       , reflex
       , reflex-dom
       , text
+      , time
     ghc-options: -Wall -O
 
     if arch(javascript)

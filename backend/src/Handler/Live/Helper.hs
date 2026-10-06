@@ -40,6 +40,10 @@ module Handler.Live.Helper
   , feedRows
   , feedStatus
   , feedSession
+  , Notice (..)
+  , Announced (..)
+  , parseNotice
+  , announcedAt
   , trackCondition
   , chequeredGrace
   , openf1Session
@@ -68,13 +72,16 @@ module Handler.Live.Helper
 
 import           App                   (ScheduledSession (..))
 import           Common.Origin         (Origin (..), Source (..))
-import           Common.Types          (DriverStatus (..), LapProgress (..),
-                                        LiveTable (..), LiveTimingRow (..),
-                                        SessionClock (..), SessionInfo (..),
-                                        SessionState (..), StateBasis (..),
+import           Common.Types          (Countdown (..), DriverStatus (..),
+                                        LapProgress (..), LiveTable (..),
+                                        LiveTimingRow (..), SessionClock (..),
+                                        SessionInfo (..), SessionState (..),
+                                        StartNotice (..), StateBasis (..),
                                         StateReading (..), TrackCondition (..),
-                                        UpNext (..), sessionInProgress,
-                                        sessionIsLive, sessionStateFrom)
+                                        UpNext (..), partLabel,
+                                        sessionInProgress, sessionIsLive,
+                                        sessionStateFrom)
+import           Control.Applicative   ((<|>))
 import           Control.Monad         (mfilter)
 import           Data.Aeson            (FromJSON (..), Value (..), withObject,
                                         (.!=), (.:), (.:?))
@@ -90,12 +97,12 @@ import           Data.Ord              (Down (..), comparing)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
 import           Data.Text.Read        (decimal)
-import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime,
-                                        diffUTCTime)
+import           Data.Time.Clock       (NominalDiffTime, UTCTime (..),
+                                        addUTCTime, diffUTCTime)
 import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
 import           Handler.Feed.Helper   (FeedFlag (..), FeedLive (..),
-                                        FeedRow (..), FeedSession (..),
-                                        FeedTrack (..))
+                                        FeedNotice (..), FeedRow (..),
+                                        FeedSession (..), FeedTrack (..))
 import           Handler.OpenF1.Helper (Of1Driver (..))
 import           Provenance            (isoInstant)
 import           Text.Printf           (printf)
@@ -354,17 +361,155 @@ feedStatus raw =
 -- quien no publica estado ninguno.
 feedSession :: UTCTime -> FeedSession -> SessionInfo
 feedSession now fs =
-  SessionInfo
-    { siType    = fsType fs
-    , siName    = fsName fs
-    , siMeeting = fsMeeting fs
-    , siCircuit = fsCircuit fs
-    , siState   = Just (feedState now fs)
-    , siLaps    = lapProgress fs
-    , siClock   = sessionClock now fs
-    , siPart    = mfilter (>= 1) (fsPart fs)
-    , siTrack   = trackCondition =<< fsTrack fs
+  info
+    { siCountdown = restartCountdown now fs info (srState state)
+    , siStart     = startNotice now fs info (srState state)
     }
+  where
+    state = feedState now fs
+    info  =
+      SessionInfo
+        { siType      = fsType fs
+        , siName      = fsName fs
+        , siMeeting   = fsMeeting fs
+        , siCircuit   = fsCircuit fs
+        , siState     = Just state
+        , siLaps      = lapProgress fs
+        , siClock     = sessionClock now fs
+        , siPart      = mfilter (>= 1) (fsPart fs)
+        , siTrack     = trackCondition =<< fsTrack fs
+        , siCountdown = Nothing
+        , siStart     = Nothing
+        }
+
+-- | Lo que control de carrera anuncia con hora, por su texto. Las formas son las de
+-- las grabaciones: @Q2 WILL START AT 16:29@, @FORMATION LAP WILL START AT 15:40@,
+-- @RACE WILL START AT 16:33@, @SESSION WILL RESUME AT 12:59@; y sin hora,
+-- @DELAYED START@ o @START OF QUALIFYING WILL BE DELAYED@. La hora es la local del
+-- circuito.
+data Notice
+  = NoticeDelay
+  | NoticeAt Announced (Int, Int)
+  deriving (Eq, Show)
+
+-- | Qué anuncia un aviso con hora.
+data Announced
+  = AnnouncedPart Int     -- ^ Una parte de la clasificación, por su número.
+  | AnnouncedFormation    -- ^ La vuelta de formación.
+  | AnnouncedStart        -- ^ La salida, y cualquier otra cosa que diga «WILL START AT».
+  | AnnouncedResume       -- ^ La reanudación tras una roja.
+  deriving (Eq, Show)
+
+-- | El aviso, si es de los que cuentan.
+parseNotice :: Text -> Maybe Notice
+parseNotice raw
+  | Just at <- after " WILL RESUME AT "            = NoticeAt AnnouncedResume <$> clock at
+  | (what, rest) <- T.breakOn " WILL START AT " msg
+  , not (T.null rest)                              =
+      NoticeAt (startWhat what) <$> clock (T.drop (T.length " WILL START AT ") rest)
+  | "DELAYED" `T.isInfixOf` msg                    = Just NoticeDelay
+  | otherwise                                      = Nothing
+  where
+    msg = T.toUpper (T.strip raw)
+
+    after key =
+      case T.breakOn key msg of
+        (_, rest) | not (T.null rest) -> Just (T.drop (T.length key) rest)
+        _                             -> Nothing
+
+    startWhat what
+      | what == "FORMATION LAP"                     = AnnouncedFormation
+      | Just n <- partNumber what                   = AnnouncedPart n
+      | otherwise                                   = AnnouncedStart
+
+    partNumber what =
+      case T.stripPrefix "SQ" what <|> T.stripPrefix "Q" what of
+        Just digits | Right (n, "") <- decimal digits -> Just n
+        _                                             -> Nothing
+
+    clock t =
+      case T.splitOn ":" (T.takeWhile (/= ' ') (T.strip t)) of
+        [h, m] | Right (hh, "") <- decimal h, Right (mm, "") <- decimal m -> Just (hh, mm)
+        _                                                                  -> Nothing
+
+-- | El instante UTC de una hora local anunciada, tomando el día del propio aviso; si
+-- con eso quedaría más de doce horas antes que el aviso, es la del día siguiente.
+announcedAt :: NominalDiffTime -> UTCTime -> (Int, Int) -> UTCTime
+announcedAt offset noticeAt (h, m)
+  | candidate < addUTCTime (-12 * 3600) localNotice = toUtc (addUTCTime 86400 candidate)
+  | otherwise                                       = toUtc candidate
+  where
+    localNotice = addUTCTime offset noticeAt
+    candidate   = addUTCTime (fromIntegral (h * 3600 + m * 60))
+                    (UTCTime (utctDay localNotice) 0)
+    toUtc       = addUTCTime (negate offset)
+
+-- | Los avisos con hora que cuentan desde un instante, con su hora en UTC, del más
+-- reciente al más viejo.
+noticesSince :: UTCTime -> FeedSession -> [(UTCTime, Notice, Maybe UTCTime)]
+noticesSince from fs =
+  sortOn (\(at, _, _) -> Down at)
+    [ (at, notice, target notice at)
+    | n <- fsNotices fs
+    , at <- maybe [] pure (parseNaiveInstant (fnUtc n))
+    , at >= from
+    , notice <- maybe [] pure (parseNotice (fnMessage n))
+    ]
+  where
+    target (NoticeAt _ hm) at = (\o -> announcedAt o at hm) <$> gmtOffset fs
+    target NoticeDelay _      = Nothing
+
+-- | La etiqueta de una cuenta: la parte con su nombre ('Common.Types.partLabel'), y
+-- las demás, por lo que anuncian.
+announcedLabel :: SessionInfo -> Announced -> Text
+announcedLabel info (AnnouncedPart n)  = partLabel info n
+announcedLabel _    AnnouncedFormation = "Vuelta de formación"
+announcedLabel _    AnnouncedStart     = "Salida"
+announcedLabel _    AnnouncedResume    = "Reanuda"
+
+-- | Una cuenta hasta un instante, si aún no ha pasado.
+countdownTo :: UTCTime -> Text -> UTCTime -> Maybe Countdown
+countdownTo now label at
+  | at > now  = Just (Countdown label (floor (diffUTCTime at now)))
+  | otherwise = Nothing
+
+-- | Con bandera a cuadros entre partes, cuándo sale la siguiente; con la roja, cuándo
+-- se reanuda. Solo cuentan los avisos posteriores a la bandera, y manda el último.
+restartCountdown :: UTCTime -> FeedSession -> SessionInfo -> SessionState -> Maybe Countdown
+restartCountdown now fs info state = do
+  wanted <- case state of
+    SessionChequered -> Just isPart
+    SessionRedFlag   -> Just (== AnnouncedResume)
+    _                -> Nothing
+  (flagAt, _) <- lastTrackFlag fs
+  (what, at) <- listToMaybe
+    [ (what, at) | (_, NoticeAt what _, Just at) <- noticesSince flagAt fs, wanted what ]
+  countdownTo now (announcedLabel info what) at
+  where
+    isPart (AnnouncedPart _) = True
+    isPart _                 = False
+
+-- | Con la sesión por empezar, si sale tarde. Cuentan los avisos desde
+-- 'startNoticeLead' antes de la hora prevista; manda el último aviso con hora, y si
+-- esa hora ya pasó, o solo se dijo que se retrasa, o la hora prevista pasó sin
+-- salir, «sale tarde» sin cuenta.
+startNotice :: UTCTime -> FeedSession -> SessionInfo -> SessionState -> Maybe StartNotice
+startNotice now fs info SessionInactive = do
+  start <- sessionStart fs
+  let notices   = noticesSince (addUTCTime (negate startNoticeLead) start) fs
+      announced = listToMaybe
+        [ (what, at) | (_, NoticeAt what _, Just at) <- notices, what /= AnnouncedResume ]
+      delayed   = now >= start || not (null notices)
+  case announced >>= \(what, at) -> countdownTo now (announcedLabel info what) at of
+    Just c                -> Just (StartAnnounced c)
+    Nothing | delayed     -> Just StartDelayed
+            | otherwise   -> Nothing
+startNotice _ _ _ _ = Nothing
+
+-- | Desde cuánto antes de la hora prevista cuenta un aviso de salida. Medido: 18 min
+-- antes en Malasia y 2½ en Bakú; la foto arrastra los de la sesión anterior.
+startNoticeLead :: NominalDiffTime
+startNoticeLead = 45 * 60
 
 -- | Lo que pasa en la pista, por el código que publica el feed. La pista despejada
 -- (@\"1\"@) y lo que no se conoce no dicen nada.
@@ -394,7 +539,7 @@ trackCondition track =
 -- Sin hora de inicio no cuenta ningún aviso.
 feedState :: UTCTime -> FeedSession -> StateReading
 feedState now fs =
-  case (field, lastTrackFlag) of
+  case (field, lastTrackFlag fs) of
     (SessionStarted, Just (at, Chequered))
       | diffUTCTime now at >= chequeredGrace -> StateReading SessionFinalised Derived
       | otherwise                           -> StateReading SessionChequered Heard
@@ -403,9 +548,11 @@ feedState now fs =
   where
     field = sessionStateFrom (fsState fs)
 
-    -- El último aviso de pista que cuenta.
-    lastTrackFlag = listToMaybe (sortOn (Down . fst) counted)
-
+-- | El último aviso de pista que cuenta para 'feedState', con su instante: de los de
+-- desde la hora de inicio, y nada sin ella.
+lastTrackFlag :: FeedSession -> Maybe (UTCTime, TrackFlag)
+lastTrackFlag fs = listToMaybe (sortOn (Down . fst) counted)
+  where
     counted =
       [ (at, kind)
       | start <- maybe [] pure (sessionStart fs)
@@ -440,8 +587,13 @@ chequeredGrace = 12 * 60
 sessionStart :: FeedSession -> Maybe UTCTime
 sessionStart fs = do
   local <- parseNaiveInstant =<< fsStartDate fs
-  offset <- parseOffset =<< fsGmtOffset fs
+  offset <- gmtOffset fs
   pure (addUTCTime (negate offset) local)
+
+-- | El desfase del circuito respecto de UTC: @\"08:00:00\"@ son ocho horas.
+-- 'Nothing' si falta o no se lee.
+gmtOffset :: FeedSession -> Maybe NominalDiffTime
+gmtOffset fs = parseOffset =<< fsGmtOffset fs
   where
     parseOffset raw =
       case T.uncons (T.strip raw) of
@@ -505,6 +657,8 @@ openf1Session now os grandPrix =
     , siClock   = Nothing
     , siPart    = Nothing
     , siTrack   = Nothing
+    , siCountdown = Nothing
+    , siStart   = Nothing
     }
 
 -- | Por qué vuelta va y de cuántas, si la sesión las cuenta.
@@ -696,7 +850,7 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 
 -- | Qué viene después de la sesión que se está enseñando, en ese instante.
 --
--- __Los cuatro casos salen de cuatro decisiones distintas y por eso no se
+-- __Los cinco casos salen de cinco decisiones distintas y por eso no se
 -- simplifican:__
 --
 -- * __Rodando, la derecha calla__ ('Common.Types.NextSilent'): en carrera el ancho
@@ -710,6 +864,10 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 -- * __Sin empezar, se cuenta a ELLA__ ('Common.Types.NextStartsIn'): con la parrilla
 --   ya publicada —el feed lo hace hasta cuarenta minutos antes—, lo que hace falta
 --   saber es cuándo arranca lo que se está mirando, no lo de después.
+-- * __Sin empezar y saliendo tarde, lo que dice control de carrera__
+--   ('Common.Types.siStart'): la hora anunciada ('Common.Types.NextAnnounced') o,
+--   sin ella, que sale tarde ('Common.Types.NextDelayed'). El calendario ya no dice
+--   cuándo sale, y contar a la siguiente sesión la confundiría con ésta.
 -- * __Acabada o sin estado, se cuenta a la siguiente__ ('Common.Types.NextAfter').
 --
 -- __La siguiente es la de arranque más próximo entre las que aún no han arrancado__,
@@ -721,10 +879,18 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 -- de la sesión sí. Sin nombre de gran premio se cae al de la sesión, que siempre hay.
 upNext :: UTCTime -> Maybe SessionInfo -> [ScheduledSession] -> UpNext
 upNext now shown sessions
-  | null sessions            = NextUnknown
-  | silences state           = NextSilent
-  | otherwise                = maybe NextUnknown answer soonest
+  | null sessions                   = NextUnknown
+  | silences state                  = NextSilent
+  | Just StartDelayed <- late       = NextDelayed
+  | Just (StartAnnounced c) <- late = NextAnnounced c
+  | otherwise                       = maybe NextUnknown answer soonest
   where
+    -- La sesión de la izquierda sale tarde: eso manda sobre el calendario, que ya no
+    -- dice cuándo sale.
+    late
+      | state == Just SessionInactive = siStart =<< shown
+      | otherwise                     = Nothing
+
     state = srState <$> (siState =<< shown)
 
     silences s = sessionInProgress s || s `elem` [Just SessionChequered, Just SessionRedFlag]
@@ -793,17 +959,24 @@ feedVerdict now live
 
 -- | La misma sesión con su reloj parado, para servirla desde la cache.
 --
--- __Lo que caduca de una sesión guardada es el reloj y solo el reloj.__ El
--- restante lo resolvió 'sessionClock' al instante de guardarla, así que seguir
--- descontándolo afirmaría que el dato es de ahora; el nombre, el tipo, el gran
--- premio, el estado y la vuelta siguen siendo ciertos mientras la sesión sea la
--- misma. Parado es exactamente lo que 'Common.Types.SessionClock' distingue con
--- 'Common.Types.scRunning': un reloj frente a la foto de un reloj.
+-- __Lo que caduca de una sesión guardada es lo que se resolvió contra el reloj__: el
+-- restante, que 'sessionClock' resolvió al instante de guardarla, y las cuentas hasta
+-- una hora anunciada. Seguir descontándolos afirmaría que el dato es de ahora; el
+-- nombre, el tipo, el gran premio, el estado y la vuelta siguen siendo ciertos
+-- mientras la sesión sea la misma. Parado es exactamente lo que
+-- 'Common.Types.SessionClock' distingue con 'Common.Types.scRunning': un reloj frente
+-- a la foto de un reloj.
 --
 -- No borra el reloj: el número que se guardó sigue diciendo algo —cuánto quedaba
--- cuando se tomó el dato—, y el instante de esa toma viaja en cabecera propia.
+-- cuando se tomó el dato—, y el instante de esa toma viaja en cabecera propia. __Las
+-- cuentas sí se borran__: una cuenta parada diría una hora que ya no se sabe si
+-- vale, y de una salida anunciada queda solo que sale tarde.
 freezeClock :: SessionInfo -> SessionInfo
-freezeClock info = info { siClock = stop <$> siClock info }
+freezeClock info =
+  info { siClock     = stop <$> siClock info
+       , siCountdown = Nothing
+       , siStart     = StartDelayed <$ siStart info
+       }
   where
     stop clock = clock { scRunning = False }
 

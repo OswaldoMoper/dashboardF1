@@ -33,18 +33,24 @@ import           Common.Origin      (Sourced (..))
 import           Common.Shown       (Kept (..), Poll (..), delayDefaultSeconds,
                                      delayFromUrl, keepLast, keptNothing,
                                      landed, readDelay)
-import           Common.Types       (BandFlag (..), BandPiece, Layout (..),
-                                     LayoutId (..), LiveTable (..),
-                                     SessionClock, SessionInfo (..),
-                                     StateReading (..), TrackCondition,
-                                     UpNext (..), WidgetConfig (..),
-                                     WidgetId (..), WidgetType (..), bandMark,
-                                     bandNote, bandPieces, bandRight, flagName,
-                                     isDerived, noParams, pieceFlag,
-                                     pieceSeparator, pieceWord, sessionTitle,
-                                     shownClock, tickClock, tickDown, catchUp)
+import           Common.Types       (BandFlag (..), BandPiece, Countdown,
+                                     Layout (..), LayoutId (..),
+                                     LiveTable (..), SessionClock,
+                                     SessionInfo (..), StateReading (..),
+                                     TrackCondition, UpNext (..),
+                                     WidgetConfig (..), WidgetId (..),
+                                     WidgetType (..), bandMark, bandNote,
+                                     bandPieces, bandRight, countdownAfter,
+                                     countdownText, flagName, isDerived,
+                                     noParams, pieceFlag, pieceSeparator,
+                                     pieceWord, sessionTitle, shownClock,
+                                     tickClock, catchUp)
+import           Control.Monad.IO.Class (liftIO)
 import           Data.Maybe         (fromMaybe, isJust, listToMaybe)
+import           Data.Text          (Text)
 import qualified Data.Text          as T
+import           Data.Time.Clock    (UTCTime (..), getCurrentTime)
+import           Language.Javascript.JSaddle (eval, liftJSM, valToNumber)
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
 import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
@@ -181,6 +187,7 @@ sessionBand :: MonadWidget t m
             -> m ()
 sessionBand openDyn poll lag = mdo
   tick    <- tickLossyFromPostBuildTime 1
+  day     <- localTimeOfDay tick
   let arrived = sessionOf <$> ffilter (isJust . landed) (updated poll)
   kept    <- foldDyn keepLast keptNothing arrived
   age     <- sessionAge tick arrived
@@ -188,13 +195,17 @@ sessionBand openDyn poll lag = mdo
   reading <- holdUniqDyn ((\k -> siState =<< keptValue k) <$> kept)
   track   <- holdUniqDyn ((\k -> siTrack =<< keptValue k) <$> kept)
   next    <- countdown tick lag (maybe NextSilent (liveNext . srcValue) . pollShown <$> poll)
+  restart <- ticked Nothing (fmap . countdownAfter) tick lag
+               ((siCountdown =<<) . sessionOf <$> poll)
   clock   <- sessionClock tick ((shownClock =<<) . sessionOf <$> poll)
   let laps = (siLaps =<<) . sessionOf <$> poll
+      restartText = (\d -> fmap (countdownText d)) <$> day <*> restart
   asCard  <- toggle True lookClick
   lookClick <- elDynClass "div" (bandClass <$> openDyn <*> asCard) $ do
     dynText title
-    sessionState reading track (keptStale <$> kept) age
-    elClass "span" "session-band__next" $ dynText (bandRight <$> next <*> laps <*> clock)
+    sessionState reading track restartText (keptStale <$> kept) age
+    elClass "span" "session-band__next" $
+      dynText (bandRight <$> day <*> next <*> laps <*> clock)
     lookSwitch asCard
   pure ()
   where
@@ -243,12 +254,13 @@ sessionBand openDyn poll lag = mdo
 sessionState :: MonadWidget t m
              => Dynamic t (Maybe StateReading)
              -> Dynamic t (Maybe TrackCondition)
+             -> Dynamic t (Maybe Text)
              -> Dynamic t Bool
              -> Dynamic t Int
              -> m ()
-sessionState reading track stale age = do
+sessionState reading track restart stale age = do
   note <- holdUniqDyn (bandNote <$> ageWhenStale <*> (isDerived <$> reading))
-  pieces <- holdUniqDyn (bandPieces <$> (fmap srState <$> reading) <*> track)
+  pieces <- holdUniqDyn (bandPieces <$> (fmap srState <$> reading) <*> track <*> restart)
   (markEl, _) <-
     elDynClass' "button" (stateClass <$> note) $ do
       piece (listToMaybe <$> pieces)
@@ -299,15 +311,22 @@ sessionAge tick arrived =
   foldDyn ($) 0 $
     leftmost [const 0 <$ ffilter isJust arrived, (+ 1) <$ tick]
 
--- | La cuenta atrás que llega en la respuesta, descontada en el navegador.
+-- | La cuenta atrás de la derecha de la banda, descontada en el navegador ('ticked').
+--
+-- __Arranca en 'NextUnknown'__ porque antes de la primera respuesta eso es lo cierto,
+-- y es además lo que la banda pinta como «todavía no se sabe».
+countdown :: MonadWidget t m
+          => Event t TickInfo -> Dynamic t (Maybe Int) -> Dynamic t UpNext
+          -> m (Dynamic t UpNext)
+countdown = ticked NextUnknown catchUp
+
+-- | Una cuenta que llega en la respuesta, descontada en el navegador: @after k@ es la
+-- misma cuenta @k@ segundos después.
 --
 -- __Un tic de un segundo sobre un refresco de diez__, que son los dos relojes de
 -- esta página y no se estorban: cada respuesta reinicia la cuenta al valor que el
 -- backend resolvió, y entre respuestas baja sola. Sin esto el número saltaría de
 -- diez en diez y «la cuenta atrás cuenta» dejaría de poder comprobarse mirando.
---
--- __Arranca en 'NextUnknown'__ porque antes de la primera respuesta eso es lo cierto,
--- y es además lo que la banda pinta como «todavía no se sabe».
 --
 -- __El 'holdUniqDyn' no es una optimización, es lo que impide que el número suba.__
 -- El estado del refresco cambia dos veces por ciclo —al pedir y al llegar— y solo la
@@ -320,20 +339,34 @@ sessionAge tick arrived =
 -- descontó.
 --
 -- __Cada valor servido entra a la hora del calendario__: se le descuenta la edad de
--- lo enseñado ('Common.Types.catchUp'), leída en el mismo frame
--- ('attachPromptlyDynWith'), porque con @current@ sería la del valor anterior.
+-- lo enseñado (@after@), leída en el mismo frame ('attachPromptlyDynWith'), porque
+-- con @current@ sería la del valor anterior.
 --
 -- __El tic entra por argumento y no se crea aquí__: es el mismo que cuenta la edad
 -- de lo conservado, y dos relojes de un segundo se separarían con el tiempo.
-countdown :: MonadWidget t m
-          => Event t TickInfo -> Dynamic t (Maybe Int) -> Dynamic t UpNext
-          -> m (Dynamic t UpNext)
-countdown tick lag served = do
+ticked :: (MonadWidget t m, Eq a)
+       => a -> (Int -> a -> a)
+       -> Event t TickInfo -> Dynamic t (Maybe Int) -> Dynamic t a
+       -> m (Dynamic t a)
+ticked initial after tick lag served = do
   fresh <- holdUniqDyn served
-  foldDyn ($) NextUnknown $
-    leftmost [ attachPromptlyDynWith (\a v -> const (catchUp (fromMaybe 0 a) v)) lag (updated fresh)
-             , tickDown <$ tick
+  foldDyn ($) initial $
+    leftmost [ attachPromptlyDynWith (\a v -> const (after (fromMaybe 0 a) v)) lag (updated fresh)
+             , after 1 <$ tick
              ]
+
+-- | Los segundos del día en la hora local del navegador, al ritmo del tic: con lo
+-- que 'Common.Types.countdownText' pone la hora del final de una cuenta.
+--
+-- __La zona se lee una vez, al montar__, del propio navegador: el @time@ del backend
+-- JavaScript de GHC no la sabe leer.
+localTimeOfDay :: MonadWidget t m => Event t TickInfo -> m (Dynamic t Int)
+localTimeOfDay tick = do
+  offset <- liftJSM (eval ("new Date().getTimezoneOffset()" :: Text) >>= valToNumber)
+  start  <- liftIO getCurrentTime
+  now    <- holdDyn start (_tickInfo_lastUTC <$> tick)
+  let behind = round (offset * 60) :: Int
+  pure ((\t -> (floor (utctDayTime t) - behind) `mod` 86400) <$> now)
 
 -- | El reloj de la sesión que llega en la respuesta, descontado en el navegador con
 -- el mismo reparto que 'countdown': cada valor servido nuevo manda, y entre uno y

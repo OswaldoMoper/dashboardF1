@@ -279,16 +279,21 @@ data BandPiece = PieceWord Text | PieceFlag BandFlag
   deriving stock (Eq, Show)
 
 -- | Lo que se enseña en el sitio del estado: el estado de la sesión y, detrás, el de
--- la pista.
+-- la pista o la cuenta hasta que vuelva a salir (el texto de 'countdownText').
 --
 -- __La pista solo con la sesión por empezar o en marcha__: con la bandera, la roja o
 -- la sesión acabada no rueda nadie, y la foto del feed arrastra hasta el anuncio de
--- la siguiente la última amarilla de la anterior (medido el 2026-10-05).
+-- la siguiente la última amarilla de la anterior (medido el 2026-10-05). __La cuenta,
+-- solo con la bandera a cuadros o la roja__, así que nunca coinciden.
 --
 -- Sin estado, nada: la marca de 'bandMark' sale sola.
-bandPieces :: Maybe SessionState -> Maybe TrackCondition -> [BandPiece]
-bandPieces state track = maybe [] statePiece state <> trackPieces
+bandPieces :: Maybe SessionState -> Maybe TrackCondition -> Maybe Text -> [BandPiece]
+bandPieces state track count = maybe [] statePiece state <> trackPieces <> countPieces
   where
+    countPieces
+      | state `elem` [Just SessionChequered, Just SessionRedFlag] = maybe [] (pure . PieceWord) count
+      | otherwise                                                 = []
+
     statePiece SessionChequered = [PieceFlag ChequeredFlag]
     statePiece SessionRedFlag   = [PieceFlag RedFlag]
     statePiece s                = [PieceWord (sessionStateWord s)]
@@ -441,6 +446,12 @@ data SessionInfo = SessionInfo
   , siTrack   :: Maybe TrackCondition
     -- ^ Lo que pasa en la pista. 'Nothing' con la pista despejada y cuando la fuente
     -- no lo publica.
+  , siCountdown :: Maybe Countdown
+    -- ^ Con bandera a cuadros entre partes o con bandera roja, cuándo vuelve a salir,
+    -- si control de carrera lo anunció y aún no ha pasado.
+  , siStart   :: Maybe StartNotice
+    -- ^ Con la sesión por empezar, si sale tarde. 'Nothing' si nada dice que se
+    -- retrase.
   }
   deriving stock (Eq, Show, Generic)
 
@@ -516,10 +527,53 @@ data UpNext
     -- Sin etiqueta: ya está nombrada al lado.
   | NextAfter Text Int
     -- ^ La siguiente, con su etiqueta y los segundos que faltan.
+  | NextDelayed
+    -- ^ La de la izquierda ya debería haber salido, o control de carrera dijo que
+    -- sale tarde, y no hay hora nueva que contar.
+  | NextAnnounced Countdown
+    -- ^ La de la izquierda sale tarde, a la hora que anunció control de carrera.
   deriving stock (Eq, Show, Generic)
 
 instance ToJSON UpNext
 instance FromJSON UpNext
+
+-- | Una cuenta atrás a la hora que anunció control de carrera: @Q2 en 1:44 · 06:29@.
+--
+-- __La etiqueta viene armada__, como en 'NextAfter': «Q2», «SQ3», «Reanuda», «Vuelta
+-- de formación», «Salida». __Los segundos viajan resueltos al responder__, como en
+-- 'UpNext'; la hora del final la pone quien pinta, en la suya ('countdownText').
+data Countdown = Countdown
+  { cdLabel   :: Text
+  , cdSeconds :: Int
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON Countdown
+instance FromJSON Countdown
+
+-- | Lo que se sabe de una salida que no llega a su hora, mientras la sesión está por
+-- empezar.
+data StartNotice
+  = StartDelayed            -- ^ Sale tarde y no hay hora nueva (o la anunciada ya pasó).
+  | StartAnnounced Countdown
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON StartNotice
+instance FromJSON StartNotice
+
+-- | La cuenta en texto, con la hora local del final: @Q2 en 1:44 · 06:29@. Recibe los
+-- segundos del día locales de ahora; la hora da la vuelta a medianoche.
+countdownText :: Int -> Countdown -> Text
+countdownText nowOfDay c =
+  cdLabel c <> " en " <> formatClock ClockCompact (cdSeconds c) <> " · " <> hhmm
+  where
+    end        = (nowOfDay + max 0 (cdSeconds c)) `mod` 86400
+    hhmm       = pad (end `div` 3600) <> ":" <> pad ((end `mod` 3600) `div` 60)
+    pad n      = T.justifyRight 2 '0' (T.pack (show n))
+
+-- | La misma cuenta @k@ segundos después, como 'catchUp'. No baja de cero.
+countdownAfter :: Int -> Countdown -> Countdown
+countdownAfter k c = c {cdSeconds = max 0 (cdSeconds c - max 0 k)}
 
 -- | Lo que se lee a la derecha de la banda.
 --
@@ -532,11 +586,15 @@ instance FromJSON UpNext
 --
 -- __La sesión que aún no empieza no se nombra__: está escrita al lado, en la misma
 -- banda, y repetirla gastaría el ancho en decir dos veces lo mismo.
-upNextLabel :: UpNext -> Text
-upNextLabel NextSilent       = ""
-upNextLabel NextUnknown      = "Próxima: …"
-upNextLabel (NextStartsIn n) = "empieza en " <> formatCountdown n
-upNextLabel (NextAfter l n)  = l <> " · en " <> formatCountdown n
+--
+-- Recibe los segundos del día locales de ahora, para la hora de 'NextAnnounced'.
+upNextLabel :: Int -> UpNext -> Text
+upNextLabel _ NextSilent           = ""
+upNextLabel _ NextUnknown          = "Próxima: …"
+upNextLabel _ (NextStartsIn n)     = "empieza en " <> formatCountdown n
+upNextLabel _ (NextAfter l n)      = l <> " · en " <> formatCountdown n
+upNextLabel _ NextDelayed          = "Salida retrasada"
+upNextLabel t (NextAnnounced c)    = countdownText t c
 
 -- | La misma cuenta atrás un segundo después.
 --
@@ -555,6 +613,7 @@ tickDown = catchUp 1
 catchUp :: Int -> UpNext -> UpNext
 catchUp k (NextStartsIn n) = NextStartsIn (max 0 (n - max 0 k))
 catchUp k (NextAfter l n)  = NextAfter l (max 0 (n - max 0 k))
+catchUp k (NextAnnounced c) = NextAnnounced (countdownAfter k c)
 catchUp _ other            = other
 
 -- | La vuelta en la banda: @Vuelta 23/57@.
@@ -575,10 +634,11 @@ shownClock s
   | otherwise    = Nothing
 
 -- | Lo que dice la derecha de la banda: la próxima sesión y, mientras la que se
--- enseña rueda ('NextSilent'), su vuelta o, si no tiene, su reloj.
-bandRight :: UpNext -> Maybe LapProgress -> Maybe SessionClock -> Text
-bandRight NextSilent laps clock = maybe (maybe "" clockLabel clock) lapLabel laps
-bandRight next _ _              = upNextLabel next
+-- enseña rueda ('NextSilent'), su vuelta o, si no tiene, su reloj. Recibe los
+-- segundos del día locales de ahora, como 'upNextLabel'.
+bandRight :: Int -> UpNext -> Maybe LapProgress -> Maybe SessionClock -> Text
+bandRight _ NextSilent laps clock = maybe (maybe "" clockLabel clock) lapLabel laps
+bandRight t next _ _              = upNextLabel t next
 
 -- | El reloj en la banda: @Quedan 12:34@, con horas solo a partir de una.
 clockLabel :: SessionClock -> Text
@@ -596,7 +656,8 @@ tickClock c
 -- enseñan.
 waitingSession :: SessionInfo -> SessionInfo
 waitingSession s =
-  s {siState = Nothing, siLaps = Nothing, siClock = Nothing, siPart = Nothing, siTrack = Nothing}
+  s { siState = Nothing, siLaps = Nothing, siClock = Nothing, siPart = Nothing
+    , siTrack = Nothing, siCountdown = Nothing, siStart = Nothing }
 
 -- | La tabla mientras la página espera: la sesión según 'waitingSession' y sin filas.
 -- __Lo que viene después sí se dice__: solo cuenta cómo acabó la sesión si la página se

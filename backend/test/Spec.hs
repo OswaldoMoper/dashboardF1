@@ -154,6 +154,8 @@ import           Common.Types                (ComparisonEntry (..),
                                               WidgetType (..), bandNote,
                                               BandFlag (..), BandPiece (..),
                                               TrackCondition (..), bandMark,
+                                              Countdown (..), StartNotice (..),
+                                              countdownText,
                                               bandPieces, flagName, pieceFlag,
                                               pieceSeparator, pieceWord, noParams,
                                               sessionInProgress, sessionIsLive,
@@ -205,7 +207,9 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               classificationTime, clockVerdict,
                                               derivedState, endMargin, feedRows,
                                               feedSession, feedStatus,
-                                              trackCondition,
+                                              trackCondition, Notice (..),
+                                              Announced (..), parseNotice,
+                                              announcedAt,
                                               feedVerdict, feedWindowLead,
                                               feedWindowOpen, fetchFailure,
                                               finaliseBox, freezeClock,
@@ -992,6 +996,8 @@ main = hspec $ do
             , siClock   = Just (SessionClock 5400 True)
             , siPart    = Nothing
             , siTrack   = Nothing
+            , siCountdown = Nothing
+            , siStart   = Nothing
             }
 
     it "una clasificación no cuenta vueltas, y eso no es un fallo" $
@@ -1025,6 +1031,8 @@ main = hspec $ do
             , siClock   = Nothing
             , siPart    = Nothing
             , siTrack   = Nothing
+            , siCountdown = Nothing
+            , siStart   = Nothing
             }
 
     it "una vuelta sin su total no es medio progreso: es ninguno" $
@@ -1425,6 +1433,135 @@ main = hspec $ do
       (sessionStateLabel SessionRedFlag, sessionStateFrom "Red")
         `shouldBe` ("Red", SessionRedFlag)
 
+  -- Los avisos con hora, con los REALES de las grabaciones: la carrera de Malasia
+  -- (2026-10-04, 15:00 locales, 07:00 UTC, salida retrasada por lluvia), la
+  -- clasificación de Bakú (2026-09-25, 16:00 locales, 12:00 UTC, que salió a las 16:04)
+  -- y la roja de la P3 de Malasia.
+  describe "las cuentas de control de carrera" $ do
+    let at :: Int -> Int -> Int -> Int -> UTCTime
+        at d h m s = addUTCTime (fromIntegral (h * 3600 + m * 60 + s))
+                       (UTCTime (fromGregorian 2026 10 d) 0)
+        notice u msg = FeedNotice u "Other" msg
+        race = (malaysiaQuali "" "Inactive")
+                 { fsType = "Race", fsName = "Race", fsFlags = []
+                 , fsStartDate = Just "2026-10-04T15:00:00"
+                 , fsNotices =
+                     [ notice "2026-10-04T06:42:57" "DELAYED START"
+                     , notice "2026-10-04T07:30:05" "FORMATION LAP WILL START AT 15:40"
+                     , notice "2026-10-04T07:45:11" "STARTING PROCEDURE SUSPENDED"
+                     , notice "2026-10-04T08:22:26" "RACE WILL START AT 16:33"
+                     ]
+                 }
+        upTo u fs = fs { fsNotices = filter ((<= u) . fnUtc) (fsNotices fs) }
+        startAt u now = siStart (feedSession now (upTo u race))
+
+    it "lee las formas grabadas, con la hora local que anuncian" $
+      map parseNotice
+          [ "DELAYED START", "START OF QUALIFYING WILL BE DELAYED"
+          , "FORMATION LAP WILL START AT 15:40", "RACE WILL START AT 16:33"
+          , "Q1 WILL START AT 16:04", "SQ3 WILL START AT 16:51"
+          , "SESSION WILL RESUME AT 12:59", "TRACK SURFACE SLIPPERY IN TRACK SECTOR 5"
+          ]
+        `shouldBe`
+          [ Just NoticeDelay, Just NoticeDelay
+          , Just (NoticeAt AnnouncedFormation (15, 40)), Just (NoticeAt AnnouncedStart (16, 33))
+          , Just (NoticeAt (AnnouncedPart 1) (16, 4)), Just (NoticeAt (AnnouncedPart 3) (16, 51))
+          , Just (NoticeAt AnnouncedResume (12, 59)), Nothing
+          ]
+
+    it "la hora local anunciada pasa a UTC con el desfase, y cerca de medianoche, al día siguiente" $ do
+      announcedAt (8 * 3600) (at 4 8 22 26) (16, 33) `shouldBe` at 4 8 33 0
+      announcedAt (8 * 3600) (at 4 15 50 0) (0, 10) `shouldBe` at 4 16 10 0
+
+    it "Malasia: antes de los avisos nada; «DELAYED START» ya es «sale tarde», 18 min antes" $
+      [ startAt "2026-10-04T06:40:00" (at 4 6 40 0)
+      , startAt "2026-10-04T06:50:00" (at 4 6 50 0)
+      ]
+        `shouldBe` [Nothing, Just StartDelayed]
+
+    it "Malasia: cuenta hasta la hora anunciada, y al pasarla sin salir, «sale tarde»" $
+      [ startAt "2026-10-04T07:30:30" (at 4 7 30 30)
+      , startAt "2026-10-04T07:41:00" (at 4 7 41 0)
+      , startAt "2026-10-04T08:22:30" (at 4 8 22 30)
+      ]
+        `shouldBe`
+          [ Just (StartAnnounced (Countdown "Vuelta de formación" 570))
+          , Just StartDelayed
+          , Just (StartAnnounced (Countdown "Salida" 630))
+          ]
+
+    it "sin ningún aviso, pasada la hora prevista también sale tarde" $
+      startAt "" (at 4 7 0 30) `shouldBe` Just StartDelayed
+
+    it "un aviso de más de 45 min antes de la hora prevista no cuenta" $
+      let early = race { fsNotices = [notice "2026-10-04T06:14:00" "DELAYED START"] }
+       in siStart (feedSession (at 4 6 50 0) early) `shouldBe` Nothing
+
+    it "con la sesión ya en marcha no se habla de la salida" $
+      siStart (feedSession (at 4 8 40 0) race { fsState = "Started" }) `shouldBe` Nothing
+
+    it "la derecha de la banda dice lo que dice la sesión que sale tarde" $
+      let shown = feedSession (at 4 8 22 30) (upTo "2026-10-04T08:22:30" race)
+          cal   = [ScheduledSession "Practice 1" 1309 "Singapore Grand Prix" (at 9 8 30 0) (at 9 9 30 0)]
+       in upNext (at 4 8 22 30) (Just shown) cal `shouldBe` NextAnnounced (Countdown "Salida" 630)
+
+    it "Bakú: la clasificación que sale tarde cuenta hasta Q1; en la Sprint, hasta SQ1" $
+      let baku name = (malaysiaQuali "" "Inactive")
+                        { fsName = name, fsFlags = []
+                        , fsStartDate = Just "2026-09-25T16:00:00"
+                        , fsGmtOffset = Just "04:00:00"
+                        , fsNotices = [ notice "2026-09-25T11:57:33" "START OF QUALIFYING WILL BE DELAYED"
+                                      , notice "2026-09-25T12:00:34" "Q1 WILL START AT 16:04" ]
+                        }
+          now = addUTCTime (12 * 3600 + 60) (UTCTime (fromGregorian 2026 9 25) 0)
+       in map (siStart . feedSession now . baku) ["Qualifying", "Sprint Qualifying"]
+            `shouldBe` [ Just (StartAnnounced (Countdown "Q1" 180))
+                       , Just (StartAnnounced (Countdown "SQ1" 180)) ]
+
+    it "Bakú: en el descanso tras la bandera cuenta hasta la parte siguiente" $
+      let bakuQ = (malaysiaQuali "" "Started")
+                    { fsStartDate = Just "2026-09-25T16:00:00"
+                    , fsGmtOffset = Just "04:00:00"
+                    , fsFlags = [ FeedFlag "2026-09-25T12:04:00" "GREEN" "Track"
+                                , FeedFlag "2026-09-25T12:22:00" "CHEQUERED" "Track" ]
+                    , fsNotices = [ notice "2026-09-25T12:00:34" "Q1 WILL START AT 16:04"
+                                  , notice "2026-09-25T12:27:16" "Q2 WILL START AT 16:29" ]
+                    }
+          now = addUTCTime (12 * 3600 + 28 * 60) (UTCTime (fromGregorian 2026 9 25) 0)
+       in siCountdown (feedSession now bakuQ) `shouldBe` Just (Countdown "Q2" 60)
+
+    it "P3 de Malasia: con la roja cuenta hasta la reanudación, y con la verde se acaba" $
+      let p3 flags = (malaysiaQuali "" "Started")
+                       { fsStartDate = Just "2026-10-03T12:30:00"
+                       , fsFlags = flags
+                       , fsNotices = [notice "2026-10-03T04:57:59" "SESSION WILL RESUME AT 12:59"]
+                       }
+          red   = [FeedFlag "2026-10-03T04:54:23" "RED" "Track"]
+          green = red <> [FeedFlag "2026-10-03T04:59:00" "GREEN" "Track"]
+       in [ siCountdown (feedSession (at 3 4 58 0) (p3 red))
+          , siCountdown (feedSession (at 3 4 59 30) (p3 green))
+          ]
+            `shouldBe` [Just (Countdown "Reanuda" 60), Nothing]
+
+    it "de lo guardado no sale ninguna cuenta: la salida anunciada pasa a «sale tarde»" $
+      let shown = feedSession (at 4 8 22 30) (upTo "2026-10-04T08:22:30" race)
+       in (siCountdown (freezeClock shown), siStart (freezeClock shown))
+            `shouldBe` (Nothing, Just StartDelayed)
+
+    it "la cuenta en texto lleva la hora local del final, y da la vuelta a medianoche" $ do
+      countdownText (6 * 3600 + 27 * 60 + 16) (Countdown "Q2" 104) `shouldBe` "Q2 en 1:44 · 06:29"
+      countdownText (23 * 3600 + 59 * 60) (Countdown "Salida" 120) `shouldBe` "Salida en 2:00 · 00:01"
+      upNextLabel 0 NextDelayed `shouldBe` "Salida retrasada"
+      catchUp 4 (NextAnnounced (Countdown "Salida" 10)) `shouldBe` NextAnnounced (Countdown "Salida" 6)
+
+    it "en el sitio del estado la cuenta va detrás de la bandera, y con la sesión rodando no" $
+      [ bandPieces (Just SessionChequered) Nothing (Just "Q2 en 1:44 · 06:29")
+      , bandPieces (Just SessionStarted) Nothing (Just "Q2 en 1:44 · 06:29")
+      ]
+        `shouldBe`
+          [ [PieceFlag ChequeredFlag, PieceWord "Q2 en 1:44 · 06:29"]
+          , [PieceWord "En marcha"] ]
+
   describe "trackCondition" $ do
     it "nombra amarilla, Safety Car, roja, VSC y VSC terminando; lo despejado no dice nada" $
       map (trackCondition . (`FeedTrack` "")) ["1", "2", "4", "5", "6", "7", "3", ""]
@@ -1619,6 +1756,8 @@ main = hspec $ do
           , siClock   = Nothing
           , siPart    = Nothing
           , siTrack   = Nothing
+          , siCountdown = Nothing
+          , siStart   = Nothing
           }
 
     it "pasado el margen sí dice que acabó, y lo dice MARCADO como deducido" $
@@ -1664,6 +1803,8 @@ main = hspec $ do
           , siClock   = Nothing
           , siPart    = Nothing
           , siTrack   = Nothing
+          , siCountdown = Nothing
+          , siStart   = Nothing
           }
 
   -- Cómo el backend guarda el calendario: cada sesión con su gran premio, juntados
@@ -2288,13 +2429,13 @@ main = hspec $ do
     it "la que rueda calla, y la que no se sabe lo dice" $
       -- Los dos silencios son distintos: uno es a propósito y el otro es el arranque
       -- del proceso. En blanco los dos, no se distinguirían.
-      map upNextLabel [NextSilent, NextUnknown] `shouldBe` ["", "Próxima: …"]
+      map (upNextLabel 0) [NextSilent, NextUnknown] `shouldBe` ["", "Próxima: …"]
 
     it "la que aún no empieza no se nombra: ya está escrita al lado" $
-      upNextLabel (NextStartsIn (12 * 60)) `shouldBe` "empieza en 12 min"
+      upNextLabel 0 (NextStartsIn (12 * 60)) `shouldBe` "empieza en 12 min"
 
     it "y la siguiente sí, con su etiqueta delante" $
-      upNextLabel (NextAfter "Azerbaijan Grand Prix" (6 * 86400 + 19 * 3600))
+      upNextLabel 0 (NextAfter "Azerbaijan Grand Prix" (6 * 86400 + 19 * 3600))
         `shouldBe` "Azerbaijan Grand Prix · en 6 d 19 h"
 
     it "el tic descuenta un segundo de las dos que cuentan" $
@@ -2365,23 +2506,23 @@ main = hspec $ do
     it "una sesión conservada sin estado deja los dos asteriscos solos" $
       -- Es lo que le da ancla al aviso: sin ellos, el caso que esto arregla sería
       -- el único que no se avisa.
-      (bandPieces Nothing Nothing, bandMark True Nothing) `shouldBe` ([], "**")
+      (bandPieces Nothing Nothing Nothing, bandMark True Nothing) `shouldBe` ([], "**")
 
     it "sin estado y sin conservar no hay nada que leer" $
-      (bandPieces Nothing Nothing, bandMark False Nothing) `shouldBe` ([], "")
+      (bandPieces Nothing Nothing Nothing, bandMark False Nothing) `shouldBe` ([], "")
 
   -- Lo que tiene símbolo va dibujado y lo demás, con palabra (decidido el
   -- 2026-10-05).
   describe "bandPieces" $ do
     it "la bandera a cuadros y la roja se dibujan; los demás estados se nombran" $
-      map (\s -> bandPieces (Just s) Nothing)
+      map (\s -> bandPieces (Just s) Nothing Nothing)
           [SessionChequered, SessionRedFlag, SessionStarted, SessionFinalised]
         `shouldBe`
           [ [PieceFlag ChequeredFlag], [PieceFlag RedFlag]
           , [PieceWord "En marcha"], [PieceWord "Finalizada"] ]
 
     it "la pista va detrás del estado, dibujada o nombrada" $
-      map (bandPieces (Just SessionStarted) . Just)
+      map (\t -> bandPieces (Just SessionStarted) (Just t) Nothing)
           [TrackYellow, TrackRed, TrackSafetyCar, TrackVsc, TrackVscEnding]
         `shouldBe`
           [ [PieceWord "En marcha", PieceFlag YellowFlag]
@@ -2392,22 +2533,22 @@ main = hspec $ do
           ]
 
     it "con la sesión por empezar también: la roja de la salida suspendida de Malasia" $
-      bandPieces (Just SessionInactive) (Just TrackRed)
+      bandPieces (Just SessionInactive) (Just TrackRed) Nothing
         `shouldBe` [PieceWord "Por empezar", PieceFlag RedFlag]
 
     it "con la bandera, la roja o la sesión acabada, la pista no se enseña" $
       -- La amarilla de la sesión anterior viaja en la foto hasta el anuncio de la
       -- siguiente; y con la roja de control de carrera la pista también dice roja.
-      map (\s -> bandPieces (Just s) (Just TrackYellow))
+      map (\s -> bandPieces (Just s) (Just TrackYellow) Nothing)
           [SessionChequered, SessionRedFlag, SessionFinalised]
         `shouldBe`
           [[PieceFlag ChequeredFlag], [PieceFlag RedFlag], [PieceWord "Finalizada"]]
 
     it "los huecos: la palabra o la bandera de cada pieza, y el separador solo entre dos" $ do
-      let two = bandPieces (Just SessionStarted) (Just TrackYellow)
+      let two = bandPieces (Just SessionStarted) (Just TrackYellow) Nothing
       (pieceWord (listToMaybe two), pieceFlag (listToMaybe (drop 1 two)), pieceSeparator two)
         `shouldBe` ("En marcha", Just YellowFlag, " · ")
-      pieceSeparator (bandPieces (Just SessionStarted) Nothing) `shouldBe` ""
+      pieceSeparator (bandPieces (Just SessionStarted) Nothing Nothing) `shouldBe` ""
       (pieceWord Nothing, pieceFlag Nothing) `shouldBe` ("", Nothing)
 
     it "cada bandera se nombra al pasar el ratón" $
@@ -3711,12 +3852,12 @@ main = hspec $ do
         `shouldBe` Just (SessionClock 5400 True)
 
     it "mientras la sesión rueda, la derecha dice la vuelta o, sin ella, el reloj" $ do
-      bandRight NextSilent (Just (LapProgress 23 57)) Nothing `shouldBe` "Vuelta 23/57"
-      bandRight NextSilent Nothing (Just (SessionClock 754 True)) `shouldBe` "Quedan 12:34"
-      bandRight NextSilent Nothing Nothing `shouldBe` ""
+      bandRight 0 NextSilent (Just (LapProgress 23 57)) Nothing `shouldBe` "Vuelta 23/57"
+      bandRight 0 NextSilent Nothing (Just (SessionClock 754 True)) `shouldBe` "Quedan 12:34"
+      bandRight 0 NextSilent Nothing Nothing `shouldBe` ""
 
     it "si no rueda, la derecha dice la próxima sesión aunque haya vuelta" $
-      bandRight (NextStartsIn (12 * 60)) (Just (LapProgress 57 57)) Nothing
+      bandRight 0 (NextStartsIn (12 * 60)) (Just (LapProgress 57 57)) Nothing
         `shouldBe` "empieza en 12 min"
 
     it "mientras espera, la tabla no tiene filas pero sí dice qué viene después" $
@@ -5018,7 +5159,7 @@ sessionAt gp st = (stateless gp) {siState = Just (StateReading st Heard)}
 
 -- | Y una sin estado ninguno, que es lo que sirve OpenF1 en el borde.
 stateless :: T.Text -> SessionInfo
-stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing Nothing Nothing Nothing
+stateless gp = SessionInfo "Race" "Race" gp Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 -- | 07:00 — hora y cuarto __antes__ de que la ventana de P1 abra.
 bakuLongBefore :: UTCTime
@@ -5474,6 +5615,8 @@ raceSessionFixture =
     , siClock   = Just (SessionClock 5400 True)
     , siPart    = Nothing
     , siTrack   = Nothing
+    , siCountdown = Nothing
+    , siStart   = Nothing
     }
 
 -- | Una sesión con el tipo, el nombre y el gran premio que se le pidan, __sin
