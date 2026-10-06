@@ -142,6 +142,7 @@ import           Common.Types                (ComparisonEntry (..),
                                               LapProgress (..), LiveTable (..),
                                               LiveTimingRow (..), bestLapMarks,
                                               RowBreak (..), rowBreaks,
+                                              cutOffLabel, overCutOff,
                                               lapSeconds,
                                               SessionClock (..),
                                               SessionInfo (..),
@@ -2998,6 +2999,36 @@ main = hspec $ do
 
   -- Las rayas de la tabla de una clasificación, con la forma de la Q de Malasia: 22
   -- coches, [22, 16, 10] por parte, y los eliminados abajo cuando el feed los marca.
+  -- El 107 % de la Q1, con la Q de Bakú a las 12:10:30 UTC: corte 1:53.171, BOT con
+  -- 1:48.290 todavía marcado por el feed como fuera, HAM con 1:57.767 y PER sin vuelta.
+  describe "cutOffLabel y overCutOff" $ do
+    let q1 state cut = raceSessionFixture
+          { siType = "Qualifying", siName = "Qualifying", siPart = Just 1
+          , siState = Just (StateReading state Heard), siCutOffTime = cut }
+        qrow n d best = LiveTimingRow n d "" "" "" "" Running best "" [best, "-", "-"] False True
+        baku = [qrow 9 "BOT" "1:48.290", qrow 18 "HAM" "1:57.767", qrow 22 "PER" "-"]
+    it "junto al título, el corte solo en la Q1" $ do
+      cutOffLabel (q1 SessionStarted (Just "1:45.800")) `shouldBe` Just "107 %: 1:45.800"
+      cutOffLabel (q1 SessionStarted (Just "1:43.230")) {siPart = Just 2} `shouldBe` Nothing
+      cutOffLabel (q1 SessionStarted Nothing) `shouldBe` Nothing
+
+    it "mientras la Q1 rueda, solo quien tiene vuelta más lenta que el corte, aunque el feed marque a más" $
+      overCutOff (Just (q1 SessionStarted (Just "1:53.171"))) baku `shouldBe` [False, True, False]
+
+    it "desde la bandera de la Q1, también quien no tiene vuelta" $
+      overCutOff (Just (q1 SessionChequered (Just "1:53.171"))) baku `shouldBe` [False, True, True]
+
+    it "si el feed no lo marca, tampoco: ni con vuelta lenta ni tras la bandera" $
+      -- Los tiempos son los de Bakú; la marca apagada es el caso contrario al de BOT,
+      -- que no se vio en la grabación (el feed nunca marcó tarde).
+      overCutOff (Just (q1 SessionChequered (Just "1:53.171"))) (map (\r -> r {ltCutoff = False}) baku)
+        `shouldBe` [False, False, False]
+
+    it "fuera de la Q1, nadie" $ do
+      overCutOff (Just (q1 SessionStarted (Just "1:53.171")) {siPart = Just 2}) baku
+        `shouldBe` [False, False, False]
+      overCutOff Nothing baku `shouldBe` [False, False, False]
+
   describe "rowBreaks" $ do
     let quali name part = Just raceSessionFixture
           {siType = "Qualifying", siName = name, siPart = Just part, siEntries = [22, 16, 10]}

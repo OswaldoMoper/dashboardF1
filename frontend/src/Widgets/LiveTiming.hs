@@ -40,10 +40,13 @@ import           Common.Types  (DriverStatus (..), LiveTable (..),
                                 LiveTimingRow (..), RowBreak (..),
                                 SessionInfo (..),
                                 SessionState (..), StateReading (..),
-                                bestLapMarks, rowBreaks, sessionInProgress,
+                                bestLapMarks, cutOffLabel, overCutOff,
+                                rowBreaks, sessionInProgress,
                                 statusLabel,
                                 waitingTable)
 import           Control.Monad (forM_)
+import           Data.List     (zip4)
+import           Data.Maybe    (fromMaybe)
 import           Data.Set      (Set)
 import qualified Data.Set      as Set
 import           Data.Text     (Text)
@@ -55,8 +58,9 @@ import           Reflex.Dom
 data LiveState
   = Loading
   | Failed
-  | Loaded [LiveTimingRow] [Maybe RowBreak]
-    -- ^ Las filas y la raya que va encima de cada una ('Common.Types.rowBreaks').
+  | Loaded [LiveTimingRow] [Maybe RowBreak] [Bool]
+    -- ^ Las filas, la raya que va encima de cada una ('Common.Types.rowBreaks') y
+    -- si va fuera del 107 % ('Common.Types.overCutOff').
   | Waiting Text
     -- ^ Con retraso, mientras nada es tan viejo: el aviso de la espera.
   deriving (Eq)
@@ -68,8 +72,8 @@ data LiveState
 -- diez segundos— aunque el dato no hubiera cambiado. Con 'holdUniqDyn' encima, se
 -- monta solo cuando cambia lo que se ve.
 --
--- __Se queda con las filas y, de la sesión, solo con sus rayas__
--- ('Common.Types.rowBreaks'): de la sesión se encarga la banda de la página
+-- __Se queda con las filas y, de la sesión, solo con sus rayas y el 107 %__
+-- ('Common.Types.rowBreaks', 'Common.Types.overCutOff'): de la sesión se encarga la banda de la página
 -- ('Pages.Dashboard.sessionBand'), y meterla entera aquí haría remontar la tabla
 -- cada vez que avanzara el reloj.
 liveStateOf :: Poll (Sourced LiveTable) -> LiveState
@@ -80,7 +84,9 @@ liveStateOf p =
       | pollLastFailed p -> Failed
       | otherwise        -> Loading
   where
-    loaded t = Loaded (liveRows t) (rowBreaks (liveSession t) (liveRows t))
+    loaded t =
+      Loaded (liveRows t) (rowBreaks (liveSession t) (liveRows t))
+        (overCutOff (liveSession t) (liveRows t))
 
 -- | De qué sesión son las filas que se están enseñando, si se sabe.
 --
@@ -166,8 +172,11 @@ delayedLive delay poll = do
 -- | Tabla de live timing, alimentada por el directo que le pasa quien la monta.
 liveTimingWidget :: MonadWidget t m => LiveView t -> m ()
 liveTimingWidget live = divClass "widget widget--live-timing" $ do
+  cutOff <- holdUniqDyn ((cutOffLabel =<<) . sessionOf <$> lvPoll live)
   closed <- divClass "widget__head" $ do
-    el "h2" $ text "Live Timing"
+    el "h2" $ do
+      text "Live Timing"
+      elClass "span" "live-timing__cutoff" $ dynText (fromMaybe "" <$> cutOff)
     c <- columnsMenu
     liveBadge (lvDelay live) (indicatorOf <$> lvPoll live)
     pure c
@@ -197,34 +206,37 @@ liveTimingWidget live = divClass "widget widget--live-timing" $ do
       elClass "p" "status status--error" $ text "Error al cargar /api/live"
     renderState _ (Waiting label) =
       elClass "p" "status status--loading" $ text label
-    renderState closed (Loaded rows breaks) =
+    renderState closed (Loaded rows breaks overs) =
       elClass "table" "live-timing" $ do
         el "thead" $ el "tr" $
           forM_ cols $ \c -> elClass "th" (liveColumnClass c) $ text (liveColumnLabel c)
-        el "tbody" $ mapM_ (row cols) (zip3 rows (bestLapMarks rows) breaks)
+        el "tbody" $
+          mapM_ (row cols) (zip4 rows (bestLapMarks rows) breaks overs)
       where
         cols = shownColumns closed
 
     row :: DomBuilder t m
-        => [LiveColumn] -> (LiveTimingRow, (Bool, Bool), Maybe RowBreak) -> m ()
-    row cols (r, marks, brk) = do
+        => [LiveColumn] -> (LiveTimingRow, (Bool, Bool), Maybe RowBreak, Bool) -> m ()
+    row cols (r, marks, brk, over) = do
       case brk of
         Just (BreakKnockedOut label) ->
           elClass "tr" "live-timing__break" $
             elAttr "td" ("colspan" =: T.pack (show (length cols))) $ text label
         _ -> blank
       elClass "tr" (rowClass r brk) $
-        forM_ cols $ \c -> elClass "td" (cellClass c marks) $ text (cellText c r)
+        forM_ cols $ \c -> elClass "td" (cellClass c marks) $ text (cellText c over r)
 
-    cellText :: LiveColumn -> LiveTimingRow -> Text
-    cellText ColPos      = T.pack . show . ltPosition
-    cellText ColDriver   = ltDriver
-    cellText ColTeam     = ltTeam
-    cellText ColGap      = ltGap
-    cellText ColInterval = ltInterval
-    cellText ColLastLap  = ltLastLap
-    cellText ColBestLap  = ltBestLap
-    cellText ColState    = statusLabel . ltStatus
+    -- Un abandono gana a «>107 %»: dice más de por qué la fila no cuenta.
+    cellText :: LiveColumn -> Bool -> LiveTimingRow -> Text
+    cellText ColPos _      = T.pack . show . ltPosition
+    cellText ColDriver _   = ltDriver
+    cellText ColTeam _     = ltTeam
+    cellText ColGap _      = ltGap
+    cellText ColInterval _ = ltInterval
+    cellText ColLastLap _  = ltLastLap
+    cellText ColBestLap _  = ltBestLap
+    cellText ColState over = \r ->
+      if over && ltStatus r == Running then ">107 %" else statusLabel (ltStatus r)
 
     -- La más rápida de la sesión, en negrita; la de la parte en curso, en morado
     -- ('Common.Types.bestLapMarks').

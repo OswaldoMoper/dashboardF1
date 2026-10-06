@@ -133,6 +133,30 @@ rowBreaks session = map (\r -> session >>= breakAbove r)
                <$> listToMaybe (filter above [1 .. part - 1])
         else if above part then Just BreakCut else Nothing
 
+-- | El 107 % junto al título de Live Timing: @107 %: 1:45.800@. Solo en la Q1: en las
+-- siguientes el feed sigue mandando el último.
+cutOffLabel :: SessionInfo -> Maybe Text
+cutOffLabel s
+  | siPart s == Just 1 = ("107 %: " <>) <$> siCutOffTime s
+  | otherwise          = Nothing
+
+-- | Qué filas llevan «>107 %» en Estado, en el orden de entrada; solo en la Q1.
+-- Mientras rueda, quien tiene vuelta más lenta que el corte; desde su bandera, también
+-- quien no tiene ninguna.
+--
+-- __Tienen que decirlo los dos, el feed ('ltCutoff') y el tiempo contra el corte__:
+-- el feed marca de más durante un rato (una vuelta ya dentro del corte que se enseña
+-- puede seguir marcada), y lo que sabe el feed y no los tiempos no se contradice.
+overCutOff :: Maybe SessionInfo -> [LiveTimingRow] -> [Bool]
+overCutOff session = map over
+  where
+    q1 = session >>= \s -> if siPart s == Just 1 then Just s else Nothing
+    flagged s = (srState <$> siState s) == Just SessionChequered
+    over r = case (q1, lapSeconds =<< listToMaybe (ltPartBests r)) of
+      (Just s, Just lap) -> ltCutoff r && maybe False (lap >) (lapSeconds =<< siCutOffTime s)
+      (Just s, Nothing)  -> ltCutoff r && flagged s
+      _                  -> False
+
 -- | Un tiempo de vuelta en segundos: @«1:23.456»@ o @«59.876»@; 'Nothing' si no lo es
 -- (la raya, vacío).
 lapSeconds :: Text -> Maybe Double

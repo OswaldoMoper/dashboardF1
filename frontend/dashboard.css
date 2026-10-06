@@ -661,6 +661,15 @@ body {
   opacity: 0.55;
 }
 
+/* El 107 % de la Q1, pegado al título. */
+.live-timing__cutoff {
+  margin-left: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--c-muted);
+}
+
 /* Clasificación (2026-10-06): los eliminados, en gris bajo su raya «fuera en Q1»,
    centrada; y la raya roja, solo la línea, encima del primero que cae. */
 .live-timing__row--knocked td {
