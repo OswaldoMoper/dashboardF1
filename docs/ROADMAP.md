@@ -706,7 +706,10 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
 - [ ] **Todo lo que el feed sabe de una clasificación** (2026-10-03 (c) y (d)). Decidido: la parte en la banda,
       los descansos con la cuenta atrás que anuncia control de carrera, los eliminados aparte y en gris, la zona de
       eliminación con una raya roja, el 107 % en Q1, la bandera roja y el estado de pista en la banda, y Best Lap
-      como la menor de todas las partes. Falta el código.
+      como la menor de todas las partes. **Hecho, la banda** (2026-10-05 (a) y (b)): la parte («Q2», «SQ2»), la
+      bandera a cuadros, la roja y la amarilla dibujadas, el estado de pista detrás del estado, y las cuentas hasta
+      la parte siguiente, la reanudación y una salida retrasada, que también se dice cuando no llega a su hora.
+      **Falta, la tabla:** los eliminados, la raya roja, el 107 % y Best Lap.
 - [ ] **Columnas nuevas en Live Timing, Radio, Tiempo, avisos de control de carrera y la dependencia de OpenF1.**
       Cada una con lo medido y sus decisiones por tomar; sin decidir.
 
