@@ -690,7 +690,10 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       (2026-10-01). **Hecho:** la respuesta de 1 a 5 coches, «Δ contra» en la leyenda (2026-10-02 (c)), el piloto
       sin vuelta (2026-10-02 (d)), el tipo en el título y la Telemetría comparativa (2026-10-02 (e)). **Falta:**
       Lap Speed Trace y Lap Delta, elegir hasta cinco pilotos, comparar sesiones (con el selector de sesión) y el
-      directo. **Sin decidir:** contra quién se mide la Δ con tres o más pilotos.
+      directo. **Decidido, sin programar** (2026-10-06 (e)): Lap Speed Trace con la velocidad estirada al alto de la
+      tarjeta (mínimo 150 px; 100 con otra gráfica), y en todos los tipos la fila de fronteras turnándose con una banda
+      de sectores al pulsarla. La Telemetría comparativa cabe en 55 u (2026-10-06 (d)). **Sin decidir:** contra quién
+      se mide la Δ con tres o más pilotos, y que el usuario elija qué gráficas salen en las trazas.
 - [x] **Live Timing: la vuelta rápida y las columnas a elegir** (2026-10-02 (f) y (g)). «Best Lap» con la más
       rápida de la sesión en negrita y la de la parte en curso en morado, y un panel «Columnas ▾» que cierra
       cualquier columna salvo «Pos» y «Driver», dejando siempre una de las de tiempo o estado. Por tarjeta y sin
@@ -709,7 +712,10 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       como la menor de todas las partes. **Hecho, la banda** (2026-10-05 (a) y (b)): la parte («Q2», «SQ2»), la
       bandera a cuadros, la roja y la amarilla dibujadas, el estado de pista detrás del estado, y las cuentas hasta
       la parte siguiente, la reanudación y una salida retrasada, que también se dice cuando no llega a su hora.
-      **Falta, la tabla:** los eliminados, la raya roja, el 107 % y Best Lap.
+      **Hecho, la tabla** (2026-10-06 (b) y (c)): los eliminados en gris bajo «fuera en Q1» (y «fuera en Q2»), la
+      raya roja hasta que el feed los marca, Best Lap como la menor de todas las partes, y en la Q1 el 107 % junto al
+      título y «>107 %» cuando lo dicen el feed y el tiempo. **Falta:** conservarlo cuando vuelve OpenF1 (con la
+      dependencia de OpenF1) y verlo en una clasificación de verdad.
 - [ ] **Columnas nuevas en Live Timing, Radio, Tiempo, avisos de control de carrera y la dependencia de OpenF1.**
       Cada una con lo medido y sus decisiones por tomar; sin decidir.
 
