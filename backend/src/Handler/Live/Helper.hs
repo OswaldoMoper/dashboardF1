@@ -332,6 +332,9 @@ feedRows = map toRow . sortOn frPosition
         , ltStatus   = feedStatus (frStatus r)
         , ltBestLap  = frBestLap r
         , ltPartBestLap = frPartBestLap r
+        , ltPartBests   = frPartBests r
+        , ltKnockedOut  = frKnockedOut r
+        , ltCutoff      = frCutoff r
         }
 
 -- | El estado del feed, que viaja como el nombre del constructor.
@@ -380,6 +383,8 @@ feedSession now fs =
         , siTrack     = trackCondition =<< fsTrack fs
         , siCountdown = Nothing
         , siStart     = Nothing
+        , siEntries   = fsEntries fs
+        , siCutOffTime = fsCutOffTime fs
         }
 
 -- | Lo que control de carrera anuncia con hora, por su texto. Las formas son las de
@@ -659,6 +664,8 @@ openf1Session now os grandPrix =
     , siTrack   = Nothing
     , siCountdown = Nothing
     , siStart   = Nothing
+    , siEntries = []
+    , siCutOffTime = Nothing
     }
 
 -- | Por qué vuelta va y de cuántas, si la sesión las cuenta.
@@ -1318,4 +1325,7 @@ assembleRows drivers positions intervals laps results =
           , ltStatus   = maybe Running statusOf mr
           , ltBestLap  = bestLap
           , ltPartBestLap = ""
+          , ltPartBests   = []
+          , ltKnockedOut  = False
+          , ltCutoff      = False
           }

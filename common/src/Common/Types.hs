@@ -78,6 +78,13 @@ data LiveTimingRow = LiveTimingRow
   , ltPartBestLap :: Text
     -- ^ Mejor vuelta en la parte en curso de una clasificación (Q1, Q2 o Q3), o
     -- @"-"@; __vacío__ si la sesión no tiene partes o la fuente no las sabe.
+  , ltPartBests :: [Text]
+    -- ^ La mejor de cada parte de una clasificación, en orden, @"-"@ en la que no
+    -- tiene vuelta. Vacía fuera de clasificación.
+  , ltKnockedOut :: Bool  -- ^ Eliminado en una parte anterior de la clasificación.
+  , ltCutoff     :: Bool
+    -- ^ Sin tiempo dentro del 107 %, también quien aún no ha marcado vuelta. __No es
+    -- la zona de eliminación.__
   }
   deriving stock (Eq, Show, Generic)
 
@@ -452,6 +459,12 @@ data SessionInfo = SessionInfo
   , siStart   :: Maybe StartNotice
     -- ^ Con la sesión por empezar, si sale tarde. 'Nothing' si nada dice que se
     -- retrase.
+  , siEntries :: [Int]
+    -- ^ Cuántos entran en cada parte de una clasificación, en orden (@[22, 16, 10]@).
+    -- Vacía fuera de clasificación.
+  , siCutOffTime :: Maybe Text
+    -- ^ El tiempo del 107 % (@\"1:45.800\"@). __Tras la primera parte sigue llegando
+    -- el último__: quien lo enseñe mira 'siPart'.
   }
   deriving stock (Eq, Show, Generic)
 
@@ -659,12 +672,13 @@ tickClock c
   | otherwise   = c
 
 -- | La sesión mientras la página espera a tener algo con el retraso pedido: se sabe
--- cuál es, pero su estado, su vuelta, su reloj, su parte y su pista todavía no se
--- enseñan.
+-- cuál es, pero su estado, su vuelta, su reloj, su parte, su pista y su 107 % todavía
+-- no se enseñan.
 waitingSession :: SessionInfo -> SessionInfo
 waitingSession s =
   s { siState = Nothing, siLaps = Nothing, siClock = Nothing, siPart = Nothing
-    , siTrack = Nothing, siCountdown = Nothing, siStart = Nothing }
+    , siTrack = Nothing, siCountdown = Nothing, siStart = Nothing
+    , siCutOffTime = Nothing }
 
 -- | La tabla mientras la página espera: la sesión según 'waitingSession' y sin filas.
 -- __Lo que viene después sí se dice__: solo cuenta cómo acabó la sesión si la página se
