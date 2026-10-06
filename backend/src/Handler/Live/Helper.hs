@@ -38,6 +38,7 @@ module Handler.Live.Helper
     -- * Transformaciones puras
   , assembleRows
   , feedRows
+  , sessionBestLap
   , feedStatus
   , feedSession
   , Notice (..)
@@ -78,7 +79,7 @@ import           Common.Types          (Countdown (..), DriverStatus (..),
                                         SessionInfo (..), SessionState (..),
                                         StartNotice (..), StateBasis (..),
                                         StateReading (..), TrackCondition (..),
-                                        UpNext (..), partLabel,
+                                        UpNext (..), lapSeconds, partLabel,
                                         sessionInProgress, sessionIsLive,
                                         sessionStateFrom)
 import           Control.Applicative   ((<|>))
@@ -88,7 +89,7 @@ import           Data.Aeson            (FromJSON (..), Value (..), withObject,
 import           Data.Aeson.Types      (Parser)
 import           Data.Foldable         (toList)
 import           Data.Function         (on)
-import           Data.List             (find, maximumBy, sortOn)
+import           Data.List             (find, maximumBy, minimumBy, sortOn)
 import           Data.List.NonEmpty    (nonEmpty)
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as Map
@@ -330,12 +331,22 @@ feedRows = map toRow . sortOn frPosition
         , ltInterval = frInterval r
         , ltLastLap  = frLastLap r
         , ltStatus   = feedStatus (frStatus r)
-        , ltBestLap  = frBestLap r
+        , ltBestLap  = sessionBestLap (frBestLap r) (frPartBests r)
         , ltPartBestLap = frPartBestLap r
         , ltPartBests   = frPartBests r
         , ltKnockedOut  = frKnockedOut r
         , ltCutoff      = frCutoff r
         }
+
+-- | La mejor vuelta de la sesión de una fila del feed: la menor entre la que trae y
+-- la de cada parte. __En una clasificación el feed vacía la suya al empezar cada
+-- parte__, y la de las anteriores solo sobrevive en la lista por partes. Sin ningún
+-- tiempo que leer, la que trae, tal cual.
+sessionBestLap :: Text -> [Text] -> Text
+sessionBestLap best parts =
+  case [(s, lap) | lap <- best : parts, Just s <- [lapSeconds lap]] of
+    []    -> best
+    timed -> snd (minimumBy (comparing fst) timed)
 
 -- | El estado del feed, que viaja como el nombre del constructor.
 --

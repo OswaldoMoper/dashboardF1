@@ -206,7 +206,7 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               classificationGaps,
                                               classificationTime, clockVerdict,
                                               derivedState, endMargin, feedRows,
-                                              feedSession, feedStatus,
+                                              feedSession, feedStatus, sessionBestLap,
                                               trackCondition, Notice (..),
                                               Announced (..), parseNotice,
                                               announcedAt,
@@ -2283,6 +2283,22 @@ main = hspec $ do
           , ("ANT", ["-", "-", "-"], False, True)
           , ("PER", ["1:38.933", "-", "-"], True, False)
           ]
+
+    it "Best Lap es la menor de todas las partes: el feed vacía la suya en cada parte" $
+      -- VER y PER, de la Q2 de Malasia: VER sin vuelta en ella y PER eliminado; ANT
+      -- sin ninguna vuelta todavía.
+      fmap (map (\r -> (ltDriver r, ltBestLap r)) . feedRows) (tryFeedRows feedRowsMalaysiaQ2)
+        `shouldBe` Right [("VER", "1:36.477"), ("ANT", "-"), ("PER", "1:38.933")]
+
+    it "con vuelta en varias partes gana la menor, sea de la parte que sea" $ do
+      -- VER y HAD en la Q3 de Malasia (08:52 UTC): VER aún sin vuelta en la Q3, HAD
+      -- con la más rápida de la sesión en ella.
+      sessionBestLap "-" ["1:36.477", "1:35.696", "-"] `shouldBe` "1:35.696"
+      sessionBestLap "1:35.558" ["1:36.898", "1:36.192", "1:35.558"] `shouldBe` "1:35.558"
+
+    it "fuera de clasificación no cambia nada, ni lo que no es un tiempo" $
+      map (uncurry sessionBestLap) [("1:29.345", []), ("-", []), ("", [])]
+        `shouldBe` ["1:29.345", "-", ""]
 
     it "y la sesión servida, cuántos entran en cada parte y el 107 %" $
       fmap ((\s -> (siEntries s, siCutOffTime s)) . feedSession raceServedAt)
