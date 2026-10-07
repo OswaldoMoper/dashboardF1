@@ -53,7 +53,9 @@ import           Common.Chart                (chartHeight, chartPad, chartWidth,
                                               axisPoints, axisPolyline,
                                               axisRange, axisTicks, axisZeroY,
                                               deltaRange, frontierCells,
-                                              frontierCellsAt, zeroLineY)
+                                              frontierCellsAt, zeroLineY,
+                                              SectorSpan (..), SectorPace (..),
+                                              sectorSpans, sectorPace)
 import           Common.Comparison           (Axis (..), Baseline (..),
                                               LapGeometry (..), anchored,
                                               axesInOrder, axisLabel,
@@ -91,7 +93,7 @@ import           Common.Traces               (Channel (..), axisEnd,
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
-                                              controlMaxWidth, tracesInset,
+                                              controlMaxWidth, tracesInset, rowTitle,
                                               controlWidth, defaultControlSide,
                                               defaultMode, insideAxisLabels,
                                               modeEnabled, modeFromKey,
@@ -3173,6 +3175,25 @@ main = hspec $ do
       frontierCellsAt [0, 50] [0, 0.1, 0.2, 0.3] `shouldBe` []
       frontierCells [0, 0.1, 0.2, 0.3] `shouldBe` frontierCellsAt (map (\(x, _, _) -> x) (frontierCells [0, 0.1, 0.2, 0.3])) [0, 0.1, 0.2, 0.3]
 
+    it "la banda: un tramo por sector entre fronteras, con la Δ acumulada y lo que pasó dentro" $ do
+      let deltas = [0, -0.014, 0.791, 0.634]
+          pieces = sectorSpans (frontierCellsAt [0, 25.32, 58.81, 99.37] deltas) deltas
+      map spName pieces `shouldBe` ["S1", "S2", "S3"]
+      map spValue pieces `shouldBe` ["\8722\&0.014 s", "+0.791 s", "+0.634 s"]
+      map spPace pieces `shouldBe` [SectorFaster, SectorSlower, SectorFaster]
+      map spLeft pieces `shouldBe` [0, 25.32, 58.81]
+      and (zipWith (\p w -> abs (spWidth p - w) < 1e-9) pieces [25.32, 33.49, 40.56]) `shouldBe` True
+
+    it "la banda: ninguna sin las cuatro fronteras o sin los cuatro valores" $ do
+      sectorSpans (frontierCellsAt [0, 30, 70, 100] [0, 0.1, 0.2, 0.3]) [0, 0.1] `shouldBe` []
+      sectorSpans [] [0, 0.1, 0.2, 0.3] `shouldBe` []
+
+    it "un sector empata si da 0.000 al milésimo, aunque la resta arrastre decimales" $ do
+      map sectorPace [0, 0.0004, -0.0004] `shouldBe` replicate 3 SectorEven
+      map sectorPace [0.001, -0.001] `shouldBe` [SectorSlower, SectorFaster]
+      map spPace (sectorSpans (frontierCellsAt [0, 30, 70, 100] [0, 0.3, 0.1 + 0.2, 0.4]) [0, 0.3, 0.1 + 0.2, 0.4])
+        `shouldBe` [SectorSlower, SectorEven, SectorSlower]
+
     it "la curva: X hasta la mayor y la Y en la fila del canal; el freno, en escalones" $ do
       tracePoints three Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
       tracePoints three Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
@@ -3198,6 +3219,13 @@ main = hspec $ do
     it "cada modo tiene su valor en el desplegable, y un valor ajeno no es ninguno" $ do
       map (modeFromKey . modeKey) modesInOrder `shouldBe` map Just modesInOrder
       modeFromKey "eje" `shouldBe` Nothing
+
+    it "la fila dice qué hace pulsarla; desde la banda, en «Valores», se vuelve a los valores" $ do
+      map (`rowTitle` False) modesInOrder `shouldBe` replicate 3 "Pulsa para ver los sectores como banda"
+      map (`rowTitle` True) modesInOrder
+        `shouldBe` [ "Pulsa para volver a los valores"
+                   , "Pulsa para volver a Inicio · S1 · S2 · S3"
+                   , "Pulsa para volver a Inicio · S1 · S2 · S3" ]
 
     it "Valores pinta los valores; Solo eje, los nombres; Eje y valores, las dos líneas" $ do
       map showsValues modesInOrder `shouldBe` [True, False, True]

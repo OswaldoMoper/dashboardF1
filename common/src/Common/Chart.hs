@@ -36,6 +36,11 @@ module Common.Chart
     -- * Fronteras
   , frontierCells
   , frontierCellsAt
+    -- * La banda de sectores
+  , SectorPace (..)
+  , sectorPace
+  , SectorSpan (..)
+  , sectorSpans
     -- * Eje
   , axisRange
   , axisTicks
@@ -141,6 +146,43 @@ frontierCellsAt at xs
   | otherwise = []
   where
     names = ["Inicio", "S1", "S2", "S3"]
+
+-- | Cómo le fue al comparado dentro de un sector, contra la base.
+data SectorPace
+  = SectorFaster  -- ^ Más rápido que la base.
+  | SectorEven    -- ^ Igual al milésimo.
+  | SectorSlower  -- ^ Más lento.
+  deriving stock (Eq, Show)
+
+-- | El 'SectorPace' de lo que el comparado ganó o perdió en un sector, en segundos
+-- (comparado − base): empate si da @0.000@ al milésimo.
+sectorPace :: Double -> SectorPace
+sectorPace d
+  | abs d < 0.0005 = SectorEven
+  | d < 0          = SectorFaster
+  | otherwise      = SectorSlower
+
+-- | Un tramo de la banda de sectores: de una frontera a la siguiente.
+data SectorSpan = SectorSpan
+  { spLeft  :: Double      -- ^ Dónde empieza, en tanto por ciento del ancho.
+  , spWidth :: Double      -- ^ Cuánto mide, en tanto por ciento.
+  , spName  :: Text        -- ^ @S1@, @S2@ o @S3@.
+  , spValue :: Text        -- ^ La Δ acumulada al acabar el tramo, como en su frontera.
+  , spPace  :: SectorPace  -- ^ Lo que pasó dentro del tramo.
+  }
+  deriving stock (Eq, Show)
+
+-- | Los tres tramos de la banda, entre las celdas de la fila de fronteras
+-- ('frontierCells' o 'frontierCellsAt') y con la Δ acumulada en esas cuatro
+-- fronteras. Vacía si no son cuatro celdas y cuatro valores.
+sectorSpans :: [(Double, Text, Text)] -> [Double] -> [SectorSpan]
+sectorSpans cells deltas
+  | length cells == 4 && length deltas == 4 =
+      [ SectorSpan x0 (x1 - x0) name value (sectorPace (d1 - d0))
+      | ((x0, _, _), (x1, name, value), (d0, d1)) <-
+          zip3 cells (drop 1 cells) (zip deltas (drop 1 deltas))
+      ]
+  | otherwise = []
 
 -- | El rango del eje vertical con las marcas: el de 'deltaRange' con cada extremo
 -- alargado hasta el múltiplo del paso de 'axisTicks' más lejano del cero, cuando

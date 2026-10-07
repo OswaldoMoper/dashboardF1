@@ -1098,9 +1098,10 @@ body {
 
 /* La fila de fronteras: cada celda va centrada en la X de su punto (`left` lo pone
    el widget). Para que la primera y la última no se salgan, el widget le da a la
-   fila un margen a cada lado. */
+   fila un margen a cada lado. Se pulsa para turnarla con la banda de sectores. */
 .comparison__frontiers {
   position: relative;
+  cursor: pointer;
   height: 2.5rem;
   margin-top: var(--sp-1);
 }
@@ -1130,6 +1131,81 @@ body {
 .comparison__frontier-value {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* La banda: una raya gris entre fronteras, con una marca en cada una y el texto en
+   medio, centrada en el alto de la fila. El texto lleva el color de cómo le fue al
+   comparado en el sector. */
+.comparison__band-piece {
+  position: absolute;
+  top: 50%;
+  height: 16px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-left: 1px solid var(--c-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  container-type: inline-size;
+}
+
+.comparison__band-piece:last-child {
+  border-right: 1px solid var(--c-muted);
+}
+
+.comparison__band-piece::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid var(--c-muted);
+}
+
+.comparison__band-label {
+  position: relative;
+  padding: 0 4px;
+  background: var(--c-surface);
+}
+
+.comparison__band-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.comparison__band-piece--faster { color: var(--c-fastest); }
+.comparison__band-piece--even   { color: var(--c-ok); }
+.comparison__band-piece--slower { color: var(--c-warn); }
+
+.comparison__band-label--names .comparison__band-sep,
+.comparison__band-label--names .comparison__band-value,
+.comparison__band-label--values .comparison__band-name,
+.comparison__band-label--values .comparison__band-sep {
+  display: none;
+}
+
+/* Si el texto no cabe en su tramo, primero se quita el nombre y después el valor.
+   Los umbrales son el ancho medido de «S1: −0.014 s» y de «−0.014 s» con su
+   relleno, en la letra de la hoja. */
+@container (max-width: 72px) {
+  .comparison__band-label--both .comparison__band-name,
+  .comparison__band-label--both .comparison__band-sep {
+    display: none;
+  }
+}
+
+@container (max-width: 52px) {
+  .comparison__band-label--both .comparison__band-value,
+  .comparison__band-label--values .comparison__band-value {
+    display: none;
+  }
+
+  .comparison__band-label--both .comparison__band-name,
+  .comparison__band-label--values .comparison__band-name {
+    display: inline;
+  }
 }
 
 /* Los colores de las dos rayas repiten los de las líneas del gráfico, que el widget

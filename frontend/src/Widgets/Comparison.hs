@@ -51,8 +51,10 @@
 module Widgets.Comparison where
 
 import           Client        (fetchJson)
-import           Common.Chart  (axisPolyline, axisTicks, axisZeroY, chartHeight,
-                                chartWidth, frontierCells, frontierCellsAt)
+import           Common.Chart  (SectorPace (..), SectorSpan (..), axisPolyline,
+                                axisTicks, axisZeroY, chartHeight,
+                                chartWidth, frontierCells, frontierCellsAt,
+                                sectorSpans)
 import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         axisColumnWidth, cardLayout, curveInset,
                                         tracesInset,
@@ -60,6 +62,7 @@ import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         insideAxisLabels, modeEnabled,
                                         modeFromKey, modeKey, modeOption,
                                         modesInOrder, otherSide, rowHeight,
+                                        rowTitle,
                                         shownMode, showsNames, showsValues,
                                         stretchFor, valueHeight,
                                         valuesFitMeasured, vsBeside)
@@ -122,6 +125,7 @@ data CState
 -- El eje vertical va siempre. El desplegable de modos elige qué lleva la fila de
 -- fronteras y enseña el modo que se ve ('Common.ComparisonCard.shownMode'); la
 -- elección del usuario se guarda aparte y vuelve en cuanto caben las dos líneas.
+-- Pulsar la fila la turna con la banda de sectores ('frontierRowAt'); abre con la fila.
 --
 -- El selector va fuera de los 'dyn_', que lo devolverían a su valor inicial en cada
 -- respuesta; sus opciones entran como 'Dynamic' (2026-08-07).
@@ -150,16 +154,19 @@ comparisonWidget revealed = mdo
       pb      <- getPostBuild
       gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
       grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
-      (picked, chosenE) <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
+      ((picked, chosenE), rowClicks) <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
         r <- elDynAttr "div" (controlAttrs <$> layout) $ do
           r' <- carSelector grid (shownComparison <$> st) (vsNextTo <$> layout)
                   (modeSelect fits shown)
           dyn_ (controlState <$> st)
           pure r'
-        divClass "comparison__plot" $
-          dyn_ ( plotView (dyn_ (banner <$> zipDyn refresh st))
-                   <$> shown <*> layout <*> (otherSide <$> side) <*> v <*> stretch <*> st )
-        pure r
+        clicks <- divClass "comparison__plot" $
+          switchHold never =<< dyn
+            ( plotView (dyn_ (banner <$> zipDyn refresh st))
+                <$> ((\c s -> RowMode c s band) <$> chosen <*> shown) <*> layout
+                <*> (otherSide <$> side) <*> v <*> stretch <*> st )
+        pure (r, clicks)
+      band    <- toggle False rowClicks
       b       <- legendRow ty axis st
       wanted  <- holdUniqDyn ((\t n -> if chartTypeTraces t then n else 0) <$> ty <*> samples)
       drivers <- holdDyn Nothing (Just <$> picked)
@@ -716,32 +723,42 @@ lapLabel e = divClass "comparison__lap" $ do
     elClass "span" "comparison__car" $ text ("#" <> ceCar e)
   elClass "span" "comparison__time" $ text (lapShown e)
 
--- | La gráfica según el reparto, el lado del eje y el modo que se ve: la curva, el
+-- | Lo que la fila de fronteras necesita para turnarse con la banda de sectores: el
+-- modo elegido, que decide qué lleva la banda; el que se ve, que decide la fila y su
+-- alto (la banda no lo cambia), y si está puesta la banda.
+data RowMode t = RowMode
+  { rmChosen :: ChartMode
+  , rmShown  :: ChartMode
+  , rmBand   :: Dynamic t Bool
+  }
+
+-- | La gráfica según el reparto, el lado del eje y el modo de la fila: la curva, el
 -- eje vertical (en su columna o dentro, según 'clAxisInside') y la fila de
--- fronteras con las líneas que pida el modo. El primer argumento se pinta encima
--- de la curva, dentro de su lienzo: el aviso de la petición. Si la referencia no
--- tiene vuelta, en lugar de todo eso va el aviso de 'Common.Comparison.missingReference'.
--- El penúltimo argumento es lo que se estira la velocidad del tipo 2.
+-- fronteras. El primer argumento se pinta encima de la curva, dentro de su lienzo:
+-- el aviso de la petición. Si la referencia no tiene vuelta, en lugar de todo eso va
+-- el aviso de 'Common.Comparison.missingReference'. El penúltimo argumento es lo que
+-- se estira la velocidad del tipo 2. Devuelve los clics en la fila ('never' sin fila).
 plotView
   :: MonadWidget t m
-  => m () -> ChartMode -> CardLayout -> Side -> View -> Double -> CState -> m ()
+  => m () -> RowMode t -> CardLayout -> Side -> View -> Double -> CState -> m (Event t ())
 plotView _ _ _ _ _ _ Loading =
-  elClass "p" "status status--loading" $ text "Cargando…"
+  never <$ elClass "p" "status status--loading" (text "Cargando…")
 plotView _ _ _ _ _ _ Failed =
-  elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
-plotView overlay m l axis v stretch (Loaded c)
-  | Just note <- missingReference (vBase v) c = elClass "p" "status status--empty" $ text note
-  | chartTypeTraces (vType v) = tracesView overlay m v stretch c
+  never <$ elClass "p" "status status--error" (text "Error al cargar /api/comparison")
+plotView overlay rm l axis v stretch (Loaded c)
+  | Just note <- missingReference (vBase v) c = never <$ elClass "p" "status status--empty" (text note)
+  | chartTypeTraces (vType v) = tracesView overlay rm v stretch c
   | otherwise =
       elAttr "div" (plotRowAttrs axis) $ do
-        divClass "comparison__plotarea" $ do
+        clicks <- divClass "comparison__plotarea" $ do
           divClass "comparison__canvas" $ do
             deltaChart series
             when (clAxisInside l) $
               mapM_ insideTick (insideAxisLabels axis (clChart l) series)
             overlay
-          frontierRow (showsNames m) (showsValues m) series
+          frontierRow rm series
         unless (clAxisInside l) $ axisColumn axis series
+        pure clicks
   where
     series = seriesOf (vBase v) c
 
@@ -755,8 +772,9 @@ plotView overlay m l axis v stretch (Loaded c)
 -- estira; los rótulos van en HTML encima, en porcentaje del ancho. El lienzo y la fila
 -- entran 'Common.ComparisonCard.tracesInset'. La velocidad sola se estira lo que diga
 -- el cuarto argumento ('Common.Traces.TraceRows').
-tracesView :: MonadWidget t m => m () -> ChartMode -> View -> Double -> LapComparison -> m ()
-tracesView overlay m v stretch c = case lcEntries c of
+tracesView
+  :: MonadWidget t m => m () -> RowMode t -> View -> Double -> LapComparison -> m (Event t ())
+tracesView overlay rm v stretch c = case lcEntries c of
   ref : other : _ -> do
     let axis  = vAxis v
         cars  = [(other, traceOtherColor), (ref, traceRefColor)]
@@ -788,8 +806,8 @@ tracesView overlay m v stretch c = case lcEntries c of
       traceLabel ("left: 0; top: " <> px (tracesHeight rows - 13)) "0"
       traceLabel ("right: 0; top: " <> px (tracesHeight rows - 13)) (axisEndLabel axis xMax)
       overlay
-    frontierRowAt tracesInset (showsNames m) (showsValues m) cells
-  _ -> blank
+    frontierRowAt tracesInset rm delta cells
+  _ -> pure never
   where
     rows = TraceRows (traceChannels (vType v)) stretch
     frontierPair = maybe [] (\(a, b) -> [a, b])
@@ -904,30 +922,66 @@ deltaChart series = do
     svgEl "svg" curveAttrs $ svgEl "polyline" (polylineAttrs series) blank
 
 -- | Debajo del gráfico, el nombre y el valor de cada frontera —o solo uno de los
--- dos, según los dos primeros argumentos—, cada uno centrado en la X de su punto
+-- dos, según el modo que se ve—, cada uno centrado en la X de su punto
 -- ('Common.Chart.frontierCells'). Van en HTML y no dentro del @\<svg\>@, que se
 -- estira a lo ancho y deformaría el texto. La fila entra 'curveInset' por lado,
 -- como la curva, para que el primero y el último no se salgan.
-frontierRow :: DomBuilder t m => Bool -> Bool -> [Double] -> m ()
-frontierRow names values series =
-  frontierRowAt (curveInset, curveInset) names values (frontierCells series)
+frontierRow :: MonadWidget t m => RowMode t -> [Double] -> m (Event t ())
+frontierRow rm series =
+  frontierRowAt (curveInset, curveInset) rm series (frontierCells series)
 
--- | 'frontierRow' con las celdas ya colocadas y su margen a la izquierda y a la
--- derecha, en px: el de las trazas ('Common.ComparisonCard.tracesInset'), cuyas
--- fronteras no caen a espacio igual.
-frontierRowAt :: DomBuilder t m => (Double, Double) -> Bool -> Bool -> [(Double, Text, Text)] -> m ()
-frontierRowAt _ _ _ [] = blank
-frontierRowAt margins names values cells =
-  elAttr "div" rowAttrs $ mapM_ (frontierCell names values) cells
+-- | 'frontierRow' con su margen a la izquierda y a la derecha, en px —el de las
+-- trazas es 'Common.ComparisonCard.tracesInset'—, la Δ en las cuatro fronteras y las
+-- celdas ya colocadas, porque en las trazas las fronteras no caen a espacio igual.
+--
+-- Con la banda puesta, en lugar de las celdas van los tramos de
+-- 'Common.Chart.sectorSpans', con lo que pida el modo __elegido__: también el valor
+-- cuando las dos líneas no caben, porque la banda va en una. La fila conserva el
+-- alto del modo que se ve. Devuelve sus clics, que turnan fila y banda.
+frontierRowAt
+  :: MonadWidget t m
+  => (Double, Double) -> RowMode t -> [Double] -> [(Double, Text, Text)] -> m (Event t ())
+frontierRowAt _ _ _ [] = pure never
+frontierRowAt margins rm series cells = do
+  (row, _) <- elDynAttr' "div" (rowAttrs <$> rmBand rm) $ dyn_ (content <$> rmBand rm)
+  pure (domEvent Click row)
   where
-    rowAttrs =
+    shown = rmShown rm
+    rowAttrs band =
       Map.fromList
         [ ("class", rowClass)
         , ("style", insetStyle margins)
+        , ("title", rowTitle (rmChosen rm) band)
         ]
     rowClass
-      | names && values = "comparison__frontiers"
-      | otherwise       = "comparison__frontiers comparison__frontiers--single"
+      | showsNames shown && showsValues shown = "comparison__frontiers"
+      | otherwise = "comparison__frontiers comparison__frontiers--single"
+    content False = mapM_ (frontierCell (showsNames shown) (showsValues shown)) cells
+    content True  = mapM_ (sectorSpan (rmChosen rm)) (sectorSpans cells series)
+
+-- | Un tramo de la banda: la raya entre sus dos fronteras y, en medio, lo que pida el
+-- modo elegido, del color de cómo le fue al comparado en el sector. Si el texto no
+-- cabe en el tramo, la hoja de estilos quita primero el nombre y después el valor.
+sectorSpan :: DomBuilder t m => ChartMode -> SectorSpan -> m ()
+sectorSpan chosen s =
+  elAttr "div" attrs $
+    elClass "span" ("comparison__band-label " <> labelClass) $ do
+      elClass "span" "comparison__band-name" $ text (spName s)
+      elClass "span" "comparison__band-sep" $ text ": "
+      elClass "span" "comparison__band-value" $ text (spValue s)
+  where
+    attrs =
+      Map.fromList
+        [ ("class", "comparison__band-piece " <> paceClass (spPace s))
+        , ("style", "left: " <> formatFixed 3 (spLeft s) <> "%; width: " <> formatFixed 3 (spWidth s) <> "%")
+        ]
+    labelClass
+      | showsNames chosen && showsValues chosen = "comparison__band-label--both"
+      | showsValues chosen                      = "comparison__band-label--values"
+      | otherwise                               = "comparison__band-label--names"
+    paceClass SectorFaster = "comparison__band-piece--faster"
+    paceClass SectorEven   = "comparison__band-piece--even"
+    paceClass SectorSlower = "comparison__band-piece--slower"
 
 -- | El @style@ de un margen a la izquierda y otro a la derecha, en px.
 insetStyle :: (Double, Double) -> Text

@@ -17,6 +17,7 @@ module Common.ComparisonCard
   , shownMode
   , showsValues
   , showsNames
+  , rowTitle
   , rowHeight
   , valuesRowFits
   , valuesFitMeasured
@@ -95,6 +96,13 @@ showsValues = (/= ModeAxis)
 -- | Si el modo pinta la línea de nombres (@Inicio · S1 · S2 · S3@).
 showsNames :: ChartMode -> Bool
 showsNames = (/= ModeValues)
+
+-- | El texto al pasar el ratón por la fila de fronteras, que se pulsa para turnarla
+-- con la banda de sectores: con el modo elegido y si está puesta la banda.
+rowTitle :: ChartMode -> Bool -> Text
+rowTitle _ False         = "Pulsa para ver los sectores como banda"
+rowTitle ModeValues True = "Pulsa para volver a los valores"
+rowTitle _ True          = "Pulsa para volver a Inicio · S1 · S2 · S3"
 
 -- | Alto de la fila de fronteras en ese modo, con su margen.
 rowHeight :: ChartMode -> Double
