@@ -691,11 +691,14 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       sin vuelta (2026-10-02 (d)), el tipo en el título y la Telemetría comparativa (2026-10-02 (e)), que cabe en
       55 u (2026-10-06 (d)). **Hecho, Lap Speed Trace** (2026-10-06 (e) y (g)): la velocidad sola llena el alto de la
       tarjeta, con mínimo de 150 px; la fila de fronteras se decide con la velocidad en su mínimo. La tarjeta se vuelve
-      a medir cuando cambia su tamaño, también al cambiar de tipo (2026-10-06 (f)). **Falta:** Lap Delta, elegir hasta
-      cinco pilotos, comparar sesiones (con el selector de sesión), el directo, y en todos los tipos la fila de
-      fronteras turnándose con una banda de sectores al pulsarla (decidido, sin programar). **Sin decidir:** si las
-      barras de Lap Delta son las trazas, contra quién se mide la Δ con tres o más pilotos, que el usuario elija qué
-      gráficas salen en las trazas, y dónde va el valor de S3, que en las trazas se sale por el borde derecho.
+      a medir cuando cambia su tamaño, también al cambiar de tipo (2026-10-06 (f)). **Hecho:** las trazas dejan sitio
+      al primer y al último valor de la fila, con cada valor centrado sobre su línea (2026-10-07 (a)), y en todos los
+      tipos la fila se turna con una banda de sectores al pulsarla, con el valor dentro de cada tramo y el color de lo
+      que pasó en el sector (2026-10-07 (b)). **Falta:** elegir hasta cinco pilotos, con una curva por piloto contra
+      la base en Delta por sectores (2026-10-07 (d)), comparar sesiones (con el selector de sesión) y el directo.
+      **Sin decidir:** Lap Delta, que sigue sin gráficas hasta poder redimensionar las tarjetas (2026-10-07 (c)); con
+      varios pilotos, el color de cada uno, los valores de la fila y el color de la banda; y que el usuario elija qué
+      gráficas salen en las trazas.
 - [x] **Live Timing: la vuelta rápida y las columnas a elegir** (2026-10-02 (f) y (g)). «Best Lap» con la más
       rápida de la sesión en negrita y la de la parte en curso en morado, y un panel «Columnas ▾» que cierra
       cualquier columna salvo «Pos» y «Driver», dejando siempre una de las de tiempo o estado. Por tarjeta y sin
