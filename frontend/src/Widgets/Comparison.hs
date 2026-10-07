@@ -55,6 +55,7 @@ import           Common.Chart  (axisPolyline, axisTicks, axisZeroY, chartHeight,
                                 chartWidth, frontierCells, frontierCellsAt)
 import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         axisColumnWidth, cardLayout, curveInset,
+                                        tracesInset,
                                         defaultControlSide, defaultMode,
                                         insideAxisLabels, modeEnabled,
                                         modeFromKey, modeKey, modeOption,
@@ -751,8 +752,9 @@ plotView overlay m l axis v stretch (Loaded c)
 -- o el dummy— no se pinta, y sin ninguna quedan los canales vacíos.
 --
 -- Las líneas van en un @\<svg\>@ que se estira a lo ancho, con trazo que no se
--- estira; los rótulos van en HTML encima, en porcentaje del ancho. La velocidad sola
--- se estira lo que diga el cuarto argumento ('Common.Traces.TraceRows').
+-- estira; los rótulos van en HTML encima, en porcentaje del ancho. El lienzo y la fila
+-- entran 'Common.ComparisonCard.tracesInset'. La velocidad sola se estira lo que diga
+-- el cuarto argumento ('Common.Traces.TraceRows').
 tracesView :: MonadWidget t m => m () -> ChartMode -> View -> Double -> LapComparison -> m ()
 tracesView overlay m v stretch c = case lcEntries c of
   ref : other : _ -> do
@@ -763,7 +765,7 @@ tracesView overlay m v stretch c = case lcEntries c of
         cells = case boundaryXs axis ref of
           Just xs | not (null delta) -> frontierCellsAt (map (xPercent xMax) xs) delta
           _                          -> []
-    divClass "comparison__canvas comparison__canvas--traces" $ do
+    elAttr "div" (Map.fromList [("class", "comparison__canvas comparison__canvas--traces"), ("style", insetStyle tracesInset)]) $ do
       svgEl "svg" (tracesAttrs rows) $ do
         forM_ (trChannels rows) $ \ch -> do
           let range@(lo, hi) = channelRange ch [ref, other]
@@ -786,7 +788,7 @@ tracesView overlay m v stretch c = case lcEntries c of
       traceLabel ("left: 0; top: " <> px (tracesHeight rows - 13)) "0"
       traceLabel ("right: 0; top: " <> px (tracesHeight rows - 13)) (axisEndLabel axis xMax)
       overlay
-    frontierRowAt 0 (showsNames m) (showsValues m) cells
+    frontierRowAt tracesInset (showsNames m) (showsValues m) cells
   _ -> blank
   where
     rows = TraceRows (traceChannels (vType v)) stretch
@@ -907,24 +909,30 @@ deltaChart series = do
 -- estira a lo ancho y deformaría el texto. La fila entra 'curveInset' por lado,
 -- como la curva, para que el primero y el último no se salgan.
 frontierRow :: DomBuilder t m => Bool -> Bool -> [Double] -> m ()
-frontierRow names values series = frontierRowAt curveInset names values (frontierCells series)
+frontierRow names values series =
+  frontierRowAt (curveInset, curveInset) names values (frontierCells series)
 
--- | 'frontierRow' con las celdas ya colocadas y su margen por lado, en px: el de las
--- trazas, cuyas fronteras no caen a espacio igual y cuya curva no entra.
-frontierRowAt :: DomBuilder t m => Double -> Bool -> Bool -> [(Double, Text, Text)] -> m ()
+-- | 'frontierRow' con las celdas ya colocadas y su margen a la izquierda y a la
+-- derecha, en px: el de las trazas ('Common.ComparisonCard.tracesInset'), cuyas
+-- fronteras no caen a espacio igual.
+frontierRowAt :: DomBuilder t m => (Double, Double) -> Bool -> Bool -> [(Double, Text, Text)] -> m ()
 frontierRowAt _ _ _ [] = blank
-frontierRowAt margin names values cells =
+frontierRowAt margins names values cells =
   elAttr "div" rowAttrs $ mapM_ (frontierCell names values) cells
   where
     rowAttrs =
       Map.fromList
         [ ("class", rowClass)
-        , ("style", "margin-left: " <> inset <> "; margin-right: " <> inset)
+        , ("style", insetStyle margins)
         ]
-    inset = formatFixed 1 margin <> "px"
     rowClass
       | names && values = "comparison__frontiers"
       | otherwise       = "comparison__frontiers comparison__frontiers--single"
+
+-- | El @style@ de un margen a la izquierda y otro a la derecha, en px.
+insetStyle :: (Double, Double) -> Text
+insetStyle (left, right) =
+  "margin-left: " <> formatFixed 1 left <> "px; margin-right: " <> formatFixed 1 right <> "px"
 
 -- | Una celda de 'frontierRow': qué líneas lleva, y la X, el nombre y el valor de su
 -- frontera.

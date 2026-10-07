@@ -43,6 +43,7 @@ module Common.ComparisonCard
   , axisGap
   , axisColumnWidth
   , curveInset
+  , tracesInset
   , valuesRowHeight
   , singleRowHeight
   , cardPadding
@@ -266,6 +267,13 @@ crossing lo hi ((x1, y1), (x2, y2))
 -- salga. Las líneas del eje no lo llevan: van de borde a borde.
 curveInset :: Double
 curveInset = valueWidth / 2
+
+-- | Margen de las trazas a la izquierda y a la derecha, en px. El lienzo y su fila de
+-- fronteras entran lo mismo, así que cada valor sigue centrado sobre su línea. Por la
+-- derecha, medio valor, para que el de S3 no pase el borde; por la izquierda, la
+-- mitad, y el de Inicio se mete el resto en el hueco junto a la tabla de mando.
+tracesInset :: (Double, Double)
+tracesInset = (curveInset / 2, curveInset)
 
 -- | Media anchura del trazo de la curva (@stroke-width@ 2).
 curveHalfStroke :: Double

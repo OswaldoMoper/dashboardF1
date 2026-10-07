@@ -91,7 +91,7 @@ import           Common.Traces               (Channel (..), axisEnd,
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               Side (..), carSelectWidth,
                                               cardLayout, columnGap, curveInset,
-                                              controlMaxWidth,
+                                              controlMaxWidth, tracesInset,
                                               controlWidth, defaultControlSide,
                                               defaultMode, insideAxisLabels,
                                               modeEnabled, modeFromKey,
@@ -3258,6 +3258,11 @@ main = hspec $ do
     it "los cuatro valores, centrados en sus puntos, caben desde ~162,5 px de gráfica" $ do
       valuesFit 162.4 `shouldBe` False
       valuesFit 162.5 `shouldBe` True
+
+    it "las trazas dejan medio valor a la derecha, y a la izquierda el valor se mete la mitad" $ do
+      let (left, right) = tracesInset
+      right `shouldSatisfy` (>= valueWidth / 2)
+      near (valueWidth / 2 - left) left `shouldBe` True
 
     it "por debajo de ~323,5 px se apila, y apilada la gráfica tiene todo el ancho" $ do
       clStacked (cardLayout 323.5) `shouldBe` False
