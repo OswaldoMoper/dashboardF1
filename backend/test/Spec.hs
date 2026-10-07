@@ -84,7 +84,8 @@ import           Common.Traces               (Channel (..), axisEnd,
                                               traceXs, tracePoints,
                                               tracesHeight, xPercent,
                                               traceChannels, channelsSpan,
-                                              channelHeight,
+                                              channelHeight, TraceRows (..),
+                                              stretchesSpeed,
                                               channelCaption, axisEndLabel,
                                               readSamples, samplesStart)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
@@ -96,7 +97,7 @@ import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
                                               modeEnabled, modeFromKey,
                                               modeKey, rowHeight, showsNames,
                                               showsValues, singleRowHeight,
-                                              valuesFitMeasured,
+                                              valuesFitMeasured, stretchFor,
                                               valuesRowHeight,
                                               modeLabel, modeOption,
                                               modesInOrder,
@@ -3090,6 +3091,8 @@ main = hspec $ do
 
   describe "Common.Traces" $ do
     let near a b = abs (a - b) < 1e-9
+        three = TraceRows channelsInOrder 0
+        speed = TraceRows [Speed]
         nearAll xs ys = length xs == length ys && and (zipWith near xs ys)
         tp t d s th b = MkTracePoint t d s th b
         car c sectors frontiers trace = MkComparisonEntry
@@ -3101,20 +3104,28 @@ main = hspec $ do
                   [tp 0 0 90 1 0, tp 60 2100 280 0.4 1, tp 110 4200 190 0 0]
     it "tres filas de arriba abajo: velocidad 100, acelerador 50 y freno 20, con 19 de rótulo" $ do
       map channelLabel channelsInOrder `shouldBe` ["km/h", "Acelerador %", "Freno"]
-      map (channelHeight channelsInOrder) channelsInOrder `shouldBe` [100, 50, 20]
-      map (channelTop channelsInOrder) channelsInOrder `shouldBe` [19, 138, 207]
-      tracesHeight channelsInOrder `shouldBe` 243
-      channelsSpan channelsInOrder `shouldBe` (19, 227)
+      map (channelHeight three) channelsInOrder `shouldBe` [100, 50, 20]
+      map (channelTop three) channelsInOrder `shouldBe` [19, 138, 207]
+      tracesHeight three `shouldBe` 243
+      channelsSpan three `shouldBe` (19, 227)
 
     it "los canales de cada tipo: el 3 los tres, el 2 la velocidad, el 1 y el 4 ninguno" $ do
       map traceChannels chartTypesInOrder `shouldBe` [[], [Speed], channelsInOrder, []]
-      channelTop [Speed] Speed `shouldBe` 19
-      tracesHeight [Speed] `shouldBe` 185
-      channelsSpan [Speed] `shouldBe` (19, 169)
+      channelTop (speed 0) Speed `shouldBe` 19
+      tracesHeight (speed 0) `shouldBe` 185
+      channelsSpan (speed 0) `shouldBe` (19, 169)
 
     it "la velocidad mide 150 si va sola y 100 con otra fila" $ do
-      channelHeight [Speed] Speed `shouldBe` 150
-      map (\o -> channelHeight [Speed, o] Speed) [Throttle, Brake] `shouldBe` [100, 100]
+      channelHeight (speed 0) Speed `shouldBe` 150
+      map (\o -> channelHeight (TraceRows [Speed, o] 0) Speed) [Throttle, Brake] `shouldBe` [100, 100]
+
+    it "solo la velocidad sola se estira: 150 más lo estirado; el tipo 3 no cambia" $ do
+      map stretchesSpeed [[Speed], channelsInOrder, [Speed, Brake], []] `shouldBe` [True, False, False, False]
+      channelHeight (speed 23) Speed `shouldBe` 173
+      tracesHeight (speed 23) `shouldBe` 208
+      channelsSpan (speed 23) `shouldBe` (19, 192)
+      tracesHeight (TraceRows channelsInOrder 50) `shouldBe` 243
+      channelHeight (TraceRows [Speed, Brake] 40) Speed `shouldBe` 100
 
     it "la velocidad hasta la máxima redondeada a 50; el acelerador y el freno, fijos" $ do
       channelRange Speed [ref, other] `shouldBe` (0, 300)
@@ -3163,11 +3174,11 @@ main = hspec $ do
       frontierCells [0, 0.1, 0.2, 0.3] `shouldBe` frontierCellsAt (map (\(x, _, _) -> x) (frontierCells [0, 0.1, 0.2, 0.3])) [0, 0.1, 0.2, 0.3]
 
     it "la curva: X hasta la mayor y la Y en la fila del canal; el freno, en escalones" $ do
-      tracePoints channelsInOrder Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
-      tracePoints channelsInOrder Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
+      tracePoints three Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
+      tracePoints three Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
         `shouldBe` "0.0,227.0 300.0,227.0 300.0,207.0 600.0,207.0 600.0,227.0"
-      tracePoints channelsInOrder Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
-      tracePoints [Speed] Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,119.0 300.0,19.0 600.0,69.0"
+      tracePoints three Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
+      tracePoints (speed 0) Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,119.0 300.0,19.0 600.0,69.0"
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9
@@ -3198,6 +3209,22 @@ main = hspec $ do
     it "en una tarjeta de 326,5 de alto, las dos líneas caben hasta 302,5 de contenido" $ do
       valuesFitMeasured 326.5 302.5 33 `shouldBe` True
       valuesFitMeasured 326.5 291 21 `shouldBe` False
+
+    it "lo que se estira la velocidad del tipo 2 en Race Overview a 1912 × 914" $ do
+      -- 50 u: «Eje y valores» cabe con la velocidad en 150 y se estira 23 (173 px)
+      valuesFitMeasured 338 291 33 `shouldBe` True
+      stretchFor 338 291 0 `shouldBe` 23
+      -- ya estirada, la medida siguiente la deja igual, y la fila se mide con la mínima
+      stretchFor 338 314 23 `shouldBe` 23
+      stretchFor 338 313.6 23 `shouldBe` 23
+      valuesFitMeasured 338 314 (33 + 23) `shouldBe` True
+      -- 46 u: con la velocidad en 150 no cabe «Eje y valores»; con «Solo eje», 157 px
+      valuesFitMeasured 310 291 33 `shouldBe` False
+      stretchFor 310 279 0 `shouldBe` 7
+      -- 44 u: ni con «Solo eje»: 150 y scroll
+      stretchFor 296 279 0 `shouldBe` 0
+      -- de 55 u a 50 u encoge
+      stretchFor 338 349 58 `shouldBe` 23
 
     prop "da lo mismo medir con una línea, con dos o sin fila" measuredFitAgrees
 

@@ -20,6 +20,7 @@ module Common.ComparisonCard
   , rowHeight
   , valuesRowFits
   , valuesFitMeasured
+  , stretchFor
     -- * Lado de la tabla de mando
   , Side (..)
   , defaultControlSide
@@ -133,6 +134,14 @@ valuesRowFits innerHeight contentWithoutRow =
 valuesFitMeasured :: Double -> Double -> Double -> Bool
 valuesFitMeasured client content row =
   valuesRowFits (client - cardPadding) (content - row)
+
+-- | Lo que se estira una gráfica para llenar la tarjeta, en px enteros, con lo que se
+-- mide en la página: el alto de la tarjeta con su relleno (@clientHeight@), el de su
+-- contenido y lo que está estirada ahora. Crece con el hueco libre y encoge con lo que
+-- sobra, sin bajar de 0: con la tarjeta llena, la medida siguiente lo deja igual.
+stretchFor :: Double -> Double -> Double -> Double
+stretchFor client content now =
+  max 0 (fromIntegral (floor (now + client - cardPadding - content) :: Int))
 
 -- | Un lado de la tarjeta.
 data Side = SideLeft | SideRight

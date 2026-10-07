@@ -11,6 +11,8 @@ module Common.Traces
     Channel (..)
   , channelsInOrder
   , traceChannels
+  , TraceRows (..)
+  , stretchesSpeed
   , channelLabel
   , channelHeight
   , channelTop
@@ -71,13 +73,26 @@ channelLabel Speed    = "km/h"
 channelLabel Throttle = "Acelerador %"
 channelLabel Brake    = "Freno"
 
--- | El alto de una fila entre esas filas, en px: la velocidad 150 si va sola y 100
+-- | Las filas que se pintan, de arriba abajo, y lo que se estira la velocidad sobre
+-- su mínimo, en px; solo cuenta si la velocidad va sola ('stretchesSpeed').
+data TraceRows = TraceRows
+  { trChannels :: [Channel]
+  , trStretch  :: Double
+  }
+  deriving stock (Eq, Show)
+
+-- | Si la velocidad se estira con la tarjeta: solo cuando va sola (2026-10-06 (e));
+-- con otras filas, el tipo 3, espera al modo edición.
+stretchesSpeed :: [Channel] -> Bool
+stretchesSpeed = (== [Speed])
+
+-- | El alto de una fila, en px: la velocidad 150 más lo estirado si va sola y 100
 -- con otra (2026-10-06 (e)). Con los rótulos, el tipo 3 cabe en 55 u de Race
 -- Overview a 1912 × 914 (2026-10-06 (d)).
-channelHeight :: [Channel] -> Channel -> Double
-channelHeight chs Speed
-  | chs == [Speed] = 150
-  | otherwise      = 100
+channelHeight :: TraceRows -> Channel -> Double
+channelHeight r Speed
+  | stretchesSpeed (trChannels r) = 150 + trStretch r
+  | otherwise                     = 100
 channelHeight _ Throttle = 50
 channelHeight _ Brake    = 20
 
@@ -94,19 +109,21 @@ tracesWidth = 600
 
 -- | El alto del lienzo con esas filas, en px y en unidades del @viewBox@, que
 -- coinciden.
-tracesHeight :: [Channel] -> Double
-tracesHeight chs =
-  tracesTop + sum (map (channelHeight chs) chs)
+tracesHeight :: TraceRows -> Double
+tracesHeight r =
+  tracesTop + sum (map (channelHeight r) chs)
     + tracesGap * fromIntegral (max 0 (length chs - 1)) + tracesBottom
+  where
+    chs = trChannels r
 
 -- | Dónde empiezan las filas y dónde acaban, de la primera a la última.
-channelsSpan :: [Channel] -> (Double, Double)
-channelsSpan chs = (tracesTop, tracesHeight chs - tracesBottom)
+channelsSpan :: TraceRows -> (Double, Double)
+channelsSpan r = (tracesTop, tracesHeight r - tracesBottom)
 
 -- | Dónde empieza una fila entre esas filas.
-channelTop :: [Channel] -> Channel -> Double
-channelTop chs ch =
-  tracesTop + sum [channelHeight chs c + tracesGap | c <- chs, c < ch]
+channelTop :: TraceRows -> Channel -> Double
+channelTop r ch =
+  tracesTop + sum [channelHeight r c + tracesGap | c <- trChannels r, c < ch]
 
 -- | El valor de una muestra en un canal: la velocidad en km\/h, el acelerador en %
 -- y el freno, 0 o 1.
@@ -185,15 +202,15 @@ xPercent xMax x
 -- rango y la X mayor de los que se pintan. El freno va en escalones: cada muestra
 -- repite antes el valor de la anterior. Vacío si las X y las muestras no casan.
 tracePoints
-  :: [Channel] -> Channel -> (Double, Double) -> Double -> [Double] -> [TracePoint] -> Text
-tracePoints chs ch (lo, hi) xMax xs ps
+  :: TraceRows -> Channel -> (Double, Double) -> Double -> [Double] -> [TracePoint] -> Text
+tracePoints r ch (lo, hi) xMax xs ps
   | length xs /= length ps || null xs = ""
   | otherwise = T.unwords (concat (zipWith3 point xs ys (Nothing : map Just ys)))
   where
     ys = map (y . channelValue ch) ps
     y v
-      | hi > lo   = channelTop chs ch + channelHeight chs ch * (1 - (v - lo) / (hi - lo))
-      | otherwise = channelTop chs ch + channelHeight chs ch
+      | hi > lo   = channelTop r ch + channelHeight r ch * (1 - (v - lo) / (hi - lo))
+      | otherwise = channelTop r ch + channelHeight r ch
     x v = tracesWidth * xPercent xMax v / 100
     pair a b = formatFixed 1 a <> "," <> formatFixed 1 b
     point xv yv (Just prev) | ch == Brake = [pair (x xv) prev, pair (x xv) yv]

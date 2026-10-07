@@ -60,8 +60,8 @@ import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         modeFromKey, modeKey, modeOption,
                                         modesInOrder, otherSide, rowHeight,
                                         shownMode, showsNames, showsValues,
-                                        valueHeight, valuesFitMeasured,
-                                        vsBeside)
+                                        stretchFor, valueHeight,
+                                        valuesFitMeasured, vsBeside)
 import           Common.Comparison (Axis, Baseline (..), ChartType, Pair (..),
                                     axesInOrder, axisFromKey, axisKey,
                                     axisLabel, axisNotice, baselineFromKey,
@@ -74,13 +74,14 @@ import           Common.Comparison (Axis, Baseline (..), ChartType, Pair (..),
                                     missingReference, noLapFor, pairWith)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPathFor, driversParam, driversPathFor)
-import           Common.Traces (Channel, axisEnd, axisEndLabel, boundaryXs,
-                                channelCaption, channelHeight, channelRange,
-                                channelTop, channelsSpan, frontierXs,
-                                readSamples, samplesMax, samplesMin,
-                                samplesStart, samplesStep, traceChannels,
-                                traceXs, tracePoints, tracesHeight,
-                                tracesWidth, xPercent)
+import           Common.Traces (TraceRows (..), axisEnd, axisEndLabel,
+                                boundaryXs, channelCaption, channelHeight,
+                                channelRange, channelTop, channelsSpan,
+                                frontierXs, readSamples, samplesMax,
+                                samplesMin, samplesStart, samplesStep,
+                                stretchesSpeed, traceChannels, traceXs,
+                                tracePoints, tracesHeight, tracesWidth,
+                                xPercent)
 import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
                                 LapComparison (..))
 import           Control.Monad (forM_, unless, when)
@@ -92,7 +93,8 @@ import           Data.Maybe    (fromMaybe, listToMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
 import qualified GHCJS.DOM     as DOM (currentWindowUnchecked)
-import qualified GHCJS.DOM.Element as DOM (getClientHeight)
+import qualified GHCJS.DOM.DOMRectReadOnly as DOM (getHeight)
+import qualified GHCJS.DOM.Element as DOM (getBoundingClientRect, getClientHeight)
 import qualified GHCJS.DOM.EventM as DOM (on)
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM (resize)
 import qualified GHCJS.DOM.HTMLElement as DOM (getOffsetHeight, getOffsetWidth)
@@ -155,7 +157,7 @@ comparisonWidget revealed = mdo
           pure r'
         divClass "comparison__plot" $
           dyn_ ( plotView (dyn_ (banner <$> zipDyn refresh st))
-                   <$> shown <*> layout <*> (otherSide <$> side) <*> v <*> st )
+                   <$> shown <*> layout <*> (otherSide <$> side) <*> v <*> stretch <*> st )
         pure r
       b       <- legendRow ty axis st
       wanted  <- holdUniqDyn ((\t n -> if chartTypeTraces t then n else 0) <$> ty <*> samples)
@@ -170,13 +172,15 @@ comparisonWidget revealed = mdo
       refresh <- holdDyn InFlight (leftmost [InFlight <$ request, refreshOf <$> resp])
       st      <- foldDyn step Loading resp
       pure (chosenE, st, v)
-  size    <- cardSize root card (current rowNow) changed
+  size    <- cardSize root card (current ((,) <$> rowNow <*> drawn)) changed
+  stretch <- holdUniqDyn (maybe 0 (\(_, _, s) -> s) <$> size)
   stacked <- holdUniqDyn (clStacked <$> layout)
   chosen  <- holdDyn defaultMode userMode
   shown   <- holdUniqDyn (shownMode <$> fits <*> chosen)
-  let layout   = cardLayout . maybe 0 fst <$> size
-      fits     = maybe True snd <$> size
+  let layout   = cardLayout . maybe 0 (\(w, _, _) -> w) <$> size
+      fits     = maybe True (\(_, f, _) -> f) <$> size
       rowNow   = rowHeightNow <$> shown <*> view <*> state
+      drawn    = stretchDrawn <$> view <*> state <*> stretch
       changed  = leftmost
                    [ () <$ updated shown, () <$ updated state, () <$ updated view
                    , () <$ updated stacked, revealed ]
@@ -201,6 +205,16 @@ data View = View
 rowHeightNow :: ChartMode -> View -> CState -> Double
 rowHeightNow m v (Loaded c) | not (null (frontierCells (seriesOf (vBase v) c))) = rowHeight m
 rowHeightNow _ _ _          = 0
+
+-- | Lo que está estirada la velocidad pintada, o 'Nothing' si no hay una velocidad que
+-- se estire pintada: otro tipo, o sin comparación, o con el aviso de la referencia sin
+-- vuelta en su lugar.
+stretchDrawn :: View -> CState -> Double -> Maybe Double
+stretchDrawn v (Loaded c) s
+  | stretchesSpeed (traceChannels (vType v))
+  , Nothing <- missingReference (vBase v) c
+  , _ : _ : _ <- lcEntries c = Just s
+stretchDrawn _ _ _ = Nothing
 
 -- | La serie que se pinta con una base: la Δ del coche que no es la base
 -- ('Common.Comparison.pairWith'), o @[]@.
@@ -312,13 +326,15 @@ baselineSelect = do
     elAttr "option" ("value" =: baselineKey b) $ text (baselineLabel b)
   pure (fromMaybe AgainstReference . baselineFromKey <$> _selectElement_value sel)
 
--- | Lo que se mide de la tarjeta: su ancho por dentro, en px, y si caben las dos
+-- | Lo que se mide de la tarjeta: su ancho por dentro, en px; si caben las dos
 -- líneas de la fila de fronteras sin que pida scroll
--- ('Common.ComparisonCard.valuesFitMeasured', con el alto de la fila pintada que da
--- el 'Behavior').
+-- ('Common.ComparisonCard.valuesFitMeasured', con la velocidad en su mínimo), y lo
+-- que se estira la velocidad pintada para llenarla ('Common.ComparisonCard.stretchFor';
+-- 0 si no hay una que se estire). El 'Behavior' da el alto de la fila pintada y lo
+-- estirado ahora ('stretchDrawn').
 --
--- Se mide al montarse, cada vez que cambia la ventana o el tamaño de la tarjeta
--- ('sizeChanges'), y un instante después de cada evento del último argumento
+-- Se mide al montarse, cada vez que cambia la ventana o el tamaño de la tarjeta o de
+-- su contenido ('sizeChanges'), y un instante después de cada evento del último argumento
 -- (cambios del contenido, o que se acaba de enseñar). Mientras la tarjeta aún no está
 -- en la página, o está oculta, mide 0, y se vuelve a medir cada 0,2 s hasta
 -- 'measureTries' veces. 'Nothing' hasta la primera medida con ancho; no cambia si la
@@ -327,43 +343,45 @@ cardSize
   :: MonadWidget t m
   => Element EventResult GhcjsDomSpace t
   -> Element EventResult GhcjsDomSpace t
-  -> Behavior t Double
+  -> Behavior t (Double, Maybe Double)
   -> Event t ()
-  -> m (Dynamic t (Maybe (Double, Bool)))
-cardSize root card rowNow changed = mdo
+  -> m (Dynamic t (Maybe (Double, Bool, Double)))
+cardSize root card drawnNow changed = mdo
   mounted  <- delay 0 =<< getPostBuild
   win      <- DOM.liftJSM DOM.currentWindowUnchecked
   resized  <- wrapDomEvent win (`DOM.on` DOM.resize) (pure ())
   settled  <- delay 0 changed
-  grown    <- sizeChanges cardEl
-  measured <- performEvent (measure <$> tag rowNow (leftmost [mounted, resized, settled, grown, retry]))
-  let zero = ffilter ((<= 0) . fst) measured
+  grown    <- sizeChanges [_element_raw root, _element_raw card]
+  measured <- performEvent (measure <$> tag drawnNow (leftmost [mounted, resized, settled, grown, retry]))
+  let zero = ffilter (\(w, _, _) -> w <= 0) measured
   tries    <- count zero
   retry    <- delay 0.2 (() <$ ffilter (< measureTries) (tag (current tries) zero))
-  holdUniqDyn =<< holdDyn Nothing (Just <$> ffilter ((> 0) . fst) measured)
+  holdUniqDyn =<< holdDyn Nothing (Just <$> ffilter (\(w, _, _) -> w > 0) measured)
   where
     cardEl = DOM.uncheckedCastTo DOM.HTMLElement (_element_raw card)
-    measure row = DOM.liftJSM $ do
+    measure (row, stretched) = DOM.liftJSM $ do
       w       <- DOM.getOffsetWidth cardEl
       content <- DOM.getOffsetHeight cardEl
       client  <- DOM.getClientHeight (_element_raw root)
-      pure (w, valuesFitMeasured client content row)
+      exact   <- DOM.getHeight =<< DOM.getBoundingClientRect cardEl
+      pure ( w
+           , valuesFitMeasured client content (row + fromMaybe 0 stretched)
+           , maybe 0 (stretchFor client exact) stretched )
 
 -- | Cuántas veces se vuelve a medir una tarjeta que mide 0 (10 s en total).
 measureTries :: Int
 measureTries = 50
 
--- | Un evento cada vez que el navegador ve cambiar el tamaño del elemento, ya pintado
--- (@ResizeObserver@), y una vez al empezar a observarlo. Lo observa mientras viva la
--- página.
-sizeChanges :: MonadWidget t m => DOM.HTMLElement -> m (Event t ())
-sizeChanges e = do
+-- | Un evento cada vez que el navegador ve cambiar el tamaño de alguno de los
+-- elementos, ya pintado (@ResizeObserver@), y al empezar a observarlos. Los observa
+-- mientras viva la página.
+sizeChanges :: MonadWidget t m => [DOM.Element] -> m (Event t ())
+sizeChanges es = do
   (changes, fire) <- newTriggerEvent
   DOM.liftJSM $ do
     cb  <- JS.function (\_ _ _ -> liftIO (fire ()))
     obs <- JS.new (JS.jsg ("ResizeObserver" :: Text)) [JS.toJSVal cb]
-    _   <- obs JS.# ("observe" :: Text) $ [JS.toJSVal e]
-    pure ()
+    forM_ es $ \e -> obs JS.# ("observe" :: Text) $ [JS.toJSVal e]
   pure changes
 
 -- | El botón que pasa la tabla de mando al otro lado. Con la tarjeta apilada no
@@ -702,15 +720,17 @@ lapLabel e = divClass "comparison__lap" $ do
 -- fronteras con las líneas que pida el modo. El primer argumento se pinta encima
 -- de la curva, dentro de su lienzo: el aviso de la petición. Si la referencia no
 -- tiene vuelta, en lugar de todo eso va el aviso de 'Common.Comparison.missingReference'.
+-- El penúltimo argumento es lo que se estira la velocidad del tipo 2.
 plotView
-  :: MonadWidget t m => m () -> ChartMode -> CardLayout -> Side -> View -> CState -> m ()
-plotView _ _ _ _ _ Loading =
+  :: MonadWidget t m
+  => m () -> ChartMode -> CardLayout -> Side -> View -> Double -> CState -> m ()
+plotView _ _ _ _ _ _ Loading =
   elClass "p" "status status--loading" $ text "Cargando…"
-plotView _ _ _ _ _ Failed =
+plotView _ _ _ _ _ _ Failed =
   elClass "p" "status status--error" $ text "Error al cargar /api/comparison"
-plotView overlay m l axis v (Loaded c)
+plotView overlay m l axis v stretch (Loaded c)
   | Just note <- missingReference (vBase v) c = elClass "p" "status status--empty" $ text note
-  | chartTypeTraces (vType v) = tracesView overlay m v c
+  | chartTypeTraces (vType v) = tracesView overlay m v stretch c
   | otherwise =
       elAttr "div" (plotRowAttrs axis) $ do
         divClass "comparison__plotarea" $ do
@@ -731,9 +751,10 @@ plotView overlay m l axis v (Loaded c)
 -- o el dummy— no se pinta, y sin ninguna quedan los canales vacíos.
 --
 -- Las líneas van en un @\<svg\>@ que se estira a lo ancho, con trazo que no se
--- estira; los rótulos van en HTML encima, en porcentaje del ancho.
-tracesView :: MonadWidget t m => m () -> ChartMode -> View -> LapComparison -> m ()
-tracesView overlay m v c = case lcEntries c of
+-- estira; los rótulos van en HTML encima, en porcentaje del ancho. La velocidad sola
+-- se estira lo que diga el cuarto argumento ('Common.Traces.TraceRows').
+tracesView :: MonadWidget t m => m () -> ChartMode -> View -> Double -> LapComparison -> m ()
+tracesView overlay m v stretch c = case lcEntries c of
   ref : other : _ -> do
     let axis  = vAxis v
         cars  = [(other, traceOtherColor), (ref, traceRefColor)]
@@ -743,34 +764,34 @@ tracesView overlay m v c = case lcEntries c of
           Just xs | not (null delta) -> frontierCellsAt (map (xPercent xMax) xs) delta
           _                          -> []
     divClass "comparison__canvas comparison__canvas--traces" $ do
-      svgEl "svg" (tracesAttrs chans) $ do
-        forM_ chans $ \ch -> do
+      svgEl "svg" (tracesAttrs rows) $ do
+        forM_ (trChannels rows) $ \ch -> do
           let range@(lo, hi) = channelRange ch [ref, other]
           forM_ [lo, hi] $ \y -> svgEl "line" (traceGridAttrs (rowY ch range y)) blank
           forM_ cars $ \(e, color) -> do
-            let pts = tracePoints chans ch range xMax (traceXs axis ref e) (ceTrace e)
+            let pts = tracePoints rows ch range xMax (traceXs axis ref e) (ceTrace e)
             unless (T.null pts) $ svgEl "polyline" (tracePolylineAttrs color pts) blank
         when (vFrontiers v) $
           forM_ cars $ \(e, color) ->
             forM_ (frontierPair (frontierXs axis ref e)) $ \x ->
-              svgEl "line" (traceFrontierAttrs chans color (tracesWidth * xPercent xMax x / 100)) blank
-      forM_ chans $ \ch ->
-        traceLabel ("left: 0; top: " <> px (channelTop chans ch - 13)) (channelCaption ch (channelRange ch [ref, other]))
+              svgEl "line" (traceFrontierAttrs rows color (tracesWidth * xPercent xMax x / 100)) blank
+      forM_ (trChannels rows) $ \ch ->
+        traceLabel ("left: 0; top: " <> px (channelTop rows ch - 13)) (channelCaption ch (channelRange ch [ref, other]))
       when (vFrontiers v) $
         forM_ (zip [0 :: Int ..] cars) $ \(row, (e, _)) ->
           forM_ (zip ["S1", "S2"] (frontierPair (frontierXs axis ref e))) $ \(name, x) ->
             traceLabelColored (if row == 0 then "comparison__trace-label--other" else "comparison__trace-label--ref")
               ("left: calc(" <> formatFixed 3 (xPercent xMax x) <> "% + 2px); top: " <> px (if row == 0 then 10 else 0))
               name
-      traceLabel ("left: 0; top: " <> px (tracesHeight chans - 13)) "0"
-      traceLabel ("right: 0; top: " <> px (tracesHeight chans - 13)) (axisEndLabel axis xMax)
+      traceLabel ("left: 0; top: " <> px (tracesHeight rows - 13)) "0"
+      traceLabel ("right: 0; top: " <> px (tracesHeight rows - 13)) (axisEndLabel axis xMax)
       overlay
     frontierRowAt 0 (showsNames m) (showsValues m) cells
   _ -> blank
   where
-    chans = traceChannels (vType v)
+    rows = TraceRows (traceChannels (vType v)) stretch
     frontierPair = maybe [] (\(a, b) -> [a, b])
-    rowY ch (lo, hi) y = channelTop chans ch + channelHeight chans ch * (1 - (y - lo) / (hi - lo))
+    rowY ch (lo, hi) y = channelTop rows ch + channelHeight rows ch * (1 - (y - lo) / (hi - lo))
     px x = formatFixed 1 x <> "px"
     traceLabel style = traceLabelColored "" style
     traceLabelColored extra style t =
@@ -784,13 +805,13 @@ traceOtherColor = "#e7e9ee"
 
 -- | El lienzo de las trazas con esos canales: @viewBox@ de 'Common.Traces' y ancho
 -- fluido.
-tracesAttrs :: [Channel] -> Map Text Text
-tracesAttrs chans =
+tracesAttrs :: TraceRows -> Map Text Text
+tracesAttrs rows =
   Map.fromList
     [ ("class", "comparison__traces")
-    , ("viewBox", "0 0 " <> num tracesWidth <> " " <> num (tracesHeight chans))
+    , ("viewBox", "0 0 " <> num tracesWidth <> " " <> num (tracesHeight rows))
     , ("width", "100%")
-    , ("height", num (tracesHeight chans))
+    , ("height", num (tracesHeight rows))
     , ("preserveAspectRatio", "none")
     ]
 
@@ -815,12 +836,12 @@ traceGridAttrs y =
     ]
 
 -- | La raya discontinua de una frontera de un coche, de arriba abajo de los canales.
-traceFrontierAttrs :: [Channel] -> Text -> Double -> Map Text Text
-traceFrontierAttrs chans color x =
+traceFrontierAttrs :: TraceRows -> Text -> Double -> Map Text Text
+traceFrontierAttrs rows color x =
   Map.fromList
     [ ("x1", formatFixed 1 x), ("x2", formatFixed 1 x)
-    , ("y1", formatFixed 1 (fst (channelsSpan chans)))
-    , ("y2", formatFixed 1 (snd (channelsSpan chans)))
+    , ("y1", formatFixed 1 (fst (channelsSpan rows)))
+    , ("y2", formatFixed 1 (snd (channelsSpan rows)))
     , ("stroke", color), ("stroke-dasharray", "4 3"), ("stroke-opacity", "0.8")
     , ("vector-effect", "non-scaling-stroke")
     ]
