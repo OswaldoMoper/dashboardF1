@@ -123,6 +123,9 @@ import           Common.Origin               (Origin (..), Source (..),
                                               sourceFrom, sourceHeader,
                                               sourceLabel, sourceName,
                                               sourcedFrom, sourcedHeaders)
+import           Common.Carry                (Board (..), Carry (..), Hand (..), Held (..),
+                                              Scene (..), boardOf, heldStyle,
+                                              magnetDivisions, scene, stepBoard)
 import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
@@ -180,7 +183,7 @@ import           Data.Aeson                  (Value (..), eitherDecodeStrict,
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import           Data.Either                 (isLeft)
-import           Data.List                   (nub)
+import           Data.List                   (find, nub)
 import qualified Data.Map.Strict             as Map
 import qualified Data.Set                    as Set
 import           Data.Maybe                  (fromMaybe, listToMaybe)
@@ -3679,6 +3682,64 @@ main = hspec $ do
     prop "tras un sí, los mismos widgets, sin solapes y cabiendo" dragKeepsLayoutValid
     prop "la que se lleva queda donde se pide, dentro del lienzo y con su tamaño" moveKeepsHeld
 
+  -- Un lienzo de 1200 × 600 px: 10 px por unidad en x y 5 en y, para que las
+  -- cuentas salgan exactas en coma flotante.
+  describe "Common.Carry" $ do
+    let cs       = WidgetId "constructor-stats"
+        canvas   = (1200, 600)
+        grabbed  = stepBoard True (Press cs (700, 500) canvas) (boardOf raceOverviewFixture)
+        toY y alt = stepBoard True (Point (700, 500 + (y - 90) * 5) alt) grabbed
+        rects    = map (\w -> (wcX w, wcY w, wcW w, wcH w))
+
+    it "el imán: la rejilla si está encendido sin Alt o apagado con Alt; si no, de 1 en 1" $
+      map (uncurry magnetDivisions) [(True, False), (True, True), (False, True), (False, False)]
+        `shouldBe` [gridDivisions, 0, gridDivisions, 0]
+
+    it "Constructores en y = 37,25: se pinta ahí, el contorno cae en 35 y Lap Comparison baja a 65 (D125)" $ do
+      let s = scene True (toY 37.25 False)
+      sceneHeld s `shouldBe` Just (Held cs 60 37.25 True)
+      fmap (\t -> (wcX t, wcY t, wcW t, wcH t)) (sceneTarget s) `shouldBe` Just (60, 35, 60, 30)
+      rects (sceneCards s)
+        `shouldBe` [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
+
+    it "en y = 60 no se deja: las demás se quedan en la foto y no hay contorno" $ do
+      let s = scene True (toY 60 False)
+      fmap heldFits (sceneHeld s) `shouldBe` Just False
+      sceneCards s `shouldBe` raceOverviewFixture
+      sceneTarget s `shouldBe` Nothing
+
+    it "soltar deja el empuje; soltar donde no se deja, Esc y un clic sin mover dejan la foto" $ do
+      rects (boardLayout (stepBoard True Release (toY 37.25 False)))
+        `shouldBe` [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
+      boardLayout (stepBoard True Release (toY 60 False)) `shouldBe` raceOverviewFixture
+      boardLayout (stepBoard True Cancel (toY 37.25 False)) `shouldBe` raceOverviewFixture
+      boardLayout (stepBoard True Release grabbed) `shouldBe` raceOverviewFixture
+      boardCarry (stepBoard True Cancel (toY 37.25 False)) `shouldBe` Nothing
+
+    it "con Alt, el imán encendido redondea de 1 en 1: el contorno cae en 37" $ do
+      fmap wcY (sceneTarget (scene True (toY 37.25 True))) `shouldBe` Just 37
+      fmap wcY (sceneTarget (scene True (stepBoard True (AltKey True) (toY 37.25 False)))) `shouldBe` Just 37
+
+    it "fuera del lienzo, la que se lleva se queda en el borde" $ do
+      let far = stepBoard True (Point (90000, -90000) False) grabbed
+      fmap (\h -> (heldX h, heldY h)) (sceneHeld (scene True far)) `shouldBe` Just (60, 0)
+
+    it "sin nada cogido no pasa nada, y no se coge otra mientras se lleva una ni con el lienzo sin medir" $ do
+      let idle = boardOf raceOverviewFixture
+      map (\h -> stepBoard True h idle) [Point (1, 2) False, AltKey True, Release, Cancel]
+        `shouldBe` replicate 4 idle
+      stepBoard True (Press cs (1, 2) (0, 600)) idle `shouldBe` idle
+      stepBoard True (Press (WidgetId "nadie") (1, 2) canvas) idle `shouldBe` idle
+      fmap carryId (boardCarry (stepBoard True (Press (WidgetId "telemetry") (1, 2) canvas) grabbed))
+        `shouldBe` Just cs
+
+    it "el estilo de la que se lleva: la esquina con dos decimales y el tamaño en unidades" $
+      heldStyle (Held cs 60 37.25 True) (rectNamed "constructor-stats" ConstructorStats (60, 90, 60, 30))
+        `shouldBe` "left: calc(60.00 * 100% / 120); top: calc(37.25 * 100% / 120); \
+                   \width: calc(60 * 100% / 120); height: calc(30 * 100% / 120)"
+
+    prop "lo que enseña el contorno es lo que queda al soltar, y si no se deja queda la foto" carryShowsDrop
+
   describe "los layouts fijos de Pages.Dashboard" $ do
     it "los seis widgets caben donde dicen estar" $
       filter (not . fitsAt) (raceOverviewFixture <> qualyFixture) `shouldBe` []
@@ -4615,6 +4676,23 @@ moveKeepsHeld i a b =
     held = raceOverviewFixture !! (i `mod` length raceOverviewFixture)
     x = a `mod` 140 - 10
     y = b `mod` 140 - 10
+
+-- | Se coja la tarjeta que se coja de Race Overview y se lleve a donde se lleve, con
+-- el imán o sin él: si se deja, el contorno es donde queda la que se lleva y soltar
+-- deja lo que se pinta; si no, soltar deja la foto.
+carryShowsDrop :: Int -> Bool -> Bool -> Int -> Int -> Bool
+carryShowsDrop i magnet alt a b =
+  case sceneHeld s of
+    Just h | heldFits h ->
+      dropped == sceneCards s
+        && sceneTarget s == find ((== heldId h) . widgetId) (sceneCards s)
+    _ -> dropped == raceOverviewFixture
+  where
+    held    = widgetId (raceOverviewFixture !! (i `mod` length raceOverviewFixture))
+    grabbed = stepBoard magnet (Press held (700, 500) (1200, 600)) (boardOf raceOverviewFixture)
+    moved   = stepBoard magnet (Point (fromIntegral (a `mod` 2000 - 400), fromIntegral (b `mod` 1000 - 200)) alt) grabbed
+    s       = scene magnet moved
+    dropped = boardLayout (stepBoard magnet Release moved)
 
 -- | Tras 'clampToMin' el ancho y el alto cumplen los mínimos del tipo, venga como
 -- venga la entrada. Es la garantía entera de la función; lo que NO garantiza —que

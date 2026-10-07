@@ -877,6 +877,66 @@ body {
   display: none;
 }
 
+/* El imán encendido queda marcado como «Terminar», sin su hover morado. */
+.magnet-toggle--on {
+  background: var(--c-surface-3);
+}
+
+/* En edición la tarjeta se coge por el título; sus controles siguen siendo
+   controles. */
+.canvas--editing .widget__head {
+  cursor: move;
+  user-select: none;
+}
+
+.canvas--editing .widget__head :is(select, input, label) {
+  cursor: default;
+}
+
+/* Lo que se aparta, lo que se suelta y lo que vuelve con Esc se desliza; la que se
+   lleva sigue al puntero sin retraso (2026-10-07). */
+.canvas--editing .widget-slot {
+  transition: left 0.15s, top 0.15s, width 0.15s, height 0.15s;
+}
+
+.widget-slot--held {
+  z-index: 10;
+  transition: none;
+}
+
+/* Levantada y en morado; el aro de la sombra hace de segundo píxel del borde, así
+   que la tarjeta no cambia de tamaño al cogerla. */
+.canvas--editing .widget-slot--held > .widget {
+  border-style: solid;
+  border-color: var(--c-fastest);
+  box-shadow: 0 0 0 1px var(--c-fastest), 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.canvas--editing .widget-slot--blocked > .widget {
+  border-color: var(--c-accent);
+  box-shadow: 0 0 0 1px var(--c-accent), 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.canvas--editing .widget-slot--blocked,
+.canvas--editing .widget-slot--blocked .widget__head {
+  cursor: not-allowed;
+}
+
+/* Donde caerá: el rectángulo del slot, con su misma separación. */
+.canvas__target {
+  position: absolute;
+  box-sizing: border-box;
+  padding: var(--sp-2);
+  pointer-events: none;
+}
+
+.canvas__target-box {
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px dashed var(--c-fastest);
+  border-radius: var(--r-md);
+}
+
 .car-selector__select {
   padding: var(--sp-1) var(--sp-2);
   font: inherit;

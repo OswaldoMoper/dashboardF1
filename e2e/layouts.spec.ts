@@ -130,3 +130,74 @@ test.describe('el modo edición', () => {
     expect((await look(page)).border).toBe('dashed');
   });
 });
+
+test.describe('el arrastre', () => {
+  // Race Overview tal como lo escribe `Pages.Dashboard`, en unidades del lienzo.
+  const RACE = [[0, 0, 60, 90], [60, 0, 60, 35], [60, 35, 60, 50], [0, 90, 60, 30], [60, 90, 60, 30]];
+
+  test.beforeEach(async ({ page }) => {
+    await openDashboard(page);
+    await expect(page.locator('.widget--comparison')).toBeVisible();
+  });
+
+  // Los rectángulos de Race Overview en unidades del lienzo, redondeados.
+  async function units(page: Page): Promise<number[][]> {
+    return page.locator('.canvas__layer').first().evaluate((layer) => {
+      const c = layer.getBoundingClientRect();
+      return Array.from(layer.querySelectorAll(':scope > .widget-slot'), (el) => {
+        const r = el.getBoundingClientRect();
+        return [r.left - c.left, r.top - c.top, r.width, r.height].map((v, i) =>
+          Math.round((v / (i % 2 ? c.height : c.width)) * 120),
+        );
+      });
+    });
+  }
+
+  // Coge la tarjeta n de Race Overview por su título y la lleva (dx, dy) unidades, sin soltar.
+  async function carry(page: Page, n: number, dx: number, dy: number): Promise<void> {
+    const layer = await page.locator('.canvas__layer').first().boundingBox();
+    const title = await page.locator('.canvas__layer').first()
+      .locator(':scope > .widget-slot').nth(n).locator('.widget__head > h2').boundingBox();
+    if (!layer || !title) throw new Error('no se ve el título');
+    const x = title.x + 10;
+    const y = title.y + title.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + (dx * layer.width) / 120, y + (dy * layer.height) / 120, { steps: 12 });
+  }
+
+  test('Constructores encima de Lap Comparison la baja (D125), y Esc lo deja todo como estaba', async ({ page }) => {
+    await page.getByRole('button', { name: '✎ Editar layout' }).click();
+    await carry(page, 4, 0, -55);
+    await expect(page.locator('.widget-slot--held')).toHaveCount(1);
+    await expect(page.locator('.canvas__layer:not(.canvas__layer--hidden) .canvas__target')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    expect(await units(page)).toEqual(RACE);
+
+    await carry(page, 4, 0, -55);
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    await expect(page.locator('.widget-slot--held')).toHaveCount(0);
+    expect(await units(page)).toEqual([[0, 0, 60, 90], [60, 0, 60, 35], [60, 65, 60, 50], [0, 90, 60, 30], [60, 35, 60, 30]]);
+  });
+
+  test('Pilotos a la columna derecha no se deja (D126): se marca y al soltar vuelve', async ({ page }) => {
+    await page.getByRole('button', { name: '✎ Editar layout' }).click();
+    await carry(page, 3, 60, -55);
+    await expect(page.locator('.widget-slot--blocked')).toHaveCount(1);
+    await expect(page.locator('.canvas__layer:not(.canvas__layer--hidden) .canvas__target')).toBeHidden();
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    expect(await units(page)).toEqual(RACE);
+  });
+
+  test('fuera de edición el título no coge la tarjeta', async ({ page }) => {
+    await carry(page, 4, 0, -55);
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    await expect(page.locator('.widget-slot--held')).toHaveCount(0);
+    expect(await units(page)).toEqual(RACE);
+  });
+});

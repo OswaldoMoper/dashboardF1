@@ -27,6 +27,9 @@
 --
 module Pages.Dashboard where
 
+import           Common.Carry       (Board (..), Hand (..), Held (..),
+                                     Scene (..), boardOf, heldStyle, scene,
+                                     stepBoard)
 import           Common.Format      (ClockForm (..), formatClock)
 import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
@@ -47,11 +50,27 @@ import           Common.Types       (BandFlag (..), BandPiece, Countdown,
                                      shownNext,
                                      tickClock, catchUp)
 import           Control.Monad.IO.Class (liftIO)
-import           Data.Maybe         (fromMaybe, isJust, listToMaybe)
+import           Data.IORef         (IORef, newIORef, readIORef, writeIORef)
+import           Data.List          (find)
+import           Data.Map           (Map)
+import           Data.Maybe         (fromMaybe, isJust, isNothing, listToMaybe)
 import           Data.Text          (Text)
 import qualified Data.Text          as T
 import           Data.Time.Clock    (UTCTime (..), getCurrentTime)
-import           Language.Javascript.JSaddle (eval, liftJSM, valToNumber)
+import qualified GHCJS.DOM          as DOM (currentWindowUnchecked)
+import qualified GHCJS.DOM.DOMRectReadOnly as DOM (getHeight, getWidth)
+import qualified GHCJS.DOM.Element as DOM (closest, getBoundingClientRect)
+import qualified GHCJS.DOM.EventM   as DOM (event, mouseClientXY, on,
+                                            preventDefault, target)
+import qualified GHCJS.DOM.GlobalEventHandlers as DOM (keyDown, keyUp,
+                                                       mouseDown, mouseMove,
+                                                       mouseUp)
+import qualified GHCJS.DOM.KeyboardEvent as Key (getKey)
+import qualified GHCJS.DOM.MouseEvent as Mouse (getAltKey, getButton)
+import qualified GHCJS.DOM.Types    as DOM (Element (..), HTMLElement (..),
+                                            MouseEvent (..),
+                                            uncheckedCastTo)
+import           Language.Javascript.JSaddle (JSM, eval, liftJSM, valToNumber)
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
 import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
@@ -85,13 +104,13 @@ dashboardPage = divClass "page page--dashboard" $ do
   openDyn     <- toggle True toggleClick
   poll        <- livePoll
   initial     <- fromMaybe delayDefaultSeconds . delayFromUrl <$> getLocationUrl
-  (layoutDyn, live, editing) <- divClass "top-bar" $ do
-    (active, delay, editing) <- dashboardHeader initial openDyn
+  (layoutDyn, live, edit) <- divClass "top-bar" $ do
+    (active, delay, edit) <- dashboardHeader initial openDyn
     live <- delayedLive delay poll
     sessionBand openDyn (lvPoll live) (lvAge live)
-    pure (active, live, editing)
-  elDynClass "div" (canvasClass <$> openDyn <*> editing) $
-    mapM_ (layer live layoutDyn) [raceOverview, qualy]
+    pure (active, live, edit)
+  elDynClass "div" (canvasClass <$> openDyn <*> editOn edit) $
+    mapM_ (layer live layoutDyn edit) [raceOverview, qualy]
   where
     -- __El lienzo dice si la cabecera está plegada y si se está editando__, para
     -- quien necesite saberlo desde la hoja de estilos. Lo plegado hoy no lo lee
@@ -139,14 +158,14 @@ headerToggle = do
 -- por lo mismo, plegarla no saca de la edición.
 dashboardHeader :: MonadWidget t m
                 => Int -> Dynamic t Bool
-                -> m (Dynamic t Layout, Dynamic t Int, Dynamic t Bool)
+                -> m (Dynamic t Layout, Dynamic t Int, Edit t)
 dashboardHeader initial openDyn =
   elDynClass "div" (headerClass <$> openDyn) $ do
     el "h1" $ text "F1 Functional Dashboard"
     divClass "dashboard-header__controls" $ do
-      (active, editing) <- layoutSwitcher
+      (active, edit) <- layoutSwitcher
       delay <- delayField initial
-      pure (active, delay, editing)
+      pure (active, delay, edit)
   where
     headerClass open
       | open      = "dashboard-header"
@@ -393,19 +412,97 @@ sessionClock tick served = do
 --
 -- Al volver a enseñarse avisa a sus widgets; lo usa Lap Comparison, que mide su
 -- ancho y oculta mide 0.
-layer :: MonadWidget t m => LiveView t -> Dynamic t Layout -> Layout -> m ()
-layer live layoutDyn l = do
+--
+-- __Cada capa lleva su layout y su arrastre__ ('Common.Carry'): en edición, una
+-- tarjeta se coge por el título y lo que se pinta lo dice 'scene'. Mover no vuelve a
+-- montar nada: solo cambian el estilo y la clase de los slots. Lo movido se pierde al
+-- recargar.
+layer :: MonadWidget t m => LiveView t -> Dynamic t Layout -> Edit t -> Layout -> m ()
+layer live layoutDyn edit l = mdo
   active <- holdUniqDyn (((== layoutId l) . layoutId) <$> layoutDyn)
   let revealed = () <$ ffilter id (updated active)
-  elDynClass "div" (layerClass <$> active) $
-    mapM_ (slot live revealed) (widgets l)
+      held     = isJust . boardCarry <$> board
+  carrying <- liftIO (newIORef False)
+  (layerEl, presses) <- elDynClass' "div" (layerClass <$> active) $ do
+    grabs <- mapM (slot live revealed shown) (widgets l)
+    targetOutline shown
+    pure (leftmost grabs)
+  pressed <- performEvent (measure layerEl <$> gate (current (editOn edit)) presses)
+  hands   <- windowHands carrying
+  performEvent_ (liftIO . writeIORef carrying <$> updated held)
+  board <- foldDyn (\(magnet, hand) -> stepBoard magnet hand) (boardOf (widgets l)) $
+             attach (current (editMagnet edit)) (leftmost [pressed, gate (current held) hands])
+  shown <- holdUniqDyn (scene <$> editMagnet edit <*> board)
+  pure ()
   where
     layerClass a
       | a         = "canvas__layer"
       | otherwise = "canvas__layer canvas__layer--hidden"
 
+    -- Coger necesita cuántos px mide el lienzo ahora; la capa mide lo mismo que él.
+    measure layerEl (wid, p) = liftJSM $ do
+      r <- DOM.getBoundingClientRect (_element_raw layerEl)
+      w <- DOM.getWidth r
+      h <- DOM.getHeight r
+      pure (Press wid p (w, h))
+
+-- | Dónde aprieta el botón izquierdo sobre el título de la tarjeta en edición, en px
+-- de la ventana. Los controles del título (botones, desplegables, casillas) siguen
+-- siendo controles y no cogen la tarjeta; al coger, el navegador no selecciona texto.
+titlePresses :: MonadWidget t m => DOM.HTMLElement -> m (Event t (Double, Double))
+titlePresses e = fmapMaybe id <$> wrapDomEvent e (`DOM.on` DOM.mouseDown) grab
+  where
+    grab = do
+      which  <- Mouse.getButton =<< DOM.event
+      onHead <- maybe (pure False) (liftJSM . fromTitle) =<< DOM.target
+      if which == 0 && onHead
+        then do
+          DOM.preventDefault
+          (x, y) <- DOM.mouseClientXY
+          pure (Just (fromIntegral x, fromIntegral y))
+        else pure Nothing
+    fromTitle :: DOM.HTMLElement -> JSM Bool
+    fromTitle t = do
+      title   <- DOM.closest t (".canvas--editing .widget__head" :: Text)
+      control <- DOM.closest t ("button, select, input, label, a, textarea" :: Text)
+      pure (isJust title && isNothing control)
+
+-- | El ratón y el teclado de toda la ventana, para quien lleva una tarjeta: el
+-- puntero llega aunque salga del lienzo, y soltar fuera de la ventana también avisa.
+-- Mientras se lleva una (@carrying@), Alt no le pasa el foco al menú del navegador y
+-- Esc cancela.
+windowHands :: MonadWidget t m => IORef Bool -> m (Event t Hand)
+windowHands carrying = do
+  win   <- liftJSM DOM.currentWindowUnchecked
+  moves <- wrapDomEvent win (`DOM.on` DOM.mouseMove) $ do
+    (x, y) <- DOM.mouseClientXY
+    alt    <- Mouse.getAltKey =<< DOM.event
+    pure (Point (fromIntegral x, fromIntegral y) alt)
+  ups   <- wrapDomEvent win (`DOM.on` DOM.mouseUp) (pure Release)
+  downs <- wrapDomEvent win (`DOM.on` DOM.keyDown) (keyHand True)
+  lifts <- wrapDomEvent win (`DOM.on` DOM.keyUp) (keyHand False)
+  pure (leftmost [moves, ups, fmapMaybe id downs, fmapMaybe id lifts])
+  where
+    keyHand down = do
+      k    <- Key.getKey =<< DOM.event
+      held <- liftIO (readIORef carrying)
+      case (k :: Text) of
+        "Alt" | held             -> Just (AltKey down) <$ DOM.preventDefault
+        "Escape" | held && down  -> pure (Just Cancel)
+        _                        -> pure Nothing
+
+-- | El contorno de donde caerá la tarjeta que se lleva; escondido si no se lleva
+-- ninguna o si donde está no se deja.
+targetOutline :: MonadWidget t m => Dynamic t Scene -> m ()
+targetOutline shown =
+  elDynAttr "div" (attrs . sceneTarget <$> shown) $ divClass "canvas__target-box" blank
+  where
+    attrs (Just r) = "class" =: "canvas__target" <> "style" =: slotStyle r
+    attrs Nothing  = "class" =: "canvas__target" <> "hidden" =: ""
+
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
--- lienzo, con el estilo que calcula 'slotStyle'.
+-- lienzo, con el estilo que calcula 'slotStyle'. Devuelve dónde se aprieta su
+-- título para cogerla ('titlePresses').
 --
 -- __El rectángulo lo pone quien envuelve y no el widget__, y no es una elección
 -- de estilo: 'renderWidget' despacha por 'widgetType' y cada widget emite su
@@ -419,10 +516,26 @@ layer live layoutDyn l = do
 -- razón: quien sabe dónde está la tarjeta es quien la coloca. Marca a la tarjeta
 -- que ocupa la esquina donde vive el botón de plegar, que es @fixed@ contra la
 -- ventana (2026-09-07 b); a quién le toca lo dice 'touchesTopRight'.
-slot :: MonadWidget t m => LiveView t -> Event t () -> WidgetConfig -> m ()
-slot live revealed wc =
-  elAttr "div" ("class" =: slotClass wc <> "style" =: slotStyle wc) $
-    renderWidget live revealed wc
+slot :: MonadWidget t m
+     => LiveView t -> Event t () -> Dynamic t Scene -> WidgetConfig
+     -> m (Event t (WidgetId, (Double, Double)))
+slot live revealed shown wc = do
+  attrs  <- holdUniqDyn (slotAttrs wc <$> shown)
+  (e, _) <- elDynAttr' "div" attrs $ renderWidget live revealed wc
+  grabs  <- titlePresses (DOM.uncheckedCastTo DOM.HTMLElement (_element_raw e))
+  pure ((,) (widgetId wc) <$> grabs)
+
+-- | Clase y estilo del slot según lo que se pinta: la que se lleva sigue al puntero
+-- ('heldStyle') y se marca si ahí no se deja; las demás, en su rectángulo.
+slotAttrs :: WidgetConfig -> Scene -> Map Text Text
+slotAttrs wc s = case sceneHeld s of
+  Just h | heldId h == widgetId wc -> "class" =: heldClass h <> "style" =: heldStyle h wc
+  _ -> "class" =: slotClass r <> "style" =: slotStyle r
+  where
+    r = fromMaybe wc (find ((== widgetId wc) . widgetId) (sceneCards s))
+    heldClass h
+      | heldFits h = "widget-slot widget-slot--held"
+      | otherwise  = "widget-slot widget-slot--held widget-slot--blocked"
 
 -- | Clase del slot: el bloque, y el modificador solo cuando hay algo que
 -- modificar — mismo criterio que el @rowClass@ de 'Widgets.LiveTiming'
@@ -437,10 +550,17 @@ slotClass wc
   | touchesTopRight wc = "widget-slot widget-slot--top-right"
   | otherwise          = "widget-slot"
 
--- | Barra de botones que conmutan entre los layouts fijos, con el del modo
--- edición a su derecha ('editToggle'). Sostiene el layout activo (arranca en
--- 'raceOverview') y si se está editando; cambiar de layout no saca de la edición.
-layoutSwitcher :: MonadWidget t m => m (Dynamic t Layout, Dynamic t Bool)
+-- | El modo edición: si se está editando y si el imán está encendido.
+data Edit t = Edit
+  { editOn     :: Dynamic t Bool
+  , editMagnet :: Dynamic t Bool
+  }
+
+-- | Barra de botones que conmutan entre los layouts fijos, con los del modo
+-- edición a su derecha ('editToggle', 'magnetToggle'). Sostiene el layout activo
+-- (arranca en 'raceOverview') y el modo edición; cambiar de layout no saca de la
+-- edición.
+layoutSwitcher :: MonadWidget t m => m (Dynamic t Layout, Edit t)
 layoutSwitcher = divClass "layout-switcher" $ do
   overviewClick <- switcherButton "Race Overview"
   qualyClick    <- switcherButton "Qualy"
@@ -449,7 +569,24 @@ layoutSwitcher = divClass "layout-switcher" $ do
     , qualy        <$ qualyClick
     ]
   editing <- editToggle
-  pure (active, editing)
+  magnet  <- magnetToggle editing
+  pure (active, Edit editing magnet)
+
+-- | El interruptor del imán, solo visible en edición. Arranca encendido y recuerda
+-- cómo se dejó hasta recargar; encendido queda marcado y lleva ✓.
+magnetToggle :: MonadWidget t m => Dynamic t Bool -> m (Dynamic t Bool)
+magnetToggle editing = mdo
+  (e, _) <- elDynAttr' "button" (attrs <$> editing <*> magnet) $ dynText (label <$> magnet)
+  magnet <- toggle True (domEvent Click e)
+  pure magnet
+  where
+    attrs shown o =
+      "class" =: (if o then "switcher__btn magnet-toggle magnet-toggle--on"
+                       else "switcher__btn magnet-toggle")
+        <> (if shown then mempty else "hidden" =: "")
+    label o
+      | o         = "⊞ Imán ✓"
+      | otherwise = "⊞ Imán"
 
 -- | El botón del modo edición (2026-09-29 (g)): entra y sale, y arranca fuera.
 -- Nombra a dónde lleva, como el aspecto de la banda; en edición queda marcado.
