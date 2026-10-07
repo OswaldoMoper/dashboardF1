@@ -84,6 +84,7 @@ import           Common.Traces (Channel, axisEnd, axisEndLabel, boundaryXs,
 import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
                                 LapComparison (..))
 import           Control.Monad (forM_, unless, when)
+import           Control.Monad.IO.Class (liftIO)
 import           Data.List     (find)
 import           Data.Map      (Map)
 import qualified Data.Map      as Map
@@ -97,6 +98,7 @@ import qualified GHCJS.DOM.GlobalEventHandlers as DOM (resize)
 import qualified GHCJS.DOM.HTMLElement as DOM (getOffsetHeight, getOffsetWidth)
 import qualified GHCJS.DOM.Types as DOM (Element (..), HTMLElement (..),
                                          liftJSM, uncheckedCastTo)
+import qualified Language.Javascript.JSaddle as JS
 import           Reflex.Dom
 
 -- | Estado del fetch de @\/api\/comparison@. 'Failed' (no 'Error') para no
@@ -315,13 +317,12 @@ baselineSelect = do
 -- ('Common.ComparisonCard.valuesFitMeasured', con el alto de la fila pintada que da
 -- el 'Behavior').
 --
--- Se mide al montarse, cada vez que cambia la ventana y un instante después de cada
--- evento del último argumento (cambios del contenido, o que se acaba de enseñar).
--- Mientras la tarjeta aún no está en la página, o está oculta, mide 0, y se vuelve a
--- medir cada 0,2 s hasta 'measureTries' veces. 'Nothing' hasta la primera medida con ancho; no cambia si la medida se
--- repite.
---
--- No mide los cambios de tamaño de la tarjeta que no vienen de la ventana.
+-- Se mide al montarse, cada vez que cambia la ventana o el tamaño de la tarjeta
+-- ('sizeChanges'), y un instante después de cada evento del último argumento
+-- (cambios del contenido, o que se acaba de enseñar). Mientras la tarjeta aún no está
+-- en la página, o está oculta, mide 0, y se vuelve a medir cada 0,2 s hasta
+-- 'measureTries' veces. 'Nothing' hasta la primera medida con ancho; no cambia si la
+-- medida se repite.
 cardSize
   :: MonadWidget t m
   => Element EventResult GhcjsDomSpace t
@@ -334,7 +335,8 @@ cardSize root card rowNow changed = mdo
   win      <- DOM.liftJSM DOM.currentWindowUnchecked
   resized  <- wrapDomEvent win (`DOM.on` DOM.resize) (pure ())
   settled  <- delay 0 changed
-  measured <- performEvent (measure <$> tag rowNow (leftmost [mounted, resized, settled, retry]))
+  grown    <- sizeChanges cardEl
+  measured <- performEvent (measure <$> tag rowNow (leftmost [mounted, resized, settled, grown, retry]))
   let zero = ffilter ((<= 0) . fst) measured
   tries    <- count zero
   retry    <- delay 0.2 (() <$ ffilter (< measureTries) (tag (current tries) zero))
@@ -350,6 +352,19 @@ cardSize root card rowNow changed = mdo
 -- | Cuántas veces se vuelve a medir una tarjeta que mide 0 (10 s en total).
 measureTries :: Int
 measureTries = 50
+
+-- | Un evento cada vez que el navegador ve cambiar el tamaño del elemento, ya pintado
+-- (@ResizeObserver@), y una vez al empezar a observarlo. Lo observa mientras viva la
+-- página.
+sizeChanges :: MonadWidget t m => DOM.HTMLElement -> m (Event t ())
+sizeChanges e = do
+  (changes, fire) <- newTriggerEvent
+  DOM.liftJSM $ do
+    cb  <- JS.function (\_ _ _ -> liftIO (fire ()))
+    obs <- JS.new (JS.jsg ("ResizeObserver" :: Text)) [JS.toJSVal cb]
+    _   <- obs JS.# ("observe" :: Text) $ [JS.toJSVal e]
+    pure ()
+  pure changes
 
 -- | El botón que pasa la tabla de mando al otro lado. Con la tarjeta apilada no
 -- hay lados y se oculta; el lado elegido se conserva.
