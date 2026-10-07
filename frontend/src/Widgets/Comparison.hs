@@ -755,7 +755,7 @@ tracesView overlay m v c = case lcEntries c of
   where
     chans = traceChannels (vType v)
     frontierPair = maybe [] (\(a, b) -> [a, b])
-    rowY ch (lo, hi) y = channelTop chans ch + channelHeight ch * (1 - (y - lo) / (hi - lo))
+    rowY ch (lo, hi) y = channelTop chans ch + channelHeight chans ch * (1 - (y - lo) / (hi - lo))
     px x = formatFixed 1 x <> "px"
     traceLabel style = traceLabelColored "" style
     traceLabelColored extra style t =

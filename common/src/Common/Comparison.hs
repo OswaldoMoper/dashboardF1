@@ -245,6 +245,7 @@ chartTypeLabel LapDeltaBars    = "Lap Delta"
 -- | Si el tipo ya se puede elegir; los demás salen en gris en el desplegable.
 chartTypeReady :: ChartType -> Bool
 chartTypeReady SectorDelta     = True
+chartTypeReady LapSpeedTrace   = True
 chartTypeReady TelemetryTraces = True
 chartTypeReady _               = False
 

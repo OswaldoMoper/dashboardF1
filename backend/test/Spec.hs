@@ -84,6 +84,7 @@ import           Common.Traces               (Channel (..), axisEnd,
                                               traceXs, tracePoints,
                                               tracesHeight, xPercent,
                                               traceChannels, channelsSpan,
+                                              channelHeight,
                                               channelCaption, axisEndLabel,
                                               readSamples, samplesStart)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
@@ -2950,11 +2951,11 @@ main = hspec $ do
       map (baselineFromKey . baselineKey) baselinesInOrder `shouldBe` map Just baselinesInOrder
       baselineFromKey "otra" `shouldBe` Nothing
 
-    it "el desplegable de tipos: los cuatro, en orden; abre en el de hoy y se eligen el 1 y el 3" $ do
+    it "el desplegable de tipos: los cuatro, en orden; abre en el de hoy y se eligen el 1, el 2 y el 3" $ do
       map chartTypeLabel chartTypesInOrder
         `shouldBe` ["Delta por sectores", "Lap Speed Trace", "Telemetría comparativa", "Lap Delta"]
       defaultChartType `shouldBe` SectorDelta
-      filter chartTypeReady chartTypesInOrder `shouldBe` [SectorDelta, TelemetryTraces]
+      filter chartTypeReady chartTypesInOrder `shouldBe` [SectorDelta, LapSpeedTrace, TelemetryTraces]
       map (chartTypeFromKey . chartTypeKey) chartTypesInOrder `shouldBe` map Just chartTypesInOrder
       chartTypeFromKey "otro" `shouldBe` Nothing
       filter chartTypeTraces chartTypesInOrder `shouldBe` [LapSpeedTrace, TelemetryTraces, LapDeltaBars]
@@ -3100,6 +3101,7 @@ main = hspec $ do
                   [tp 0 0 90 1 0, tp 60 2100 280 0.4 1, tp 110 4200 190 0 0]
     it "tres filas de arriba abajo: velocidad 100, acelerador 50 y freno 20, con 19 de rótulo" $ do
       map channelLabel channelsInOrder `shouldBe` ["km/h", "Acelerador %", "Freno"]
+      map (channelHeight channelsInOrder) channelsInOrder `shouldBe` [100, 50, 20]
       map (channelTop channelsInOrder) channelsInOrder `shouldBe` [19, 138, 207]
       tracesHeight channelsInOrder `shouldBe` 243
       channelsSpan channelsInOrder `shouldBe` (19, 227)
@@ -3107,8 +3109,12 @@ main = hspec $ do
     it "los canales de cada tipo: el 3 los tres, el 2 la velocidad, el 1 y el 4 ninguno" $ do
       map traceChannels chartTypesInOrder `shouldBe` [[], [Speed], channelsInOrder, []]
       channelTop [Speed] Speed `shouldBe` 19
-      tracesHeight [Speed] `shouldBe` 135
-      channelsSpan [Speed] `shouldBe` (19, 119)
+      tracesHeight [Speed] `shouldBe` 185
+      channelsSpan [Speed] `shouldBe` (19, 169)
+
+    it "la velocidad mide 150 si va sola y 100 con otra fila" $ do
+      channelHeight [Speed] Speed `shouldBe` 150
+      map (\o -> channelHeight [Speed, o] Speed) [Throttle, Brake] `shouldBe` [100, 100]
 
     it "la velocidad hasta la máxima redondeada a 50; el acelerador y el freno, fijos" $ do
       channelRange Speed [ref, other] `shouldBe` (0, 300)
@@ -3161,7 +3167,7 @@ main = hspec $ do
       tracePoints channelsInOrder Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
         `shouldBe` "0.0,227.0 300.0,227.0 300.0,207.0 600.0,207.0 600.0,227.0"
       tracePoints channelsInOrder Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
-      tracePoints [Speed] Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
+      tracePoints [Speed] Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,119.0 300.0,19.0 600.0,69.0"
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9

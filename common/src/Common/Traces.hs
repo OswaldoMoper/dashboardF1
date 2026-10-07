@@ -71,12 +71,15 @@ channelLabel Speed    = "km/h"
 channelLabel Throttle = "Acelerador %"
 channelLabel Brake    = "Freno"
 
--- | El alto de cada fila, en px. Con los rótulos, la tarjeta cabe en 55 u de Race
--- Overview a 1912 × 914 (2026-10-06).
-channelHeight :: Channel -> Double
-channelHeight Speed    = 100
-channelHeight Throttle = 50
-channelHeight Brake    = 20
+-- | El alto de una fila entre esas filas, en px: la velocidad 150 si va sola y 100
+-- con otra (2026-10-06 (e)). Con los rótulos, el tipo 3 cabe en 55 u de Race
+-- Overview a 1912 × 914 (2026-10-06 (d)).
+channelHeight :: [Channel] -> Channel -> Double
+channelHeight chs Speed
+  | chs == [Speed] = 150
+  | otherwise      = 100
+channelHeight _ Throttle = 50
+channelHeight _ Brake    = 20
 
 -- | Lo que hay encima de la primera fila (su rótulo) y debajo de la última (el
 -- principio y el final del eje X), y entre dos filas, en px.
@@ -93,7 +96,7 @@ tracesWidth = 600
 -- coinciden.
 tracesHeight :: [Channel] -> Double
 tracesHeight chs =
-  tracesTop + sum (map channelHeight chs)
+  tracesTop + sum (map (channelHeight chs) chs)
     + tracesGap * fromIntegral (max 0 (length chs - 1)) + tracesBottom
 
 -- | Dónde empiezan las filas y dónde acaban, de la primera a la última.
@@ -103,7 +106,7 @@ channelsSpan chs = (tracesTop, tracesHeight chs - tracesBottom)
 -- | Dónde empieza una fila entre esas filas.
 channelTop :: [Channel] -> Channel -> Double
 channelTop chs ch =
-  tracesTop + sum [channelHeight c + tracesGap | c <- chs, c < ch]
+  tracesTop + sum [channelHeight chs c + tracesGap | c <- chs, c < ch]
 
 -- | El valor de una muestra en un canal: la velocidad en km\/h, el acelerador en %
 -- y el freno, 0 o 1.
@@ -189,8 +192,8 @@ tracePoints chs ch (lo, hi) xMax xs ps
   where
     ys = map (y . channelValue ch) ps
     y v
-      | hi > lo   = channelTop chs ch + channelHeight ch * (1 - (v - lo) / (hi - lo))
-      | otherwise = channelTop chs ch + channelHeight ch
+      | hi > lo   = channelTop chs ch + channelHeight chs ch * (1 - (v - lo) / (hi - lo))
+      | otherwise = channelTop chs ch + channelHeight chs ch
     x v = tracesWidth * xPercent xMax v / 100
     pair a b = formatFixed 1 a <> "," <> formatFixed 1 b
     point xv yv (Just prev) | ch == Brake = [pair (x xv) prev, pair (x xv) yv]
