@@ -1,7 +1,7 @@
--- | El escalado de las trazas de Lap Comparison (el tipo 3, Telemetría comparativa) a
--- un @\<svg\>@ de ancho fijo: un canal por fila —velocidad, acelerador y freno—, la X
--- de cada muestra en el eje elegido ('Common.Comparison.axisXs') y dónde caen las
--- fronteras. Puro; quien pinta es 'Widgets.Comparison'.
+-- | El escalado de las trazas de Lap Comparison a un @\<svg\>@ de ancho fijo: un canal
+-- por fila —los que lleva el tipo ('traceChannels')—, la X de cada muestra en el eje
+-- elegido ('Common.Comparison.axisXs') y dónde caen las fronteras. Puro; quien pinta
+-- es 'Widgets.Comparison'.
 --
 -- La X va de 0 al final de la vuelta más larga de las que se pintan, sin margen: el
 -- lienzo se estira a lo ancho, y lo que va en HTML encima se coloca en porcentaje
@@ -10,6 +10,7 @@ module Common.Traces
   ( -- * Los canales
     Channel (..)
   , channelsInOrder
+  , traceChannels
   , channelLabel
   , channelHeight
   , channelTop
@@ -18,6 +19,7 @@ module Common.Traces
     -- * El lienzo
   , tracesWidth
   , tracesHeight
+  , channelsSpan
     -- * La X
   , carGeometry
   , traceXs
@@ -38,7 +40,8 @@ module Common.Traces
   , readSamples
   ) where
 
-import           Common.Comparison (Axis (..), LapGeometry (..), axisXs)
+import           Common.Comparison (Axis (..), ChartType (..), LapGeometry (..),
+                                    axisXs)
 import           Common.Format     (formatFixed)
 import           Common.Types      (ComparisonEntry (..), TracePoint (..))
 import           Data.Maybe        (fromMaybe)
@@ -53,6 +56,14 @@ data Channel = Speed | Throttle | Brake
 -- | Los canales de arriba abajo.
 channelsInOrder :: [Channel]
 channelsInOrder = [minBound .. maxBound]
+
+-- | Los canales que pinta cada tipo, de arriba abajo: el 2 solo la velocidad y el 3
+-- los tres (2026-10-06 (e)). El 1 no pinta trazas, y el 4 no tiene canales hasta que
+-- se decida si sus barras son las trazas.
+traceChannels :: ChartType -> [Channel]
+traceChannels LapSpeedTrace   = [Speed]
+traceChannels TelemetryTraces = channelsInOrder
+traceChannels _               = []
 
 -- | El rótulo de cada fila.
 channelLabel :: Channel -> Text
@@ -78,16 +89,21 @@ tracesBottom = 16
 tracesWidth :: Double
 tracesWidth = 600
 
--- | El alto del lienzo, en px y en unidades del @viewBox@, que coinciden.
-tracesHeight :: Double
-tracesHeight =
-  tracesTop + sum (map channelHeight channelsInOrder)
-    + tracesGap * fromIntegral (length channelsInOrder - 1) + tracesBottom
+-- | El alto del lienzo con esas filas, en px y en unidades del @viewBox@, que
+-- coinciden.
+tracesHeight :: [Channel] -> Double
+tracesHeight chs =
+  tracesTop + sum (map channelHeight chs)
+    + tracesGap * fromIntegral (max 0 (length chs - 1)) + tracesBottom
 
--- | Dónde empieza cada fila.
-channelTop :: Channel -> Double
-channelTop ch =
-  tracesTop + sum [channelHeight c + tracesGap | c <- channelsInOrder, c < ch]
+-- | Dónde empiezan las filas y dónde acaban, de la primera a la última.
+channelsSpan :: [Channel] -> (Double, Double)
+channelsSpan chs = (tracesTop, tracesHeight chs - tracesBottom)
+
+-- | Dónde empieza una fila entre esas filas.
+channelTop :: [Channel] -> Channel -> Double
+channelTop chs ch =
+  tracesTop + sum [channelHeight c + tracesGap | c <- chs, c < ch]
 
 -- | El valor de una muestra en un canal: la velocidad en km\/h, el acelerador en %
 -- y el freno, 0 o 1.
@@ -162,18 +178,19 @@ xPercent xMax x
   | xMax > 0  = 100 * x / xMax
   | otherwise = 0
 
--- | El atributo @points@ de la curva de un coche en un canal, con su rango y la X
--- mayor de los que se pintan. El freno va en escalones: cada muestra repite antes el
--- valor de la anterior. Vacío si las X y las muestras no casan.
-tracePoints :: Channel -> (Double, Double) -> Double -> [Double] -> [TracePoint] -> Text
-tracePoints ch (lo, hi) xMax xs ps
+-- | El atributo @points@ de la curva de un coche en un canal de esas filas, con su
+-- rango y la X mayor de los que se pintan. El freno va en escalones: cada muestra
+-- repite antes el valor de la anterior. Vacío si las X y las muestras no casan.
+tracePoints
+  :: [Channel] -> Channel -> (Double, Double) -> Double -> [Double] -> [TracePoint] -> Text
+tracePoints chs ch (lo, hi) xMax xs ps
   | length xs /= length ps || null xs = ""
   | otherwise = T.unwords (concat (zipWith3 point xs ys (Nothing : map Just ys)))
   where
     ys = map (y . channelValue ch) ps
     y v
-      | hi > lo   = channelTop ch + channelHeight ch * (1 - (v - lo) / (hi - lo))
-      | otherwise = channelTop ch + channelHeight ch
+      | hi > lo   = channelTop chs ch + channelHeight ch * (1 - (v - lo) / (hi - lo))
+      | otherwise = channelTop chs ch + channelHeight ch
     x v = tracesWidth * xPercent xMax v / 100
     pair a b = formatFixed 1 a <> "," <> formatFixed 1 b
     point xv yv (Just prev) | ch == Brake = [pair (x xv) prev, pair (x xv) yv]

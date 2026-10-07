@@ -83,6 +83,7 @@ import           Common.Traces               (Channel (..), axisEnd,
                                               channelsInOrder, frontierXs,
                                               traceXs, tracePoints,
                                               tracesHeight, xPercent,
+                                              traceChannels, channelsSpan,
                                               channelCaption, axisEndLabel,
                                               readSamples, samplesStart)
 import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
@@ -3099,8 +3100,15 @@ main = hspec $ do
                   [tp 0 0 90 1 0, tp 60 2100 280 0.4 1, tp 110 4200 190 0 0]
     it "tres filas de arriba abajo: velocidad 100, acelerador 50 y freno 20, con 19 de rótulo" $ do
       map channelLabel channelsInOrder `shouldBe` ["km/h", "Acelerador %", "Freno"]
-      map channelTop channelsInOrder `shouldBe` [19, 138, 207]
-      tracesHeight `shouldBe` 243
+      map (channelTop channelsInOrder) channelsInOrder `shouldBe` [19, 138, 207]
+      tracesHeight channelsInOrder `shouldBe` 243
+      channelsSpan channelsInOrder `shouldBe` (19, 227)
+
+    it "los canales de cada tipo: el 3 los tres, el 2 la velocidad, el 1 y el 4 ninguno" $ do
+      map traceChannels chartTypesInOrder `shouldBe` [[], [Speed], channelsInOrder, []]
+      channelTop [Speed] Speed `shouldBe` 19
+      tracesHeight [Speed] `shouldBe` 135
+      channelsSpan [Speed] `shouldBe` (19, 119)
 
     it "la velocidad hasta la máxima redondeada a 50; el acelerador y el freno, fijos" $ do
       channelRange Speed [ref, other] `shouldBe` (0, 300)
@@ -3149,10 +3157,11 @@ main = hspec $ do
       frontierCells [0, 0.1, 0.2, 0.3] `shouldBe` frontierCellsAt (map (\(x, _, _) -> x) (frontierCells [0, 0.1, 0.2, 0.3])) [0, 0.1, 0.2, 0.3]
 
     it "la curva: X hasta la mayor y la Y en la fila del canal; el freno, en escalones" $ do
-      tracePoints Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
-      tracePoints Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
+      tracePoints channelsInOrder Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
+      tracePoints channelsInOrder Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
         `shouldBe` "0.0,227.0 300.0,227.0 300.0,207.0 600.0,207.0 600.0,227.0"
-      tracePoints Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
+      tracePoints channelsInOrder Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
+      tracePoints [Speed] Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9

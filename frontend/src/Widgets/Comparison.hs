@@ -74,13 +74,13 @@ import           Common.Comparison (Axis, Baseline (..), ChartType, Pair (..),
                                     missingReference, noLapFor, pairWith)
 import           Common.Format (formatFixed)
 import           Common.Route  (comparisonPathFor, driversParam, driversPathFor)
-import           Common.Traces (Channel (..), axisEnd, axisEndLabel, boundaryXs,
+import           Common.Traces (Channel, axisEnd, axisEndLabel, boundaryXs,
                                 channelCaption, channelHeight, channelRange,
-                                channelTop, channelsInOrder, frontierXs,
+                                channelTop, channelsSpan, frontierXs,
                                 readSamples, samplesMax, samplesMin,
-                                samplesStart, samplesStep, traceXs,
-                                tracePoints, tracesHeight, tracesWidth,
-                                xPercent)
+                                samplesStart, samplesStep, traceChannels,
+                                traceXs, tracePoints, tracesHeight,
+                                tracesWidth, xPercent)
 import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
                                 LapComparison (..))
 import           Control.Monad (forM_, unless, when)
@@ -709,9 +709,9 @@ plotView overlay m l axis v (Loaded c)
   where
     series = seriesOf (vBase v) c
 
--- | Las trazas de los dos primeros coches (el tipo 3): velocidad, acelerador y freno
--- en el eje elegido ('Common.Traces'), con las fronteras de cada coche si van y,
--- debajo, la fila Δ en las fronteras de la referencia. La referencia en rojo y el
+-- | Las trazas de los dos primeros coches: los canales del tipo
+-- ('Common.Traces.traceChannels') en el eje elegido, con las fronteras de cada coche
+-- si van y, debajo, la fila Δ en las fronteras de la referencia. La referencia en rojo y el
 -- otro en blanco, encima la referencia (2026-10-02). Un coche sin traza —sin vuelta,
 -- o el dummy— no se pinta, y sin ninguna quedan los canales vacíos.
 --
@@ -728,33 +728,34 @@ tracesView overlay m v c = case lcEntries c of
           Just xs | not (null delta) -> frontierCellsAt (map (xPercent xMax) xs) delta
           _                          -> []
     divClass "comparison__canvas comparison__canvas--traces" $ do
-      svgEl "svg" tracesAttrs $ do
-        forM_ channelsInOrder $ \ch -> do
+      svgEl "svg" (tracesAttrs chans) $ do
+        forM_ chans $ \ch -> do
           let range@(lo, hi) = channelRange ch [ref, other]
           forM_ [lo, hi] $ \y -> svgEl "line" (traceGridAttrs (rowY ch range y)) blank
           forM_ cars $ \(e, color) -> do
-            let pts = tracePoints ch range xMax (traceXs axis ref e) (ceTrace e)
+            let pts = tracePoints chans ch range xMax (traceXs axis ref e) (ceTrace e)
             unless (T.null pts) $ svgEl "polyline" (tracePolylineAttrs color pts) blank
         when (vFrontiers v) $
           forM_ cars $ \(e, color) ->
             forM_ (frontierPair (frontierXs axis ref e)) $ \x ->
-              svgEl "line" (traceFrontierAttrs color (tracesWidth * xPercent xMax x / 100)) blank
-      forM_ channelsInOrder $ \ch ->
-        traceLabel ("left: 0; top: " <> px (channelTop ch - 13)) (channelCaption ch (channelRange ch [ref, other]))
+              svgEl "line" (traceFrontierAttrs chans color (tracesWidth * xPercent xMax x / 100)) blank
+      forM_ chans $ \ch ->
+        traceLabel ("left: 0; top: " <> px (channelTop chans ch - 13)) (channelCaption ch (channelRange ch [ref, other]))
       when (vFrontiers v) $
         forM_ (zip [0 :: Int ..] cars) $ \(row, (e, _)) ->
           forM_ (zip ["S1", "S2"] (frontierPair (frontierXs axis ref e))) $ \(name, x) ->
             traceLabelColored (if row == 0 then "comparison__trace-label--other" else "comparison__trace-label--ref")
               ("left: calc(" <> formatFixed 3 (xPercent xMax x) <> "% + 2px); top: " <> px (if row == 0 then 10 else 0))
               name
-      traceLabel ("left: 0; top: " <> px (tracesHeight - 13)) "0"
-      traceLabel ("right: 0; top: " <> px (tracesHeight - 13)) (axisEndLabel axis xMax)
+      traceLabel ("left: 0; top: " <> px (tracesHeight chans - 13)) "0"
+      traceLabel ("right: 0; top: " <> px (tracesHeight chans - 13)) (axisEndLabel axis xMax)
       overlay
     frontierRowAt 0 (showsNames m) (showsValues m) cells
   _ -> blank
   where
+    chans = traceChannels (vType v)
     frontierPair = maybe [] (\(a, b) -> [a, b])
-    rowY ch (lo, hi) y = channelTop ch + channelHeight ch * (1 - (y - lo) / (hi - lo))
+    rowY ch (lo, hi) y = channelTop chans ch + channelHeight ch * (1 - (y - lo) / (hi - lo))
     px x = formatFixed 1 x <> "px"
     traceLabel style = traceLabelColored "" style
     traceLabelColored extra style t =
@@ -766,14 +767,15 @@ traceRefColor, traceOtherColor :: Text
 traceRefColor   = "#e10600"
 traceOtherColor = "#e7e9ee"
 
--- | El lienzo de las trazas: @viewBox@ de 'Common.Traces' y ancho fluido.
-tracesAttrs :: Map Text Text
-tracesAttrs =
+-- | El lienzo de las trazas con esos canales: @viewBox@ de 'Common.Traces' y ancho
+-- fluido.
+tracesAttrs :: [Channel] -> Map Text Text
+tracesAttrs chans =
   Map.fromList
     [ ("class", "comparison__traces")
-    , ("viewBox", "0 0 " <> num tracesWidth <> " " <> num tracesHeight)
+    , ("viewBox", "0 0 " <> num tracesWidth <> " " <> num (tracesHeight chans))
     , ("width", "100%")
-    , ("height", num tracesHeight)
+    , ("height", num (tracesHeight chans))
     , ("preserveAspectRatio", "none")
     ]
 
@@ -798,12 +800,12 @@ traceGridAttrs y =
     ]
 
 -- | La raya discontinua de una frontera de un coche, de arriba abajo de los canales.
-traceFrontierAttrs :: Text -> Double -> Map Text Text
-traceFrontierAttrs color x =
+traceFrontierAttrs :: [Channel] -> Text -> Double -> Map Text Text
+traceFrontierAttrs chans color x =
   Map.fromList
     [ ("x1", formatFixed 1 x), ("x2", formatFixed 1 x)
-    , ("y1", formatFixed 1 (channelTop Speed))
-    , ("y2", formatFixed 1 (channelTop Brake + channelHeight Brake))
+    , ("y1", formatFixed 1 (fst (channelsSpan chans)))
+    , ("y2", formatFixed 1 (snd (channelsSpan chans)))
     , ("stroke", color), ("stroke-dasharray", "4 3"), ("stroke-opacity", "0.8")
     , ("vector-effect", "non-scaling-stroke")
     ]
