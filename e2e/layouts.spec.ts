@@ -83,3 +83,50 @@ test.describe('los layouts', () => {
     });
   }
 });
+
+test.describe('el modo edición', () => {
+  test.beforeEach(async ({ page }) => {
+    await openDashboard(page);
+  });
+
+  // El borde de la primera tarjeta de la capa que se ve y lo que lleva delante su título.
+  async function look(page: Page): Promise<{ border: string; mark: string }> {
+    const card = page.locator('.canvas__layer:not(.canvas__layer--hidden) .widget').first();
+    return card.evaluate((el) => ({
+      border: getComputedStyle(el).borderTopStyle,
+      mark: getComputedStyle(el.querySelector('.widget__head > h2')!, '::before').content,
+    }));
+  }
+
+  test('entra y sale: bordes discontinuos, la ⠿ en el título y «⇄» solo en edición', async ({ page }) => {
+    const swap = page.locator('.comparison__swap');
+    await expect(page.locator('.widget--comparison')).toBeVisible();
+    await expect(swap).toBeHidden();
+    expect(await look(page)).toEqual({ border: 'solid', mark: 'none' });
+
+    await page.getByRole('button', { name: '✎ Editar layout' }).click();
+    await expect(page.getByRole('button', { name: '✓ Terminar edición' })).toBeVisible();
+    await expect(swap).toBeVisible();
+    expect(await look(page)).toEqual({ border: 'dashed', mark: '"⠿ "' });
+
+    await page.getByRole('button', { name: '✓ Terminar edición' }).click();
+    await expect(page.getByRole('button', { name: '✎ Editar layout' })).toBeVisible();
+    await expect(swap).toBeHidden();
+    expect(await look(page)).toEqual({ border: 'solid', mark: 'none' });
+  });
+
+  test('plegar la cabecera y cambiar de layout no sacan de la edición', async ({ page }) => {
+    const canvas = page.locator('.canvas');
+    await page.getByRole('button', { name: '✎ Editar layout' }).click();
+    await expect(canvas).toHaveClass(/canvas--editing/);
+
+    await page.locator('.header-toggle').click();
+    await expect(canvas).toHaveClass(/canvas--header-hidden/);
+    await expect(canvas).toHaveClass(/canvas--editing/);
+    await page.locator('.header-toggle').click();
+
+    await show(page, 'Qualy');
+    await expect(canvas).toHaveClass(/canvas--editing/);
+    expect((await look(page)).border).toBe('dashed');
+  });
+});

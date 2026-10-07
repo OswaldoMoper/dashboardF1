@@ -85,26 +85,29 @@ dashboardPage = divClass "page page--dashboard" $ do
   openDyn     <- toggle True toggleClick
   poll        <- livePoll
   initial     <- fromMaybe delayDefaultSeconds . delayFromUrl <$> getLocationUrl
-  (layoutDyn, live) <- divClass "top-bar" $ do
-    (active, delay) <- dashboardHeader initial openDyn
+  (layoutDyn, live, editing) <- divClass "top-bar" $ do
+    (active, delay, editing) <- dashboardHeader initial openDyn
     live <- delayedLive delay poll
     sessionBand openDyn (lvPoll live) (lvAge live)
-    pure (active, live)
-  elDynClass "div" (canvasClass <$> openDyn) $
+    pure (active, live, editing)
+  elDynClass "div" (canvasClass <$> openDyn <*> editing) $
     mapM_ (layer live layoutDyn) [raceOverview, qualy]
   where
-    -- __El lienzo dice si la cabecera está plegada__, para quien necesite saberlo
-    -- desde la hoja de estilos. Hoy no lo lee nadie: lo leía la muesca de la
-    -- esquina, y la banda se la quitó de encima al bajar las tarjetas fuera del
-    -- alcance del botón. Se conserva con el resto de ese mecanismo.
+    -- __El lienzo dice si la cabecera está plegada y si se está editando__, para
+    -- quien necesite saberlo desde la hoja de estilos. Lo plegado hoy no lo lee
+    -- nadie: lo leía la muesca de la esquina, y la banda se la quitó de encima al
+    -- bajar las tarjetas fuera del alcance del botón. Se conserva con el resto de
+    -- ese mecanismo. Lo editado lo leen los bordes, la ⠿ del título y «⇄».
     --
     -- __Va aquí y no en @.page--dashboard@__ para no atar un nudo: el botón que
     -- produce el 'Event' es hijo de la página, así que una clase dinámica en
     -- ella tendría que leer algo que se define dentro de ella misma. El lienzo
     -- se monta después del botón y del estado, y el valor ya está en la mano.
-    canvasClass open
-      | open      = "canvas"
-      | otherwise = "canvas canvas--header-hidden"
+    canvasClass open editing =
+      T.unwords $
+        ["canvas"]
+          <> ["canvas--header-hidden" | not open]
+          <> ["canvas--editing" | editing]
 
 -- | Botón que pliega y despliega la cabecera. __Es hermano de ella y no hijo__,
 -- que es lo único que le permite seguir visible cuando ella no lo está: metido
@@ -124,23 +127,26 @@ headerToggle = do
   (e, _) <- elClass' "button" "header-toggle" $ text "☰"
   pure (domEvent Click e)
 
--- | La cabecera: título, conmutación de layouts y el retraso del directo, que se
--- pliegan __juntos__ (2026-09-07). Devuelve el layout activo y el retraso en
--- segundos, porque los dos viven dentro; el retraso arranca en @initial@.
+-- | La cabecera: título, conmutación de layouts, el modo edición y el retraso del
+-- directo, que se pliegan __juntos__ (2026-09-07). Devuelve el layout activo, el
+-- retraso en segundos y si se está editando, porque los tres viven dentro; el
+-- retraso arranca en @initial@.
 --
 -- __Se pliega con una clase y no desmontando__, y la diferencia importa: con
 -- 'dyn' el contenido se re-monta en cada cambio, así que 'layoutSwitcher'
 -- perdería su @Dynamic t Layout@ y __volvería a 'raceOverview'__ cada vez que se
--- desplegara. Con 'elDynClass' el DOM se queda montado y solo cambia si se pinta.
+-- desplegara. Con 'elDynClass' el DOM se queda montado y solo cambia si se pinta;
+-- por lo mismo, plegarla no saca de la edición.
 dashboardHeader :: MonadWidget t m
-                => Int -> Dynamic t Bool -> m (Dynamic t Layout, Dynamic t Int)
+                => Int -> Dynamic t Bool
+                -> m (Dynamic t Layout, Dynamic t Int, Dynamic t Bool)
 dashboardHeader initial openDyn =
   elDynClass "div" (headerClass <$> openDyn) $ do
     el "h1" $ text "F1 Functional Dashboard"
     divClass "dashboard-header__controls" $ do
-      active <- layoutSwitcher
-      delay  <- delayField initial
-      pure (active, delay)
+      (active, editing) <- layoutSwitcher
+      delay <- delayField initial
+      pure (active, delay, editing)
   where
     headerClass open
       | open      = "dashboard-header"
@@ -431,16 +437,35 @@ slotClass wc
   | touchesTopRight wc = "widget-slot widget-slot--top-right"
   | otherwise          = "widget-slot"
 
--- | Barra de botones que conmutan entre los layouts fijos. Sostiene el layout
--- activo en un @Dynamic t Layout@ (arranca en 'raceOverview').
-layoutSwitcher :: MonadWidget t m => m (Dynamic t Layout)
+-- | Barra de botones que conmutan entre los layouts fijos, con el del modo
+-- edición a su derecha ('editToggle'). Sostiene el layout activo (arranca en
+-- 'raceOverview') y si se está editando; cambiar de layout no saca de la edición.
+layoutSwitcher :: MonadWidget t m => m (Dynamic t Layout, Dynamic t Bool)
 layoutSwitcher = divClass "layout-switcher" $ do
   overviewClick <- switcherButton "Race Overview"
   qualyClick    <- switcherButton "Qualy"
-  holdDyn raceOverview $ leftmost
+  active <- holdDyn raceOverview $ leftmost
     [ raceOverview <$ overviewClick
     , qualy        <$ qualyClick
     ]
+  editing <- editToggle
+  pure (active, editing)
+
+-- | El botón del modo edición (2026-09-29 (g)): entra y sale, y arranca fuera.
+-- Nombra a dónde lleva, como el aspecto de la banda; en edición queda marcado.
+editToggle :: MonadWidget t m => m (Dynamic t Bool)
+editToggle = mdo
+  (e, _) <- elDynClass' "button" (toggleClass <$> editing) $
+              dynText (toggleLabel <$> editing)
+  editing <- toggle False (domEvent Click e)
+  pure editing
+  where
+    toggleClass on
+      | on        = "switcher__btn edit-toggle edit-toggle--on"
+      | otherwise = "switcher__btn edit-toggle"
+    toggleLabel on
+      | on        = "✓ Terminar edición"
+      | otherwise = "✎ Editar layout"
 
 -- | Botón que emite un 'Event' al hacer click. Clase @switcher__btn@, la misma
 -- que los tres switchers de los widgets; el bloque

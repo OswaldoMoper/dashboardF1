@@ -8,6 +8,7 @@
   --c-bg:        #12141a;
   --c-surface:   #1b1e26;
   --c-surface-2: #232733;
+  --c-surface-3: #3a4050;  /* un botón marcado */
   --c-border:    #2f3441;
   --c-text:      #e7e9ee;
   --c-muted:     #9aa1b1;
@@ -847,6 +848,33 @@ body {
   border-color: var(--c-accent);
   color: #fff;
   font-weight: 600;
+}
+
+/* En edición, «✓ Terminar edición» queda marcado, y al pasar el ratón su borde es
+   morado: es aceptar (2026-10-07). */
+.edit-toggle--on {
+  background: var(--c-surface-3);
+}
+
+.edit-toggle--on:hover {
+  border-color: var(--c-fastest);
+}
+
+/* En edición, cada tarjeta lleva borde discontinuo y la ⠿ delante del título, y
+   «⇄» solo se ve en edición (2026-09-29 (j)). «⇄» está fuera del flujo del título,
+   así que ocultarlo no cambia su ancho. */
+.canvas--editing .widget {
+  border-style: dashed;
+  border-color: var(--c-muted);
+}
+
+.canvas--editing .widget__head > h2::before {
+  content: "⠿ ";
+  color: var(--c-muted);
+}
+
+.canvas:not(.canvas--editing) .comparison__swap {
+  display: none;
 }
 
 .car-selector__select {
