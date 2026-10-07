@@ -27,7 +27,7 @@
 --
 module Pages.Dashboard where
 
-import           Common.Carry       (Board (..), Hand (..), Held (..),
+import           Common.Carry       (Board (..), Grip (..), Hand (..), Held (..),
                                      Scene (..), boardOf, heldStyle, scene,
                                      stepBoard)
 import           Common.Format      (ClockForm (..), formatClock)
@@ -440,32 +440,37 @@ layer live layoutDyn edit l = mdo
       | otherwise = "canvas__layer canvas__layer--hidden"
 
     -- Coger necesita cuántos px mide el lienzo ahora; la capa mide lo mismo que él.
-    measure layerEl (wid, p) = liftJSM $ do
+    measure layerEl (wid, grip, p) = liftJSM $ do
       r <- DOM.getBoundingClientRect (_element_raw layerEl)
       w <- DOM.getWidth r
       h <- DOM.getHeight r
-      pure (Press wid p (w, h))
+      pure (Press wid grip p (w, h))
 
--- | Dónde aprieta el botón izquierdo sobre el título de la tarjeta en edición, en px
--- de la ventana. Los controles del título (botones, desplegables, casillas) siguen
--- siendo controles y no cogen la tarjeta; al coger, el navegador no selecciona texto.
-titlePresses :: MonadWidget t m => DOM.HTMLElement -> m (Event t (Double, Double))
-titlePresses e = fmapMaybe id <$> wrapDomEvent e (`DOM.on` DOM.mouseDown) grab
+-- | Dónde y por dónde aprieta el botón izquierdo sobre la tarjeta en edición, en px
+-- de la ventana: por el título o por la esquina ◢. Los controles del título
+-- (botones, desplegables, casillas) siguen siendo controles y no cogen la tarjeta; al
+-- coger, el navegador no selecciona texto.
+slotPresses :: MonadWidget t m => DOM.HTMLElement -> m (Event t (Grip, (Double, Double)))
+slotPresses e = fmapMaybe id <$> wrapDomEvent e (`DOM.on` DOM.mouseDown) grab
   where
     grab = do
-      which  <- Mouse.getButton =<< DOM.event
-      onHead <- maybe (pure False) (liftJSM . fromTitle) =<< DOM.target
-      if which == 0 && onHead
-        then do
+      which <- Mouse.getButton =<< DOM.event
+      grip  <- maybe (pure Nothing) (liftJSM . gripOf) =<< DOM.target
+      case grip of
+        Just g | which == 0 -> do
           DOM.preventDefault
           (x, y) <- DOM.mouseClientXY
-          pure (Just (fromIntegral x, fromIntegral y))
-        else pure Nothing
-    fromTitle :: DOM.HTMLElement -> JSM Bool
-    fromTitle t = do
+          pure (Just (g, (fromIntegral x, fromIntegral y)))
+        _ -> pure Nothing
+    gripOf :: DOM.HTMLElement -> JSM (Maybe Grip)
+    gripOf t = do
+      corner  <- DOM.closest t (".canvas--editing .widget-slot__grip" :: Text)
       title   <- DOM.closest t (".canvas--editing .widget__head" :: Text)
       control <- DOM.closest t ("button, select, input, label, a, textarea" :: Text)
-      pure (isJust title && isNothing control)
+      pure $ case () of
+        _ | isJust corner                     -> Just ByCorner
+          | isJust title && isNothing control -> Just ByTitle
+          | otherwise                         -> Nothing
 
 -- | El ratón y el teclado de toda la ventana, para quien lleva una tarjeta: el
 -- puntero llega aunque salga del lienzo, y soltar fuera de la ventana también avisa.
@@ -501,8 +506,8 @@ targetOutline shown =
     attrs Nothing  = "class" =: "canvas__target" <> "hidden" =: ""
 
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
--- lienzo, con el estilo que calcula 'slotStyle'. Devuelve dónde se aprieta su
--- título para cogerla ('titlePresses').
+-- lienzo, con el estilo que calcula 'slotStyle', y con la esquina ◢ que solo se ve
+-- en edición. Devuelve dónde y por dónde se coge ('slotPresses').
 --
 -- __El rectángulo lo pone quien envuelve y no el widget__, y no es una elección
 -- de estilo: 'renderWidget' despacha por 'widgetType' y cada widget emite su
@@ -518,18 +523,20 @@ targetOutline shown =
 -- ventana (2026-09-07 b); a quién le toca lo dice 'touchesTopRight'.
 slot :: MonadWidget t m
      => LiveView t -> Event t () -> Dynamic t Scene -> WidgetConfig
-     -> m (Event t (WidgetId, (Double, Double)))
+     -> m (Event t (WidgetId, Grip, (Double, Double)))
 slot live revealed shown wc = do
   attrs  <- holdUniqDyn (slotAttrs wc <$> shown)
-  (e, _) <- elDynAttr' "div" attrs $ renderWidget live revealed wc
-  grabs  <- titlePresses (DOM.uncheckedCastTo DOM.HTMLElement (_element_raw e))
-  pure ((,) (widgetId wc) <$> grabs)
+  (e, _) <- elDynAttr' "div" attrs $ do
+    renderWidget live revealed wc
+    divClass "widget-slot__grip" $ text "◢"
+  grabs  <- slotPresses (DOM.uncheckedCastTo DOM.HTMLElement (_element_raw e))
+  pure ((\(g, p) -> (widgetId wc, g, p)) <$> grabs)
 
 -- | Clase y estilo del slot según lo que se pinta: la que se lleva sigue al puntero
 -- ('heldStyle') y se marca si ahí no se deja; las demás, en su rectángulo.
 slotAttrs :: WidgetConfig -> Scene -> Map Text Text
 slotAttrs wc s = case sceneHeld s of
-  Just h | heldId h == widgetId wc -> "class" =: heldClass h <> "style" =: heldStyle h wc
+  Just h | heldId h == widgetId wc -> "class" =: heldClass h <> "style" =: heldStyle h
   _ -> "class" =: slotClass r <> "style" =: slotStyle r
   where
     r = fromMaybe wc (find ((== widgetId wc) . widgetId) (sceneCards s))

@@ -123,7 +123,7 @@ import           Common.Origin               (Origin (..), Source (..),
                                               sourceFrom, sourceHeader,
                                               sourceLabel, sourceName,
                                               sourcedFrom, sourcedHeaders)
-import           Common.Carry                (Board (..), Carry (..), Hand (..), Held (..),
+import           Common.Carry                (Board (..), Carry (..), Grip (..), Hand (..), Held (..),
                                               Scene (..), boardOf, heldStyle,
                                               magnetDivisions, scene, stepBoard)
 import           Common.Push                 (Drag (..), applyDrag)
@@ -3687,7 +3687,7 @@ main = hspec $ do
   describe "Common.Carry" $ do
     let cs       = WidgetId "constructor-stats"
         canvas   = (1200, 600)
-        grabbed  = stepBoard True (Press cs (700, 500) canvas) (boardOf raceOverviewFixture)
+        grabbed  = stepBoard True (Press cs ByTitle (700, 500) canvas) (boardOf raceOverviewFixture)
         toY y alt = stepBoard True (Point (700, 500 + (y - 90) * 5) alt) grabbed
         rects    = map (\w -> (wcX w, wcY w, wcW w, wcH w))
 
@@ -3697,7 +3697,7 @@ main = hspec $ do
 
     it "Constructores en y = 37,25: se pinta ahí, el contorno cae en 35 y Lap Comparison baja a 65 (D125)" $ do
       let s = scene True (toY 37.25 False)
-      sceneHeld s `shouldBe` Just (Held cs 60 37.25 True)
+      sceneHeld s `shouldBe` Just (Held cs 60 37.25 60 30 True)
       fmap (\t -> (wcX t, wcY t, wcW t, wcH t)) (sceneTarget s) `shouldBe` Just (60, 35, 60, 30)
       rects (sceneCards s)
         `shouldBe` [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
@@ -3728,15 +3728,32 @@ main = hspec $ do
       let idle = boardOf raceOverviewFixture
       map (\h -> stepBoard True h idle) [Point (1, 2) False, AltKey True, Release, Cancel]
         `shouldBe` replicate 4 idle
-      stepBoard True (Press cs (1, 2) (0, 600)) idle `shouldBe` idle
-      stepBoard True (Press (WidgetId "nadie") (1, 2) canvas) idle `shouldBe` idle
-      fmap carryId (boardCarry (stepBoard True (Press (WidgetId "telemetry") (1, 2) canvas) grabbed))
+      stepBoard True (Press cs ByTitle (1, 2) (0, 600)) idle `shouldBe` idle
+      stepBoard True (Press (WidgetId "nadie") ByTitle (1, 2) canvas) idle `shouldBe` idle
+      fmap carryId (boardCarry (stepBoard True (Press (WidgetId "telemetry") ByCorner (1, 2) canvas) grabbed))
         `shouldBe` Just cs
 
-    it "el estilo de la que se lleva: la esquina con dos decimales y el tamaño en unidades" $
-      heldStyle (Held cs 60 37.25 True) (rectNamed "constructor-stats" ConstructorStats (60, 90, 60, 30))
+    it "por la esquina, Lap Comparison a 61,25 de alto: el contorno en 60 y Constructores encoge a 25" $ do
+      let lc = WidgetId "lap-comparison"
+          s  = scene True (stepBoard True (Point (700, 500 + 11.25 * 5) False)
+                 (stepBoard True (Press lc ByCorner (700, 500) canvas) (boardOf raceOverviewFixture)))
+      sceneHeld s `shouldBe` Just (Held lc 60 35 60 61.25 True)
+      fmap (\t -> (wcX t, wcY t, wcW t, wcH t)) (sceneTarget s) `shouldBe` Just (60, 35, 60, 60)
+      rects (sceneCards s)
+        `shouldBe` [(0, 0, 60, 90), (60, 0, 60, 35), (60, 35, 60, 60), (0, 90, 60, 30), (60, 95, 60, 25)]
+
+    it "por la esquina, de 70 en adelante no se deja; y no baja de su mínimo ni se sale del lienzo" $ do
+      let lc       = WidgetId "lap-comparison"
+          stretch p = scene True (stepBoard True (Point p False)
+                        (stepBoard True (Press lc ByCorner (700, 500) canvas) (boardOf raceOverviewFixture)))
+      fmap heldFits (sceneHeld (stretch (700, 500 + 22.5 * 5))) `shouldBe` Just False
+      fmap (\h -> (heldW h, heldH h)) (sceneHeld (stretch (-90000, -90000))) `shouldBe` Just (25, 50)
+      fmap (\h -> (heldW h, heldH h)) (sceneHeld (stretch (90000, 90000))) `shouldBe` Just (60, 85)
+
+    it "el estilo de la que se lleva: su rectángulo con dos decimales" $
+      heldStyle (Held cs 60 37.25 60 30 True)
         `shouldBe` "left: calc(60.00 * 100% / 120); top: calc(37.25 * 100% / 120); \
-                   \width: calc(60 * 100% / 120); height: calc(30 * 100% / 120)"
+                   \width: calc(60.00 * 100% / 120); height: calc(30.00 * 100% / 120)"
 
     prop "lo que enseña el contorno es lo que queda al soltar, y si no se deja queda la foto" carryShowsDrop
 
@@ -4677,11 +4694,11 @@ moveKeepsHeld i a b =
     x = a `mod` 140 - 10
     y = b `mod` 140 - 10
 
--- | Se coja la tarjeta que se coja de Race Overview y se lleve a donde se lleve, con
--- el imán o sin él: si se deja, el contorno es donde queda la que se lleva y soltar
--- deja lo que se pinta; si no, soltar deja la foto.
-carryShowsDrop :: Int -> Bool -> Bool -> Int -> Int -> Bool
-carryShowsDrop i magnet alt a b =
+-- | Se coja la tarjeta que se coja de Race Overview, por el título o por la esquina,
+-- y se lleve a donde se lleve, con el imán o sin él: si se deja, el contorno es donde
+-- queda la que se lleva y soltar deja lo que se pinta; si no, soltar deja la foto.
+carryShowsDrop :: Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool
+carryShowsDrop i corner magnet alt a b =
   case sceneHeld s of
     Just h | heldFits h ->
       dropped == sceneCards s
@@ -4689,7 +4706,8 @@ carryShowsDrop i magnet alt a b =
     _ -> dropped == raceOverviewFixture
   where
     held    = widgetId (raceOverviewFixture !! (i `mod` length raceOverviewFixture))
-    grabbed = stepBoard magnet (Press held (700, 500) (1200, 600)) (boardOf raceOverviewFixture)
+    grip    = if corner then ByCorner else ByTitle
+    grabbed = stepBoard magnet (Press held grip (700, 500) (1200, 600)) (boardOf raceOverviewFixture)
     moved   = stepBoard magnet (Point (fromIntegral (a `mod` 2000 - 400), fromIntegral (b `mod` 1000 - 200)) alt) grabbed
     s       = scene magnet moved
     dropped = boardLayout (stepBoard magnet Release moved)

@@ -8,6 +8,7 @@
 module Common.Carry
   ( Board (..)
   , Carry (..)
+  , Grip (..)
   , Hand (..)
   , Held (..)
   , Scene (..)
@@ -18,7 +19,8 @@ module Common.Carry
   , stepBoard
   ) where
 
-import           Common.Layout (canvasSpan, gridDivisions, snapTo, spanCss)
+import           Common.Layout (canvasSpan, gridDivisions, minHeightFor,
+                                minWidthFor, snapTo)
 import           Common.Push   (Drag (..), applyDrag)
 import           Common.Types  (WidgetConfig (..), WidgetId)
 import           Data.List     (find)
@@ -33,11 +35,16 @@ data Board = Board
   , boardCarry  :: Maybe Carry
   } deriving stock (Eq, Show)
 
--- | Una tarjeta cogida: cuál, dónde estaba el puntero al cogerla y dónde está ahora
--- (en px de la ventana), cuántos px mide una unidad del lienzo en cada eje, y si Alt
--- está pulsado.
+-- | Por dónde se coge la tarjeta: por el título se mueve; por la esquina ◢ se estira.
+data Grip = ByTitle | ByCorner
+  deriving stock (Eq, Show)
+
+-- | Una tarjeta cogida: cuál y por dónde, dónde estaba el puntero al cogerla y dónde
+-- está ahora (en px de la ventana), cuántos px mide una unidad del lienzo en cada
+-- eje, y si Alt está pulsado.
 data Carry = Carry
   { carryId   :: WidgetId
+  , carryGrip :: Grip
   , carryFrom :: (Double, Double)
   , carryAt   :: (Double, Double)
   , carryUnit :: (Double, Double)
@@ -46,8 +53,9 @@ data Carry = Carry
 
 -- | Lo que llega del ratón y del teclado.
 data Hand
-  = Press WidgetId (Double, Double) (Double, Double)
-    -- ^ Coger esa tarjeta, con el puntero ahí; el ancho y el alto del lienzo, en px.
+  = Press WidgetId Grip (Double, Double) (Double, Double)
+    -- ^ Coger esa tarjeta por ahí, con el puntero ahí; el ancho y el alto del
+    -- lienzo, en px.
   | Point (Double, Double) Bool
     -- ^ El puntero se mueve, con Alt pulsado o no.
   | AltKey Bool
@@ -55,12 +63,14 @@ data Hand
   | Cancel
   deriving stock (Eq, Show)
 
--- | La tarjeta que se lleva, como se pinta: su esquina en unidades del lienzo, sin
--- pegar a la rejilla, y si donde está se deja soltar.
+-- | La tarjeta que se lleva, como se pinta: su rectángulo en unidades del lienzo,
+-- sin pegar a la rejilla, y si donde está se deja soltar.
 data Held = Held
   { heldId   :: WidgetId
   , heldX    :: Double
   , heldY    :: Double
+  , heldW    :: Double
+  , heldH    :: Double
   , heldFits :: Bool
   } deriving stock (Eq, Show)
 
@@ -89,9 +99,9 @@ magnetDivisions on alt
 -- foto.
 stepBoard :: Bool -> Hand -> Board -> Board
 stepBoard magnet hand b = case (hand, boardCarry b) of
-  (Press wid p (w, h), Nothing)
+  (Press wid grip p (w, h), Nothing)
     | w > 0, h > 0, any ((== wid) . widgetId) photo ->
-        b { boardCarry = Just (Carry wid p p (w / units, h / units) False) }
+        b { boardCarry = Just (Carry wid grip p p (w / units, h / units) False) }
   (Point p alt, Just c) -> b { boardCarry = Just c { carryAt = p, carryAlt = alt } }
   (AltKey alt, Just c)  -> b { boardCarry = Just c { carryAlt = alt } }
   (Release, Just c)     -> Board (fromMaybe photo (pushed magnet photo c)) Nothing
@@ -108,42 +118,54 @@ scene magnet b = case boardCarry b of
   Just c  -> case find ((== carryId c) . widgetId) photo of
     Nothing -> Scene photo Nothing Nothing
     Just w  ->
-      let (x, y) = floating w c
-          after  = pushed magnet photo c
+      let (x, y, wd, ht) = floating w c
+          after          = pushed magnet photo c
       in Scene (fromMaybe photo after)
-               (Just (Held (carryId c) x y (isJust after)))
+               (Just (Held (carryId c) x y wd ht (isJust after)))
                (after >>= find ((== carryId c) . widgetId))
   where photo = boardLayout b
 
--- | El estilo del slot de la que se lleva: como 'Common.Layout.slotStyle', con la
--- esquina sin pegar a la rejilla (dos decimales).
-heldStyle :: Held -> WidgetConfig -> Text
-heldStyle h w = T.intercalate "; "
+-- | El estilo del slot de la que se lleva: como 'Common.Layout.slotStyle', sin
+-- pegar a la rejilla (dos decimales).
+heldStyle :: Held -> Text
+heldStyle h = T.intercalate "; "
   [ "left: "   <> fraction (heldX h)
   , "top: "    <> fraction (heldY h)
-  , "width: "  <> spanCss (wcW w)
-  , "height: " <> spanCss (wcH w)
+  , "width: "  <> fraction (heldW h)
+  , "height: " <> fraction (heldH h)
   ]
   where
     fraction v =
       "calc(" <> T.pack (showFFloat (Just 2) v "") <> " * 100% / " <> T.pack (show canvasSpan) <> ")"
 
--- | La esquina de la que se lleva: donde estaba, más lo que se ha movido el puntero,
--- sin salirse del lienzo.
-floating :: WidgetConfig -> Carry -> (Double, Double)
-floating w c =
-  ( along (wcX w) (wcW w) fst
-  , along (wcY w) (wcH w) snd )
+-- | El rectángulo de la que se lleva: el de la foto más lo que se ha movido el
+-- puntero, en la esquina (por el título) o en el tamaño (por la ◢). Sin salirse del
+-- lienzo y, al estirar, sin bajar de los mínimos.
+floating :: WidgetConfig -> Carry -> (Double, Double, Double, Double)
+floating w c = case carryGrip c of
+  ByTitle  -> ( within 0 (span' - wd) (x + dx), within 0 (span' - ht) (y + dy), wd, ht )
+  ByCorner -> ( x, y
+              , within (fromIntegral (minWidthFor (widgetType w))) (span' - x) (wd + dx)
+              , within (fromIntegral (minHeightFor (widgetType w))) (span' - y) (ht + dy) )
   where
-    along start size pick =
-      max 0 . min (fromIntegral (canvasSpan - size)) $
-        fromIntegral start + (pick (carryAt c) - pick (carryFrom c)) / pick (carryUnit c)
+    span'  = fromIntegral canvasSpan
+    x      = fromIntegral (wcX w)
+    y      = fromIntegral (wcY w)
+    wd     = fromIntegral (wcW w)
+    ht     = fromIntegral (wcH w)
+    dx     = moved fst
+    dy     = moved snd
+    moved pick = (pick (carryAt c) - pick (carryFrom c)) / pick (carryUnit c)
+    within lo hi = max lo . min hi
 
--- | El layout si se soltara ahora: la esquina, redondeada y pegada al imán, y el
--- empuje sobre la foto. 'Nothing' si no se deja.
+-- | El layout si se soltara ahora: la esquina o el tamaño, redondeados y pegados al
+-- imán, y el empuje sobre la foto. 'Nothing' si no se deja.
 pushed :: Bool -> [WidgetConfig] -> Carry -> Maybe [WidgetConfig]
 pushed magnet photo c = do
   w <- find ((== carryId c) . widgetId) photo
-  let (x, y) = floating w c
-      d      = magnetDivisions magnet (carryAlt c)
-  applyDrag d photo (MoveTo (carryId c) (snapTo d (round x)) (snapTo d (round y)))
+  let (x, y, wd, ht) = floating w c
+      d              = magnetDivisions magnet (carryAlt c)
+      snapped        = snapTo d . round
+  applyDrag d photo $ case carryGrip c of
+    ByTitle  -> MoveTo (carryId c) (snapped x) (snapped y)
+    ByCorner -> ResizeTo (carryId c) (snapped wd) (snapped ht)

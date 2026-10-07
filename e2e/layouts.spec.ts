@@ -193,6 +193,24 @@ test.describe('el arrastre', () => {
     expect(await units(page)).toEqual(RACE);
   });
 
+  test('la esquina ◢ estira Lap Comparison y Constructores encoge', async ({ page }) => {
+    await page.getByRole('button', { name: '✎ Editar layout' }).click();
+    const layer = await page.locator('.canvas__layer').first().boundingBox();
+    const slot = page.locator('.canvas__layer').first().locator(':scope > .widget-slot').nth(2);
+    await slot.hover();
+    const grip = await slot.locator('.widget-slot__grip').boundingBox();
+    if (!layer || !grip) throw new Error('no se ve la esquina');
+    const x = grip.x + grip.width / 2;
+    const y = grip.y + grip.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, y + (11 * layer.height) / 120, { steps: 12 });
+    await expect(page.locator('.widget-slot--held')).toHaveCount(1);
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    expect(await units(page)).toEqual([[0, 0, 60, 90], [60, 0, 60, 35], [60, 35, 60, 60], [0, 90, 60, 30], [60, 95, 60, 25]]);
+  });
+
   test('fuera de edición el título no coge la tarjeta', async ({ page }) => {
     await carry(page, 4, 0, -55);
     await page.mouse.up();

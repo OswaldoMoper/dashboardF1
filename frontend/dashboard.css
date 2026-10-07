@@ -922,6 +922,38 @@ body {
   cursor: not-allowed;
 }
 
+/* La esquina ◢ que estira: solo en edición, y solo con el ratón sobre la tarjeta o
+   mientras se lleva (2026-10-07). */
+.widget-slot__grip {
+  display: none;
+}
+
+.canvas--editing .widget-slot__grip {
+  display: block;
+  position: absolute;
+  right: calc(var(--sp-2) + 3px);
+  bottom: calc(var(--sp-2) + 2px);
+  z-index: 5;
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
+  line-height: 14px;
+  text-align: right;
+  color: var(--c-muted);
+  cursor: nwse-resize;
+  user-select: none;
+  opacity: 0;
+}
+
+.canvas--editing .widget-slot:hover > .widget-slot__grip,
+.canvas--editing .widget-slot--held > .widget-slot__grip {
+  opacity: 1;
+}
+
+.canvas--editing .widget-slot--blocked > .widget-slot__grip {
+  cursor: not-allowed;
+}
+
 /* Donde caerá: el rectángulo del slot, con su misma separación. */
 .canvas__target {
   position: absolute;
