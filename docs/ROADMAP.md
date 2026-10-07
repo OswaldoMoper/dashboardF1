@@ -688,12 +688,14 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       en N exactas). Una tarjeta más baja que el mínimo del tipo elegido hace scroll dentro hasta que exista el modo
       edición, y el deslizable pide como mucho una vez cada ~200 ms mientras se arrastra, más la del final
       (2026-10-01). **Hecho:** la respuesta de 1 a 5 coches, «Δ contra» en la leyenda (2026-10-02 (c)), el piloto
-      sin vuelta (2026-10-02 (d)), el tipo en el título y la Telemetría comparativa (2026-10-02 (e)). **Falta:**
-      Lap Speed Trace y Lap Delta, elegir hasta cinco pilotos, comparar sesiones (con el selector de sesión) y el
-      directo. **Decidido, sin programar** (2026-10-06 (e)): Lap Speed Trace con la velocidad estirada al alto de la
-      tarjeta (mínimo 150 px; 100 con otra gráfica), y en todos los tipos la fila de fronteras turnándose con una banda
-      de sectores al pulsarla. La Telemetría comparativa cabe en 55 u (2026-10-06 (d)). **Sin decidir:** contra quién
-      se mide la Δ con tres o más pilotos, y que el usuario elija qué gráficas salen en las trazas.
+      sin vuelta (2026-10-02 (d)), el tipo en el título y la Telemetría comparativa (2026-10-02 (e)), que cabe en
+      55 u (2026-10-06 (d)). **Hecho, Lap Speed Trace** (2026-10-06 (e) y (g)): la velocidad sola llena el alto de la
+      tarjeta, con mínimo de 150 px; la fila de fronteras se decide con la velocidad en su mínimo. La tarjeta se vuelve
+      a medir cuando cambia su tamaño, también al cambiar de tipo (2026-10-06 (f)). **Falta:** Lap Delta, elegir hasta
+      cinco pilotos, comparar sesiones (con el selector de sesión), el directo, y en todos los tipos la fila de
+      fronteras turnándose con una banda de sectores al pulsarla (decidido, sin programar). **Sin decidir:** si las
+      barras de Lap Delta son las trazas, contra quién se mide la Δ con tres o más pilotos, que el usuario elija qué
+      gráficas salen en las trazas, y dónde va el valor de S3, que en las trazas se sale por el borde derecho.
 - [x] **Live Timing: la vuelta rápida y las columnas a elegir** (2026-10-02 (f) y (g)). «Best Lap» con la más
       rápida de la sesión en negrita y la de la parte en curso en morado, y un panel «Columnas ▾» que cierra
       cualquier columna salvo «Pos» y «Driver», dejando siempre una de las de tiempo o estado. Por tarjeta y sin
