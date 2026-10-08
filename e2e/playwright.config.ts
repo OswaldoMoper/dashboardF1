@@ -1,10 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// Un proceso y un reintento: una prueba que solo pasa al reintentar sale como
-// «flaky», y ese aviso se lee.
+// Un proceso por ventana, con las pruebas de cada una en orden, y un reintento: una
+// prueba que solo pasa al reintentar sale como «flaky», y ese aviso se lee.
 export default defineConfig({
   testDir: '.',
-  workers: 1,
+  workers: 2,
   retries: 1,
   reporter: 'list',
   use: {
