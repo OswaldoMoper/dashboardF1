@@ -218,4 +218,96 @@ test.describe('el arrastre', () => {
     await expect(page.locator('.widget-slot--held')).toHaveCount(0);
     expect(await units(page)).toEqual(RACE);
   });
+
+  test.describe('el layout se recuerda', () => {
+    // Race Overview con Constructores encima de Lap Comparison (D125).
+    const MOVED = [[0, 0, 60, 90], [60, 0, 60, 35], [60, 65, 60, 50], [0, 90, 60, 30], [60, 35, 60, 30]];
+    const edit = (page: Page) => page.getByRole('button', { name: '✎ Editar layout' }).click();
+    const finish = (page: Page) => page.getByRole('button', { name: '✓ Terminar edición' }).click();
+
+    async function moveConstructors(page: Page): Promise<void> {
+      await edit(page);
+      await carry(page, 4, 0, -55);
+      await page.mouse.up();
+      await page.waitForTimeout(400);
+      expect(await units(page)).toEqual(MOVED);
+    }
+
+    async function reload(page: Page): Promise<void> {
+      await page.reload();
+      await expect(page.locator('.widget--comparison')).toBeVisible();
+    }
+
+    test('lo movido se guarda al terminar la edición, y sin terminar se pierde', async ({ page }) => {
+      await moveConstructors(page);
+      await reload(page);
+      expect(await units(page)).toEqual(RACE);
+
+      await moveConstructors(page);
+      await finish(page);
+      await reload(page);
+      expect(await units(page)).toEqual(MOVED);
+    });
+
+    test('«Restablecer» solo se ve en edición, y devuelve al de fábrica al terminar', async ({ page }) => {
+      const reset = page.getByRole('button', { name: '↺ Restablecer' });
+      await expect(reset).toBeHidden();
+      await moveConstructors(page);
+      await finish(page);
+      await reload(page);
+
+      await edit(page);
+      await reset.click();
+      await page.waitForTimeout(400);
+      expect(await units(page)).toEqual(RACE);
+      await finish(page);
+      await expect(reset).toBeHidden();
+      await reload(page);
+      expect(await units(page)).toEqual(RACE);
+    });
+
+    test('lo guardado que no encaja: el de fábrica, con asterisco y nota hasta terminar una edición', async ({ page }) => {
+      await page.evaluate(() => localStorage.setItem('dashboardF1.layout.race-overview', '[]'));
+      await reload(page);
+      expect(await units(page)).toEqual(RACE);
+      const noted = page.getByRole('button', { name: 'Race Overview*', exact: true });
+      const note = page.locator('.layout-note--open');
+      await expect(noted).toBeVisible();
+      await expect(note).toHaveCount(1);
+      await note.click();
+      await expect(note).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Qualy', exact: true })).toBeVisible();
+
+      await reload(page);
+      await expect(noted).toBeVisible();
+      await edit(page);
+      await expect(noted).toBeHidden();
+      await expect(page.getByRole('button', { name: 'Race Overview', exact: true })).toBeVisible();
+      await finish(page);
+      await reload(page);
+      await expect(page.getByRole('button', { name: 'Race Overview', exact: true })).toBeVisible();
+      await expect(page.locator('.layout-note--open')).toHaveCount(0);
+    });
+
+    test('si los dos no encajan, una sola nota bajo el primero los nombra, y vuelve al pasar el ratón', async ({ page }) => {
+      await page.evaluate(() => {
+        localStorage.setItem('dashboardF1.layout.race-overview', '{');
+        localStorage.setItem('dashboardF1.layout.qualy', '[]');
+      });
+      await reload(page);
+      const note = page.locator('.layout-note--open');
+      await expect(note).toHaveCount(1);
+      await expect(note).toContainText('Race Overview y Qualy volvieron al de fábrica');
+      await expect(page.getByRole('button', { name: 'Race Overview*', exact: true })).toBeVisible();
+      const qualy = page.getByRole('button', { name: 'Qualy*', exact: true });
+      await expect(qualy).toBeVisible();
+
+      await note.click();
+      await expect(note).toHaveCount(0);
+      await qualy.hover();
+      await expect(note).toHaveCount(1);
+      await page.mouse.move(1500, 600);
+      await expect(note).toHaveCount(0);
+    });
+  });
 });

@@ -130,7 +130,7 @@ import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Saved                (Restored (..), restoreLayout,
-                                              saveLayout, savedKey)
+                                              saveLayout, savedKey, unfitNote)
 import           Common.Shown                (Indicator (..), Kept (..),
                                               Poll (..), PollEvent (..),
                                               canRequest, fetchedAtLabel,
@@ -3800,6 +3800,16 @@ main = hspec $ do
         `shouldBe` replicate 11 Unfit
 
     prop "todo lo que deja el arrastre se guarda y vuelve igual" savedDropRoundTrips
+
+    it "la nota: con un layout, sin nombrarlo; con varios, todos por su nombre; sin ninguno, vacía" $ do
+      unfitNote ["Qualy"]
+        `shouldBe` "Volvió al de fábrica: lo guardado ya no encaja con el diseño de hoy. \
+                   \(Pulsa para cerrar; el asterisco se queda hasta pulsar «✎ Editar layout».)"
+      unfitNote ["Race Overview", "Qualy"]
+        `shouldBe` "Race Overview y Qualy volvieron al de fábrica: lo guardado ya no encaja con el diseño de hoy. \
+                   \(Pulsa para cerrar; los asteriscos se quedan hasta pulsar «✎ Editar layout».)"
+      T.takeWhile (/= ':') (unfitNote ["A", "B", "C"]) `shouldBe` "A, B y C volvieron al de fábrica"
+      unfitNote [] `shouldBe` ""
 
   describe "los layouts fijos de Pages.Dashboard" $ do
     it "los seis widgets caben donde dicen estar" $

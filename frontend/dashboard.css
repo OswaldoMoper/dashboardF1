@@ -882,6 +882,44 @@ body {
   background: var(--c-surface-3);
 }
 
+/* «Restablecer» se pinta de amarillo solo al pasar el ratón. */
+.reset-button:hover {
+  border-color: var(--c-warn);
+  color: var(--c-warn);
+}
+
+/* La nota de los layouts cuyo guardado no encajó va bajo el primero de ellos; cuándo
+   se ve lo dice la clase `--open`. */
+.layout-switcher__item {
+  position: relative;
+  display: inline-flex;
+}
+
+.switcher__btn--noted {
+  color: var(--c-muted);
+}
+
+.layout-note {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  width: 22rem;
+  margin-top: 4px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-warn);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  color: var(--c-text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.layout-note--open {
+  display: block;
+}
+
 /* En edición la tarjeta se coge por el título; sus controles siguen siendo
    controles. */
 .canvas--editing .widget__head {

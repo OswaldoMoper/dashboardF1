@@ -1,5 +1,5 @@
--- | Lo que se guarda de un layout en el navegador y cómo se vuelve a leer: el
--- rectángulo de cada tarjeta, por su id.
+-- | Lo que se guarda de un layout en el navegador, cómo se vuelve a leer y el aviso
+-- cuando lo guardado no encaja. Se guarda el rectángulo de cada tarjeta, por su id.
 --
 -- Lo guardado solo pone el rectángulo; el tipo, los parámetros, la visibilidad y el
 -- grupo de cada tarjeta salen siempre del layout de fábrica.
@@ -9,6 +9,7 @@ module Common.Saved
   , restoreLayout
   , saveLayout
   , savedKey
+  , unfitNote
   ) where
 
 import           Common.Layout   (fitsAt, overlaps)
@@ -18,6 +19,7 @@ import           Data.Aeson      (FromJSON, ToJSON, decodeStrictText)
 import           Data.Aeson.Text (encodeToLazyText)
 import           Data.List       (find, tails)
 import           Data.Text       (Text)
+import qualified Data.Text       as T
 import qualified Data.Text.Lazy  as LT
 import           GHC.Generics    (Generic)
 
@@ -70,3 +72,15 @@ restoreLayout factory (Just t) = maybe Unfit FromSaved $ do
   pure placed
   where
     place w c = w { wcX = savedX c, wcY = savedY c, wcW = savedW c, wcH = savedH c }
+
+-- | La nota de los layouts que volvieron al de fábrica, con sus nombres. Con uno solo
+-- no lo nombra, porque la nota va bajo su botón; sin ninguno, vacía.
+unfitNote :: [Text] -> Text
+unfitNote names = case reverse names of
+  []          -> ""
+  [_]         -> "Volvió al de fábrica" <> because <> " (Pulsa para cerrar; el asterisco se queda" <> until'
+  lastOne : r -> T.intercalate ", " (reverse r) <> " y " <> lastOne <> " volvieron al de fábrica" <> because
+                   <> " (Pulsa para cerrar; los asteriscos se quedan" <> until'
+  where
+    because = ": lo guardado ya no encaja con el diseño de hoy."
+    until'  = " hasta pulsar «✎ Editar layout».)"

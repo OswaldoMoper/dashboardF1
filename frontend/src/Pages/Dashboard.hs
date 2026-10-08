@@ -33,7 +33,9 @@ import           Common.Carry       (Board (..), Grip (..), Hand (..), Held (..)
 import           Common.Format      (ClockForm (..), formatClock)
 import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
-import           Common.Shown       (Kept (..), Poll (..), delayDefaultSeconds,
+import           Common.Saved       (Restored (..), restoreLayout, saveLayout,
+                                     savedKey, unfitNote)
+import           Common.Shown      (Kept (..), Poll (..), delayDefaultSeconds,
                                      delayFromUrl, keepLast, keptNothing,
                                      landed, readDelay)
 import           Common.Types       (BandFlag (..), BandPiece, Countdown,
@@ -49,6 +51,7 @@ import           Common.Types       (BandFlag (..), BandPiece, Countdown,
                                      pieceWord, sessionTitle, shownClock,
                                      shownNext,
                                      tickClock, catchUp)
+import           Control.Exception  (SomeException, try)
 import           Control.Monad.IO.Class (liftIO)
 import           Data.IORef         (IORef, newIORef, readIORef, writeIORef)
 import           Data.List          (find)
@@ -67,9 +70,11 @@ import qualified GHCJS.DOM.GlobalEventHandlers as DOM (keyDown, keyUp,
                                                        mouseUp)
 import qualified GHCJS.DOM.KeyboardEvent as Key (getKey)
 import qualified GHCJS.DOM.MouseEvent as Mouse (getAltKey, getButton)
+import qualified GHCJS.DOM.Storage  as Storage (getItem, setItem)
 import qualified GHCJS.DOM.Types    as DOM (Element (..), HTMLElement (..),
                                             MouseEvent (..),
                                             uncheckedCastTo)
+import qualified GHCJS.DOM.Window   as Window (getLocalStorage)
 import           Language.Javascript.JSaddle (JSM, eval, liftJSM, valToNumber)
 import           Reflex.Dom
 import           Widgets.Comparison (comparisonWidget)
@@ -104,13 +109,15 @@ dashboardPage = divClass "page page--dashboard" $ do
   openDyn     <- toggle True toggleClick
   poll        <- livePoll
   initial     <- fromMaybe delayDefaultSeconds . delayFromUrl <$> getLocationUrl
+  restored    <- mapM (\l -> (,) l <$> liftJSM (readSaved l)) [raceOverview, qualy]
+  let unfit l = lookup l restored == Just Unfit
   (layoutDyn, live, edit) <- divClass "top-bar" $ do
-    (active, delay, edit) <- dashboardHeader initial openDyn
+    (active, delay, edit) <- dashboardHeader initial openDyn unfit
     live <- delayedLive delay poll
     sessionBand openDyn (lvPoll live) (lvAge live)
     pure (active, live, edit)
   elDynClass "div" (canvasClass <$> openDyn <*> editOn edit) $
-    mapM_ (layer live layoutDyn edit) [raceOverview, qualy]
+    mapM_ (uncurry (layer live layoutDyn edit)) restored
   where
     -- __El lienzo dice si la cabecera está plegada y si se está editando__, para
     -- quien necesite saberlo desde la hoja de estilos. Lo plegado hoy no lo lee
@@ -157,13 +164,13 @@ headerToggle = do
 -- desplegara. Con 'elDynClass' el DOM se queda montado y solo cambia si se pinta;
 -- por lo mismo, plegarla no saca de la edición.
 dashboardHeader :: MonadWidget t m
-                => Int -> Dynamic t Bool
+                => Int -> Dynamic t Bool -> (Layout -> Bool)
                 -> m (Dynamic t Layout, Dynamic t Int, Edit t)
-dashboardHeader initial openDyn =
+dashboardHeader initial openDyn unfit =
   elDynClass "div" (headerClass <$> openDyn) $ do
     el "h1" $ text "F1 Functional Dashboard"
     divClass "dashboard-header__controls" $ do
-      (active, edit) <- layoutSwitcher
+      (active, edit) <- layoutSwitcher unfit
       delay <- delayField initial
       pure (active, delay, edit)
   where
@@ -415,13 +422,21 @@ sessionClock tick served = do
 --
 -- __Cada capa lleva su layout y su arrastre__ ('Common.Carry'): en edición, una
 -- tarjeta se coge por el título y lo que se pinta lo dice 'scene'. Mover no vuelve a
--- montar nada: solo cambian el estilo y la clase de los slots. Lo movido se pierde al
--- recargar.
-layer :: MonadWidget t m => LiveView t -> Dynamic t Layout -> Edit t -> Layout -> m ()
-layer live layoutDyn edit l = mdo
+-- montar nada: solo cambian el estilo y la clase de los slots.
+--
+-- Arranca de lo guardado si encaja ('Common.Saved.restoreLayout') y si no, del de
+-- fábrica. Al salir de la edición guarda lo que se ve, esté activa o no; «Restablecer»
+-- devuelve al de fábrica solo la activa, y se guarda al salir como lo demás.
+layer :: MonadWidget t m => LiveView t -> Dynamic t Layout -> Edit t -> Layout -> Restored -> m ()
+layer live layoutDyn edit l restored = mdo
   active <- holdUniqDyn (((== layoutId l) . layoutId) <$> layoutDyn)
   let revealed = () <$ ffilter id (updated active)
       held     = isJust . boardCarry <$> board
+      start    = case restored of
+        FromSaved ws -> ws
+        _            -> widgets l
+      done     = () <$ ffilter not (updated (editOn edit))
+      reset    = gate (current active) (editReset edit)
   carrying <- liftIO (newIORef False)
   (layerEl, presses) <- elDynClass' "div" (layerClass <$> active) $ do
     grabs <- mapM (slot live revealed shown) (widgets l)
@@ -430,10 +445,13 @@ layer live layoutDyn edit l = mdo
   pressed <- performEvent (measure layerEl <$> gate (current (editOn edit)) presses)
   hands   <- windowHands carrying
   performEvent_ (liftIO . writeIORef carrying <$> updated held)
-  board <- foldDyn (\(magnet, hand) -> stepBoard magnet hand) (boardOf (widgets l)) $
-             attach (current (editMagnet edit)) (leftmost [pressed, gate (current held) hands])
+  board <- foldDyn ($) (boardOf start) $ leftmost
+             [ const (boardOf (widgets l)) <$ reset
+             , (\(magnet, hand) -> stepBoard magnet hand)
+                 <$> attach (current (editMagnet edit)) (leftmost [pressed, gate (current held) hands])
+             ]
   shown <- holdUniqDyn (scene <$> editMagnet edit <*> board)
-  pure ()
+  performEvent_ (liftJSM . writeSaved l . boardLayout <$> tag (current board) done)
   where
     layerClass a
       | a         = "canvas__layer"
@@ -445,6 +463,25 @@ layer live layoutDyn edit l = mdo
       w <- DOM.getWidth r
       h <- DOM.getHeight r
       pure (Press wid grip p (w, h))
+
+-- | De dónde sale un layout al abrir la página, según lo guardado en el navegador. Si
+-- el navegador no deja leer, como si no hubiera nada guardado.
+readSaved :: Layout -> JSM Restored
+readSaved l = restoreLayout (widgets l) . either unreadable id <$> try (do
+  storage <- Window.getLocalStorage =<< DOM.currentWindowUnchecked
+  Storage.getItem storage (savedKey (layoutId l)))
+  where
+    unreadable :: SomeException -> Maybe Text
+    unreadable _ = Nothing
+
+-- | Guarda en el navegador lo que se ve de un layout. Si no deja escribir, no pasa nada.
+writeSaved :: Layout -> [WidgetConfig] -> JSM ()
+writeSaved l ws = either unwritable pure =<< try (do
+  storage <- Window.getLocalStorage =<< DOM.currentWindowUnchecked
+  Storage.setItem storage (savedKey (layoutId l)) (saveLayout ws))
+  where
+    unwritable :: SomeException -> JSM ()
+    unwritable _ = pure ()
 
 -- | Dónde y por dónde aprieta el botón izquierdo sobre la tarjeta en edición, en px
 -- de la ventana: por el título o por la esquina ◢. Los controles del título
@@ -557,27 +594,80 @@ slotClass wc
   | touchesTopRight wc = "widget-slot widget-slot--top-right"
   | otherwise          = "widget-slot"
 
--- | El modo edición: si se está editando y si el imán está encendido.
+-- | El modo edición: si se está editando, si el imán está encendido y cuándo se pulsa
+-- «Restablecer».
 data Edit t = Edit
   { editOn     :: Dynamic t Bool
   , editMagnet :: Dynamic t Bool
+  , editReset  :: Event t ()
   }
 
 -- | Barra de botones que conmutan entre los layouts fijos, con los del modo
--- edición a su derecha ('editToggle', 'magnetToggle'). Sostiene el layout activo
--- (arranca en 'raceOverview') y el modo edición; cambiar de layout no saca de la
--- edición.
-layoutSwitcher :: MonadWidget t m => m (Dynamic t Layout, Edit t)
-layoutSwitcher = divClass "layout-switcher" $ do
-  overviewClick <- switcherButton "Race Overview"
-  qualyClick    <- switcherButton "Qualy"
+-- edición a su derecha ('editToggle', 'magnetToggle', 'resetButton'). Sostiene el
+-- layout activo (arranca en 'raceOverview') y el modo edición; cambiar de layout no
+-- saca de la edición. @unfit@ dice qué layouts volvieron al de fábrica porque lo
+-- guardado no encajaba: cada uno lleva un asterisco, y hay __una sola nota__ para
+-- todos, bajo el primero, abierta al cargar. Pulsarla la cierra y pasar el ratón por
+-- un botón con asterisco la vuelve a enseñar; asteriscos y nota se quitan al entrar
+-- en edición.
+layoutSwitcher :: MonadWidget t m => (Layout -> Bool) -> m (Dynamic t Layout, Edit t)
+layoutSwitcher unfit = divClass "layout-switcher" $ mdo
+  noted <- holdDyn True (False <$ ffilter id (updated editing))
+  open  <- holdDyn True (False <$ leftmost [overviewClose, qualyClose])
+  hover <- holdDyn False (leftmost [overviewHover, qualyHover])
+  let shown = (&&) <$> noted <*> ((||) <$> open <*> hover)
+      names = [name | (l, name) <- [(raceOverview, "Race Overview"), (qualy, "Qualy")], unfit l]
+      holder = listToMaybe (filter unfit [raceOverview, qualy])
+      item l = layoutButton noted shown (unfit l) (holder == Just l) (unfitNote names)
+  (overviewClick, overviewHover, overviewClose) <- item raceOverview "Race Overview"
+  (qualyClick, qualyHover, qualyClose)          <- item qualy "Qualy"
   active <- holdDyn raceOverview $ leftmost
     [ raceOverview <$ overviewClick
     , qualy        <$ qualyClick
     ]
   editing <- editToggle
   magnet  <- magnetToggle editing
-  pure (active, Edit editing magnet)
+  reset   <- resetButton editing
+  pure (active, Edit editing magnet reset)
+
+-- | El botón de un layout: con asterisco mientras @noted@ si su guardado no encajó
+-- (@unfit@), y con la nota debajo si es quien la lleva (@holds@), enseñada mientras
+-- @shown@. Devuelve el clic, si el ratón entra o sale del botón con asterisco, y el
+-- clic en la nota.
+layoutButton :: MonadWidget t m
+             => Dynamic t Bool -> Dynamic t Bool -> Bool -> Bool -> T.Text -> T.Text
+             -> m (Event t (), Event t Bool, Event t ())
+layoutButton noted shown unfit holds note label = elClass "span" "layout-switcher__item" $ do
+  let marked = (&& unfit) <$> noted
+  (b, _) <- elDynClass' "button" (buttonClass <$> marked) $ dynText (buttonLabel <$> marked)
+  closes <- if holds
+    then do
+      (n, _) <- elDynClass' "div" (noteClass <$> shown) $ text note
+      pure (domEvent Click n)
+    else pure never
+  let hovers = gate (current marked) $
+        leftmost [True <$ domEvent Mouseenter b, False <$ domEvent Mouseleave b]
+  pure (domEvent Click b, hovers, closes)
+  where
+    buttonClass m
+      | m         = "switcher__btn switcher__btn--noted"
+      | otherwise = "switcher__btn"
+    buttonLabel m
+      | m         = label <> "*"
+      | otherwise = label
+    noteClass s
+      | s         = "layout-note layout-note--open"
+      | otherwise = "layout-note"
+
+-- | «↺ Restablecer», solo visible en edición.
+resetButton :: MonadWidget t m => Dynamic t Bool -> m (Event t ())
+resetButton editing = do
+  (e, _) <- elDynAttr' "button" (attrs <$> editing) $ text "↺ Restablecer"
+  pure (domEvent Click e)
+  where
+    attrs shown =
+      "class" =: "switcher__btn reset-button"
+        <> (if shown then mempty else "hidden" =: "")
 
 -- | El interruptor del imán, solo visible en edición. Arranca encendido y recuerda
 -- cómo se dejó hasta recargar; encendido queda marcado y lleva ✓.
@@ -610,14 +700,6 @@ editToggle = mdo
     toggleLabel on
       | on        = "✓ Terminar edición"
       | otherwise = "✎ Editar layout"
-
--- | Botón que emite un 'Event' al hacer click. Clase @switcher__btn@, la misma
--- que los tres switchers de los widgets; el bloque
--- @layout-switcher@ sí es propio.
-switcherButton :: DomBuilder t m => T.Text -> m (Event t ())
-switcherButton label = do
-  (e, _) <- elClass' "button" "switcher__btn" $ text label
-  pure (domEvent Click e)
 
 -- | Despacha una 'WidgetConfig' a su widget según 'widgetType'. Total sobre los
 -- __siete__ constructores de 'WidgetType'; los aún no implementados caen en un
