@@ -645,7 +645,9 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       `Common.Push.applyDrag` desde ese día**. **Desde el 2026-09-30 (b) los layouts se ocultan en vez de
       reconstruirse.** **Hecho:** el modo edición pintado (2026-10-07 (e)), mover por el título con lo empujado
       deslizándose (2026-10-07 (f)) y estirar por la esquina ◢ (2026-10-07 (g)), con el gesto puro en
-      `Common.Carry`. **Falta:** que lo movido se recuerde al recargar, con «Restablecer» (2026-09-29 (j)).
+      `Common.Carry`. **Lo movido se recuerda** en el navegador al terminar la edición, cada layout lo suyo, con
+      «↺ Restablecer» y un aviso si lo guardado ya no encaja (2026-10-07 (h) e (i); `Common.Saved`). **Falta:** que
+      se recuerde también el lado de «⇄» (2026-09-29 (j)).
 - [x] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
       que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
       desde el 2026-09-04**, con el imán apagado como caso normal y no como error. La tecla es **Alt** y el
