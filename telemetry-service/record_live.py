@@ -6,7 +6,9 @@ poder diseñar sobre datos reales en vez de sobre una muestra de veinte segundos
 
 Se conecta a ``wss://livetiming.formula1.com/signalrcore`` reusando el
 ``SignalRClient`` de FastF1 — su formato de salida es el que
-``fastf1.livetiming.data.LiveTimingData`` sabe releer después.
+``fastf1.livetiming.data.LiveTimingData`` sabe releer después. Pide los topics de ese
+cliente y, además, ``ChampionshipPrediction`` (la predicción del campeonato; en el
+archivo de F1 sale en carreras y Sprints, no en clasificación).
 
 **Por defecto la conexión es anónima**, y así el feed no manda la telemetría del coche
 (``CarData.z``, ``Position.z``). **Con ``--f1tv``, o con la variable ``F1TV`` no vacía, se
@@ -57,6 +59,7 @@ def main() -> int:
     timeout = int(_ARGS[1]) if len(_ARGS) > 1 else 300
 
     client = SignalRClient(filename=filename, filemode="w", timeout=timeout)
+    client.topics.append("ChampionshipPrediction")
     # `no_auth` se queda en False a propósito: es lo que hace que el cliente use la
     # `get_auth_token` de arriba —la sustituida o la de la cuenta— en vez del `None`
     # que rompe signalrcore.
