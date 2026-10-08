@@ -643,17 +643,19 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       la lista ni `resize: both`, que quedan superados. **Decidido entero el 2026-09-29 (g) y (h)**: en modo
       edición, se coge por el título y se estira por la esquina; soltar encima empuja. **El empuje, puro, está en
       `Common.Push.applyDrag` desde ese día**. **Desde el 2026-09-30 (b) los layouts se ocultan en vez de
-      reconstruirse**, y el aspecto del modo edición está decidido (2026-09-30 (c)); falta pintarlo y el arrastre.
-- [ ] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
+      reconstruirse.** **Hecho:** el modo edición pintado (2026-10-07 (e)), mover por el título con lo empujado
+      deslizándose (2026-10-07 (f)) y estirar por la esquina ◢ (2026-10-07 (g)), con el gesto puro en
+      `Common.Carry`. **Falta:** que lo movido se recuerde al recargar, con «Restablecer» (2026-09-29 (j)).
+- [x] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
       que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
-      desde el 2026-09-04**, con el imán apagado como caso normal y no como error; falta el arrastre. La tecla
-      es **Alt** y el interruptor va junto al del modo edición (2026-09-29 (g)).
+      desde el 2026-09-04**, con el imán apagado como caso normal y no como error. La tecla es **Alt** y el
+      interruptor «⊞ Imán» va junto al del modo edición (2026-09-29 (g)), pintado el 2026-10-07 (e).
 - [x] **Tamaño mínimo por widget**, en `Common.Layout.minWidthFor` y `minHeightFor` y no en el código de cada
       uno (2026-09-04 (b)). **Medidos en Edge el 2026-09-29 (i)**: el ancho más estrecho sin barra y el alto
       con una fila de datos, en múltiplos de 5. Medirlos desde la propia página queda para después.
 - [ ] **La marca de «aquí no cabe»**, sobre `Common.Layout.fitsAt`: nada se recoloca solo, y lo que no cabe
-      se avisa (2026-09-04 (c)). El predicado existe desde ese mismo día; falta pintarla. **Al arrastrar**, su
-      aspecto y qué pasa al soltar están decididos (2026-09-30 (c)).
+      se avisa (2026-09-04 (c)). El predicado existe desde ese mismo día. **Al arrastrar, hecha:** el «no se deja» en
+      rojo y, al soltar, la tarjeta vuelve (2026-10-07 (f)). Falta pintarla sobre un layout que no quepa al cargarse.
 - [ ] **Recomposición por zonas** en los seis widgets: identidad envuelve, cifras mantienen línea, y se
       escala donde no cabe. **A lo ancho no debe existir barra**, salvo el último recurso de la barra de
       **página** cuando ni el mínimo del widget más ancho quepa (2026-09-03 (d), ampliado el 2026-09-04 (c)).
