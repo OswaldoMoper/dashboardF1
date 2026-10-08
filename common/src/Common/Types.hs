@@ -11,7 +11,7 @@ import           GHC.Generics  (Generic)
 
 -- | Identificador de un widget dentro de un 'Layout'.
 newtype WidgetId = WidgetId Text
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
   deriving newtype (ToJSON, FromJSON)
 
 -- | Identificador de un 'Layout'.
@@ -990,9 +990,9 @@ data WidgetParams = WidgetParams
   }
   deriving stock (Eq, Show, Generic)
 
--- El récord tiene instancias genéricas, y con el pin de aeson (2.3.1.0) el
--- @omittedField@ de un campo 'Maybe' admite la clave ausente como 'Nothing': un
--- parámetro nuevo no costará migración del layout guardado.
+-- El récord tiene instancias genéricas, y el 'FromJSON' genérico lee la clave
+-- ausente de un campo 'Maybe' como 'Nothing' (@omittedField@): un parámetro nuevo
+-- no costará migración del layout guardado.
 instance ToJSON WidgetParams
 instance FromJSON WidgetParams
 

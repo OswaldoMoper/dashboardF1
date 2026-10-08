@@ -30,11 +30,12 @@ module Pages.Dashboard where
 import           Common.Carry       (Board (..), Grip (..), Hand (..), Held (..),
                                      Scene (..), boardOf, heldStyle, scene,
                                      stepBoard)
+import           Common.ComparisonCard (Side, defaultControlSide)
 import           Common.Format      (ClockForm (..), formatClock)
 import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
-import           Common.Saved       (Restored (..), restoreLayout, saveLayout,
-                                     savedKey, unfitNote)
+import           Common.Saved       (Restored (..), factorySides, restoreLayout,
+                                     saveLayout, savedKey, unfitNote)
 import           Common.Shown      (Kept (..), Poll (..), delayDefaultSeconds,
                                      delayFromUrl, keepLast, keptNothing,
                                      landed, readDelay)
@@ -56,6 +57,7 @@ import           Control.Monad.IO.Class (liftIO)
 import           Data.IORef         (IORef, newIORef, readIORef, writeIORef)
 import           Data.List          (find)
 import           Data.Map           (Map)
+import qualified Data.Map           as Map
 import           Data.Maybe         (fromMaybe, isJust, isNothing, listToMaybe)
 import           Data.Text          (Text)
 import qualified Data.Text          as T
@@ -425,23 +427,25 @@ sessionClock tick served = do
 -- montar nada: solo cambian el estilo y la clase de los slots.
 --
 -- Arranca de lo guardado si encaja ('Common.Saved.restoreLayout') y si no, del de
--- fábrica. Al salir de la edición guarda lo que se ve, esté activa o no; «Restablecer»
--- devuelve al de fábrica solo la activa, y se guarda al salir como lo demás.
+-- fábrica, con los rectángulos y el lado de cada Lap Comparison. Al salir de la
+-- edición guarda lo que se ve, esté activa o no; «Restablecer» devuelve al de fábrica
+-- solo la activa, lados incluidos, y se guarda al salir como lo demás.
 layer :: MonadWidget t m => LiveView t -> Dynamic t Layout -> Edit t -> Layout -> Restored -> m ()
 layer live layoutDyn edit l restored = mdo
   active <- holdUniqDyn (((== layoutId l) . layoutId) <$> layoutDyn)
   let revealed = () <$ ffilter id (updated active)
       held     = isJust . boardCarry <$> board
-      start    = case restored of
-        FromSaved ws -> ws
-        _            -> widgets l
+      (start, startSides) = case restored of
+        FromSaved ws s -> (ws, s)
+        _              -> (widgets l, factorySides (widgets l))
       done     = () <$ ffilter not (updated (editOn edit))
       reset    = gate (current active) (editReset edit)
+      sideOf w = Map.findWithDefault defaultControlSide (widgetId w) startSides
   carrying <- liftIO (newIORef False)
-  (layerEl, presses) <- elDynClass' "div" (layerClass <$> active) $ do
-    grabs <- mapM (slot live revealed shown) (widgets l)
+  (layerEl, (presses, turns)) <- elDynClass' "div" (layerClass <$> active) $ do
+    outs <- mapM (\w -> slot live revealed (sideOf w) reset shown w) (widgets l)
     targetOutline shown
-    pure (leftmost grabs)
+    pure (leftmost (map fst outs), mconcat (map snd outs))
   pressed <- performEvent (measure layerEl <$> gate (current (editOn edit)) presses)
   hands   <- windowHands carrying
   performEvent_ (liftIO . writeIORef carrying <$> updated held)
@@ -451,7 +455,12 @@ layer live layoutDyn edit l restored = mdo
                  <$> attach (current (editMagnet edit)) (leftmost [pressed, gate (current held) hands])
              ]
   shown <- holdUniqDyn (scene <$> editMagnet edit <*> board)
-  performEvent_ (liftJSM . writeSaved l . boardLayout <$> tag (current board) done)
+  sides <- foldDyn ($) startSides $ leftmost
+             [ const (factorySides (widgets l)) <$ reset
+             , Map.union <$> turns
+             ]
+  let saved = (,) <$> sides <*> (boardLayout <$> board)
+  performEvent_ (liftJSM . uncurry (writeSaved l) <$> tag (current saved) done)
   where
     layerClass a
       | a         = "canvas__layer"
@@ -475,10 +484,10 @@ readSaved l = restoreLayout (widgets l) . either unreadable id <$> try (do
     unreadable _ = Nothing
 
 -- | Guarda en el navegador lo que se ve de un layout. Si no deja escribir, no pasa nada.
-writeSaved :: Layout -> [WidgetConfig] -> JSM ()
-writeSaved l ws = either unwritable pure =<< try (do
+writeSaved :: Layout -> Map WidgetId Side -> [WidgetConfig] -> JSM ()
+writeSaved l sides ws = either unwritable pure =<< try (do
   storage <- Window.getLocalStorage =<< DOM.currentWindowUnchecked
-  Storage.setItem storage (savedKey (layoutId l)) (saveLayout ws))
+  Storage.setItem storage (savedKey (layoutId l)) (saveLayout sides ws))
   where
     unwritable :: SomeException -> JSM ()
     unwritable _ = pure ()
@@ -544,7 +553,8 @@ targetOutline shown =
 
 -- | Envuelve un widget en su __slot__: el rectángulo que le da sitio en el
 -- lienzo, con el estilo que calcula 'slotStyle', y con la esquina ◢ que solo se ve
--- en edición. Devuelve dónde y por dónde se coge ('slotPresses').
+-- en edición. Devuelve dónde y por dónde se coge ('slotPresses') y cada lado nuevo
+-- de su tabla de mando, con su id.
 --
 -- __El rectángulo lo pone quien envuelve y no el widget__, y no es una elección
 -- de estilo: 'renderWidget' despacha por 'widgetType' y cada widget emite su
@@ -559,15 +569,16 @@ targetOutline shown =
 -- que ocupa la esquina donde vive el botón de plegar, que es @fixed@ contra la
 -- ventana (2026-09-07 b); a quién le toca lo dice 'touchesTopRight'.
 slot :: MonadWidget t m
-     => LiveView t -> Event t () -> Dynamic t Scene -> WidgetConfig
-     -> m (Event t (WidgetId, Grip, (Double, Double)))
-slot live revealed shown wc = do
+     => LiveView t -> Event t () -> Side -> Event t () -> Dynamic t Scene -> WidgetConfig
+     -> m (Event t (WidgetId, Grip, (Double, Double)), Event t (Map WidgetId Side))
+slot live revealed side reset shown wc = do
   attrs  <- holdUniqDyn (slotAttrs wc <$> shown)
-  (e, _) <- elDynAttr' "div" attrs $ do
-    renderWidget live revealed wc
+  (e, turns) <- elDynAttr' "div" attrs $ do
+    t <- renderWidget live revealed side reset wc
     divClass "widget-slot__grip" $ text "◢"
+    pure t
   grabs  <- slotPresses (DOM.uncheckedCastTo DOM.HTMLElement (_element_raw e))
-  pure ((\(g, p) -> (widgetId wc, g, p)) <$> grabs)
+  pure ((\(g, p) -> (widgetId wc, g, p)) <$> grabs, Map.singleton (widgetId wc) <$> turns)
 
 -- | Clase y estilo del slot según lo que se pinta: la que se lleva sigue al puntero
 -- ('heldStyle') y se marca si ahí no se deja; las demás, en su rectángulo.
@@ -710,20 +721,22 @@ editToggle = mdo
 -- tablas. La totalidad de este @case@ es la que cobra el constructor nuevo, y
 -- __solo bajo GHCJS__ (@-Wall@ del paquete @frontend@).
 --
--- __El refresco del directo y el aviso de que la capa se enseña atraviesan las
--- siete ramas y cada uno lo usa una__, por la misma razón por la que el
--- rectángulo no lo lleva el widget: quien conoce el dato es quien monta, y darlo
--- solo a la rama que lo pide exigiría que el @case@ devolviera funciones de tipos
--- distintos.
-renderWidget :: MonadWidget t m => LiveView t -> Event t () -> WidgetConfig -> m ()
-renderWidget live revealed wc = case widgetType wc of
-  LiveTiming       -> liveTimingWidget live
-  Telemetry        -> telemetryWidget
-  LapComparison    -> comparisonWidget revealed
-  TyreStrategy     -> placeholderWidget "Tyre Strategy"
-  HistoricalStats  -> driverStatsWidget
-  ConstructorStats -> constructorStatsWidget
-  Custom           -> placeholderWidget "Custom"
+-- __El refresco del directo, el aviso de que la capa se enseña, el lado de arranque
+-- y «Restablecer» atraviesan las siete ramas y cada uno lo usa una__, por la misma
+-- razón por la que el rectángulo no lo lleva el widget: quien conoce el dato es
+-- quien monta, y darlo solo a la rama que lo pide exigiría que el @case@ devolviera
+-- funciones de tipos distintos. Solo Lap Comparison devuelve lados; las demás,
+-- 'never'.
+renderWidget :: MonadWidget t m
+             => LiveView t -> Event t () -> Side -> Event t () -> WidgetConfig -> m (Event t Side)
+renderWidget live revealed side reset wc = case widgetType wc of
+  LiveTiming       -> never <$ liveTimingWidget live
+  Telemetry        -> never <$ telemetryWidget
+  LapComparison    -> comparisonWidget revealed side reset
+  TyreStrategy     -> never <$ placeholderWidget "Tyre Strategy"
+  HistoricalStats  -> never <$ driverStatsWidget
+  ConstructorStats -> never <$ constructorStatsWidget
+  Custom           -> never <$ placeholderWidget "Custom"
 
 -- | Widget aún no disponible: recuadro con etiqueta del tipo.
 placeholderWidget :: DomBuilder t m => T.Text -> m ()

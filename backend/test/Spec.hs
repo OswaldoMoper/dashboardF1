@@ -129,8 +129,9 @@ import           Common.Carry                (Board (..), Carry (..), Grip (..),
 import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
-import           Common.Saved                (Restored (..), restoreLayout,
-                                              saveLayout, savedKey, unfitNote)
+import           Common.Saved                (Restored (..), factorySides,
+                                              restoreLayout, saveLayout,
+                                              savedKey, unfitNote)
 import           Common.Shown                (Indicator (..), Kept (..),
                                               Poll (..), PollEvent (..),
                                               canRequest, fetchedAtLabel,
@@ -3766,36 +3767,63 @@ main = hspec $ do
         moved = zipWith place raceOverviewFixture
                   [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
         moving wid r = map (\w -> if widgetId w == WidgetId wid then place w r else w) raceOverviewFixture
+        raceSides  = factorySides raceOverviewFixture
+        rightSides = Map.insert (WidgetId "lap-comparison") SideRight raceSides
+        save       = saveLayout raceSides
 
     it "sin nada guardado, el de fábrica y sin aviso" $
       restoreLayout raceOverviewFixture Nothing `shouldBe` FromFactory
 
     it "lo guardado vuelve tal cual, en los dos layouts" $ do
-      restoreLayout raceOverviewFixture (Just (saveLayout moved)) `shouldBe` FromSaved moved
-      restoreLayout qualyFixture (Just (saveLayout qualyFixture)) `shouldBe` FromSaved qualyFixture
+      restoreLayout raceOverviewFixture (Just (save moved)) `shouldBe` FromSaved moved raceSides
+      restoreLayout qualyFixture (Just (saveLayout Map.empty qualyFixture)) `shouldBe` FromSaved qualyFixture Map.empty
 
-    it "lo guardado pone solo el rectángulo: el resto y el orden son los de fábrica" $ do
+    it "lo guardado pone solo el rectángulo y el lado: el resto y el orden son los de fábrica" $ do
       let hidden = map (\w -> w { widgetVisible = False }) raceOverviewFixture
-      restoreLayout hidden (Just (saveLayout (reverse moved)))
-        `shouldBe` FromSaved (zipWith (\h m -> h { wcX = wcX m, wcY = wcY m, wcW = wcW m, wcH = wcH m }) hidden moved)
+      restoreLayout hidden (Just (save (reverse moved)))
+        `shouldBe` FromSaved (zipWith (\h m -> h { wcX = wcX m, wcY = wcY m, wcW = wcW m, wcH = wcH m }) hidden moved) raceSides
 
     it "el formato y la clave: un rectángulo por tarjeta, con su id" $ do
       let expected = decodeStrictText
             "[{\"savedId\":\"qualy-live-timing\",\"savedX\":0,\"savedY\":0,\"savedW\":120,\"savedH\":120}]"
       expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
-      decodeStrictText (saveLayout qualyFixture) `shouldBe` expected
+      decodeStrictText (saveLayout (factorySides qualyFixture) qualyFixture) `shouldBe` expected
       savedKey (LayoutId "race-overview") `shouldBe` "dashboardF1.layout.race-overview"
+
+    it "solo Lap Comparison lleva lado, a la izquierda de fábrica, y lo escribe también a la izquierda" $ do
+      raceSides `shouldBe` Map.singleton (WidgetId "lap-comparison") SideLeft
+      factorySides qualyFixture `shouldBe` Map.empty
+      let lapOnly  = filter ((== LapComparison) . widgetType) raceOverviewFixture
+          expected = decodeStrictText
+            "[{\"savedId\":\"lap-comparison\",\"savedX\":60,\"savedY\":35,\"savedW\":60,\"savedH\":50,\"savedSide\":\"left\"}]"
+      expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
+      decodeStrictText (save lapOnly) `shouldBe` expected
+
+    it "el lado guardado vuelve; sin él (guardado antes de que existiera), el de fábrica" $ do
+      restoreLayout raceOverviewFixture (Just (saveLayout rightSides moved)) `shouldBe` FromSaved moved rightSides
+      restoreLayout raceOverviewFixture (Just (saveLayout Map.empty moved)) `shouldBe` FromSaved moved raceSides
+
+    it "un lado en una tarjeta que no es Lap Comparison se ignora" $
+      restoreLayout raceOverviewFixture (Just (saveLayout (Map.insert (WidgetId "telemetry") SideRight rightSides) moved))
+        `shouldBe` FromSaved moved rightSides
+
+    it "un lado ilegible no se lee, y lo que no encaja no conserva su lado" $
+      map (restoreLayout raceOverviewFixture . Just)
+        [ T.replace "\"right\"" "\"up\"" (saveLayout rightSides moved)
+        , saveLayout rightSides (moving "lap-comparison" (60, 35, 60, 45))
+        ]
+        `shouldBe` replicate 2 Unfit
 
     it "no encaja si no se lee, si las tarjetas no son las de fábrica, si alguna queda bajo su mínimo, fuera o encima de otra" $
       map (restoreLayout raceOverviewFixture . Just)
         [ "", "{", "null", "[]"
-        , saveLayout (init raceOverviewFixture)
-        , saveLayout (raceOverviewFixture <> [rectNamed "tyres" TyreStrategy (0, 0, 30, 20)])
-        , saveLayout (init raceOverviewFixture <> take 1 raceOverviewFixture)
-        , saveLayout (init raceOverviewFixture <> [rectNamed "constructores" ConstructorStats (60, 90, 60, 30)])
-        , saveLayout (moving "lap-comparison" (60, 35, 60, 45))
-        , saveLayout (moving "constructor-stats" (70, 90, 60, 30))
-        , saveLayout (moving "telemetry" (60, 0, 60, 40))
+        , save (init raceOverviewFixture)
+        , save (raceOverviewFixture <> [rectNamed "tyres" TyreStrategy (0, 0, 30, 20)])
+        , save (init raceOverviewFixture <> take 1 raceOverviewFixture)
+        , save (init raceOverviewFixture <> [rectNamed "constructores" ConstructorStats (60, 90, 60, 30)])
+        , save (moving "lap-comparison" (60, 35, 60, 45))
+        , save (moving "constructor-stats" (70, 90, 60, 30))
+        , save (moving "telemetry" (60, 0, 60, 40))
         ]
         `shouldBe` replicate 11 Unfit
 
@@ -4762,11 +4790,12 @@ carryShowsDrop i corner magnet alt a b =
     (s, dropped) = dragOnRace i corner magnet alt a b
 
 -- | Lo guardado de cualquier layout que deje el arrastre vuelve tal cual.
-savedDropRoundTrips :: Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool
-savedDropRoundTrips i corner magnet alt a b =
-  restoreLayout raceOverviewFixture (Just (saveLayout dropped)) == FromSaved dropped
+savedDropRoundTrips :: Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool -> Bool
+savedDropRoundTrips i corner magnet alt a b right =
+  restoreLayout raceOverviewFixture (Just (saveLayout sides dropped)) == FromSaved dropped sides
   where
     (_, dropped) = dragOnRace i corner magnet alt a b
+    sides        = Map.map (\s -> if right then otherSide s else s) (factorySides raceOverviewFixture)
 
 -- | Coger la tarjeta @i@ de Race Overview por el título o por la esquina, llevar el
 -- puntero a un sitio cualquiera (también fuera del lienzo) y soltar: lo que se pinta

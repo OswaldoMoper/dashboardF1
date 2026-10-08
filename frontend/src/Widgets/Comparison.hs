@@ -140,9 +140,12 @@ data CState
 --
 -- @revealed@ avisa de que la tarjeta se acaba de enseñar tras estar oculta: oculta
 -- mide 0, así que al enseñarse se vuelve a medir.
-comparisonWidget :: MonadWidget t m => Event t () -> m ()
-comparisonWidget revealed = mdo
-  (root, (card, (userMode, state, view))) <-
+--
+-- La tabla de mando arranca en @start@ y @reset@ la devuelve a
+-- 'defaultControlSide'. Devuelve cada lado nuevo, también el de @reset@.
+comparisonWidget :: MonadWidget t m => Event t () -> Side -> Event t () -> m (Event t Side)
+comparisonWidget revealed start reset = mdo
+  (root, (card, (userMode, state, view, side))) <-
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
       (swap, ty, (axis, frontiers, samples)) <- divClass "widget__head" $ do
         el "h2" $ text "Lap Comparison"
@@ -150,7 +153,7 @@ comparisonWidget revealed = mdo
         tc <- traceControls t
         s  <- swapButton (clStacked <$> layout)
         pure (s, t, tc)
-      side    <- foldDyn (const otherSide) defaultControlSide swap
+      side    <- foldDyn ($) start (leftmost [const defaultControlSide <$ reset, otherSide <$ swap])
       pb      <- getPostBuild
       gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
       grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
@@ -179,7 +182,7 @@ comparisonWidget revealed = mdo
       resp    <- fetchJson request
       refresh <- holdDyn InFlight (leftmost [InFlight <$ request, refreshOf <$> resp])
       st      <- foldDyn step Loading resp
-      pure (chosenE, st, v)
+      pure (chosenE, st, v, side)
   size    <- cardSize root card (current ((,) <$> rowNow <*> drawn)) changed
   stretch <- holdUniqDyn (maybe 0 (\(_, _, s) -> s) <$> size)
   stacked <- holdUniqDyn (clStacked <$> layout)
@@ -192,7 +195,7 @@ comparisonWidget revealed = mdo
       changed  = leftmost
                    [ () <$ updated shown, () <$ updated state, () <$ updated view
                    , () <$ updated stacked, revealed ]
-  pure ()
+  pure (updated side)
   where
     controlState :: MonadWidget t m => CState -> m ()
     controlState (Loaded c) = lapHeader c

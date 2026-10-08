@@ -266,6 +266,39 @@ test.describe('el arrastre', () => {
       expect(await units(page)).toEqual(RACE);
     });
 
+    test('el lado de «⇄» se guarda al terminar la edición, y sin terminar se pierde', async ({ page }) => {
+      const body = page.locator('.comparison__body');
+      const right = /comparison__body--control-right/;
+      await edit(page);
+      await page.locator('.comparison__swap').click();
+      await expect(body).toHaveClass(right);
+      await reload(page);
+      await expect(body).not.toHaveClass(right);
+
+      await edit(page);
+      await page.locator('.comparison__swap').click();
+      await finish(page);
+      await reload(page);
+      await expect(body).toHaveClass(right);
+    });
+
+    test('«Restablecer» devuelve la tabla de mando a la izquierda, y se guarda al terminar', async ({ page }) => {
+      const body = page.locator('.comparison__body');
+      const right = /comparison__body--control-right/;
+      await edit(page);
+      await page.locator('.comparison__swap').click();
+      await finish(page);
+      await reload(page);
+      await expect(body).toHaveClass(right);
+
+      await edit(page);
+      await page.getByRole('button', { name: '↺ Restablecer' }).click();
+      await expect(body).not.toHaveClass(right);
+      await finish(page);
+      await reload(page);
+      await expect(body).not.toHaveClass(right);
+    });
+
     test('lo guardado que no encaja: el de fábrica, con asterisco y nota hasta terminar una edición', async ({ page }) => {
       await page.evaluate(() => localStorage.setItem('dashboardF1.layout.race-overview', '[]'));
       await reload(page);

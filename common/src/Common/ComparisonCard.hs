@@ -52,6 +52,8 @@ module Common.ComparisonCard
 
 import           Common.Chart (axisPoints, axisTicks, chartWidth,
                                frontierCells)
+import           Data.Aeson   (FromJSON (..), ToJSON (..), Value (String),
+                               withText)
 import           Data.List    (find, sort, sortOn)
 import           Data.Maybe   (mapMaybe)
 import           Data.Ord     (Down (..))
@@ -152,9 +154,19 @@ stretchFor :: Double -> Double -> Double -> Double
 stretchFor client content now =
   max 0 (fromIntegral (floor (now + client - cardPadding - content) :: Int))
 
--- | Un lado de la tarjeta.
+-- | Un lado de la tarjeta. Se guarda como @"left"@ o @"right"@; otro texto no se lee.
 data Side = SideLeft | SideRight
   deriving stock (Eq, Show)
+
+instance ToJSON Side where
+  toJSON SideLeft  = String "left"
+  toJSON SideRight = String "right"
+
+instance FromJSON Side where
+  parseJSON = withText "Side" $ \case
+    "left"  -> pure SideLeft
+    "right" -> pure SideRight
+    _       -> fail "Side: se esperaba \"left\" o \"right\""
 
 -- | Donde abre la tabla de mando.
 defaultControlSide :: Side
