@@ -129,6 +129,8 @@ import           Common.Carry                (Board (..), Carry (..), Grip (..),
 import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
+import           Common.Saved                (Restored (..), restoreLayout,
+                                              saveLayout, savedKey)
 import           Common.Shown                (Indicator (..), Kept (..),
                                               Poll (..), PollEvent (..),
                                               canRequest, fetchedAtLabel,
@@ -160,6 +162,7 @@ import           Common.Types                (ComparisonEntry (..),
                                               TelemetryPoint (..),
                                               TracePoint (..),
                                               TyreStint (..), UpNext (..),
+                                              LayoutId (..),
                                               WidgetConfig (..), WidgetId (..),
                                               WidgetType (..), bandNote,
                                               BandFlag (..), BandPiece (..),
@@ -178,8 +181,8 @@ import           Common.Types                (ComparisonEntry (..),
                                               waitingTable, bandRight,
                                               shownClock, shownNext)
 import           Config                      (openF1Log, telemetrySocket)
-import           Data.Aeson                  (Value (..), eitherDecodeStrict,
-                                              toJSON)
+import           Data.Aeson                  (Value (..), decodeStrictText,
+                                              eitherDecodeStrict, toJSON)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import           Data.Either                 (isLeft)
@@ -3757,6 +3760,47 @@ main = hspec $ do
 
     prop "lo que enseña el contorno es lo que queda al soltar, y si no se deja queda la foto" carryShowsDrop
 
+  describe "Common.Saved" $ do
+    let place w (x, y, wd, ht) = w { wcX = x, wcY = y, wcW = wd, wcH = ht }
+        -- D125: Constructores sube a 35 y Lap Comparison baja a 65.
+        moved = zipWith place raceOverviewFixture
+                  [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
+        moving wid r = map (\w -> if widgetId w == WidgetId wid then place w r else w) raceOverviewFixture
+
+    it "sin nada guardado, el de fábrica y sin aviso" $
+      restoreLayout raceOverviewFixture Nothing `shouldBe` FromFactory
+
+    it "lo guardado vuelve tal cual, en los dos layouts" $ do
+      restoreLayout raceOverviewFixture (Just (saveLayout moved)) `shouldBe` FromSaved moved
+      restoreLayout qualyFixture (Just (saveLayout qualyFixture)) `shouldBe` FromSaved qualyFixture
+
+    it "lo guardado pone solo el rectángulo: el resto y el orden son los de fábrica" $ do
+      let hidden = map (\w -> w { widgetVisible = False }) raceOverviewFixture
+      restoreLayout hidden (Just (saveLayout (reverse moved)))
+        `shouldBe` FromSaved (zipWith (\h m -> h { wcX = wcX m, wcY = wcY m, wcW = wcW m, wcH = wcH m }) hidden moved)
+
+    it "el formato y la clave: un rectángulo por tarjeta, con su id" $ do
+      let expected = decodeStrictText
+            "[{\"savedId\":\"qualy-live-timing\",\"savedX\":0,\"savedY\":0,\"savedW\":120,\"savedH\":120}]"
+      expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
+      decodeStrictText (saveLayout qualyFixture) `shouldBe` expected
+      savedKey (LayoutId "race-overview") `shouldBe` "dashboardF1.layout.race-overview"
+
+    it "no encaja si no se lee, si las tarjetas no son las de fábrica, si alguna queda bajo su mínimo, fuera o encima de otra" $
+      map (restoreLayout raceOverviewFixture . Just)
+        [ "", "{", "null", "[]"
+        , saveLayout (init raceOverviewFixture)
+        , saveLayout (raceOverviewFixture <> [rectNamed "tyres" TyreStrategy (0, 0, 30, 20)])
+        , saveLayout (init raceOverviewFixture <> take 1 raceOverviewFixture)
+        , saveLayout (init raceOverviewFixture <> [rectNamed "constructores" ConstructorStats (60, 90, 60, 30)])
+        , saveLayout (moving "lap-comparison" (60, 35, 60, 45))
+        , saveLayout (moving "constructor-stats" (70, 90, 60, 30))
+        , saveLayout (moving "telemetry" (60, 0, 60, 40))
+        ]
+        `shouldBe` replicate 11 Unfit
+
+    prop "todo lo que deja el arrastre se guarda y vuelve igual" savedDropRoundTrips
+
   describe "los layouts fijos de Pages.Dashboard" $ do
     it "los seis widgets caben donde dicen estar" $
       filter (not . fitsAt) (raceOverviewFixture <> qualyFixture) `shouldBe` []
@@ -4705,12 +4749,25 @@ carryShowsDrop i corner magnet alt a b =
         && sceneTarget s == find ((== heldId h) . widgetId) (sceneCards s)
     _ -> dropped == raceOverviewFixture
   where
+    (s, dropped) = dragOnRace i corner magnet alt a b
+
+-- | Lo guardado de cualquier layout que deje el arrastre vuelve tal cual.
+savedDropRoundTrips :: Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool
+savedDropRoundTrips i corner magnet alt a b =
+  restoreLayout raceOverviewFixture (Just (saveLayout dropped)) == FromSaved dropped
+  where
+    (_, dropped) = dragOnRace i corner magnet alt a b
+
+-- | Coger la tarjeta @i@ de Race Overview por el título o por la esquina, llevar el
+-- puntero a un sitio cualquiera (también fuera del lienzo) y soltar: lo que se pinta
+-- justo antes de soltar y lo que queda.
+dragOnRace :: Int -> Bool -> Bool -> Bool -> Int -> Int -> (Scene, [WidgetConfig])
+dragOnRace i corner magnet alt a b = (scene magnet moved, boardLayout (stepBoard magnet Release moved))
+  where
     held    = widgetId (raceOverviewFixture !! (i `mod` length raceOverviewFixture))
     grip    = if corner then ByCorner else ByTitle
     grabbed = stepBoard magnet (Press held grip (700, 500) (1200, 600)) (boardOf raceOverviewFixture)
     moved   = stepBoard magnet (Point (fromIntegral (a `mod` 2000 - 400), fromIntegral (b `mod` 1000 - 200)) alt) grabbed
-    s       = scene magnet moved
-    dropped = boardLayout (stepBoard magnet Release moved)
 
 -- | Tras 'clampToMin' el ancho y el alto cumplen los mínimos del tipo, venga como
 -- venga la entrada. Es la garantía entera de la función; lo que NO garantiza —que
