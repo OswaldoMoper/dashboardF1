@@ -646,8 +646,10 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       reconstruirse.** **Hecho:** el modo edición pintado (2026-10-07 (e)), mover por el título con lo empujado
       deslizándose (2026-10-07 (f)) y estirar por la esquina ◢ (2026-10-07 (g)), con el gesto puro en
       `Common.Carry`. **Lo movido se recuerda** en el navegador al terminar la edición, cada layout lo suyo, con
-      «↺ Restablecer» y un aviso si lo guardado ya no encaja (2026-10-07 (h) e (i); `Common.Saved`). **Falta:** que
-      se recuerde también el lado de «⇄» (2026-09-29 (j)).
+      «↺ Restablecer» y un aviso si lo guardado ya no encaja (2026-10-07 (h) e (i); `Common.Saved`), **con el lado de
+      «⇄»** (2026-10-08 (a)). **Sumado después, en este orden:** «✗ Cancelar» y recordar el modo banda de Lap
+      Comparison; la proporción del tipo 3 al estirar; y, sin fecha, mover columnas, resaltar pilotos, el tipo 4 y el
+      aire repartido.
 - [x] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
       que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
       desde el 2026-09-04**, con el imán apagado como caso normal y no como error. La tecla es **Alt** y el
@@ -657,7 +659,9 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       con una fila de datos, en múltiplos de 5. Medirlos desde la propia página queda para después.
 - [ ] **La marca de «aquí no cabe»**, sobre `Common.Layout.fitsAt`: nada se recoloca solo, y lo que no cabe
       se avisa (2026-09-04 (c)). El predicado existe desde ese mismo día. **Al arrastrar, hecha:** el «no se deja» en
-      rojo y, al soltar, la tarjeta vuelve (2026-10-07 (f)). Falta pintarla sobre un layout que no quepa al cargarse.
+      rojo y, al soltar, la tarjeta vuelve (2026-10-07 (f)). **Al cargar ya no tiene a quién pintarse:** lo guardado que
+      no encaja vuelve al de fábrica con aviso (2026-10-07 (h)). Sigue abierta y sin fecha, y se revisa con la
+      recomposición por zonas.
 - [ ] **Recomposición por zonas** en los seis widgets: identidad envuelve, cifras mantienen línea, y se
       escala donde no cabe. **A lo ancho no debe existir barra**, salvo el último recurso de la barra de
       **página** cuando ni el mínimo del widget más ancho quepa (2026-09-03 (d), ampliado el 2026-09-04 (c)).
@@ -700,9 +704,16 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       tipos la fila se turna con una banda de sectores al pulsarla, con el valor dentro de cada tramo y el color de lo
       que pasó en el sector (2026-10-07 (b)). **Falta:** elegir hasta cinco pilotos, con una curva por piloto contra
       la base en Delta por sectores (2026-10-07 (d)), comparar sesiones (con el selector de sesión) y el directo.
-      **Sin decidir:** Lap Delta, que sigue sin gráficas hasta poder redimensionar las tarjetas (2026-10-07 (c)); con
-      varios pilotos, el color de cada uno, los valores de la fila y el color de la banda; y que el usuario elija qué
-      gráficas salen en las trazas.
+      **Decidido:** el color de cada piloto, una pareja (el del equipo y el de su casco), la misma en la telemetría por
+      piloto (2026-10-08 (d)). **Sin decidir:** Lap Delta, que sigue sin gráficas hasta que una tarjeta de Lap
+      Comparison pueda ser más baja que el mínimo del tipo 2 (2026-10-07 (c)); con varios pilotos, los valores de la
+      fila y el color de la banda; y que el usuario elija qué gráficas salen en las trazas.
+- [ ] **La telemetría por piloto**: una fila por piloto con los microsectores como columnas, y un widget de hasta
+      cinco pilotos con una barra por magnitud y la fila de marchas. **Decidido** (2026-10-08 (e)): cada microsector,
+      con el color del feed; en directo lo que haya y de una sesión acabada todo; el microservicio entrega lo mínimo por
+      piloto y las reglas son puras en `common`. **Sin decidir:** dónde se acumula lo que no sale de una foto (la
+      máxima de la vuelta anterior y la de la carrera), el contrato, el ancho de la tabla, el selector de pilotos y el
+      orden de trabajo.
 - [x] **Live Timing: la vuelta rápida y las columnas a elegir** (2026-10-02 (f) y (g)). «Best Lap» con la más
       rápida de la sesión en negrita y la de la parte en curso en morado, y un panel «Columnas ▾» que cierra
       cualquier columna salvo «Pos» y «Driver», dejando siempre una de las de tiempo o estado. Por tarjeta y sin
@@ -710,7 +721,9 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
 - [ ] **Lap Comparison y las tablas de campeonato, en vivo.** Sin decidir: la comparación con lo que está en
       marcha (los sectores llegan en el directo; las trazas, solo con cuenta de F1TV) y las tablas de pilotos y
       constructores con las posiciones actuales (pide la tabla de puntos del reglamento). **Hecho:** la posición en
-      esas tablas, la oficial de Jolpica (2026-10-03 (e)).
+      esas tablas, la oficial de Jolpica (2026-10-03 (e)). **Medido el 2026-10-08:** el feed publica su propia
+      predicción del campeonato (`ChampionshipPrediction`: posición y puntos actuales y previstos, por piloto y por
+      equipo) en carreras y Sprints, y llega con cuenta de F1TV; el grabador la pide (2026-10-08 (c)).
 - [x] **El final de una sesión, dicho como es** (2026-10-03 (a) y (b)). Tras cada bandera a cuadros la banda dice
       «Bandera a cuadros» —también entre las partes de una clasificación— y el punto del directo se apaga; con el
       `Finalised`, «Finalizada», también mientras se sirve la última tabla del feed y cuando vuelve OpenF1. La
