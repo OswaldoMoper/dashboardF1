@@ -58,7 +58,7 @@ import           Common.Chart  (SectorPace (..), SectorSpan (..), axisPolyline,
 import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
                                         axisColumnWidth, cardLayout, curveInset,
                                         tracesInset,
-                                        defaultControlSide, defaultMode,
+                                        defaultMode,
                                         insideAxisLabels, modeEnabled,
                                         modeFromKey, modeKey, modeOption,
                                         modesInOrder, otherSide, rowHeight,
@@ -141,10 +141,10 @@ data CState
 -- @revealed@ avisa de que la tarjeta se acaba de enseñar tras estar oculta: oculta
 -- mide 0, así que al enseñarse se vuelve a medir.
 --
--- La tabla de mando arranca en @start@ y @reset@ la devuelve a
--- 'defaultControlSide'. Devuelve cada lado nuevo, también el de @reset@.
-comparisonWidget :: MonadWidget t m => Event t () -> Side -> Event t () -> m (Event t Side)
-comparisonWidget revealed start reset = mdo
+-- La tabla de mando arranca en @start@ y @putSide@ la pone en el lado que trae.
+-- Devuelve cada lado nuevo, también el de @putSide@.
+comparisonWidget :: MonadWidget t m => Event t () -> Side -> Event t Side -> m (Event t Side)
+comparisonWidget revealed start putSide = mdo
   (root, (card, (userMode, state, view, side))) <-
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
       (swap, ty, (axis, frontiers, samples)) <- divClass "widget__head" $ do
@@ -153,7 +153,7 @@ comparisonWidget revealed start reset = mdo
         tc <- traceControls t
         s  <- swapButton (clStacked <$> layout)
         pure (s, t, tc)
-      side    <- foldDyn ($) start (leftmost [const defaultControlSide <$ reset, otherSide <$ swap])
+      side    <- foldDyn ($) start (leftmost [const <$> putSide, otherSide <$ swap])
       pb      <- getPostBuild
       gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
       grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)

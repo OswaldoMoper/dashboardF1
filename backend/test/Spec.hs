@@ -130,8 +130,8 @@ import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
 import           Common.Saved                (Restored (..), atFactory, factorySides,
-                                              restoreLayout, saveLayout,
-                                              savedKey, unfitNote)
+                                              restoreLayout, sameShown,
+                                              saveLayout, savedKey, unfitNote)
 import           Common.Shown                (Indicator (..), Kept (..),
                                               Poll (..), PollEvent (..),
                                               canRequest, fetchedAtLabel,
@@ -3870,6 +3870,11 @@ main = hspec $ do
     it "lo movido y vuelto a su sitio es otra vez el de fábrica" $
       atFactory raceOverviewFixture raceSides (moving "lap-comparison" (60, 35, 60, 50))
         `shouldBe` True
+
+    it "dos estados se ven igual con los mismos rectángulos y lados, y no si cambia uno" $
+      map (sameShown (rightSides, moved))
+          [(rightSides, reverse moved), (raceSides, moved), (rightSides, raceOverviewFixture)]
+        `shouldBe` [True, False, False]
 
     it "lo guardado vuelve tal cual, en los dos layouts" $ do
       restoreLayout raceOverviewFixture (Just (save moved)) `shouldBe` FromSaved moved raceSides

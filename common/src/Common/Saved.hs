@@ -10,6 +10,7 @@ module Common.Saved
   , atFactory
   , factorySides
   , restoreLayout
+  , sameShown
   , saveLayout
   , savedKey
   , unfitNote
@@ -73,11 +74,14 @@ factorySides :: [WidgetConfig] -> Map WidgetId Side
 factorySides ws =
   Map.fromList [(widgetId w, defaultControlSide) | w <- ws, widgetType w == LapComparison]
 
--- | Si lo que se ve ya es el de fábrica @factory@: cada tarjeta en su rectángulo de
--- fábrica, sin importar el orden, y cada Lap Comparison con su lado de fábrica. El
--- imán no cuenta.
+-- | Si lo que se ve ya es el de fábrica @factory@ ('sameShown').
 atFactory :: [WidgetConfig] -> Map WidgetId Side -> [WidgetConfig] -> Bool
-atFactory factory sides shown = rects shown == rects factory && sides == factorySides factory
+atFactory factory sides shown = sameShown (factorySides factory, factory) (sides, shown)
+
+-- | Si dos estados de un layout se ven igual: cada tarjeta en el mismo rectángulo,
+-- sin importar el orden, y cada Lap Comparison con el mismo lado. El imán no cuenta.
+sameShown :: (Map WidgetId Side, [WidgetConfig]) -> (Map WidgetId Side, [WidgetConfig]) -> Bool
+sameShown (sidesA, a) (sidesB, b) = sidesA == sidesB && rects a == rects b
   where
     rects ws = Map.fromList [(widgetId w, (wcX w, wcY w, wcW w, wcH w)) | w <- ws]
 

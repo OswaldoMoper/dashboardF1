@@ -888,26 +888,39 @@ body {
   color: var(--c-warn);
 }
 
-/* Su pregunta sale en su sitio, en amarillo, con el «Sí» marcado (2026-10-09). */
-.reset-confirm,
-.reset-confirm__question {
+/* «Cancelar», de rojo solo al pasar el ratón. */
+.cancel-button:hover {
+  border-color: var(--c-error);
+  color: var(--c-error);
+}
+
+/* Las preguntas de «Restablecer» y «Cancelar» salen en el sitio del botón, en su color
+   y con el «Sí» marcado (2026-10-09). */
+.confirm,
+.confirm__question {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
 }
 
-.reset-confirm__question {
+.confirm__question {
   font-size: var(--fs-sm);
-  color: var(--c-warn);
 }
 
-.reset-confirm__question[hidden] {
+.confirm__question[hidden] {
   display: none;
 }
 
-.reset-confirm__yes {
+.confirm--reset .confirm__question,
+.confirm--reset .confirm__yes {
   border-color: var(--c-warn);
   color: var(--c-warn);
+}
+
+.confirm--cancel .confirm__question,
+.confirm--cancel .confirm__yes {
+  border-color: var(--c-error);
+  color: var(--c-error);
 }
 
 /* La nota de los layouts cuyo guardado no encajó va bajo el primero de ellos; cuándo

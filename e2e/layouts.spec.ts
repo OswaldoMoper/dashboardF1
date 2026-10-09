@@ -224,7 +224,9 @@ test.describe('el arrastre', () => {
     const MOVED = [[0, 0, 60, 90], [60, 0, 60, 35], [60, 65, 60, 50], [0, 90, 60, 30], [60, 35, 60, 30]];
     const edit = (page: Page) => page.getByRole('button', { name: '✎ Editar layout' }).click();
     const finish = (page: Page) => page.getByRole('button', { name: '✓ Terminar edición' }).click();
-    const question = (page: Page) => page.locator('.reset-confirm__question');
+    const question = (page: Page) => page.locator('.confirm--reset .confirm__question');
+    const cancelQuestion = (page: Page) => page.locator('.confirm--cancel .confirm__question');
+    const cancel = (page: Page) => page.getByRole('button', { name: '✗ Cancelar' });
     const yes = (page: Page) => page.getByRole('button', { name: 'Sí', exact: true });
 
     async function moveConstructors(page: Page): Promise<void> {
@@ -329,6 +331,62 @@ test.describe('el arrastre', () => {
       await finish(page);
       await reload(page);
       await expect(body).not.toHaveClass(right);
+    });
+
+    test('«Cancelar» sin nada cambiado sale sin preguntar, y el imán vuelve como estaba', async ({ page }) => {
+      await edit(page);
+      await page.getByRole('button', { name: '⊞ Imán ✓', exact: true }).click();
+      await expect(page.getByRole('button', { name: '⊞ Imán', exact: true })).toBeVisible();
+      await cancel(page).click();
+      await expect(cancelQuestion(page)).toBeHidden();
+      await expect(page.getByRole('button', { name: '✎ Editar layout' })).toBeVisible();
+      await edit(page);
+      await expect(page.getByRole('button', { name: '⊞ Imán ✓', exact: true })).toBeVisible();
+    });
+
+    test('«Cancelar» pregunta, y con «Sí» devuelve los dos layouts a como estaban sin guardar nada', async ({ page }) => {
+      const body = page.locator('.comparison__body');
+      const right = /comparison__body--control-right/;
+      await moveConstructors(page);
+      await finish(page);
+
+      await edit(page);
+      await page.getByRole('button', { name: '↺ Restablecer' }).click();
+      await yes(page).click();
+      await page.waitForTimeout(400);
+      expect(await units(page)).toEqual(RACE);
+      await page.locator('.comparison__swap').click();
+      await expect(body).toHaveClass(right);
+      await page.getByRole('button', { name: 'Qualy', exact: true }).click();
+
+      await cancel(page).click();
+      await expect(cancelQuestion(page)).toBeVisible();
+      await page.getByRole('button', { name: 'No', exact: true }).click();
+      await expect(cancelQuestion(page)).toBeHidden();
+      await expect(page.getByRole('button', { name: '✓ Terminar edición' })).toBeVisible();
+
+      await cancel(page).click();
+      await yes(page).click();
+      await expect(page.getByRole('button', { name: '✎ Editar layout' })).toBeVisible();
+      await page.getByRole('button', { name: 'Race Overview', exact: true }).click();
+      await page.waitForTimeout(400);
+      expect(await units(page)).toEqual(MOVED);
+      await expect(body).not.toHaveClass(right);
+      await reload(page);
+      expect(await units(page)).toEqual(MOVED);
+      await expect(body).not.toHaveClass(right);
+    });
+
+    test('«Cancelar» devuelve el asterisco y la nota del guardado que no encajó', async ({ page }) => {
+      await page.evaluate(() => localStorage.setItem('dashboardF1.layout.race-overview', '[]'));
+      await reload(page);
+      const noted = page.getByRole('button', { name: 'Race Overview*', exact: true });
+      await expect(noted).toBeVisible();
+      await edit(page);
+      await expect(noted).toHaveCount(0);
+      await cancel(page).click();
+      await expect(noted).toBeVisible();
+      await expect(page.locator('.layout-note--open')).toHaveCount(1);
     });
 
     test('lo guardado que no encaja: el de fábrica, con asterisco y nota hasta terminar una edición', async ({ page }) => {
