@@ -362,7 +362,7 @@ test.describe('el arrastre', () => {
       await reload(page);
       const note = page.locator('.layout-note--open');
       await expect(note).toHaveCount(1);
-      await expect(note).toContainText('Race Overview y Qualy volvieron al de fábrica');
+      await expect(note).toContainText('Race Overview y Qualy volvieron a la configuración predeterminada');
       await expect(page.getByRole('button', { name: 'Race Overview*', exact: true })).toBeVisible();
       const qualy = page.getByRole('button', { name: 'Qualy*', exact: true });
       await expect(qualy).toBeVisible();

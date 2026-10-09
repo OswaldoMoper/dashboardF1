@@ -115,8 +115,10 @@ restoreLayout factory (Just t) = maybe Unfit (uncurry FromSaved) $ do
 unfitNote :: [Text] -> Text
 unfitNote names = case reverse names of
   []          -> ""
-  [_]         -> "Volvió al de fábrica" <> because <> " (Pulsa para cerrar; el asterisco se queda" <> until'
-  lastOne : r -> T.intercalate ", " (reverse r) <> " y " <> lastOne <> " volvieron al de fábrica" <> because
+  [_]         -> "Volvió a la configuración predeterminada" <> because
+                   <> " (Pulsa para cerrar; el asterisco se queda" <> until'
+  lastOne : r -> T.intercalate ", " (reverse r) <> " y " <> lastOne
+                   <> " volvieron a la configuración predeterminada" <> because
                    <> " (Pulsa para cerrar; los asteriscos se quedan" <> until'
   where
     because = ": lo guardado ya no encaja con el diseño de hoy."

@@ -3928,12 +3928,14 @@ main = hspec $ do
 
     it "la nota: con un layout, sin nombrarlo; con varios, todos por su nombre; sin ninguno, vacía" $ do
       unfitNote ["Qualy"]
-        `shouldBe` "Volvió al de fábrica: lo guardado ya no encaja con el diseño de hoy. \
+        `shouldBe` "Volvió a la configuración predeterminada: lo guardado ya no encaja con el diseño de hoy. \
                    \(Pulsa para cerrar; el asterisco se queda hasta pulsar «✎ Editar layout».)"
       unfitNote ["Race Overview", "Qualy"]
-        `shouldBe` "Race Overview y Qualy volvieron al de fábrica: lo guardado ya no encaja con el diseño de hoy. \
+        `shouldBe` "Race Overview y Qualy volvieron a la configuración predeterminada: lo guardado ya no encaja \
+                   \con el diseño de hoy. \
                    \(Pulsa para cerrar; los asteriscos se quedan hasta pulsar «✎ Editar layout».)"
-      T.takeWhile (/= ':') (unfitNote ["A", "B", "C"]) `shouldBe` "A, B y C volvieron al de fábrica"
+      T.takeWhile (/= ':') (unfitNote ["A", "B", "C"])
+        `shouldBe` "A, B y C volvieron a la configuración predeterminada"
       unfitNote [] `shouldBe` ""
 
   describe "los layouts fijos de Pages.Dashboard" $ do
