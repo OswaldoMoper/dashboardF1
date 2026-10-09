@@ -651,10 +651,11 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       deslizándose (2026-10-07 (f)) y estirar por la esquina ◢ (2026-10-07 (g)), con el gesto puro en
       `Common.Carry`. **Lo movido se recuerda** en el navegador al terminar la edición, cada layout lo suyo, con
       «↺ Restablecer» y un aviso si lo guardado ya no encaja (2026-10-07 (h) e (i); `Common.Saved`), **con el lado de
-      «⇄»** (2026-10-08 (a)). **Sumado después, en este orden:** que «↺ Restablecer» pida confirmar si hay algo que
-      perder; «✗ Cancelar», que devuelve los dos layouts a como estaban al entrar y también pide confirmar
-      (2026-10-08 (h)); recordar la banda de Lap Comparison con su modo (2026-10-08 (i)); la proporción del tipo 3 al
-      estirar; y, sin fecha, mover columnas, resaltar pilotos, el tipo 4 y el aire repartido.
+      «⇄»** (2026-10-08 (a)). **Hecho después:** «↺ Restablecer» pregunta en la barra si hay algo que perder, y
+      «✗ Cancelar» devuelve los dos layouts a como estaban al entrar, preguntando si algo cambió (2026-10-08 (h),
+      2026-10-09 (b)); la banda de Lap Comparison se recuerda con su modo (2026-10-08 (i), 2026-10-09 (c)). **Queda:**
+      la proporción del tipo 3 al estirar; y, sin fecha, mover columnas, resaltar pilotos, el tipo 4 y el aire
+      repartido.
 - [x] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
       que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
       desde el 2026-09-04**, con el imán apagado como caso normal y no como error. La tecla es **Alt** y el
@@ -723,16 +724,21 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       rápida de la sesión en negrita y la de la parte en curso en morado, y un panel «Columnas ▾» que cierra
       cualquier columna salvo «Pos» y «Driver», dejando siempre una de las de tiempo o estado. Por tarjeta y sin
       recordarse hasta el modo edición. Es un adelanto del catálogo de KPIs, que sigue pendiente.
-- [ ] **Lap Comparison y las tablas de campeonato, en vivo.** Sin decidir: la comparación con lo que está en
-      marcha (los sectores llegan en el directo; las trazas, solo con cuenta de F1TV) y las tablas de pilotos y
-      constructores con las posiciones actuales (pide la tabla de puntos del reglamento). **Hecho:** la posición en
-      esas tablas, la oficial de Jolpica (2026-10-03 (e)). **Medido el 2026-10-08:** el feed publica su propia
-      predicción del campeonato (`ChampionshipPrediction`: posición y puntos actuales y previstos, por piloto y por
-      equipo) en carreras y Sprints, y llega con cuenta de F1TV; el grabador la pide (2026-10-08 (c)).
+- [ ] **Lap Comparison y las tablas de campeonato, en vivo.** La comparación con lo que está en marcha (los
+      sectores llegan en el directo; las trazas, solo con cuenta de F1TV) y las tablas de pilotos y constructores con
+      las posiciones actuales. **Hecho:** la posición en esas tablas, la oficial de Jolpica (2026-10-03 (e)).
+      **Medido el 2026-10-08:** el feed publica su propia predicción del campeonato (`ChampionshipPrediction`:
+      posición y puntos actuales y previstos, por piloto y por equipo) en carreras y Sprints, y llega con cuenta de
+      F1TV; el grabador la pide (2026-10-08 (c)). **Decidido sin código el 2026-10-09 (d) y (e):** en Lap Comparison,
+      todos los tipos que se puedan (sin cuenta los sectores), con la vuelta que elija el usuario y FastF1 al acabar;
+      en las tablas, la predicción del feed o, si no llega, calculada, con la oficial y el cambio al lado. **Falta:**
+      cuándo entra, y el mando de la vuelta.
 - [x] **El final de una sesión, dicho como es** (2026-10-03 (a) y (b)). Tras cada bandera a cuadros la banda dice
       «Bandera a cuadros» —también entre las partes de una clasificación— y el punto del directo se apaga; con el
       `Finalised`, «Finalizada», también mientras se sirve la última tabla del feed y cuando vuelve OpenF1. La
-      bandera sale de los avisos de control de carrera, contados desde la hora de inicio de la sesión.
+      bandera sale de los avisos de control de carrera, contados desde la hora de inicio de la sesión. En una
+      clasificación, la parte siguiente anunciada tras la bandera la mantiene sin plazo, y una «Finalizada\*»
+      deducida no deja de mirar el feed (2026-10-09 (a)).
 - [ ] **Todo lo que el feed sabe de una clasificación** (2026-10-03 (c) y (d)). Decidido: la parte en la banda,
       los descansos con la cuenta atrás que anuncia control de carrera, los eliminados aparte y en gris, la zona de
       eliminación con una raya roja, el 107 % en Q1, la bandera roja y el estado de pista en la banda, y Best Lap
