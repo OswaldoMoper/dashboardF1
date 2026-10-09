@@ -13,6 +13,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.hypothesis/
 
 # Cache de FastF1.
 .fastf1-cache/

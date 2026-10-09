@@ -30,8 +30,8 @@ import json
 import sys
 import time
 
-from feed import _feed_rows
-from main import _LIVE_TOPICS, _live_snapshot
+from feed import _LIVE_TOPICS, _feed_rows
+from main import _live_snapshot
 
 
 def _dump_topic(snapshot, topic: str) -> int:

@@ -77,7 +77,7 @@ import fastf1
 from fastapi import FastAPI, HTTPException
 
 from convert import _num, _text
-from feed import _feed_rows, _feed_session
+from feed import _LIVE_TOPICS, _feed_rows, _feed_session
 
 CACHE_DIR = os.environ.get("FASTF1_CACHE", ".fastf1-cache")
 MAX_POINTS = max(1, int(os.environ.get("TELEMETRY_MAX_POINTS", "60")))
@@ -850,36 +850,6 @@ def laps(session_key: str, driver: str = "all") -> List[Dict[str, Any]]:
 
 _LIVE_FEED_URL = "wss://livetiming.formula1.com/signalrcore"
 _LIVE_NEGOTIATE_URL = "https://livetiming.formula1.com/signalrcore/negotiate"
-
-# Lo que se pide en la suscripción, de todo lo que el feed publica. `_feed_rows`
-# lee dos —`DriverList` y `TimingData`—; el resto lo consume el dato de sesión que
-# viaja con la tabla, y los que hoy no lee nadie se piden igual para que ampliar la
-# tabla no obligue a volver aquí.
-#
-# **Lo que cuesta pedir de más está medido** (2026-09-14, sin sesión en marcha,
-# tres pasadas a cada lado): la foto pasa de 47,5 a 95,0 KB y el tiempo **no se
-# mueve** —17,03 s de media contra 17,19, menos de lo que varían las pasadas entre
-# sí—. O sea que el coste está en la conversación con el feed y no en los bytes, y
-# el techo de 30 s de `Handler.Feed.Manager` conserva su margen.
-#
-# Y el peso de un topic depende de **cuándo** se pida, porque la foto trae estado
-# acumulado: `RaceControlMessages` son 30 KB con la sesión acabada y menos de 1 KB
-# antes de empezar.
-#
-# `LapCount` **solo existe en carrera** —57 mensajes en la carrera 11369 y ninguno
-# en la clasificación 11365—, así que su ausencia en la foto es el caso normal y no
-# un fallo del feed.
-_LIVE_TOPICS = [
-    "DriverList",
-    "SessionInfo",
-    "TimingData",
-    "TimingAppData",
-    "TimingStats",
-    "LapCount",
-    "TrackStatus",
-    "RaceControlMessages",
-    "ExtrapolatedClock",
-]
 
 
 def _live_snapshot(timeout: float = 15.0) -> Dict[str, Any]:

@@ -24,6 +24,19 @@ En los dos casos conviene arrancar con `telemetry-service/` como directorio de t
 
 El backend Haskell lo localiza con `TELEMETRY_HOST` (default `127.0.0.1`) y `TELEMETRY_PORT` (default `8000`), o por el socket Unix que nombre `TELEMETRY_SOCKET`, que tiene prioridad (vacía cuenta como no definida). Al arrancar escribe por dónde lo busca. Para que escuche en un socket: `--uds <ruta>` en vez de `--port`.
 
+## Pruebas
+
+Las de `tests/` cubren lo puro del feed (`feed.py`): la salida de `_feed_rows` sobre fotos reales del feed, comparada
+con la guardada en `tests/esperado/`, y sus reglas como propiedades con hypothesis. Desde la raíz del repositorio:
+
+```sh
+dashboardF1-pytest
+```
+
+`dashboardF1-test` las corre antes que las de Haskell. Las fotos salen de una grabación de `dashboardF1-record`, y un
+cambio intencionado de la salida se regenera, se prueba y se revisa en el diff; los dos usos, en la cabecera de
+`tests/fotos.py`. Hypothesis guarda en `.hypothesis/` los ejemplos que fallaron y los repite primero.
+
 ## Variables de entorno
 
 | Variable | Default | Qué hace |

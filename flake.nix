@@ -90,10 +90,18 @@
           ]) ++ [ signalrcore timple ];
         };
 
-        pythonEnv = python.withPackages (ps: [
+        pythonDeps = ps: [
           fastf1
           ps.fastapi
           ps.uvicorn
+        ];
+
+        pythonEnv = python.withPackages pythonDeps;
+
+        # The service's environment plus the test tools; the service never carries them.
+        pythonTestEnv = python.withPackages (ps: pythonDeps ps ++ [
+          ps.pytest
+          ps.hypothesis
         ]);
 
         telemetrySrc = pkgs.runCommand "telemetry-service-src" { } ''
@@ -361,10 +369,23 @@
           '';
         };
 
+        packages.pytest = pkgs.writeShellApplication {
+          name = "dashboardF1-pytest";
+          runtimeInputs = [ pythonTestEnv ];
+          text = ''
+            ${guardRoot}
+            exec python -m pytest telemetry-service "$@"
+          '';
+        };
+
         packages.test = pkgs.writeShellApplication {
           name = "dashboardF1-test";
-          runtimeInputs = [ self'.packages.hspec e2eLauncher ];
+          runtimeInputs = [ self'.packages.pytest self'.packages.hspec e2eLauncher ];
           text = ''
+            if ! dashboardF1-pytest; then
+              echo "dashboardF1-pytest falló; mientras lo revisas puedes correr dashboardF1-hspec y dashboardF1-e2e" >&2
+              exit 1
+            fi
             if ! dashboardF1-hspec "$@"; then
               echo "dashboardF1-hspec falló; mientras lo revisas puedes correr dashboardF1-e2e" >&2
               exit 1
@@ -471,6 +492,11 @@
           program = "${self'.packages.hspec}/bin/dashboardF1-hspec";
         };
 
+        apps.pytest = {
+          type = "app";
+          program = "${self'.packages.pytest}/bin/dashboardF1-pytest";
+        };
+
         apps.test = {
           type = "app";
           program = "${self'.packages.test}/bin/dashboardF1-test";
@@ -501,6 +527,7 @@
             devLauncher
             e2eLauncher
             e2eRecordLauncher
+            self'.packages.pytest
             self'.packages.hspec
             self'.packages.test
             self'.packages.serve
@@ -515,8 +542,9 @@
             echo "F1 Functional Dashboard — dev shell (Haskell)"
             echo "  backend : cabal run backend       # Servant en :8080 (Fase 0, sesión 3)"
             echo "  todo    : dashboardF1-dev         # microservicio + backend, STATIC_DIR desde el store"
+            echo "  python  : dashboardF1-pytest      # pytest del microservicio (telemetry-service/tests)"
             echo "  pruebas : dashboardF1-hspec       # cabal build all + cabal test all"
-            echo "  las dos : dashboardF1-test        # hspec y, si pasa, e2e"
+            echo "  todas   : dashboardF1-test        # pytest, hspec y, si pasan, e2e"
             echo "  e2e     : dashboardF1-e2e         # tsc + Playwright, con lo grabado en e2e/recordings"
             echo "  e2e rec : dashboardF1-e2e-record  # graba /api/* de :3000 (otro con E2E_URL; queda a nombre de :3000)"
             echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
@@ -529,13 +557,14 @@
         # ── Python dev shell del microservicio FastF1 ──
         devShells.telemetry = pkgs.mkShell {
           name = "dashboardF1-telemetry";
-          packages = [ pythonEnv ];
+          packages = [ pythonTestEnv ];
           shellHook = ''
             echo "telemetry-service — Python dev shell (FastF1)"
             echo "  correr:  cd telemetry-service && uvicorn main:app   (:8000)"
             echo "  o sin shell:  nix run .#telemetry -- --port 8000"
             echo "  feed en vivo: nix run .#live                  # la tabla, ahora"
             echo "  grabar feed : nix run .#record -- [--f1tv] salida.txt 900"
+            echo "  pruebas     : python -m pytest telemetry-service  (o dashboardF1-pytest)"
           '';
         };
       };
