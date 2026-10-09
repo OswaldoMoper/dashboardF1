@@ -217,6 +217,7 @@ import           Handler.Live.Helper         (ClockVerdict (..),
                                               Of1Position, Of1Result (..),
                                               Of1Session (..), advanceClock,
                                               assembleRows, chequeredGrace,
+                                              closesFeedWindow,
                                               classificationGaps,
                                               classificationTime, clockVerdict,
                                               derivedState, endMargin, feedRows,
@@ -2288,6 +2289,13 @@ main = hspec $ do
 
     prop "abierta la ventana, solo la cierra una finalización desde la hora de arranque"
       closesOnlyFromStart
+
+    it "la finalizada que dijo el feed cierra; la deducida tras la bandera, no" $
+      -- La clasificación Sprint de Singapur: la deducida a los 12 min de la bandera
+      -- de SQ1 cerró la ventana, y la SQ2 y la SQ3 no se vieron.
+      map closesFeedWindow
+          [StateReading SessionFinalised Heard, StateReading SessionFinalised Derived]
+        `shouldBe` [True, False]
 
   -- Lo que `GET /fastf1/live` entrega: la tabla y la sesión en la MISMA foto, así
   -- que hablan del mismo instante. Los fixtures llevan las claves que el

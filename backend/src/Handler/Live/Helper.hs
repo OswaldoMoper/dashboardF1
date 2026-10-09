@@ -28,6 +28,7 @@ module Handler.Live.Helper
     -- * Cuándo merece la pena mirar el feed
   , feedWindowLead
   , feedWindowOpen
+  , closesFeedWindow
   , endMargin
   , derivedState
   , meetingNames
@@ -754,8 +755,9 @@ feedWindowLead = 15 * 60
 --
 -- __La ventana abre por reloj y cierra por señal.__ Abre 'feedWindowLead' antes de
 -- la hora prevista; no cierra a una hora sino cuando el feed dice que la sesión
--- acabó, así que __una carrera alargada por bandera roja sigue cubierta__ sin que
--- nadie haya tenido que inventar cuánto puede alargarse.
+-- acabó (la deducida no cuenta: 'closesFeedWindow'), así que __una carrera alargada
+-- por bandera roja sigue cubierta__ sin que nadie haya tenido que inventar cuánto
+-- puede alargarse.
 --
 -- __La señal se compara contra la hora prevista de arranque de la sesión vigente__,
 -- y no contra su apertura: ninguna sesión acaba antes de empezar, así que una
@@ -779,6 +781,12 @@ feedWindowOpen now starts finalisedAt
       listToMaybe (sortOn Down (filter ((<= now) . opensAt) starts))
     opensAt = addUTCTime (negate feedWindowLead)
     stillLive start = maybe True (< start) finalisedAt
+
+-- | Si una sesión finalizada cierra la ventana del feed: solo si lo dijo el feed
+-- ('Common.Types.Heard'). La deducida tras la bandera la deja abierta, para que una
+-- parte que salga tarde se vuelva a ver.
+closesFeedWindow :: StateReading -> Bool
+closesFeedWindow reading = srBasis reading == Heard
 
 -- | Cuánto se espera __tras la hora de fin prevista__ antes de dar una sesión por
 -- acabada.

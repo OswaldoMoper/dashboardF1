@@ -53,7 +53,7 @@ import           Control.Concurrent.MVar (withMVar)
 import           Control.Concurrent.STM  (atomically, modifyTVar', readTVarIO,
                                           writeTVar)
 import           Control.Exception       (SomeException, displayException, try)
-import           Control.Monad           (forever, void)
+import           Control.Monad           (forever, void, when)
 import           Data.List               (nub)
 import           Data.Map.Strict         (Map)
 import qualified Data.Map.Strict         as Map
@@ -68,8 +68,9 @@ import qualified Handler.Feed.Manager    as Feed
 import           Handler.Live.Helper     (ClockVerdict (..), FeedVerdict (..),
                                           Of1Interval, Of1Meeting (..),
                                           Of1Session (..), assembleRows,
-                                          clockVerdict, feedVerdict,
-                                          feedWindowOpen, fetchFailure,
+                                          clockVerdict, closesFeedWindow,
+                                          feedVerdict, feedWindowOpen,
+                                          fetchFailure,
                                           finaliseBox, freezeClock,
                                           inheritFinalised, meetingNames,
                                           openf1ClockPeriod, openf1Session,
@@ -247,7 +248,7 @@ fromFeed env live = do
     FeedEmpty             -> fromOpenF1 env
     FeedFinalised reading -> do
       atomically $ modifyTVar' (envLiveCache env) (fmap (finaliseBox reading))
-      noteFinalised env now
+      when (closesFeedWindow reading) (noteFinalised env now)
       fromOpenF1 env
 
 -- | El peldaño de OpenF1: __lee la caja y no baja__, salvo que esté vacía.
