@@ -34,8 +34,9 @@ import           Common.ComparisonCard (Side, defaultControlSide)
 import           Common.Format      (ClockForm (..), formatClock)
 import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
-import           Common.Saved       (Restored (..), factorySides, restoreLayout,
-                                     saveLayout, savedKey, unfitNote)
+import           Common.Saved       (Restored (..), atFactory, factorySides,
+                                     restoreLayout, saveLayout, savedKey,
+                                     unfitNote)
 import           Common.Shown      (Kept (..), Poll (..), delayDefaultSeconds,
                                      delayFromUrl, keepLast, keptNothing,
                                      landed, readDelay)
@@ -67,7 +68,7 @@ import qualified GHCJS.DOM.DOMRectReadOnly as DOM (getHeight, getWidth)
 import qualified GHCJS.DOM.Element as DOM (closest, getBoundingClientRect)
 import qualified GHCJS.DOM.EventM   as DOM (event, mouseClientXY, on,
                                             preventDefault, target)
-import qualified GHCJS.DOM.GlobalEventHandlers as DOM (keyDown, keyUp,
+import qualified GHCJS.DOM.GlobalEventHandlers as DOM (click, keyDown, keyUp,
                                                        mouseDown, mouseMove,
                                                        mouseUp)
 import qualified GHCJS.DOM.KeyboardEvent as Key (getKey)
@@ -105,8 +106,11 @@ import           Widgets.Telemetry  (telemetryWidget)
 -- __El refresco del directo lo monta la página y no la tarjeta__ ('Widgets.LiveTiming.livePoll'):
 -- los dos layouts están montados a la vez y los dos llevan Live Timing, así que una
 -- petición por tarjeta saldría dos veces. Así comparten una sola.
+--
+-- __Es 'mdo' porque la cabecera lee de las capas__: «Restablecer» necesita saber si la
+-- capa que se ve ya es la de fábrica, y las capas se montan después de la cabecera.
 dashboardPage :: MonadWidget t m => m ()
-dashboardPage = divClass "page page--dashboard" $ do
+dashboardPage = divClass "page page--dashboard" $ mdo
   toggleClick <- headerToggle
   openDyn     <- toggle True toggleClick
   poll        <- livePoll
@@ -114,12 +118,16 @@ dashboardPage = divClass "page page--dashboard" $ do
   restored    <- mapM (\l -> (,) l <$> liftJSM (readSaved l)) [raceOverview, qualy]
   let unfit l = lookup l restored == Just Unfit
   (layoutDyn, live, edit) <- divClass "top-bar" $ do
-    (active, delay, edit) <- dashboardHeader initial openDyn unfit
-    live <- delayedLive delay poll
-    sessionBand openDyn (lvPoll live) (lvAge live)
-    pure (active, live, edit)
-  elDynClass "div" (canvasClass <$> openDyn <*> editOn edit) $
-    mapM_ (uncurry (layer live layoutDyn edit)) restored
+    (active, delay, editing) <- dashboardHeader initial openDyn unfit shownAtFactory
+    delayed <- delayedLive delay poll
+    sessionBand openDyn (lvPoll delayed) (lvAge delayed)
+    pure (active, delayed, editing)
+  factories <- elDynClass "div" (canvasClass <$> openDyn <*> editOn edit) $
+    mapM (\(l, r) -> (,) (layoutId l) <$> layer live layoutDyn edit l r) restored
+  let shownAtFactory =
+        (\l fs -> fromMaybe True (lookup (layoutId l) fs))
+          <$> layoutDyn <*> traverse (\(i, d) -> (,) i <$> d) factories
+  pure ()
   where
     -- __El lienzo dice si la cabecera está plegada y si se está editando__, para
     -- quien necesite saberlo desde la hoja de estilos. Lo plegado hoy no lo lee
@@ -158,7 +166,8 @@ headerToggle = do
 -- | La cabecera: título, conmutación de layouts, el modo edición y el retraso del
 -- directo, que se pliegan __juntos__ (2026-09-07). Devuelve el layout activo, el
 -- retraso en segundos y si se está editando, porque los tres viven dentro; el
--- retraso arranca en @initial@.
+-- retraso arranca en @initial@. @atFactoryNow@ dice si el layout que se ve ya es el
+-- de fábrica, para que «Restablecer» no pregunte en balde.
 --
 -- __Se pliega con una clase y no desmontando__, y la diferencia importa: con
 -- 'dyn' el contenido se re-monta en cada cambio, así que 'layoutSwitcher'
@@ -166,13 +175,13 @@ headerToggle = do
 -- desplegara. Con 'elDynClass' el DOM se queda montado y solo cambia si se pinta;
 -- por lo mismo, plegarla no saca de la edición.
 dashboardHeader :: MonadWidget t m
-                => Int -> Dynamic t Bool -> (Layout -> Bool)
+                => Int -> Dynamic t Bool -> (Layout -> Bool) -> Dynamic t Bool
                 -> m (Dynamic t Layout, Dynamic t Int, Edit t)
-dashboardHeader initial openDyn unfit =
+dashboardHeader initial openDyn unfit atFactoryNow =
   elDynClass "div" (headerClass <$> openDyn) $ do
     el "h1" $ text "F1 Functional Dashboard"
     divClass "dashboard-header__controls" $ do
-      (active, edit) <- layoutSwitcher unfit
+      (active, edit) <- layoutSwitcher unfit atFactoryNow
       delay <- delayField initial
       pure (active, delay, edit)
   where
@@ -429,8 +438,10 @@ sessionClock tick served = do
 -- Arranca de lo guardado si encaja ('Common.Saved.restoreLayout') y si no, del de
 -- fábrica, con los rectángulos y el lado de cada Lap Comparison. Al salir de la
 -- edición guarda lo que se ve, esté activa o no; «Restablecer» devuelve al de fábrica
--- solo la activa, lados incluidos, y se guarda al salir como lo demás.
-layer :: MonadWidget t m => LiveView t -> Dynamic t Layout -> Edit t -> Layout -> Restored -> m ()
+-- solo la activa, lados incluidos, y se guarda al salir como lo demás. Devuelve si lo
+-- que enseña es el de fábrica ('Common.Saved.atFactory').
+layer :: MonadWidget t m
+      => LiveView t -> Dynamic t Layout -> Edit t -> Layout -> Restored -> m (Dynamic t Bool)
 layer live layoutDyn edit l restored = mdo
   active <- holdUniqDyn (((== layoutId l) . layoutId) <$> layoutDyn)
   let revealed = () <$ ffilter id (updated active)
@@ -461,6 +472,7 @@ layer live layoutDyn edit l restored = mdo
              ]
   let saved = (,) <$> sides <*> (boardLayout <$> board)
   performEvent_ (liftJSM . uncurry (writeSaved l) <$> tag (current saved) done)
+  pure (uncurry (atFactory (widgets l)) <$> saved)
   where
     layerClass a
       | a         = "canvas__layer"
@@ -621,8 +633,9 @@ data Edit t = Edit
 -- todos, bajo el primero, abierta al cargar. Pulsarla la cierra y pasar el ratón por
 -- un botón con asterisco la vuelve a enseñar; asteriscos y nota se quitan al entrar
 -- en edición.
-layoutSwitcher :: MonadWidget t m => (Layout -> Bool) -> m (Dynamic t Layout, Edit t)
-layoutSwitcher unfit = divClass "layout-switcher" $ mdo
+layoutSwitcher :: MonadWidget t m
+               => (Layout -> Bool) -> Dynamic t Bool -> m (Dynamic t Layout, Edit t)
+layoutSwitcher unfit atFactoryNow = divClass "layout-switcher" $ mdo
   noted <- holdDyn True (False <$ ffilter id (updated editing))
   open  <- holdDyn True (False <$ leftmost [overviewClose, qualyClose])
   hover <- holdDyn False (leftmost [overviewHover, qualyHover])
@@ -638,7 +651,7 @@ layoutSwitcher unfit = divClass "layout-switcher" $ mdo
     ]
   editing <- editToggle
   magnet  <- magnetToggle editing
-  reset   <- resetButton editing
+  reset   <- resetButton editing atFactoryNow
   pure (active, Edit editing magnet reset)
 
 -- | El botón de un layout: con asterisco mientras @noted@ si su guardado no encajó
@@ -670,15 +683,45 @@ layoutButton noted shown unfit holds note label = elClass "span" "layout-switche
       | s         = "layout-note layout-note--open"
       | otherwise = "layout-note"
 
--- | «↺ Restablecer», solo visible en edición.
-resetButton :: MonadWidget t m => Dynamic t Bool -> m (Event t ())
-resetButton editing = do
-  (e, _) <- elDynAttr' "button" (attrs <$> editing) $ text "↺ Restablecer"
-  pure (domEvent Click e)
+-- | «↺ Restablecer», solo visible en edición. Si lo que se ve ya es el de fábrica
+-- (@atFactoryNow@) restablece sin más; si no, en su sitio pregunta «¿Volver a la
+-- configuración predeterminada? Sí · No», y solo «Sí» restablece. Cualquier clic
+-- fuera de la pregunta, y salir de la edición, cuentan como «No».
+resetButton :: MonadWidget t m => Dynamic t Bool -> Dynamic t Bool -> m (Event t ())
+resetButton editing atFactoryNow = mdo
+  (pressed, yes, no) <- elClass "span" "reset-confirm" $ do
+    (b, _) <- elDynAttr' "button" (buttonAttrs <$> editing <*> asking) $ text "↺ Restablecer"
+    (y, n) <- elDynAttr "span" (questionAttrs <$> editing <*> asking) $ do
+      text "¿Volver a la configuración predeterminada?"
+      (y, _) <- elClass' "button" "switcher__btn reset-confirm__yes" $ text "Sí"
+      (n, _) <- elClass' "button" "switcher__btn" $ text "No"
+      pure (domEvent Click y, domEvent Click n)
+    pure (domEvent Click b, y, n)
+  outside <- clicksOutside ".reset-confirm"
+  let direct = gate (current atFactoryNow) pressed
+      ask    = gate (not <$> current atFactoryNow) pressed
+  asking <- holdDyn False $ leftmost
+    [ True <$ ask
+    , False <$ leftmost [yes, no, outside, () <$ ffilter not (updated editing)]
+    ]
+  pure (leftmost [direct, yes])
   where
-    attrs shown =
+    buttonAttrs shown a =
       "class" =: "switcher__btn reset-button"
-        <> (if shown then mempty else "hidden" =: "")
+        <> (if shown && not a then mempty else "hidden" =: "")
+    questionAttrs shown a =
+      "class" =: "reset-confirm__question"
+        <> (if shown && a then mempty else "hidden" =: "")
+
+-- | Los clics de la ventana que caen fuera de lo que casa con @selector@.
+clicksOutside :: MonadWidget t m => Text -> m (Event t ())
+clicksOutside selector = do
+  win <- liftJSM DOM.currentWindowUnchecked
+  fmapMaybe id <$> wrapDomEvent win (`DOM.on` DOM.click)
+    (maybe (pure (Just ())) (liftJSM . away) =<< DOM.target)
+  where
+    away :: DOM.HTMLElement -> JSM (Maybe ())
+    away t = (\hit -> if isJust hit then Nothing else Just ()) <$> DOM.closest t selector
 
 -- | El interruptor del imán, solo visible en edición. Arranca encendido y recuerda
 -- cómo se dejó hasta recargar; encendido queda marcado y lleva ✓.

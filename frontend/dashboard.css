@@ -888,6 +888,28 @@ body {
   color: var(--c-warn);
 }
 
+/* Su pregunta sale en su sitio, en amarillo, con el «Sí» marcado (2026-10-09). */
+.reset-confirm,
+.reset-confirm__question {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.reset-confirm__question {
+  font-size: var(--fs-sm);
+  color: var(--c-warn);
+}
+
+.reset-confirm__question[hidden] {
+  display: none;
+}
+
+.reset-confirm__yes {
+  border-color: var(--c-warn);
+  color: var(--c-warn);
+}
+
 /* La nota de los layouts cuyo guardado no encajó va bajo el primero de ellos; cuándo
    se ve lo dice la clase `--open`. */
 .layout-switcher__item {

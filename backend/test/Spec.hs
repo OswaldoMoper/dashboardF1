@@ -129,7 +129,7 @@ import           Common.Carry                (Board (..), Carry (..), Grip (..),
 import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
-import           Common.Saved                (Restored (..), factorySides,
+import           Common.Saved                (Restored (..), atFactory, factorySides,
                                               restoreLayout, saveLayout,
                                               savedKey, unfitNote)
 import           Common.Shown                (Indicator (..), Kept (..),
@@ -3856,6 +3856,20 @@ main = hspec $ do
 
     it "sin nada guardado, el de fábrica y sin aviso" $
       restoreLayout raceOverviewFixture Nothing `shouldBe` FromFactory
+
+    it "el de fábrica lo es en cualquier orden; una tarjeta movida o un lado cambiado, no" $
+      map (\(sides, shown) -> atFactory raceOverviewFixture sides shown)
+          [ (raceSides, raceOverviewFixture)
+          , (raceSides, reverse raceOverviewFixture)
+          , (raceSides, moved)
+          , (raceSides, moving "lap-comparison" (60, 35, 60, 51))
+          , (rightSides, raceOverviewFixture)
+          ]
+        `shouldBe` [True, True, False, False, False]
+
+    it "lo movido y vuelto a su sitio es otra vez el de fábrica" $
+      atFactory raceOverviewFixture raceSides (moving "lap-comparison" (60, 35, 60, 50))
+        `shouldBe` True
 
     it "lo guardado vuelve tal cual, en los dos layouts" $ do
       restoreLayout raceOverviewFixture (Just (save moved)) `shouldBe` FromSaved moved raceSides

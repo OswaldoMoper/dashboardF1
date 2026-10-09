@@ -7,6 +7,7 @@
 module Common.Saved
   ( Restored (..)
   , SavedCard (..)
+  , atFactory
   , factorySides
   , restoreLayout
   , saveLayout
@@ -71,6 +72,14 @@ savedKey (LayoutId l) = "dashboardF1.layout." <> l
 factorySides :: [WidgetConfig] -> Map WidgetId Side
 factorySides ws =
   Map.fromList [(widgetId w, defaultControlSide) | w <- ws, widgetType w == LapComparison]
+
+-- | Si lo que se ve ya es el de fábrica @factory@: cada tarjeta en su rectángulo de
+-- fábrica, sin importar el orden, y cada Lap Comparison con su lado de fábrica. El
+-- imán no cuenta.
+atFactory :: [WidgetConfig] -> Map WidgetId Side -> [WidgetConfig] -> Bool
+atFactory factory sides shown = rects shown == rects factory && sides == factorySides factory
+  where
+    rects ws = Map.fromList [(widgetId w, (wcX w, wcY w, wcW w, wcH w)) | w <- ws]
 
 -- | Lo que se escribe para un layout: el rectángulo de cada tarjeta y el lado que
 -- tenga en el mapa.

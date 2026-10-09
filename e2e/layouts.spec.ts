@@ -224,6 +224,8 @@ test.describe('el arrastre', () => {
     const MOVED = [[0, 0, 60, 90], [60, 0, 60, 35], [60, 65, 60, 50], [0, 90, 60, 30], [60, 35, 60, 30]];
     const edit = (page: Page) => page.getByRole('button', { name: '✎ Editar layout' }).click();
     const finish = (page: Page) => page.getByRole('button', { name: '✓ Terminar edición' }).click();
+    const question = (page: Page) => page.locator('.reset-confirm__question');
+    const yes = (page: Page) => page.getByRole('button', { name: 'Sí', exact: true });
 
     async function moveConstructors(page: Page): Promise<void> {
       await edit(page);
@@ -258,12 +260,41 @@ test.describe('el arrastre', () => {
 
       await edit(page);
       await reset.click();
+      await yes(page).click();
       await page.waitForTimeout(400);
       expect(await units(page)).toEqual(RACE);
       await finish(page);
       await expect(reset).toBeHidden();
       await reload(page);
       expect(await units(page)).toEqual(RACE);
+    });
+
+    test('«Restablecer» no pregunta si lo que se ve ya es el de fábrica', async ({ page }) => {
+      const reset = page.getByRole('button', { name: '↺ Restablecer' });
+      await edit(page);
+      await reset.click();
+      await expect(question(page)).toBeHidden();
+      await expect(reset).toBeVisible();
+      expect(await units(page)).toEqual(RACE);
+    });
+
+    test('«No», y un clic fuera de la pregunta, no restablecen', async ({ page }) => {
+      const reset = page.getByRole('button', { name: '↺ Restablecer' });
+      await moveConstructors(page);
+      await reset.click();
+      await expect(question(page)).toBeVisible();
+      await expect(reset).toBeHidden();
+      await page.getByRole('button', { name: 'No', exact: true }).click();
+      await expect(question(page)).toBeHidden();
+      await expect(reset).toBeVisible();
+      expect(await units(page)).toEqual(MOVED);
+
+      await reset.click();
+      await expect(question(page)).toBeVisible();
+      await finish(page);
+      await expect(question(page)).toBeHidden();
+      await reload(page);
+      expect(await units(page)).toEqual(MOVED);
     });
 
     test('el lado de «⇄» se guarda al terminar la edición, y sin terminar se pierde', async ({ page }) => {
@@ -293,6 +324,7 @@ test.describe('el arrastre', () => {
 
       await edit(page);
       await page.getByRole('button', { name: '↺ Restablecer' }).click();
+      await yes(page).click();
       await expect(body).not.toHaveClass(right);
       await finish(page);
       await reload(page);
