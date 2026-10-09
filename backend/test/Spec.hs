@@ -1411,6 +1411,81 @@ main = hspec $ do
           [ScheduledSession "Race" 1308 "Bahrain Grand Prix" (malaysiaAt 31 0 0) (malaysiaAt 33 0 0)]
         `shouldBe` NextSilent
 
+  -- El descanso alargado, con los avisos REALES de la clasificación Sprint de Singapur
+  -- (2026-10-09, 20:30 locales, 12:30 UTC): la bandera de SQ1 a las 12:52:09, «START
+  -- OF SQ2 WILL BE DELAYED» a las 12:55:03, «SQ2 WILL START AT 21:11» a las 13:05:26
+  -- y la verde de SQ2 a las 13:11:00, 19 min después de la bandera.
+  describe "feedSession con la parte siguiente anunciada" $ do
+    let at :: Int -> Int -> Int -> UTCTime
+        at h m s = addUTCTime (fromIntegral (h * 3600 + m * 60 + s))
+                     (UTCTime (fromGregorian 2026 10 9) 0)
+        notice u msg = FeedNotice u "Other" msg
+        sq = (malaysiaQuali "" "Started")
+               { fsName      = "Sprint Qualifying"
+               , fsStartDate = Just "2026-10-09T20:30:00"
+               , fsFlags     =
+                   [ FeedFlag "2026-10-09T12:30:00" "GREEN"     "Track"
+                   , FeedFlag "2026-10-09T12:35:52" "RED"       "Track"
+                   , FeedFlag "2026-10-09T12:38:22" "CLEAR"     "Track"
+                   , FeedFlag "2026-10-09T12:46:00" "GREEN"     "Track"
+                   , FeedFlag "2026-10-09T12:52:09" "CHEQUERED" "Track"
+                   , FeedFlag "2026-10-09T13:11:00" "GREEN"     "Track"
+                   , FeedFlag "2026-10-09T13:21:00" "CHEQUERED" "Track"
+                   , FeedFlag "2026-10-09T13:28:00" "GREEN"     "Track"
+                   , FeedFlag "2026-10-09T13:36:00" "CHEQUERED" "Track"
+                   ]
+               , fsNotices   =
+                   [ notice "2026-10-09T12:55:03" "START OF SQ2 WILL BE DELAYED"
+                   , notice "2026-10-09T13:05:26" "SQ2 WILL START AT 21:11"
+                   , notice "2026-10-09T13:25:01" "SQ3 WILL START AT 21:28"
+                   ]
+               }
+        -- Lo que había llegado hasta `upTo`, servido en ese instante.
+        upTo u fs = fs { fsFlags   = filter ((<= u) . ffUtc) (fsFlags fs)
+                       , fsNotices = filter ((<= u) . fnUtc) (fsNotices fs) }
+        stateAt fs (u, (h, m, s)) = siState (feedSession (at h m s) (upTo u fs))
+
+    it "con el retraso de SQ2 anunciado, pasados los 12 min sigue la bandera, y con la verde, en marcha" $
+      map (stateAt sq)
+          [ ("2026-10-09T13:05:00", (13, 5, 0))
+          , ("2026-10-09T13:10:59", (13, 10, 59))
+          , ("2026-10-09T13:11:30", (13, 11, 30))
+          ]
+        `shouldBe`
+          [ Just (StateReading SessionChequered Heard)
+          , Just (StateReading SessionChequered Heard)
+          , Just (StateReading SessionStarted Heard)
+          ]
+
+    it "la hora anunciada de la parte cuenta igual que el retraso" $
+      let onlyTime = sq { fsNotices = filter ((/= "START OF SQ2 WILL BE DELAYED") . fnMessage) (fsNotices sq) }
+       in stateAt onlyTime ("2026-10-09T13:06:00", (13, 6, 0))
+            `shouldBe` Just (StateReading SessionChequered Heard)
+
+    it "un retraso que no nombra parte no cuenta, y a los 12 min queda deducida" $
+      let unnamed = sq { fsNotices = [notice "2026-10-09T12:55:03" "DELAYED START"] }
+       in stateAt unnamed ("2026-10-09T13:05:00", (13, 5, 0))
+            `shouldBe` Just (StateReading SessionFinalised Derived)
+
+    it "un aviso anterior a la bandera no cuenta" $
+      let early = sq { fsNotices = [notice "2026-10-09T12:50:00" "START OF SQ2 WILL BE DELAYED"] }
+       in stateAt early ("2026-10-09T13:05:00", (13, 5, 0))
+            `shouldBe` Just (StateReading SessionFinalised Derived)
+
+    it "fuera de una clasificación el aviso no cuenta" $
+      stateAt sq { fsType = "Practice" } ("2026-10-09T13:05:00", (13, 5, 0))
+        `shouldBe` Just (StateReading SessionFinalised Derived)
+
+    it "tras la última bandera, sin avisos, a los 12 min queda deducida como siempre" $
+      map (stateAt sq)
+          [ ("2026-10-09T13:47:59", (13, 47, 59))
+          , ("2026-10-09T13:48:00", (13, 48, 0))
+          ]
+        `shouldBe`
+          [ Just (StateReading SessionChequered Heard)
+          , Just (StateReading SessionFinalised Derived)
+          ]
+
   -- La roja, con los avisos REALES de control de carrera de la P3 de Malasia
   -- (2026-10-03, 12:30 locales, 04:30 UTC): «RED FLAG» a las 04:54:23, «TRACK
   -- CLEAR» a las 04:56:59 y la verde a las 04:59:00.
@@ -1475,13 +1550,13 @@ main = hspec $ do
 
     it "lee las formas grabadas, con la hora local que anuncian" $
       map parseNotice
-          [ "DELAYED START", "START OF QUALIFYING WILL BE DELAYED"
+          [ "DELAYED START", "START OF QUALIFYING WILL BE DELAYED", "START OF SQ2 WILL BE DELAYED"
           , "FORMATION LAP WILL START AT 15:40", "RACE WILL START AT 16:33"
           , "Q1 WILL START AT 16:04", "SQ3 WILL START AT 16:51"
           , "SESSION WILL RESUME AT 12:59", "TRACK SURFACE SLIPPERY IN TRACK SECTOR 5"
           ]
         `shouldBe`
-          [ Just NoticeDelay, Just NoticeDelay
+          [ Just (NoticeDelay Nothing), Just (NoticeDelay Nothing), Just (NoticeDelay (Just 2))
           , Just (NoticeAt AnnouncedFormation (15, 40)), Just (NoticeAt AnnouncedStart (16, 33))
           , Just (NoticeAt (AnnouncedPart 1) (16, 4)), Just (NoticeAt (AnnouncedPart 3) (16, 51))
           , Just (NoticeAt AnnouncedResume (12, 59)), Nothing

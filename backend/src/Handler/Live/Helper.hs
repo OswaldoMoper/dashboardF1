@@ -93,7 +93,7 @@ import           Data.List             (find, maximumBy, minimumBy, sortOn)
 import           Data.List.NonEmpty    (nonEmpty)
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as Map
-import           Data.Maybe            (fromMaybe, listToMaybe, mapMaybe)
+import           Data.Maybe            (fromMaybe, isJust, listToMaybe, mapMaybe)
 import           Data.Ord              (Down (..), comparing)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
@@ -401,10 +401,10 @@ feedSession now fs =
 -- | Lo que control de carrera anuncia con hora, por su texto. Las formas son las de
 -- las grabaciones: @Q2 WILL START AT 16:29@, @FORMATION LAP WILL START AT 15:40@,
 -- @RACE WILL START AT 16:33@, @SESSION WILL RESUME AT 12:59@; y sin hora,
--- @DELAYED START@ o @START OF QUALIFYING WILL BE DELAYED@. La hora es la local del
--- circuito.
+-- @DELAYED START@, @START OF QUALIFYING WILL BE DELAYED@ o @START OF SQ2 WILL BE
+-- DELAYED@. La hora es la local del circuito.
 data Notice
-  = NoticeDelay
+  = NoticeDelay (Maybe Int)  -- ^ Sin hora; con la parte, si la nombra.
   | NoticeAt Announced (Int, Int)
   deriving (Eq, Show)
 
@@ -423,7 +423,8 @@ parseNotice raw
   | (what, rest) <- T.breakOn " WILL START AT " msg
   , not (T.null rest)                              =
       NoticeAt (startWhat what) <$> clock (T.drop (T.length " WILL START AT ") rest)
-  | "DELAYED" `T.isInfixOf` msg                    = Just NoticeDelay
+  | "DELAYED" `T.isInfixOf` msg                    =
+      Just (NoticeDelay (listToMaybe (mapMaybe partNumber (T.words msg))))
   | otherwise                                      = Nothing
   where
     msg = T.toUpper (T.strip raw)
@@ -473,7 +474,7 @@ noticesSince from fs =
     ]
   where
     target (NoticeAt _ hm) at = (\o -> announcedAt o at hm) <$> gmtOffset fs
-    target NoticeDelay _      = Nothing
+    target (NoticeDelay _) _  = Nothing
 
 -- | La etiqueta de una cuenta: la parte con su nombre ('Common.Types.partLabel'), y
 -- las demás, por lo que anuncian.
@@ -550,19 +551,31 @@ trackCondition track =
 -- * la roja: 'SessionRedFlag', oída, hasta la verde;
 -- * la bandera: 'SessionChequered', oída;
 -- * la bandera con 'chequeredGrace' sin otra salida: 'SessionFinalised', y como
---   nadie lo dijo, 'Common.Types.Derived'.
+--   nadie lo dijo, 'Common.Types.Derived';
+-- * __en una clasificación__, la bandera seguida de un aviso que nombra una parte
+--   (que se retrasa, o su hora): 'SessionChequered' sin plazo, hasta que el campo
+--   diga @Finalised@.
 --
 -- Sin hora de inicio no cuenta ningún aviso.
 feedState :: UTCTime -> FeedSession -> StateReading
 feedState now fs =
   case (field, lastTrackFlag fs) of
     (SessionStarted, Just (at, Chequered))
+      | partAnnouncedSince at                -> StateReading SessionChequered Heard
       | diffUTCTime now at >= chequeredGrace -> StateReading SessionFinalised Derived
       | otherwise                           -> StateReading SessionChequered Heard
     (SessionStarted, Just (_, Red))         -> StateReading SessionRedFlag Heard
     _                                       -> StateReading field Heard
   where
     field = sessionStateFrom (fsState fs)
+
+    partAnnouncedSince at =
+      T.strip (fsType fs) == "Qualifying"
+        && any (\(_, notice, _) -> namesPart notice) (noticesSince at fs)
+
+    namesPart (NoticeDelay part)             = isJust part
+    namesPart (NoticeAt (AnnouncedPart _) _) = True
+    namesPart _                              = False
 
 -- | El último aviso de pista que cuenta para 'feedState', con su instante: de los de
 -- desde la hora de inicio, y nada sin ella.
@@ -594,7 +607,8 @@ data TrackFlag = Chequered | Red | Green
 --
 -- Más que un descanso entre partes de una clasificación (7:00 en los seis medidos)
 -- y que el tramo más largo medido entre la bandera y el @Finalised@ (10:30): en lo
--- medido nunca se adelanta a la fuente (2026-10-03).
+-- medido nunca se adelanta a la fuente (2026-10-03). En una clasificación no corre
+-- si control de carrera anuncia una parte tras la bandera ('feedState').
 chequeredGrace :: NominalDiffTime
 chequeredGrace = 12 * 60
 
