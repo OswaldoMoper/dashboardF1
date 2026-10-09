@@ -1,7 +1,7 @@
 """Grabador del feed de timing en vivo de F1 — herramienta de desarrollo.
 
-No forma parte del microservicio: `telemetrySrc` del flake solo empaqueta `main.py`, así
-que este fichero no entra en la derivación. Existe para **capturar una sesión entera** y
+No forma parte del microservicio: `telemetrySrc` del flake solo empaqueta `main.py`,
+`feed.py` y `convert.py`, así que este fichero no entra en la derivación. Existe para **capturar una sesión entera** y
 poder diseñar sobre datos reales en vez de sobre una muestra de veinte segundos.
 
 Se conecta a ``wss://livetiming.formula1.com/signalrcore`` reusando el

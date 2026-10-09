@@ -99,6 +99,8 @@
         telemetrySrc = pkgs.runCommand "telemetry-service-src" { } ''
           mkdir -p $out
           install -m644 ${./telemetry-service/main.py} $out/main.py
+          install -m644 ${./telemetry-service/feed.py} $out/feed.py
+          install -m644 ${./telemetry-service/convert.py} $out/convert.py
         '';
 
         # Guard shared by the working-tree commands: they run code from $PWD, so

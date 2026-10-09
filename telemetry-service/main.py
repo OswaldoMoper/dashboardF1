@@ -65,7 +65,6 @@ sector y no una serie submuestreada (2026-08-11).
 from __future__ import annotations
 
 import ctypes
-import math
 import os
 import sys
 import threading
@@ -76,6 +75,9 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import fastf1
 from fastapi import FastAPI, HTTPException
+
+from convert import _num, _text
+from feed import _feed_rows, _feed_session
 
 CACHE_DIR = os.environ.get("FASTF1_CACHE", ".fastf1-cache")
 MAX_POINTS = max(1, int(os.environ.get("TELEMETRY_MAX_POINTS", "60")))
@@ -333,22 +335,6 @@ def _driver_label(session: Any, number: str) -> str:
 
 
 # ── Saneado numérico ──────────────────────────────────────────────────────────
-
-
-def _num(value: Any) -> Optional[float]:
-    """Valor como ``float`` finito, o ``None``.
-
-    Absorbe ``NaN``, ``inf``, ``NaT``, ``None`` y cualquier cosa no convertible
-    en un único punto: es lo que garantiza que el JSON emitido sea decodificable
-    por aeson.
-    """
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return None
-    if math.isnan(out) or math.isinf(out):
-        return None
-    return out
 
 
 def _seconds(value: Any) -> Optional[float]:
@@ -773,29 +759,6 @@ def drivers(session_key: str) -> List[Dict[str, Any]]:
 # ── Vueltas ───────────────────────────────────────────────────────────────────
 
 
-def _text(value: Any) -> str:
-    """Un campo de texto de FastF1 como ``str``, o ``""`` si no hay dato.
-
-    Tres formas del hueco, y las tres tienen que salir vacías porque las tres
-    salvo la última **parecen un dato** una vez pasadas por ``str()``:
-
-    * ``None`` y ``NaN`` — una columna de objetos de pandas usa el segundo donde
-      falta el valor, y ``str()`` daría ``"nan"``.
-    * la **cadena** ``"None"``, que es la que de verdad aparece: FastF1 rellena
-      así ``Compound`` cuando no conoce el neumático (25 de 1431 vueltas en
-      Hungría 2026, exactamente las mismas que traen ``TyreLife`` ausente — dos
-      señales independientes del mismo hueco). Es ``str(None)`` escrito en la
-      columna, no un compuesto llamado *None*.
-
-    Mismo criterio blando que ``_team_name``: el compuesto es información sobre
-    la vuelta, no su identidad, así que su ausencia no cuesta la entrada entera.
-    """
-    if value is None or value != value:
-        return ""
-    text = str(value)
-    return "" if text == "None" else text
-
-
 def _lap_entry(label: str, number: str, row: Any) -> Dict[str, Any]:
     """Una fila de ``session.laps`` como objeto JSON.
 
@@ -988,288 +951,6 @@ def _live_snapshot(timeout: float = 15.0) -> Dict[str, Any]:
         connection.stop()
 
     return captured
-
-
-def _feed_text(value: Any) -> str:
-    """Un campo del feed como texto, desenvolviendo la forma ``{"Value": …}``.
-
-    El feed publica unos campos como cadena y otros como objeto con ``Value``
-    dentro (``LastLapTime``, ``BestLapTime``). Lo que queda vacío sale ``"-"``,
-    que es lo que ``Common.Types.LiveTimingRow`` usa para el hueco.
-    """
-    if isinstance(value, dict):
-        value = value.get("Value")
-    text = _text(value).strip()
-    return text or "-"
-
-
-def _feed_gaps(line: Dict[str, Any], part: Any) -> Tuple[str, str]:
-    """Diferencia al mejor y al de delante de un coche, del feed.
-
-    **Medido en la Qualy 11365 (2026-09-12):** las dos viven en ``Stats``, que es
-    una lista **por segmento** (Q1, Q2, Q3), y ``SessionPart`` de ``TimingData``
-    dice cuál mirar. Un piloto eliminado conserva las de su último segmento.
-
-    **Medido en la carrera 11369 (2026-09-13):** no hay ``Stats`` ni
-    ``SessionPart``, y las dos viven en la propia línea. ``GapToLeader`` llega
-    siempre como cadena; ``IntervalToPositionAhead``, siempre como dict con
-    ``Value``, que ``_feed_text`` desenvuelve.
-
-    **Lo devuelto no siempre es una duración, y las dos no comparten unidad:**
-    ``"LAP n"`` marca al coche que acaba de empezar la vuelta ``n`` —en la
-    primera lo llevan varios y después solo el líder—; ``"3 L"`` es una
-    diferencia en vueltas, y **cualquiera de las dos la toma** cuando el rival
-    va doblado; y una línea sin diferencia las manda vacías, que salen como
-    ``"-"``. Quien llame no puede parsearlas como tiempo sin mirar.
-
-    **La diferencia en vueltas llega con dos formas, con y sin espacio, y se
-    devuelve tal cual.** Medido en la carrera 11369: ``GapToLeader`` trae
-    ``"1 L"`` 12 veces y ``"1L"`` 8, e ``IntervalToPositionAhead`` también trae
-    las dos; las de dos cifras (``"14L"``, ``"26L"``) solo salieron sin espacio.
-    Quien distinga vueltas de segundos tiene que aceptar las dos.
-    """
-    stats = line.get("Stats")
-    if isinstance(stats, list) and stats:
-        index = part - 1 if isinstance(part, int) and 1 <= part <= len(stats) else 0
-        entry = stats[index] if isinstance(stats[index], dict) else {}
-        return (
-            _feed_text(entry.get("TimeDiffToFastest")),
-            _feed_text(entry.get("TimeDifftoPositionAhead")),
-        )
-    return (
-        _feed_text(line.get("GapToLeader")),
-        _feed_text(line.get("IntervalToPositionAhead")),
-    )
-
-
-def _feed_part_best(line: Dict[str, Any], part: Any) -> str:
-    """La mejor vuelta de un coche en la parte en curso de una clasificación.
-
-    Vive en ``BestLapTimes``, una lista **por parte** (Q1, Q2, Q3), y ``SessionPart``
-    dice cuál; medido en la clasificación del 2026-09-12. Fuera de una clasificación
-    no hay lista, y sale **vacío**: «esta sesión no tiene partes». Un coche sin
-    vuelta en la parte sale ``"-"``.
-    """
-    bests = line.get("BestLapTimes")
-    if not isinstance(bests, list) or not isinstance(part, int) or not 1 <= part <= len(bests):
-        return ""
-    entry = bests[part - 1]
-    return _feed_text(entry if isinstance(entry, dict) else None)
-
-
-def _feed_part_bests(line: Dict[str, Any]) -> List[str]:
-    """La mejor vuelta de un coche en cada parte de una clasificación, en orden.
-
-    Una entrada por parte que el feed publica, ``"-"`` en la que no tiene vuelta.
-    Fuera de una clasificación no hay ``BestLapTimes`` y sale la lista vacía.
-    """
-    bests = line.get("BestLapTimes")
-    if not isinstance(bests, list):
-        return []
-    return [_feed_text(entry if isinstance(entry, dict) else None) for entry in bests]
-
-
-def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """El snapshot del feed como las filas de ``Common.Types.LiveTimingRow``.
-
-    Las claves son las del DTO de Haskell, igual que en los otros cuatro
-    endpoints, para que el decode del backend sea directo.
-
-    Tres decisiones de mapeo que conviene conocer:
-
-    * **El líder lleva ``"LEADER"`` y ``"-"``**, como ya hace
-      ``Handler.Live.Helper.assembleRows``: la tabla no puede decir dos cosas
-      distintas según de dónde venga el dato.
-    * **``KnockedOut`` no es un abandono.** Un eliminado de Q1 terminó su
-      sesión; marcarlo haría creer en un incidente. Solo ``Retired`` y
-      ``Stopped`` dan ``Dnf``, y el feed no publica nada que distinga ``Dns`` de
-      ``Dsq``.
-    * **Un coche sin ``Position`` se omite**, por lo mismo que en
-      ``assembleRows``: sin posición no hay fila que ordenar.
-    """
-    drivers = snapshot.get("DriverList") or {}
-    timing = snapshot.get("TimingData") or {}
-    lines = timing.get("Lines") or {}
-    part = timing.get("SessionPart")
-
-    rows: List[Dict[str, Any]] = []
-    for number, line in lines.items():
-        if not isinstance(line, dict):
-            continue
-        position = _num(line.get("Position"))
-        if position is None:
-            continue
-        info = drivers.get(number) if isinstance(drivers, dict) else None
-        info = info if isinstance(info, dict) else {}
-        gap, interval = _feed_gaps(line, part)
-        leader = int(position) == 1
-        rows.append(
-            {
-                "ltPosition": int(position),
-                "ltDriver": _text(info.get("Tla")) or str(number),
-                "ltTeam": _text(info.get("TeamName")),
-                "ltGap": "LEADER" if leader else gap,
-                "ltInterval": "-" if leader else interval,
-                "ltLastLap": _feed_text(line.get("LastLapTime")),
-                "ltStatus": (
-                    "Dnf" if line.get("Retired") or line.get("Stopped") else "Running"
-                ),
-                "ltBestLap": _feed_text(line.get("BestLapTime")),
-                "ltPartBestLap": _feed_part_best(line, part),
-                "ltPartBests": _feed_part_bests(line),
-                "ltKnockedOut": bool(line.get("KnockedOut")),
-                "ltCutoff": bool(line.get("Cutoff")),
-            }
-        )
-
-    rows.sort(key=lambda row: row["ltPosition"])
-    return rows
-
-
-def _feed_flags(snapshot: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Los avisos de bandera de control de carrera, tal como llegan.
-
-    Solo los transporta: quién cuenta y qué estado sale lo decide el backend
-    (``Handler.Live.Helper.feedState``). **La lista trae también los de la
-    sesión anterior** hasta el primer aviso de la nueva; los descarta el
-    backend con la hora de inicio.
-    """
-    race_control = snapshot.get("RaceControlMessages")
-    messages = race_control.get("Messages") if isinstance(race_control, dict) else None
-    if isinstance(messages, dict):
-        messages = list(messages.values())
-    if not isinstance(messages, list):
-        return []
-    return [
-        {
-            "utc": _text(message.get("Utc")),
-            "flag": _text(message.get("Flag")),
-            "scope": _text(message.get("Scope")),
-        }
-        for message in messages
-        if isinstance(message, dict) and _text(message.get("Category")) == "Flag"
-    ]
-
-
-def _feed_notices(snapshot: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Los avisos de control de carrera que no son de bandera, tal como llegan.
-
-    Los de bandera viajan aparte (``_feed_flags``). Como allí, **la lista trae
-    también los de la sesión anterior**, y cuáles cuentan lo decide el backend.
-    """
-    race_control = snapshot.get("RaceControlMessages")
-    messages = race_control.get("Messages") if isinstance(race_control, dict) else None
-    if isinstance(messages, dict):
-        messages = list(messages.values())
-    if not isinstance(messages, list):
-        return []
-    return [
-        {
-            "utc": _text(message.get("Utc")),
-            "category": _text(message.get("Category")),
-            "message": _text(message.get("Message")),
-        }
-        for message in messages
-        if isinstance(message, dict) and _text(message.get("Category")) != "Flag"
-    ]
-
-
-def _feed_track(snapshot: Dict[str, Any]) -> Optional[Dict[str, str]]:
-    """El estado de la pista tal como llega: el código (``"1"`` a ``"7"``) y su
-    nombre (``"AllClear"``, ``"Yellow"``, ``"Red"``…). ``None`` sin el tema."""
-    track = snapshot.get("TrackStatus")
-    if not isinstance(track, dict):
-        return None
-    return {"status": _text(track.get("Status")), "message": _text(track.get("Message"))}
-
-
-def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Qué sesión anuncia el feed, con las claves de ``Handler.Feed.Helper``.
-
-    Sale de seis topics y ninguno se reordena ni se calcula: el reloj viaja
-    **crudo** —el instante, el restante como texto y la marca— porque quien lo
-    resuelve necesita saber cuándo está sirviendo, y eso no se sabe aquí. Lo
-    mismo la hora de inicio (local, con su desfase aparte), los avisos de
-    control de carrera (``_feed_flags``, ``_feed_notices``) y el estado de la
-    pista (``_feed_track``): qué sale de ellos lo decide el backend.
-
-    ``None`` si la foto no trae ``SessionInfo``, y eso significa «el feed no
-    anunció sesión», que no es lo mismo que anunciarla con los campos vacíos.
-    No se ha observado nunca en las dos grabaciones.
-
-    ``siCircuit`` solo va si ``Meeting`` trae ``Circuit.ShortName``.
-
-    Dos ausencias que son el caso normal y no un fallo:
-
-    * ``LapCount`` **solo existe en carrera**, así que cuatro de las cinco
-      sesiones de un fin de semana llegan sin vuelta. Los dos campos van o no
-      van juntos: una vuelta sin total no dice por dónde va la sesión.
-    * ``ExtrapolatedClock`` puede faltar, y su marca puede faltar dentro de él;
-      ausente se trata como **parado**, que es lo que el feed emitió en los dos
-      únicos mensajes medidos sin ella.
-    * La parte (``siPart``; ``0`` antes de empezar), cuántos entran en cada parte
-      (``siEntries``) y el tiempo del 107 % (``siCutOffTime``) **solo existen en
-      clasificación**. El tiempo se publica durante la primera parte, y la foto
-      **conserva el último en las siguientes**: quién lo enseñe mira la parte.
-
-    Y el estado sale del **campo** ``SessionStatus`` de ``SessionInfo``, no del
-    topic homónimo, que es otro y cicla por segmento.
-    """
-    info = snapshot.get("SessionInfo")
-    if not isinstance(info, dict):
-        return None
-
-    meeting = info.get("Meeting")
-    meeting = meeting if isinstance(meeting, dict) else {}
-
-    session: Dict[str, Any] = {
-        "siType": _text(info.get("Type")),
-        "siName": _text(info.get("Name")),
-        "siMeeting": _text(meeting.get("Name")),
-        "siState": _text(info.get("SessionStatus")),
-        "siStartDate": _text(info.get("StartDate")) or None,
-        "siGmtOffset": _text(info.get("GmtOffset")) or None,
-        "siFlags": _feed_flags(snapshot),
-        "siNotices": _feed_notices(snapshot),
-    }
-
-    circuit = meeting.get("Circuit")
-    circuit = circuit if isinstance(circuit, dict) else {}
-    short_name = _text(circuit.get("ShortName"))
-    if short_name:
-        session["siCircuit"] = short_name
-
-    laps = snapshot.get("LapCount")
-    if isinstance(laps, dict):
-        current = _num(laps.get("CurrentLap"))
-        total = _num(laps.get("TotalLaps"))
-        if current is not None and total is not None:
-            session["siCurrentLap"] = int(current)
-            session["siTotalLaps"] = int(total)
-
-    clock = snapshot.get("ExtrapolatedClock")
-    if isinstance(clock, dict):
-        session["siClockUtc"] = _text(clock.get("Utc")) or None
-        session["siClockRemaining"] = _text(clock.get("Remaining")) or None
-        session["siClockRunning"] = bool(clock.get("Extrapolating"))
-
-    timing = snapshot.get("TimingData")
-    timing = timing if isinstance(timing, dict) else {}
-    part = _num(timing.get("SessionPart"))
-    if part is not None:
-        session["siPart"] = int(part)
-    entries = timing.get("NoEntries")
-    if isinstance(entries, list):
-        session["siEntries"] = [int(n) for n in map(_num, entries) if n is not None]
-    cutoff = _text(timing.get("CutOffTime"))
-    if cutoff:
-        session["siCutOffTime"] = cutoff
-
-    track = _feed_track(snapshot)
-    if track is not None:
-        session["siTrack"] = track
-
-    return session
 
 
 @app.get("/fastf1/live")

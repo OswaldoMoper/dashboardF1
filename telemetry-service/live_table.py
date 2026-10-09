@@ -1,12 +1,12 @@
 """Imprime la tabla de live timing de la sesión en marcha — herramienta de desarrollo.
 
 No forma parte del microservicio: `telemetrySrc` del flake solo empaqueta `main.py`,
-así que este fichero no entra en la derivación. Existe para **ver el dato del feed sin
+`feed.py` y `convert.py`, así que este fichero no entra en la derivación. Existe para **ver el dato del feed sin
 levantar el servicio**, que es la forma más corta de comprobar que una sesión en
 directo llega completa.
 
-Es el mismo camino que sirve ``GET /fastf1/live``: importa ``_live_snapshot`` y
-``_feed_rows`` de ``main`` en vez de reimplementarlos, así que lo que se ve aquí es
+Es el mismo camino que sirve ``GET /fastf1/live``: importa ``_live_snapshot`` de
+``main`` y ``_feed_rows`` de ``feed`` en vez de reimplementarlos, así que lo que se ve aquí es
 exactamente lo que el backend recibiría.
 
 Uso, desde ``telemetry-service/``::
@@ -30,7 +30,8 @@ import json
 import sys
 import time
 
-from main import _LIVE_TOPICS, _feed_rows, _live_snapshot
+from feed import _feed_rows
+from main import _LIVE_TOPICS, _live_snapshot
 
 
 def _dump_topic(snapshot, topic: str) -> int:
