@@ -121,6 +121,10 @@
   - **En las tres áreas que hablan con el microservicio** (`telemetry`, `comparison`, `drivers`), y no
     en las seis: `live`, `historical` y `tyre-strategy` no tienen parámetros, así que no admiten query
     malo. Corregido con la medición del 2026-08-14, que es cuando se comprobó por primera vez.
+- [x] **Pruebas del microservicio** (2026-10-08 (f) y (g)): lo puro del feed vive en `feed.py`, sin FastF1, y
+      `dashboardF1-pytest` lo prueba con fotos reales del feed y su salida guardada, más propiedades con hypothesis;
+      `dashboardF1-test` lo corre antes que hspec. **Falta:** el resto de `/fastf1/live` (`_feed_session`), sin
+      fecha.
 
 ## Fase 5 – Diseño y estilos — COMPLETADA (2026-08-21)
 
@@ -647,9 +651,10 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       deslizándose (2026-10-07 (f)) y estirar por la esquina ◢ (2026-10-07 (g)), con el gesto puro en
       `Common.Carry`. **Lo movido se recuerda** en el navegador al terminar la edición, cada layout lo suyo, con
       «↺ Restablecer» y un aviso si lo guardado ya no encaja (2026-10-07 (h) e (i); `Common.Saved`), **con el lado de
-      «⇄»** (2026-10-08 (a)). **Sumado después, en este orden:** «✗ Cancelar» y recordar el modo banda de Lap
-      Comparison; la proporción del tipo 3 al estirar; y, sin fecha, mover columnas, resaltar pilotos, el tipo 4 y el
-      aire repartido.
+      «⇄»** (2026-10-08 (a)). **Sumado después, en este orden:** que «↺ Restablecer» pida confirmar si hay algo que
+      perder; «✗ Cancelar», que devuelve los dos layouts a como estaban al entrar y también pide confirmar
+      (2026-10-08 (h)); recordar la banda de Lap Comparison con su modo (2026-10-08 (i)); la proporción del tipo 3 al
+      estirar; y, sin fecha, mover columnas, resaltar pilotos, el tipo 4 y el aire repartido.
 - [x] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
       que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
       desde el 2026-09-04**, con el imán apagado como caso normal y no como error. La tecla es **Alt** y el
