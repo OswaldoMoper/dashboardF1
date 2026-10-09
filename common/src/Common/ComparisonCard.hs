@@ -26,6 +26,8 @@ module Common.ComparisonCard
   , Side (..)
   , defaultControlSide
   , otherSide
+  , CardControl (..)
+  , defaultControl
     -- * Anchos
   , CardLayout (..)
   , cardLayout
@@ -90,6 +92,14 @@ modeKey ModeAxisValues = "axis-values"
 -- | El modo de un valor del desplegable; 'Nothing' si no es de ninguno.
 modeFromKey :: Text -> Maybe ChartMode
 modeFromKey k = lookup k [(modeKey m, m) | m <- modesInOrder]
+
+-- | Se guarda por su 'modeKey'; otro texto no se lee.
+instance ToJSON ChartMode where
+  toJSON = String . modeKey
+
+instance FromJSON ChartMode where
+  parseJSON = withText "ChartMode" $ \k ->
+    maybe (fail "ChartMode: no es un modo") pure (modeFromKey k)
 
 -- | Si el modo pinta la línea de valores.
 showsValues :: ChartMode -> Bool
@@ -177,6 +187,18 @@ defaultControlSide = SideLeft
 otherSide :: Side -> Side
 otherSide SideLeft  = SideRight
 otherSide SideRight = SideLeft
+
+-- | Lo que se recuerda de una Lap Comparison: el lado de su tabla de mando, si la
+-- banda de sectores está puesta y el modo elegido en el desplegable.
+data CardControl = CardControl
+  { ccSide :: Side
+  , ccBand :: Bool
+  , ccMode :: ChartMode
+  } deriving stock (Eq, Show)
+
+-- | Como abre la tarjeta: la tabla a la izquierda, sin banda y en 'defaultMode'.
+defaultControl :: CardControl
+defaultControl = CardControl defaultControlSide False defaultMode
 
 -- | El reparto de la tarjeta a lo ancho, en px.
 data CardLayout = CardLayout

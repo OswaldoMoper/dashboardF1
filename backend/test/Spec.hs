@@ -90,8 +90,9 @@ import           Common.Traces               (Channel (..), axisEnd,
                                               stretchesSpeed,
                                               channelCaption, axisEndLabel,
                                               readSamples, samplesStart)
-import           Common.ComparisonCard       (CardLayout (..), ChartMode (..),
-                                              Side (..), carSelectWidth,
+import           Common.ComparisonCard       (CardControl (..), CardLayout (..),
+                                              ChartMode (..), Side (..),
+                                              carSelectWidth, defaultControl,
                                               cardLayout, columnGap, curveInset,
                                               controlMaxWidth, tracesInset, rowTitle,
                                               controlWidth, defaultControlSide,
@@ -129,7 +130,7 @@ import           Common.Carry                (Board (..), Carry (..), Grip (..),
 import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
                                               driversPathFor)
-import           Common.Saved                (Restored (..), atFactory, factorySides,
+import           Common.Saved                (Restored (..), atFactory, factoryControls,
                                               restoreLayout, sameShown,
                                               saveLayout, savedKey, unfitNote)
 import           Common.Shown                (Indicator (..), Kept (..),
@@ -3850,8 +3851,9 @@ main = hspec $ do
         moved = zipWith place raceOverviewFixture
                   [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
         moving wid r = map (\w -> if widgetId w == WidgetId wid then place w r else w) raceOverviewFixture
-        raceSides  = factorySides raceOverviewFixture
-        rightSides = Map.insert (WidgetId "lap-comparison") SideRight raceSides
+        raceSides  = factoryControls raceOverviewFixture
+        lapCard f  = Map.adjust f (WidgetId "lap-comparison")
+        rightSides = lapCard (\c -> c { ccSide = SideRight }) raceSides
         save       = saveLayout raceSides
 
     it "sin nada guardado, el de fábrica y sin aviso" $
@@ -3889,15 +3891,17 @@ main = hspec $ do
       let expected = decodeStrictText
             "[{\"savedId\":\"qualy-live-timing\",\"savedX\":0,\"savedY\":0,\"savedW\":120,\"savedH\":120}]"
       expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
-      decodeStrictText (saveLayout (factorySides qualyFixture) qualyFixture) `shouldBe` expected
+      decodeStrictText (saveLayout (factoryControls qualyFixture) qualyFixture) `shouldBe` expected
       savedKey (LayoutId "race-overview") `shouldBe` "dashboardF1.layout.race-overview"
 
-    it "solo Lap Comparison lleva lado, a la izquierda de fábrica, y lo escribe también a la izquierda" $ do
-      raceSides `shouldBe` Map.singleton (WidgetId "lap-comparison") SideLeft
-      factorySides qualyFixture `shouldBe` Map.empty
+    it "solo Lap Comparison lleva lado, banda y modo, los de fábrica, y los escribe siempre" $ do
+      raceSides `shouldBe` Map.singleton (WidgetId "lap-comparison") defaultControl
+      defaultControl `shouldBe` CardControl SideLeft False ModeAxisValues
+      factoryControls qualyFixture `shouldBe` Map.empty
       let lapOnly  = filter ((== LapComparison) . widgetType) raceOverviewFixture
           expected = decodeStrictText
-            "[{\"savedId\":\"lap-comparison\",\"savedX\":60,\"savedY\":35,\"savedW\":60,\"savedH\":50,\"savedSide\":\"left\"}]"
+            "[{\"savedId\":\"lap-comparison\",\"savedX\":60,\"savedY\":35,\"savedW\":60,\"savedH\":50,\
+            \\"savedSide\":\"left\",\"savedBand\":false,\"savedMode\":\"axis-values\"}]"
       expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
       decodeStrictText (save lapOnly) `shouldBe` expected
 
@@ -3905,16 +3909,26 @@ main = hspec $ do
       restoreLayout raceOverviewFixture (Just (saveLayout rightSides moved)) `shouldBe` FromSaved moved rightSides
       restoreLayout raceOverviewFixture (Just (saveLayout Map.empty moved)) `shouldBe` FromSaved moved raceSides
 
+    it "la banda y el modo guardados vuelven; sin ellos (guardado antes de que existieran), los de fábrica" $ do
+      let banded = lapCard (\c -> c { ccBand = True, ccMode = ModeValues }) rightSides
+          noBand = T.replace ",\"savedBand\":true,\"savedMode\":\"values\"" "" (saveLayout banded moved)
+      restoreLayout raceOverviewFixture (Just (saveLayout banded moved)) `shouldBe` FromSaved moved banded
+      noBand `shouldSatisfy` (not . T.isInfixOf "savedBand")
+      restoreLayout raceOverviewFixture (Just noBand) `shouldBe` FromSaved moved rightSides
+
     it "un lado en una tarjeta que no es Lap Comparison se ignora" $
-      restoreLayout raceOverviewFixture (Just (saveLayout (Map.insert (WidgetId "telemetry") SideRight rightSides) moved))
+      restoreLayout raceOverviewFixture
+          (Just (saveLayout (Map.insert (WidgetId "telemetry") defaultControl { ccSide = SideRight } rightSides) moved))
         `shouldBe` FromSaved moved rightSides
 
-    it "un lado ilegible no se lee, y lo que no encaja no conserva su lado" $
+    it "un lado, una banda o un modo ilegibles no se leen, y lo que no encaja no conserva nada" $
       map (restoreLayout raceOverviewFixture . Just)
         [ T.replace "\"right\"" "\"up\"" (saveLayout rightSides moved)
+        , T.replace "\"savedBand\":false" "\"savedBand\":\"no\"" (saveLayout rightSides moved)
+        , T.replace "\"axis-values\"" "\"ejes\"" (saveLayout rightSides moved)
         , saveLayout rightSides (moving "lap-comparison" (60, 35, 60, 45))
         ]
-        `shouldBe` replicate 2 Unfit
+        `shouldBe` replicate 4 Unfit
 
     it "no encaja si no se lee, si las tarjetas no son las de fábrica, si alguna queda bajo su mínimo, fuera o encima de otra" $
       map (restoreLayout raceOverviewFixture . Just)
@@ -4899,7 +4913,8 @@ savedDropRoundTrips i corner magnet alt a b right =
   restoreLayout raceOverviewFixture (Just (saveLayout sides dropped)) == FromSaved dropped sides
   where
     (_, dropped) = dragOnRace i corner magnet alt a b
-    sides        = Map.map (\s -> if right then otherSide s else s) (factorySides raceOverviewFixture)
+    sides        = Map.map (\c -> if right then c { ccSide = otherSide (ccSide c) } else c)
+                     (factoryControls raceOverviewFixture)
 
 -- | Coger la tarjeta @i@ de Race Overview por el título o por la esquina, llevar el
 -- puntero a un sitio cualquiera (también fuera del lienzo) y soltar: lo que se pinta

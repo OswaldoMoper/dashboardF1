@@ -55,10 +55,10 @@ import           Common.Chart  (SectorPace (..), SectorSpan (..), axisPolyline,
                                 axisTicks, axisZeroY, chartHeight,
                                 chartWidth, frontierCells, frontierCellsAt,
                                 sectorSpans)
-import           Common.ComparisonCard (CardLayout (..), ChartMode, Side (..),
+import           Common.ComparisonCard (CardControl (..), CardLayout (..),
+                                        ChartMode, Side (..),
                                         axisColumnWidth, cardLayout, curveInset,
                                         tracesInset,
-                                        defaultMode,
                                         insideAxisLabels, modeEnabled,
                                         modeFromKey, modeKey, modeOption,
                                         modesInOrder, otherSide, rowHeight,
@@ -141,11 +141,13 @@ data CState
 -- @revealed@ avisa de que la tarjeta se acaba de enseñar tras estar oculta: oculta
 -- mide 0, así que al enseñarse se vuelve a medir.
 --
--- La tabla de mando arranca en @start@ y @putSide@ la pone en el lado que trae.
--- Devuelve cada lado nuevo, también el de @putSide@.
-comparisonWidget :: MonadWidget t m => Event t () -> Side -> Event t Side -> m (Event t Side)
-comparisonWidget revealed start putSide = mdo
-  (root, (card, (userMode, state, view, side))) <-
+-- El lado de la tabla de mando, la banda y el modo elegido arrancan en @start@, y
+-- @put@ los pone como trae ('Common.ComparisonCard.CardControl'). Devuelve cada
+-- cambio de cualquiera de los tres, también el de @put@.
+comparisonWidget :: MonadWidget t m
+                 => Event t () -> CardControl -> Event t CardControl -> m (Event t CardControl)
+comparisonWidget revealed start put = mdo
+  (root, (card, (userMode, state, view, side, band))) <-
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
       (swap, ty, (axis, frontiers, samples)) <- divClass "widget__head" $ do
         el "h2" $ text "Lap Comparison"
@@ -153,14 +155,14 @@ comparisonWidget revealed start putSide = mdo
         tc <- traceControls t
         s  <- swapButton (clStacked <$> layout)
         pure (s, t, tc)
-      side    <- foldDyn ($) start (leftmost [const <$> putSide, otherSide <$ swap])
+      side    <- foldDyn ($) (ccSide start) (leftmost [const . ccSide <$> put, otherSide <$ swap])
       pb      <- getPostBuild
       gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
       grid    <- holdDyn [] (fromMaybe [] <$> gridRsp)
       ((picked, chosenE), rowClicks) <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
         r <- elDynAttr "div" (controlAttrs <$> layout) $ do
           r' <- carSelector grid (shownComparison <$> st) (vsNextTo <$> layout)
-                  (modeSelect fits shown)
+                  (modeSelect (ccMode start) fits shown)
           dyn_ (controlState <$> st)
           pure r'
         clicks <- divClass "comparison__plot" $
@@ -169,7 +171,7 @@ comparisonWidget revealed start putSide = mdo
                 <$> ((\c s -> RowMode c s band) <$> chosen <*> shown) <*> layout
                 <*> (otherSide <$> side) <*> v <*> stretch <*> st )
         pure (r, clicks)
-      band    <- toggle False rowClicks
+      band    <- foldDyn ($) (ccBand start) (leftmost [const . ccBand <$> put, not <$ rowClicks])
       b       <- legendRow ty axis st
       wanted  <- holdUniqDyn ((\t n -> if chartTypeTraces t then n else 0) <$> ty <*> samples)
       drivers <- holdDyn Nothing (Just <$> picked)
@@ -182,11 +184,11 @@ comparisonWidget revealed start putSide = mdo
       resp    <- fetchJson request
       refresh <- holdDyn InFlight (leftmost [InFlight <$ request, refreshOf <$> resp])
       st      <- foldDyn step Loading resp
-      pure (chosenE, st, v, side)
+      pure (chosenE, st, v, side, band)
   size    <- cardSize root card (current ((,) <$> rowNow <*> drawn)) changed
   stretch <- holdUniqDyn (maybe 0 (\(_, _, s) -> s) <$> size)
   stacked <- holdUniqDyn (clStacked <$> layout)
-  chosen  <- holdDyn defaultMode userMode
+  chosen  <- holdDyn (ccMode start) (leftmost [ccMode <$> put, userMode])
   shown   <- holdUniqDyn (shownMode <$> fits <*> chosen)
   let layout   = cardLayout . maybe 0 (\(w, _, _) -> w) <$> size
       fits     = maybe True (\(_, f, _) -> f) <$> size
@@ -195,7 +197,7 @@ comparisonWidget revealed start putSide = mdo
       changed  = leftmost
                    [ () <$ updated shown, () <$ updated state, () <$ updated view
                    , () <$ updated stacked, revealed ]
-  pure (updated side)
+  pure (updated (CardControl <$> side <*> band <*> chosen))
   where
     controlState :: MonadWidget t m => CState -> m ()
     controlState (Loaded c) = lapHeader c
@@ -677,19 +679,22 @@ compareButton = do
   (e, _) <- elClass' "button" "car-selector__btn" $ text "Comparar"
   pure (domEvent Click e)
 
--- | El desplegable de modos, nativo: enseña el modo que se ve, apaga «Eje y
--- valores» cuando la fila no cabe, y devuelve solo lo que elige el usuario (el
--- valor que pone el código no dispara nada).
+-- | El desplegable de modos, nativo: arranca en @start@, enseña el modo que se ve,
+-- apaga «Eje y valores» cuando la fila no cabe, y devuelve solo lo que elige el
+-- usuario (el valor que pone el código no dispara nada).
 modeSelect
   :: MonadWidget t m
-  => Dynamic t Bool
+  => ChartMode
+  -> Dynamic t Bool
   -> Dynamic t ChartMode
   -> m (Event t ChartMode)
-modeSelect fits shown = do
-  pb <- getPostBuild
+modeSelect start fits shown = do
+  -- Las opciones reciben su @value@ después de montarse: escrito antes, no casa con
+  -- ninguna y el desplegable queda vacío.
+  mounted <- delay 0 =<< getPostBuild
   let cfg = def
-        & selectElementConfig_initialValue .~ modeKey defaultMode
-        & selectElementConfig_setValue .~ (modeKey <$> leftmost [updated shown, tag (current shown) pb])
+        & selectElementConfig_initialValue .~ modeKey start
+        & selectElementConfig_setValue .~ (modeKey <$> leftmost [updated shown, tag (current shown) mounted])
         & selectElementConfig_elementConfig . elementConfig_initialAttributes
             .~ ("class" =: "car-selector__select comparison__modes")
   (sel, _) <- selectElement cfg $ forM_ modesInOrder $ \m ->

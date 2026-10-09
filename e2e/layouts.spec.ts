@@ -377,6 +377,59 @@ test.describe('el arrastre', () => {
       await expect(body).not.toHaveClass(right);
     });
 
+    test('la banda y el modo de Lap Comparison se recuerdan al pulsar, fuera de la edición', async ({ page }) => {
+      const row = page.locator('.comparison__frontiers');
+      const pieces = page.locator('.comparison__band-piece');
+      const modes = page.locator('select.comparison__modes');
+      await expect(row).toBeVisible();
+      await expect(pieces).toHaveCount(0);
+      await row.click();
+      await expect(pieces.first()).toBeVisible();
+      await modes.selectOption('values');
+      await reload(page);
+      await expect(pieces.first()).toBeVisible();
+      await expect(modes).toHaveValue('values');
+    });
+
+    test('«Restablecer» devuelve la banda y el modo a los de fábrica, y «Cancelar» a como estaban', async ({ page }) => {
+      const pieces = page.locator('.comparison__band-piece');
+      const modes = page.locator('select.comparison__modes');
+      await page.locator('.comparison__frontiers').click();
+      await modes.selectOption('values');
+      await expect(pieces.first()).toBeVisible();
+
+      await edit(page);
+      await page.getByRole('button', { name: '↺ Restablecer' }).click();
+      await yes(page).click();
+      await expect(pieces).toHaveCount(0);
+      // «Eje y valores» se enseña como «Solo eje» si sus dos líneas no caben.
+      await expect(modes).not.toHaveValue('values');
+
+      await cancel(page).click();
+      await yes(page).click();
+      await expect(pieces.first()).toBeVisible();
+      await expect(modes).toHaveValue('values');
+      await reload(page);
+      await expect(pieces.first()).toBeVisible();
+      await expect(modes).toHaveValue('values');
+    });
+
+    test('con lo guardado que no encajó, la banda no se recuerda hasta terminar una edición', async ({ page }) => {
+      const pieces = page.locator('.comparison__band-piece');
+      await page.evaluate(() => localStorage.setItem('dashboardF1.layout.race-overview', '[]'));
+      await reload(page);
+      await page.locator('.comparison__frontiers').click();
+      await expect(pieces.first()).toBeVisible();
+      await reload(page);
+      await expect(pieces).toHaveCount(0);
+
+      await page.locator('.comparison__frontiers').click();
+      await edit(page);
+      await finish(page);
+      await reload(page);
+      await expect(pieces.first()).toBeVisible();
+    });
+
     test('«Cancelar» devuelve el asterisco y la nota del guardado que no encajó', async ({ page }) => {
       await page.evaluate(() => localStorage.setItem('dashboardF1.layout.race-overview', '[]'));
       await reload(page);

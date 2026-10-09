@@ -30,11 +30,11 @@ module Pages.Dashboard where
 import           Common.Carry       (Board (..), Grip (..), Hand (..), Held (..),
                                      Scene (..), boardOf, heldStyle, scene,
                                      stepBoard)
-import           Common.ComparisonCard (Side, defaultControlSide)
+import           Common.ComparisonCard (CardControl, defaultControl)
 import           Common.Format      (ClockForm (..), formatClock)
 import           Common.Layout      (slotStyle, touchesTopRight)
 import           Common.Origin      (Sourced (..))
-import           Common.Saved       (Restored (..), atFactory, factorySides,
+import           Common.Saved       (Restored (..), atFactory, factoryControls,
                                      restoreLayout, sameShown, saveLayout,
                                      savedKey, unfitNote)
 import           Common.Shown      (Kept (..), Poll (..), delayDefaultSeconds,
@@ -439,10 +439,12 @@ sessionClock tick served = do
 -- montar nada: solo cambian el estilo y la clase de los slots.
 --
 -- Arranca de lo guardado si encaja ('Common.Saved.restoreLayout') y si no, del de
--- fábrica, con los rectángulos y el lado de cada Lap Comparison. Al salir de la
--- edición guarda lo que se ve, esté activa o no, y al cancelarla vuelve a como estaba
--- al entrar, sin guardar; «Restablecer» devuelve al de fábrica solo la activa, lados
--- incluidos, y se guarda al terminar como lo demás. Devuelve si lo que enseña es el
+-- fábrica, con los rectángulos y lo de cada Lap Comparison (lado, banda y modo). Al
+-- terminar la edición guarda lo que se ve, esté activa o no, y al cancelarla vuelve a
+-- como estaba al entrar, sin guardar; «Restablecer» devuelve al de fábrica solo la
+-- activa, Lap Comparison incluida, y se guarda al terminar como lo demás. Fuera de la
+-- edición, lo que se turna en Lap Comparison se guarda al momento, salvo si lo
+-- guardado no encajó: eso espera al siguiente «Terminar». Devuelve si lo que enseña es el
 -- de fábrica ('Common.Saved.atFactory') y si cambió desde que se entró en la edición
 -- ('Common.Saved.sameShown').
 layer :: MonadWidget t m
@@ -452,17 +454,19 @@ layer live layoutDyn edit l restored = mdo
   active <- holdUniqDyn (((== layoutId l) . layoutId) <$> layoutDyn)
   let revealed = () <$ ffilter id (updated active)
       held     = isJust . boardCarry <$> board
-      (start, startSides) = case restored of
-        FromSaved ws s -> (ws, s)
-        _              -> (widgets l, factorySides (widgets l))
+      (start, startControls) = case restored of
+        FromSaved ws c -> (ws, c)
+        _              -> (widgets l, factoryControls (widgets l))
       reset    = gate (current active) (editReset edit)
       undone   = tag (current entry) (editCancel edit)
-      sideOf w = Map.findWithDefault defaultControlSide (widgetId w)
-      putSide w = leftmost [defaultControlSide <$ reset, sideOf w . fst <$> undone]
-  entry <- holdDyn (startSides, start) (tag (current saved) (ffilter id (updated (editOn edit))))
+      controlOf w = Map.findWithDefault defaultControl (widgetId w)
+      putControl w = leftmost [defaultControl <$ reset, controlOf w . fst <$> undone]
+      outside  =(\editing waits -> not editing && not waits) <$> editOn edit <*> unfitWaits
+  entry <- holdDyn (startControls, start) (tag (current saved) (ffilter id (updated (editOn edit))))
+  unfitWaits <- holdDyn (restored == Unfit) (False <$ editFinish edit)
   carrying <- liftIO (newIORef False)
   (layerEl, (presses, turns)) <- elDynClass' "div" (layerClass <$> active) $ do
-    outs <- mapM (\w -> slot live revealed (sideOf w startSides) (putSide w) shown w) (widgets l)
+    outs <- mapM (\w -> slot live revealed (controlOf w startControls) (putControl w) shown w) (widgets l)
     targetOutline shown
     pure (leftmost (map fst outs), mconcat (map snd outs))
   pressed <- performEvent (measure layerEl <$> gate (current (editOn edit)) presses)
@@ -475,13 +479,16 @@ layer live layoutDyn edit l restored = mdo
                  <$> attach (current (editMagnet edit)) (leftmost [pressed, gate (current held) hands])
              ]
   shown <- holdUniqDyn (scene <$> editMagnet edit <*> board)
-  sides <- foldDyn ($) startSides $ leftmost
-             [ const (factorySides (widgets l)) <$ reset
-             , const . fst <$> undone
-             , Map.union <$> turns
-             ]
-  let saved = (,) <$> sides <*> (boardLayout <$> board)
-  performEvent_ (liftJSM . uncurry (writeSaved l) <$> tag (current saved) (editFinish edit))
+  controls <- foldDyn ($) startControls $ leftmost
+                [ const (factoryControls (widgets l)) <$ reset
+                , const . fst <$> undone
+                , Map.union <$> turns
+                ]
+  let saved = (,) <$> controls <*> (boardLayout <$> board)
+  performEvent_ (liftJSM . uncurry (writeSaved l) <$> leftmost
+    [ tag (current saved) (editFinish edit)
+    , gate (current outside) (updated saved)
+    ])
   pure (uncurry (atFactory (widgets l)) <$> saved, (\e s -> not (sameShown e s)) <$> entry <*> saved)
   where
     layerClass a
@@ -506,10 +513,10 @@ readSaved l = restoreLayout (widgets l) . either unreadable id <$> try (do
     unreadable _ = Nothing
 
 -- | Guarda en el navegador lo que se ve de un layout. Si no deja escribir, no pasa nada.
-writeSaved :: Layout -> Map WidgetId Side -> [WidgetConfig] -> JSM ()
-writeSaved l sides ws = either unwritable pure =<< try (do
+writeSaved :: Layout -> Map WidgetId CardControl -> [WidgetConfig] -> JSM ()
+writeSaved l controls ws = either unwritable pure =<< try (do
   storage <- Window.getLocalStorage =<< DOM.currentWindowUnchecked
-  Storage.setItem storage (savedKey (layoutId l)) (saveLayout sides ws))
+  Storage.setItem storage (savedKey (layoutId l)) (saveLayout controls ws))
   where
     unwritable :: SomeException -> JSM ()
     unwritable _ = pure ()
@@ -591,12 +598,13 @@ targetOutline shown =
 -- que ocupa la esquina donde vive el botón de plegar, que es @fixed@ contra la
 -- ventana (2026-09-07 b); a quién le toca lo dice 'touchesTopRight'.
 slot :: MonadWidget t m
-     => LiveView t -> Event t () -> Side -> Event t Side -> Dynamic t Scene -> WidgetConfig
-     -> m (Event t (WidgetId, Grip, (Double, Double)), Event t (Map WidgetId Side))
-slot live revealed side putSide shown wc = do
+     => LiveView t -> Event t () -> CardControl -> Event t CardControl -> Dynamic t Scene
+     -> WidgetConfig
+     -> m (Event t (WidgetId, Grip, (Double, Double)), Event t (Map WidgetId CardControl))
+slot live revealed control put shown wc = do
   attrs  <- holdUniqDyn (slotAttrs wc <$> shown)
   (e, turns) <- elDynAttr' "div" attrs $ do
-    t <- renderWidget live revealed side putSide wc
+    t <- renderWidget live revealed control put wc
     divClass "widget-slot__grip" $ text "◢"
     pure t
   grabs  <- slotPresses (DOM.uncheckedCastTo DOM.HTMLElement (_element_raw e))
@@ -798,19 +806,19 @@ editToggle cancel = mdo
 -- tablas. La totalidad de este @case@ es la que cobra el constructor nuevo, y
 -- __solo bajo GHCJS__ (@-Wall@ del paquete @frontend@).
 --
--- __El refresco del directo, el aviso de que la capa se enseña, el lado de arranque
--- y el que ponen «Restablecer» y «Cancelar» atraviesan las siete ramas y cada uno lo
--- usa una__, por la misma
--- razón por la que el rectángulo no lo lleva el widget: quien conoce el dato es
--- quien monta, y darlo solo a la rama que lo pide exigiría que el @case@ devolviera
--- funciones de tipos distintos. Solo Lap Comparison devuelve lados; las demás,
--- 'never'.
+-- __El refresco del directo, el aviso de que la capa se enseña, lo de Lap Comparison
+-- al arrancar y lo que ponen «Restablecer» y «Cancelar» atraviesan las siete ramas y
+-- cada uno lo usa una__, por la misma razón por la que el rectángulo no lo lleva el
+-- widget: quien conoce el dato es quien monta, y darlo solo a la rama que lo pide
+-- exigiría que el @case@ devolviera funciones de tipos distintos. Solo Lap Comparison
+-- devuelve sus cambios; las demás, 'never'.
 renderWidget :: MonadWidget t m
-             => LiveView t -> Event t () -> Side -> Event t Side -> WidgetConfig -> m (Event t Side)
-renderWidget live revealed side putSide wc = case widgetType wc of
+             => LiveView t -> Event t () -> CardControl -> Event t CardControl -> WidgetConfig
+             -> m (Event t CardControl)
+renderWidget live revealed control put wc = case widgetType wc of
   LiveTiming       -> never <$ liveTimingWidget live
   Telemetry        -> never <$ telemetryWidget
-  LapComparison    -> comparisonWidget revealed side putSide
+  LapComparison    -> comparisonWidget revealed control put
   TyreStrategy     -> never <$ placeholderWidget "Tyre Strategy"
   HistoricalStats  -> never <$ driverStatsWidget
   ConstructorStats -> never <$ constructorStatsWidget
