@@ -1479,6 +1479,61 @@ body {
   display: block;
 }
 
+/* El lienzo de las trazas, en trozos de arriba abajo: cada uno trae su `flex` y el
+   navegador reparte lo que crece la tarjeta, sin volver a pintar. Cada fila es un svg
+   que llena su trozo; las fronteras, otro encima de todas las filas. */
+.comparison__canvas--traces,
+.comparison__traces-span {
+  display: flex;
+  flex-direction: column;
+}
+
+.comparison__canvas--traces {
+  flex: 1 0 auto;
+}
+
+.comparison__traces-span,
+.comparison__trace-piece {
+  position: relative;
+  min-height: 0;
+}
+
+.comparison__traces--row,
+.comparison__traces--frontiers {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.comparison__traces--frontiers {
+  pointer-events: none;
+}
+
+/* Con trazas, la tarjeta se llena: cada caja hasta el lienzo crece con lo que sobra, y
+   el lienzo se lo queda. Sin trazas, las cajas miden lo que su contenido. */
+.widget--comparison:has(.comparison__canvas--traces) {
+  display: flex;
+  flex-direction: column;
+}
+
+.comparison__card:has(.comparison__canvas--traces) {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.comparison__body:has(.comparison__canvas--traces) {
+  flex: 1 0 auto;
+  align-items: stretch;
+}
+
+.comparison__plot:has(.comparison__canvas--traces) {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Rótulos encima del lienzo: el canal, S1/S2 de cada coche y los extremos del eje. */
 .comparison__trace-label {
   position: absolute;

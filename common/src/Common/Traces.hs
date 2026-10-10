@@ -12,7 +12,6 @@ module Common.Traces
   , channelsInOrder
   , traceChannels
   , TraceRows (..)
-  , stretchesSpeed
   , channelLabel
   , channelHeight
   , channelTop
@@ -22,6 +21,12 @@ module Common.Traces
   , tracesWidth
   , tracesHeight
   , channelsSpan
+    -- * El estirado
+  , TracePiece (..)
+  , TraceLayout (..)
+  , traceLayout
+  , spanPiece
+  , pieceFlex
     -- * La X
   , carGeometry
   , traceXs
@@ -46,6 +51,7 @@ import           Common.Comparison (Axis (..), ChartType (..), LapGeometry (..),
                                     axisXs)
 import           Common.Format     (formatFixed)
 import           Common.Types      (ComparisonEntry (..), TracePoint (..))
+import           Data.List         (intercalate)
 import           Data.Maybe        (fromMaybe)
 import           Data.Text         (Text)
 import qualified Data.Text         as T
@@ -73,26 +79,17 @@ channelLabel Speed    = "km/h"
 channelLabel Throttle = "Acelerador %"
 channelLabel Brake    = "Freno"
 
--- | Las filas que se pintan, de arriba abajo, y lo que se estira la velocidad sobre
--- su mínimo, en px; solo cuenta si la velocidad va sola ('stretchesSpeed').
-data TraceRows = TraceRows
-  { trChannels :: [Channel]
-  , trStretch  :: Double
-  }
+-- | Las filas que se pintan, de arriba abajo.
+newtype TraceRows = TraceRows { trChannels :: [Channel] }
   deriving stock (Eq, Show)
 
--- | Si la velocidad se estira con la tarjeta: solo cuando va sola (2026-10-06 (e));
--- con otras filas, el tipo 3, espera al modo edición.
-stretchesSpeed :: [Channel] -> Bool
-stretchesSpeed = (== [Speed])
-
--- | El alto de una fila, en px: la velocidad 150 más lo estirado si va sola y 100
--- con otra (2026-10-06 (e)). Con los rótulos, el tipo 3 cabe en 55 u de Race
--- Overview a 1912 × 914 (2026-10-06 (d)).
+-- | El alto mínimo de una fila, en px: la velocidad 150 si va sola y 100 con otra
+-- (2026-10-06 (e)). Con los rótulos, el tipo 3 cabe en 55 u de Race Overview a
+-- 1912 × 914 (2026-10-06 (d)). Lo que la tarjeta crece lo reparte 'traceLayout'.
 channelHeight :: TraceRows -> Channel -> Double
 channelHeight r Speed
-  | stretchesSpeed (trChannels r) = 150 + trStretch r
-  | otherwise                     = 100
+  | trChannels r == [Speed] = 150
+  | otherwise               = 100
 channelHeight _ Throttle = 50
 channelHeight _ Brake    = 20
 
@@ -124,6 +121,49 @@ channelsSpan r = (tracesTop, tracesHeight r - tracesBottom)
 channelTop :: TraceRows -> Channel -> Double
 channelTop r ch =
   tracesTop + sum [channelHeight r c + tracesGap | c <- trChannels r, c < ch]
+
+-- | Un trozo del lienzo, de arriba abajo: la fila de un canal o, con 'Nothing', un
+-- aire (el del rótulo de arriba, el hueco entre dos filas o el del eje). Lleva su
+-- alto mínimo, en px, y su peso al repartir lo que crece la tarjeta (@flex-grow@):
+-- cada trozo se lleva su peso entre la suma de todos.
+data TracePiece = TracePiece
+  { tpChannel :: Maybe Channel
+  , tpBasis   :: Double
+  , tpGrow    :: Double
+  }
+  deriving stock (Eq, Show)
+
+-- | El lienzo en trozos: el aire de arriba, las filas con los aires de entre medias
+-- y el aire de abajo. Las fronteras van de punta a punta de 'tlSpan'.
+data TraceLayout = TraceLayout
+  { tlTop    :: TracePiece
+  , tlSpan   :: [TracePiece]
+  , tlBottom :: TracePiece
+  }
+  deriving stock (Eq, Show)
+
+-- | Los trozos de esas filas. Sin crecer suman 'tracesHeight'. Los pesos
+-- (2026-10-09 (h)): la velocidad sola se queda todo lo que crece; con más filas,
+-- cada una pesa su alto, así que guardan la proporción, y cada aire la mitad del
+-- suyo, así que crece la mitad que ellas.
+traceLayout :: TraceRows -> TraceLayout
+traceLayout r =
+  TraceLayout (air tracesTop) (intercalate [air tracesGap] (map (pure . row) chs)) (air tracesBottom)
+  where
+    chs   = trChannels r
+    alone = chs == [Speed]
+    row ch = let h = channelHeight r ch in TracePiece (Just ch) h (if alone then 1 else h)
+    air h  = TracePiece Nothing h (if alone then 0 else h / 2)
+
+-- | Un trozo que agrupa otros: suma sus mínimos y sus pesos, así que repartir dentro
+-- de él da lo mismo que repartir entre todos.
+spanPiece :: [TracePiece] -> TracePiece
+spanPiece ps = TracePiece Nothing (sum (map tpBasis ps)) (sum (map tpGrow ps))
+
+-- | El @flex@ de un trozo en una columna: crece con su peso, no encoge y parte de su
+-- mínimo.
+pieceFlex :: TracePiece -> Text
+pieceFlex p = "flex: " <> formatFixed 3 (tpGrow p) <> " 0 " <> formatFixed 1 (tpBasis p) <> "px"
 
 -- | El valor de una muestra en un canal: la velocidad en km\/h, el acelerador en %
 -- y el freno, 0 o 1.

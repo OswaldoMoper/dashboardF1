@@ -87,7 +87,8 @@ import           Common.Traces               (Channel (..), axisEnd,
                                               tracesHeight, xPercent,
                                               traceChannels, channelsSpan,
                                               channelHeight, TraceRows (..),
-                                              stretchesSpeed,
+                                              TracePiece (..), TraceLayout (..),
+                                              traceLayout, spanPiece, pieceFlex,
                                               channelCaption, axisEndLabel,
                                               readSamples, samplesStart)
 import           Common.ComparisonCard       (CardControl (..), CardLayout (..),
@@ -100,7 +101,7 @@ import           Common.ComparisonCard       (CardControl (..), CardLayout (..),
                                               modeEnabled, modeFromKey,
                                               modeKey, rowHeight, showsNames,
                                               showsValues, singleRowHeight,
-                                              valuesFitMeasured, stretchFor,
+                                              valuesFitMeasured,
                                               valuesRowHeight,
                                               modeLabel, modeOption,
                                               modesInOrder,
@@ -3184,8 +3185,11 @@ main = hspec $ do
 
   describe "Common.Traces" $ do
     let near a b = abs (a - b) < 1e-9
-        three = TraceRows channelsInOrder 0
+        close a b = abs (a - b) <= 1e-6 * max 1 (abs b)
+        three = TraceRows channelsInOrder
         speed = TraceRows [Speed]
+        layoutPieces r = let l = traceLayout r in tlTop l : tlSpan l ++ [tlBottom l]
+        grown s ps = let g = sum (map tpGrow ps) in map (\p -> tpBasis p + tpGrow p / g * s) ps
         nearAll xs ys = length xs == length ys && and (zipWith near xs ys)
         tp t d s th b = MkTracePoint t d s th b
         car c sectors frontiers trace = MkComparisonEntry
@@ -3204,21 +3208,47 @@ main = hspec $ do
 
     it "los canales de cada tipo: el 3 los tres, el 2 la velocidad, el 1 y el 4 ninguno" $ do
       map traceChannels chartTypesInOrder `shouldBe` [[], [Speed], channelsInOrder, []]
-      channelTop (speed 0) Speed `shouldBe` 19
-      tracesHeight (speed 0) `shouldBe` 185
-      channelsSpan (speed 0) `shouldBe` (19, 169)
+      channelTop speed Speed `shouldBe` 19
+      tracesHeight speed `shouldBe` 185
+      channelsSpan speed `shouldBe` (19, 169)
 
     it "la velocidad mide 150 si va sola y 100 con otra fila" $ do
-      channelHeight (speed 0) Speed `shouldBe` 150
-      map (\o -> channelHeight (TraceRows [Speed, o] 0) Speed) [Throttle, Brake] `shouldBe` [100, 100]
+      channelHeight speed Speed `shouldBe` 150
+      map (\o -> channelHeight (TraceRows [Speed, o]) Speed) [Throttle, Brake] `shouldBe` [100, 100]
 
-    it "solo la velocidad sola se estira: 150 más lo estirado; el tipo 3 no cambia" $ do
-      map stretchesSpeed [[Speed], channelsInOrder, [Speed, Brake], []] `shouldBe` [True, False, False, False]
-      channelHeight (speed 23) Speed `shouldBe` 173
-      tracesHeight (speed 23) `shouldBe` 208
-      channelsSpan (speed 23) `shouldBe` (19, 192)
-      tracesHeight (TraceRows channelsInOrder 50) `shouldBe` 243
-      channelHeight (TraceRows [Speed, Brake] 40) Speed `shouldBe` 100
+    it "los trozos sin crecer suman el alto del lienzo, con las filas en orden entre sus aires" $ do
+      map (sum . map tpBasis . layoutPieces) [speed, three] `shouldBe` [tracesHeight speed, tracesHeight three]
+      map tpChannel (layoutPieces three)
+        `shouldBe` [Nothing, Just Speed, Nothing, Just Throttle, Nothing, Just Brake, Nothing]
+      map tpChannel (layoutPieces speed) `shouldBe` [Nothing, Just Speed, Nothing]
+
+    it "los pesos: en el tipo 3 cada fila su alto y cada aire la mitad; en el 2, todo a la velocidad" $ do
+      map tpGrow (layoutPieces three) `shouldBe` [9.5, 100, 9.5, 50, 9.5, 20, 8]
+      map tpGrow (layoutPieces speed) `shouldBe` [0, 1, 0]
+      pieceFlex (TracePiece (Just Throttle) 50 50) `shouldBe` "flex: 50.000 0 50.0px"
+      spanPiece (tlSpan (traceLayout three)) `shouldBe` TracePiece Nothing 208 189
+
+    prop "en el tipo 3, al crecer, las filas guardan el 100 : 50 : 20, cada aire crece la mitad que ellas y suman lo crecido" $
+      \(NonNegative s) ->
+        let hs = grown s (layoutPieces three)
+            k = hs !! 1 / 100
+            air = (1 + k) / 2
+         in close (sum hs) (tracesHeight three + s)
+              && close (hs !! 3) (50 * k) && close (hs !! 5) (20 * k)
+              && all (\i -> close (hs !! i) (19 * air)) [0, 2, 4]
+              && close (hs !! 6) (16 * air)
+
+    prop "en el tipo 2, la velocidad se queda todo lo que crece" $ \(NonNegative s) ->
+      grown s (layoutPieces speed) == [19, 150 + s, 16]
+
+    prop "repartir dentro del grupo de las filas da lo mismo que repartir entre todos" $ \(NonNegative s) ->
+      all (\r ->
+             let l = traceLayout r
+                 sp = spanPiece (tlSpan l)
+              in case grown s [tlTop l, sp, tlBottom l] of
+                   [t, m, b] -> and (zipWith close (t : grown (m - tpBasis sp) (tlSpan l) ++ [b]) (grown s (layoutPieces r)))
+                   _         -> False)
+          [speed, three]
 
     it "la velocidad hasta la máxima redondeada a 50; el acelerador y el freno, fijos" $ do
       channelRange Speed [ref, other] `shouldBe` (0, 300)
@@ -3290,7 +3320,7 @@ main = hspec $ do
       tracePoints three Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
         `shouldBe` "0.0,227.0 300.0,227.0 300.0,207.0 600.0,207.0 600.0,227.0"
       tracePoints three Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
-      tracePoints (speed 0) Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,119.0 300.0,19.0 600.0,69.0"
+      tracePoints speed Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,119.0 300.0,19.0 600.0,69.0"
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9
@@ -3329,21 +3359,13 @@ main = hspec $ do
       valuesFitMeasured 326.5 302.5 33 `shouldBe` True
       valuesFitMeasured 326.5 291 21 `shouldBe` False
 
-    it "lo que se estira la velocidad del tipo 2 en Race Overview a 1912 × 914" $ do
-      -- 50 u: «Eje y valores» cabe con la velocidad en 150 y se estira 23 (173 px)
+    it "las dos líneas del tipo 2 en Race Overview a 1912 × 914, con las trazas sin crecer" $ do
+      -- 50 u: «Eje y valores» cabe con la velocidad en 150
       valuesFitMeasured 338 291 33 `shouldBe` True
-      stretchFor 338 291 0 `shouldBe` 23
-      -- ya estirada, la medida siguiente la deja igual, y la fila se mide con la mínima
-      stretchFor 338 314 23 `shouldBe` 23
-      stretchFor 338 313.6 23 `shouldBe` 23
+      -- con el lienzo crecido 23 px, se descuenta y sigue cabiendo
       valuesFitMeasured 338 314 (33 + 23) `shouldBe` True
-      -- 46 u: con la velocidad en 150 no cabe «Eje y valores»; con «Solo eje», 157 px
+      -- 46 u: con la velocidad en 150 no cabe
       valuesFitMeasured 310 291 33 `shouldBe` False
-      stretchFor 310 279 0 `shouldBe` 7
-      -- 44 u: ni con «Solo eje»: 150 y scroll
-      stretchFor 296 279 0 `shouldBe` 0
-      -- de 55 u a 50 u encoge
-      stretchFor 338 349 58 `shouldBe` 23
 
     prop "da lo mismo medir con una línea, con dos o sin fila" measuredFitAgrees
 
