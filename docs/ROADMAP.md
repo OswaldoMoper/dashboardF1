@@ -653,11 +653,11 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       «↺ Restablecer» y un aviso si lo guardado ya no encaja (2026-10-07 (h) e (i); `Common.Saved`), **con el lado de
       «⇄»** (2026-10-08 (a)). **Hecho después:** «↺ Restablecer» pregunta en la barra si hay algo que perder, y
       «✗ Cancelar» devuelve los dos layouts a como estaban al entrar, preguntando si algo cambió (2026-10-08 (h),
-      2026-10-09 (b)); la banda de Lap Comparison se recuerda con su modo (2026-10-08 (i), 2026-10-09 (c)). **Decidido,
-      sin código:** al estirar el tipo 3 sus gráficas crecen en la proporción de hoy y sus aires la mitad, a la par de
-      la tarjeta (2026-10-09 (h)); medir el hueco y volver a pintar va un paso por detrás y rebota, así que lo estira el
-      navegador (cómo, por decidir). **Queda:** eso; y, sin fecha, mover columnas, resaltar pilotos, el tipo 4 y el
-      aire repartido (todos los aires de todas las tarjetas).
+      2026-10-09 (b)); la banda de Lap Comparison se recuerda con su modo (2026-10-08 (i), 2026-10-09 (c)). Al estirar,
+      las trazas crecen a la par de la tarjeta: las del tipo 3 en la proporción de hoy y sus aires la mitad, y la
+      velocidad del tipo 2 con todo; lo reparte el navegador por trozos con peso, sin medir ni volver a pintar
+      (2026-10-09 (h), 2026-10-10 (b); `Common.Traces.traceLayout`). **Queda,** sin fecha: mover columnas, resaltar
+      pilotos, el tipo 4 y el aire repartido (todos los aires de todas las tarjetas).
 - [x] **Imán a la rejilla de 24×24** al arrastrar, activo por defecto, con interruptor visible y una tecla
       que lo invierte mientras dura el arrastre (2026-09-03). **La aritmética está en `Common.Layout.snapTo`
       desde el 2026-09-04**, con el imán apagado como caso normal y no como error. La tecla es **Alt** y el
@@ -737,8 +737,9 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       después (2026-10-09 (f) y (g)):** en Lap Comparison entra primero el tipo 1, sin cuenta, y las trazas con la
       cuenta; una regla común de vuelta («la más rápida» por defecto, «la última» y, en clasificación, la de cada parte)
       en botones junto al tipo, con excepción por piloto en un desplegable junto a su tiempo, aplicada al momento y sin
-      «Comparar»; los sectores de la mejor, guardados por el backend de las fotos del feed. Las tablas se fechan
-      midiendo la predicción en una Sprint grabada.
+      «Comparar»; los sectores de la mejor, guardados por el backend de las fotos del feed, que pide él mismo cada 20 s
+      (2026-10-10 (c)). Con cuenta, la predicción llega en directo; las tablas se fechan midiendo si llega sin cuenta
+      (2026-10-10 (a)).
 - [x] **El final de una sesión, dicho como es** (2026-10-03 (a) y (b)). Tras cada bandera a cuadros la banda dice
       «Bandera a cuadros» —también entre las partes de una clasificación— y el punto del directo se apaga; con el
       `Finalised`, «Finalizada», también mientras se sirve la última tabla del feed y cuando vuelve OpenF1. La
