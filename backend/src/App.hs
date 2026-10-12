@@ -153,7 +153,8 @@ data Env = Env
     -- y es el estado con el que arranca el proceso.
     --
     -- __No es una cache ni un freno sino la señal de que hay quien mira__, y de eso
-    -- depende que el reloj del directo baje o se pare
+    -- depende que el reloj del directo baje o se pare, y con sesión, que pida la foto
+    -- del feed o se la salte porque la página ya la pidió
     -- ('Handler.Live.Helper.clockVerdict'). Sin ella, un backend levantado y sin
     -- nadie delante gastaría presupuesto todo el día.
     --

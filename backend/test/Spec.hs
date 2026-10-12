@@ -1224,17 +1224,32 @@ main = hspec $ do
       clockVerdict (addUTCTime 10 raceStartsAt) False (Just raceStartsAt)
         `shouldBe` ClockAsks
 
-    it "la ventana del feed gana al lector: con sesión no se baja ni habiendo quien mire" $
-      -- Ahí OpenF1 contesta 401 y el feed sirve el directo, así que preguntar sería
-      -- gasto en balde.
+    it "con sesión y la página preguntando, el reloj se salta la foto: ya la pidió ella" $
+      -- La página pregunta cada 10 s y el periodo son 20: con ella abierta, el reloj
+      -- no añade ninguna foto.
       clockVerdict (addUTCTime 1 raceStartsAt) True (Just raceStartsAt)
-        `shouldBe` ClockFeedOpen
+        `shouldBe` ClockFeedAsked
 
-    it "la ventana del feed gana también al reposo, y por eso el motivo es el suyo" $
-      -- Los dos dirían «no bajes»; lo que se comprueba es cuál se reporta, porque
-      -- son sucesos distintos y un día habrá que contarlos por separado.
+    it "con sesión y nadie mirando, el reloj pide la foto: el reposo no manda ahí" $
+      -- Es el caso por el que existe: lo que pasa en pista antes de abrir la página
+      -- (los sectores de la mejor vuelta) solo se guarda si alguien pide la foto.
       clockVerdict (addUTCTime 3600 raceStartsAt) True (Just raceStartsAt)
-        `shouldBe` ClockFeedOpen
+        `shouldBe` ClockFeedPhoto
+
+    it "con sesión y el proceso recién arrancado, también pide la foto" $
+      clockVerdict raceStartsAt True Nothing `shouldBe` ClockFeedPhoto
+
+    it "el borde del periodo de la foto: a los 19,9 s ya la pidió la página; a los 20, no" $
+      map (\s -> clockVerdict (addUTCTime s raceStartsAt) True (Just raceStartsAt))
+          [0, 19.9, 20, 39.9, 40]
+        `shouldBe` [ ClockFeedAsked, ClockFeedAsked, ClockFeedPhoto, ClockFeedPhoto
+                   , ClockFeedPhoto ]
+
+    it "con sesión, un instante del futuro no cuenta como foto pedida: se pide" $
+      -- Solo sale de un reloj del sistema que ha retrocedido; darlo por pedida
+      -- dejaría sin foto todo lo que retrocedió, sin nadie mirando.
+      clockVerdict raceStartsAt True (Just (addUTCTime 300 raceStartsAt))
+        `shouldBe` ClockFeedPhoto
 
     it "el borde del reposo: justo antes baja, justo en el umbral ya no" $
       -- Dos periodos son 40 s. A los 39,9 todavía hay lector; a los 40 exactos, no.
@@ -1253,8 +1268,16 @@ main = hspec $ do
       -- mismo número dicho dos veces, no dos números que mantener sincronizados.
       openf1ClockIdle `shouldBe` 2 * openf1ClockPeriod
 
-    prop "con la ventana del feed abierta nunca baja, mire quien mire"
+    prop "con la ventana del feed abierta nunca baja ni reposa, mire quien mire"
       neverAsksInsideFeedWindow
+
+    prop "con la ventana abierta, la foto se salta solo si la página preguntó en el periodo"
+      skipsPhotoOnlyWhenAskedThisPeriod
+
+    it "el periodo de la foto es el del reloj" $
+      -- La propiedad de arriba escribe 20 a mano; si el periodo cambia, esto avisa
+      -- antes de que la propiedad pase a comprobar otra cosa.
+      openf1ClockPeriod `shouldBe` 20
 
   describe "servedFromBox" $ do
     it "el borde del umbral: hasta los 40 s es reciente, desde ahí ya no" $
@@ -4860,7 +4883,20 @@ closesOnlyFromStart (NonNegative sinceOpening) finalisedOffset =
 
 neverAsksInsideFeedWindow :: Int -> Maybe Int -> Bool
 neverAsksInsideFeedWindow nowOffset askedOffset =
-  clockVerdict now True lastAsked == ClockFeedOpen
+  clockVerdict now True lastAsked `elem` [ClockFeedPhoto, ClockFeedAsked]
+  where
+    now       = secondsFromRaceStart nowOffset
+    lastAsked = secondsFromRaceStart <$> askedOffset
+
+    secondsFromRaceStart s = addUTCTime (fromIntegral s) raceStartsAt
+
+-- | Con la ventana abierta, el reloj se salta la foto si y solo si la página
+-- preguntó hace entre 0 y menos de un periodo. Los desplazamientos son segundos
+-- desde la salida de la carrera.
+skipsPhotoOnlyWhenAskedThisPeriod :: Int -> Maybe Int -> Property
+skipsPhotoOnlyWhenAskedThisPeriod nowOffset askedOffset =
+  (clockVerdict now True lastAsked == ClockFeedAsked)
+    === maybe False (\a -> let d = nowOffset - a in d >= 0 && d < 20) askedOffset
   where
     now       = secondsFromRaceStart nowOffset
     lastAsked = secondsFromRaceStart <$> askedOffset

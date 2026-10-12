@@ -1106,38 +1106,43 @@ openf1ClockPeriod = 20
 openf1ClockIdle :: NominalDiffTime
 openf1ClockIdle = 2 * openf1ClockPeriod
 
--- | Por qué el reloj no baja en este tic, o que sí.
+-- | Qué hace el reloj en este tic, y si no hace nada, por qué.
 --
 -- __Los motivos van separados y no fundidos en un 'Bool'__, por lo mismo que
--- 'FeedVerdict': el hilo hace lo mismo con los tres —no bajar—, pero el que no baja
--- por reposo y el que no baja por haber sesión son sucesos distintos, y un día habrá
--- que poder contarlos por separado sin reabrir esto.
+-- 'FeedVerdict': el hilo no hace nada en dos de ellos, pero el que calla por reposo
+-- y el que calla porque la página ya pidió la foto son sucesos distintos, y un día
+-- habrá que poder contarlos por separado sin reabrir esto.
 data ClockVerdict
-  = ClockAsks      -- ^ Toca bajar: hay quien mira y OpenF1 es quien sirve.
-  | ClockFeedOpen  -- ^ Hay sesión: manda el feed y OpenF1 contestaría @401@.
-  | ClockIdle      -- ^ Nadie ha preguntado en 'openf1ClockIdle'.
+  = ClockAsks       -- ^ Toca bajar a OpenF1: hay quien mira y no hay sesión.
+  | ClockFeedPhoto  -- ^ Hay sesión y nadie pidió la foto en este periodo: la pide el reloj.
+  | ClockFeedAsked  -- ^ Hay sesión y la página ya la pidió en este periodo.
+  | ClockIdle       -- ^ Sin sesión, nadie ha preguntado en 'openf1ClockIdle'.
   deriving (Eq, Show)
 
--- | Si el reloj baja a OpenF1 en este tic, y si no, por qué.
+-- | Qué hace el reloj en este tic.
 --
 -- Recibe si la ventana del feed está abierta ('feedWindowOpen') y cuándo preguntó
 -- alguien por última vez a @\/api\/live@; @Nothing@ es «nunca», que es el estado con
 -- el que arranca el proceso.
 --
--- __La ventana del feed gana al reposo__, y el orden no es arbitrario: con sesión
--- rodando no se baja ni habiendo quien mire, así que preguntarse por los lectores
--- ahí sería contestar una pregunta que no decide nada.
+-- __Con la ventana del feed abierta nunca baja a OpenF1__ (contestaría @401@) y
+-- __el reposo no cuenta__: la foto se pide aunque nadie mire, que es lo que guarda
+-- lo que pasa en pista antes de que se abra la página. Se la salta solo si la página
+-- ya la pidió hace menos de 'openf1ClockPeriod'.
 --
--- __Un instante del futuro cuenta como lector.__ Solo puede salir de un reloj del
--- sistema que ha retrocedido, y darlo por viejo pararía el reloj con la página
--- abierta delante — que es el fallo caro. 'stillRecent' resuelve su duda al otro
--- lado por el mismo criterio: ante la duda, no dejar de servir dato de ahora.
+-- __Un instante del futuro cuenta como lector, pero no como foto ya pedida.__ Solo
+-- puede salir de un reloj del sistema que ha retrocedido; ante la duda, lo que deja
+-- dato de ahora: sin sesión, no parar el reloj con la página delante; con sesión,
+-- pedir la foto. 'stillRecent' resuelve su duda al otro lado por el mismo criterio.
 clockVerdict :: UTCTime -> Bool -> Maybe UTCTime -> ClockVerdict
 clockVerdict now feedOpen lastAsked
-  | feedOpen                  = ClockFeedOpen
-  | maybe True idle lastAsked = ClockIdle
-  | otherwise                 = ClockAsks
+  | feedOpen && maybe False askedThisPeriod lastAsked = ClockFeedAsked
+  | feedOpen                                          = ClockFeedPhoto
+  | maybe True idle lastAsked                         = ClockIdle
+  | otherwise                                         = ClockAsks
   where
+    askedThisPeriod at =
+      let elapsed = diffUTCTime now at in elapsed >= 0 && elapsed < openf1ClockPeriod
     idle at = diffUTCTime now at >= openf1ClockIdle
 
 -- | Cuánto puede tener lo guardado antes de que la respuesta deje de llamarlo

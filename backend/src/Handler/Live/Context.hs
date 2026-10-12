@@ -34,7 +34,9 @@
 -- __Y a OpenF1 no baja quien pregunta, sino un reloj propio__ ('liveClock'): acepta
 -- 30 peticiones por minuto, y con el endpoint bajando el gasto crecía con cada
 -- pantalla. El endpoint solo lee la caja, y únicamente sale a la red cuando está
--- vacía. El feed no tiene reloj, porque es nuestro y no tiene presupuesto.
+-- vacía. El feed no tiene presupuesto, así que la página pide su foto a su ritmo; el
+-- mismo reloj la pide solo cuando nadie lo ha hecho en su periodo, también sin nadie
+-- mirando.
 --
 -- Cada peldaño devuelve además __de dónde salió el dato__ —el peldaño y la fuente,
 -- que son dos preguntas ('Common.Origin')— y, lo que sale de lo guardado, __cuándo
@@ -349,10 +351,12 @@ liveClock env = forever $ do
   where
     tickDelay = round (realToFrac openf1ClockPeriod * 1e6 :: Double)
 
--- | Un tic: mirar si toca bajar y, si toca, bajar.
+-- | Un tic: mirar qué toca —bajar a OpenF1 o pedir la foto del feed— y hacerlo.
 --
--- El resultado de la bajada se tira porque lo que importa es su efecto — dejar la
--- caja al día—, y de servirla se encarga quien pregunte después.
+-- El resultado se tira porque lo que importa es su efecto — dejar la caja al día y,
+-- con la foto, ver el «finalizada» que cierra la ventana—, y de servirla se encarga
+-- quien pregunte después. __La foto no anota lector__ ('envLiveAsked'): el reloj no
+-- es nadie mirando.
 tick :: Env -> IO ()
 tick env = do
   now <- getCurrentTime
@@ -361,9 +365,10 @@ tick env = do
   let feedOpen =
         feedWindowOpen now (map ssStart (fwSessions window)) (fwFinalisedAt window)
   case clockVerdict now feedOpen asked of
-    ClockAsks     -> void (askOpenF1 env)
-    ClockFeedOpen -> pure ()
-    ClockIdle     -> pure ()
+    ClockAsks      -> void (askOpenF1 env)
+    ClockFeedPhoto -> Feed.fetchFeedLive (envConfig env) >>= void . fromFeed env
+    ClockFeedAsked -> pure ()
+    ClockIdle      -> pure ()
 
 -- | La bajada a OpenF1: los seis GET y el ensamblado, con la cache detrás.
 --
