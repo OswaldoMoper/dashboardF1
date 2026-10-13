@@ -1004,6 +1004,17 @@ main = hspec $ do
     it "una mejor que no se vio en ninguna foto sale sin sectores" $
       bestSectorsAfter [[sectorRow "1:36.000" lapB "1:34.000" []]] `shouldBe` [[]]
 
+    it "la última, si la foto no trae los suyos, sale con los de una foto anterior" $
+      -- En la segunda foto los sectores ya no suman la vuelta: son de otra.
+      lastSectorsAfter [[sectorRow "1:35.757" lapA "1:35.757" []], [sectorRow "1:35.757" lapB "1:35.757" []]]
+        `shouldBe` [lapA]
+
+    it "la última que no se vio entera en ninguna foto sale sin sectores" $
+      lastSectorsAfter [[sectorRow "1:35.757" lapB "1:35.757" []]] `shouldBe` [[]]
+
+    it "la última con los suyos en la foto se queda con los de la foto" $
+      lastSectorsAfter [[sectorRow "1:36.000" lapB "1:35.757" []]] `shouldBe` [lapB]
+
     it "la mejor de cada parte, cada una con los suyos" $
       map ltPartBestSectors (servedAfter [[sectorRow "1:35.757" lapA "1:35.757" []], [sectorRow "1:36.000" lapB "1:35.757" ["1:35.757", "1:36.000", "-"]]])
         `shouldBe` [[lapA, lapB, []]]
@@ -5595,6 +5606,9 @@ servedAfter photos =
 
 bestSectorsAfter :: [[FeedRow]] -> [[T.Text]]
 bestSectorsAfter = map ltBestSectors . servedAfter
+
+lastSectorsAfter :: [[FeedRow]] -> [[T.Text]]
+lastSectorsAfter = map ltLastSectors . servedAfter
 
 -- | Lo mínimo que una fila puede traer sin dejar de ser fila.
 feedTableMinimal :: ByteString

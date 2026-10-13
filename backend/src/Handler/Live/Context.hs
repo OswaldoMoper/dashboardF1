@@ -244,7 +244,8 @@ fetchSchedule cfg now = do
 -- decirlo ('finaliseBox').
 --
 -- __Toda foto guarda los sectores de sus vueltas__, también la que pide el reloj sin
--- nadie mirando, y la tabla que se sirve lleva los de la mejor ('withLapSectors').
+-- nadie mirando, y la tabla que se sirve lleva los de la mejor, y los de la última
+-- si la foto no los trae ('withLapSectors').
 fromFeed :: Env -> FeedLive -> IO LiveResult
 fromFeed env live = do
   now <- getCurrentTime

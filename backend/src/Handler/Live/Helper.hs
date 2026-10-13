@@ -373,14 +373,17 @@ rememberSectors live memory = foldl' remember fresh (flRows live)
                        (Map.singleton (frLastLap r) ss) (smLaps m) }
 
 -- | Pone en cada fila los sectores de su mejor vuelta y de la mejor de cada parte,
--- buscados por su tiempo en lo guardado. No toca los de la última.
+-- buscados por su tiempo en lo guardado; y los de la última, también de lo guardado,
+-- solo cuando la foto no los trae.
 withLapSectors :: SectorMemory -> LiveTable -> LiveTable
 withLapSectors memory table = table { liveRows = map fill (liveRows table) }
   where
     fill r =
       let laps = Map.findWithDefault Map.empty (ltDriver r) (smLaps memory)
           of_ lap = Map.findWithDefault [] lap laps
-       in r { ltBestSectors = of_ (ltBestLap r), ltPartBestSectors = map of_ (ltPartBests r) }
+       in r { ltLastSectors     = if null (ltLastSectors r) then of_ (ltLastLap r) else ltLastSectors r
+            , ltBestSectors     = of_ (ltBestLap r)
+            , ltPartBestSectors = map of_ (ltPartBests r) }
 
 -- | La mejor vuelta de la sesión de una fila del feed: la menor entre la que trae y
 -- la de cada parte. __En una clasificación el feed vacía la suya al empezar cada
