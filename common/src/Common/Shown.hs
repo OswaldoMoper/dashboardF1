@@ -2,7 +2,7 @@
 -- dejar en pantalla mientras, y qué dice de sí mismo el indicador __@● Live@__ que
 -- lo acompaña.
 --
--- Es la parte con decisiones del refresco periódico de 'Widgets.LiveTiming', sacada
+-- Es la parte con decisiones del refresco periódico de 'Widgets.Live', sacada
 -- del widget para que no sea ciega: el widget solo cablea un reloj, la respuesta de
 -- la petición y el resultado a una clase y a un atributo @title@. Es el criterio del
 -- 2026-08-04 —lo puro y sin Reflex va a @common@, que es lo único con suite—, el
@@ -199,7 +199,7 @@ data Indicator = Indicator
 --
 -- __Si la sesión rueda, y si está finalizada, entran por argumento y no se sacan del
 -- 'Poll'__, que es lo que mantiene esto genérico en @a@ y sin conocer el dominio:
--- quien llama tiene la tabla y sabe proyectarla ('Widgets.LiveTiming.stateOf'), y
+-- quien llama tiene la tabla y sabe proyectarla ('Widgets.Live.stateOf'), y
 -- aquí solo se decide qué pintar con la respuesta. Primero la que rueda, después la
 -- finalizada.
 indicatorFrom :: Bool -> Bool -> Poll (Sourced a) -> Indicator

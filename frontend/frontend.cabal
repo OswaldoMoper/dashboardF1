@@ -22,6 +22,7 @@ executable frontend
         Pages.Dashboard
         Widgets.Comparison
         Widgets.Historical
+        Widgets.Live
         Widgets.LiveTiming
         Widgets.Telemetry
     build-depends:

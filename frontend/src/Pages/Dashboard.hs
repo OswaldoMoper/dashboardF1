@@ -93,9 +93,9 @@ import           Reflex.Dom
 import           Widgets.Comparison            (comparisonWidget)
 import           Widgets.Historical            (constructorStatsWidget,
                                                 driverStatsWidget)
-import           Widgets.LiveTiming            (LiveView (..), delayedLive,
-                                                livePoll, liveTimingWidget,
-                                                sessionOf)
+import           Widgets.Live                  (LiveView (..), delayedLive,
+                                                livePoll, sessionOf)
+import           Widgets.LiveTiming            (liveTimingWidget)
 import           Widgets.Telemetry             (telemetryWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
@@ -115,7 +115,7 @@ import           Widgets.Telemetry             (telemetryWidget)
 -- y arranca abierta. El botón se monta antes que ella porque el 'Event' que emite
 -- es lo que alimenta su estado, y no por dónde salga en pantalla.
 --
--- __El refresco del directo lo monta la página y no la tarjeta__ ('Widgets.LiveTiming.livePoll'):
+-- __El refresco del directo lo monta la página y no la tarjeta__ ('Widgets.Live.livePoll'):
 -- los dos layouts están montados a la vez y los dos llevan Live Timing, así que una
 -- petición por tarjeta saldría dos veces. Así comparten una sola.
 --
