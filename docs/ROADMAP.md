@@ -741,7 +741,13 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       (2026-10-10 (c)). **Hecho el 2026-10-12 (a):** con la ventana del feed abierta, el reloj pide la foto aunque
       nadie mire (~22 s con la sesión en marcha). **Hecho el 2026-10-12 (e):** de cada foto el backend guarda los
       sectores de cada vuelta, y cada fila del directo lleva los de la última, los de la mejor y los de la mejor de
-      cada parte, buscados por su tiempo (una mejor borrada no deja los suyos); la página aún no los pinta. Con cuenta, la
+      cada parte, buscados por su tiempo (una mejor borrada no deja los suyos); la página aún no los pinta. **Decidido
+      el 2026-10-13 (a) y (b):** Lap Comparison entra sola en el directo, con el directo retrasado que ya reparte la
+      página y el mismo «Live»; al acabar se queda con lo último, con un aviso encima de la gráfica; en directo, los
+      pilotos del directo por número de coche. **Hecho el 2026-10-13 (b)–(e):** cada fila del directo lleva el número
+      de coche; el directo que comparten las tarjetas tiene su propio módulo; los sectores de la última también se
+      buscan en lo guardado, y valen solo si suman la vuelta al milésimo (con ±0,05 s, una foto a mitad de vuelta
+      colaba sectores de dos vueltas). Falta pintarlo: la vuelta del directo, la tarjeta y el mando. Con cuenta, la
       predicción llega en directo; las tablas se fechan midiendo si llega sin cuenta (2026-10-10 (a)), en la carrera
       de EE. UU.: la de Singapur no se grabó.
 - [x] **El final de una sesión, dicho como es** (2026-10-03 (a) y (b)). Tras cada bandera a cuadros la banda dice
