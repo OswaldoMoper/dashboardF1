@@ -178,6 +178,7 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
         rows.append(
             {
                 "ltPosition": int(position),
+                "ltCar": str(number),
                 "ltDriver": _text(info.get("Tla")) or str(number),
                 "ltTeam": _text(info.get("TeamName")),
                 "ltGap": "LEADER" if leader else gap,

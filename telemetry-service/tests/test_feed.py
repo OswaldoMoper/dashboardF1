@@ -21,6 +21,7 @@ FOTOS = sorted((AQUI / "fotos").glob("*.json"))
 # Las claves de `Common.Types.LiveTimingRow`.
 CLAVES = {
     "ltPosition",
+    "ltCar",
     "ltDriver",
     "ltTeam",
     "ltGap",
@@ -115,6 +116,15 @@ def test_cada_fila_lleva_las_claves_del_dto_y_se_serializa_sin_nan(foto):
     filas = _feed_rows(foto)
     assert all(set(fila) == CLAVES for fila in filas)
     json.dumps(filas, allow_nan=False)
+
+
+@given(fotos)
+def test_el_numero_es_el_de_su_linea_aunque_haya_acronimo(foto):
+    lineas = foto["TimingData"]["Lines"]
+    filas = _feed_rows(foto)
+    assert sorted(fila["ltCar"] for fila in filas) == sorted(n for n, l in lineas.items() if con_posicion(l))
+    for fila in filas:
+        assert int(float(lineas[fila["ltCar"]]["Position"])) == fila["ltPosition"]
 
 
 @given(fotos)

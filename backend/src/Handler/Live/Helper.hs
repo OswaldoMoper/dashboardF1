@@ -331,6 +331,7 @@ feedRows = map toRow . sortOn frPosition
     toRow r =
       LiveTimingRow
         { ltPosition = frPosition r
+        , ltCar      = frCar r
         , ltDriver   = frDriver r
         , ltTeam     = frTeam r
         , ltGap      = frGap r
@@ -1397,6 +1398,7 @@ assembleRows drivers positions intervals laps results =
       pure
         LiveTimingRow
           { ltPosition = pos
+          , ltCar      = T.pack (show (odNumber d))
           , ltDriver   = odAcronym d
           , ltTeam     = odTeam d
           , ltGap      = gap

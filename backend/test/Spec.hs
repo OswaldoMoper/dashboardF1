@@ -5542,20 +5542,20 @@ openF1Grid =
 -- 'lapArray', las dos 'Running'.
 openF1Lec, openF1Nor :: LiveTimingRow
 openF1Lec = emptyLiveRow
-  { ltPosition = 1, ltDriver = "LEC", ltTeam = "Ferrari", ltGap = "LEADER", ltInterval = "-"
+  { ltPosition = 1, ltCar = "16", ltDriver = "LEC", ltTeam = "Ferrari", ltGap = "LEADER", ltInterval = "-"
   , ltLastLap = "1:15.265", ltBestLap = "1:15.265" }
 openF1Nor = emptyLiveRow
-  { ltPosition = 2, ltDriver = "NOR", ltTeam = "McLaren", ltGap = "+2.310", ltInterval = "+2.310"
+  { ltPosition = 2, ltCar = "1", ltDriver = "NOR", ltTeam = "McLaren", ltGap = "+2.310", ltInterval = "+2.310"
   , ltLastLap = "1:16.001", ltBestLap = "1:16.001" }
 
--- | La tabla tal cual la emite @GET \/fastf1\/live@: siete claves por fila, con el
+-- | La tabla tal cual la emite @GET \/fastf1\/live@: ocho claves por fila, con el
 -- líder ya marcado y el estado como el nombre del constructor.
 feedTable :: ByteString
 feedTable =
-  "[{\"ltPosition\":1,\"ltDriver\":\"VER\",\"ltTeam\":\"Red Bull\",\
+  "[{\"ltPosition\":1,\"ltCar\":\"3\",\"ltDriver\":\"VER\",\"ltTeam\":\"Red Bull\",\
   \\"ltGap\":\"LEADER\",\"ltInterval\":\"-\",\"ltLastLap\":\"1:29.345\",\
   \\"ltStatus\":\"Running\"},\
-  \{\"ltPosition\":2,\"ltDriver\":\"LEC\",\"ltTeam\":\"Ferrari\",\
+  \{\"ltPosition\":2,\"ltCar\":\"16\",\"ltDriver\":\"LEC\",\"ltTeam\":\"Ferrari\",\
   \\"ltGap\":\"+1.234\",\"ltInterval\":\"+1.234\",\"ltLastLap\":\"1:29.512\",\
   \\"ltStatus\":\"Dnf\"}]"
 
@@ -5577,7 +5577,7 @@ lapB = ["34.500", "46.600", "14.900"]
 sectorRow :: T.Text -> [T.Text] -> T.Text -> [T.Text] -> FeedRow
 sectorRow lastLap sectors best parts =
   FeedRow
-    { frPosition = 1, frDriver = "LEC", frTeam = "", frGap = "", frInterval = ""
+    { frPosition = 1, frCar = "16", frDriver = "LEC", frTeam = "", frGap = "", frInterval = ""
     , frLastLap = lastLap, frStatus = "Running", frBestLap = best, frPartBestLap = ""
     , frPartBests = parts, frKnockedOut = False, frCutoff = False, frLastSectors = sectors
     }
@@ -5650,11 +5650,11 @@ feedLiveFinalised =
 feedRowsFixture :: [LiveTimingRow]
 feedRowsFixture =
   [ emptyLiveRow
-      { ltPosition = 1, ltDriver = "VER", ltTeam = "Red Bull", ltGap = "LEADER", ltInterval = "-"
-      , ltLastLap = "1:29.345" }
+      { ltPosition = 1, ltCar = "3", ltDriver = "VER", ltTeam = "Red Bull", ltGap = "LEADER"
+      , ltInterval = "-", ltLastLap = "1:29.345" }
   , emptyLiveRow
-      { ltPosition = 2, ltDriver = "LEC", ltTeam = "Ferrari", ltGap = "+1.234", ltInterval = "+1.234"
-      , ltLastLap = "1:29.512", ltStatus = Dnf }
+      { ltPosition = 2, ltCar = "16", ltDriver = "LEC", ltTeam = "Ferrari", ltGap = "+1.234"
+      , ltInterval = "+1.234", ltLastLap = "1:29.512", ltStatus = Dnf }
   ]
 
 -- El instante en que se sirve la sesión de carrera: media hora después de que el

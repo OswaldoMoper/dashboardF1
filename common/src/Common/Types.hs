@@ -64,6 +64,7 @@ statusLabel Dsq     = "DSQ"
 -- | Fila del widget de live timing.
 data LiveTimingRow = LiveTimingRow
   { ltPosition        :: Int
+  , ltCar             :: Text  -- ^ Número de coche (p. ej. @"16"@), o vacío si la fuente no lo dio.
   , ltDriver          :: Text
   , ltTeam            :: Text
   , ltGap             :: Text  -- ^ Gap al líder (p. ej. @"+1.234"@ o @"LEADER"@).
@@ -105,6 +106,7 @@ emptyLiveRow :: LiveTimingRow
 emptyLiveRow =
   LiveTimingRow
     { ltPosition        = 0
+    , ltCar             = ""
     , ltDriver          = ""
     , ltTeam            = ""
     , ltGap             = ""

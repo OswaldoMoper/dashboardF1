@@ -63,6 +63,7 @@ instance FromJSON FeedLive where
 -- ('Handler.Live.Helper.feedRows'), no el decode.
 data FeedRow = FeedRow
   { frPosition    :: Int
+  , frCar         :: Text  -- ^ Número de coche; vacío si el microservicio no lo trae.
   , frDriver      :: Text
   , frTeam        :: Text
   , frGap         :: Text
@@ -88,6 +89,7 @@ instance FromJSON FeedRow where
   parseJSON = withObject "FeedRow" $ \o ->
     FeedRow
       <$> o .:  "ltPosition"
+      <*> o .:? "ltCar"      .!= ""
       <*> o .:  "ltDriver"
       <*> o .:? "ltTeam"     .!= ""
       <*> o .:? "ltGap"      .!= ""

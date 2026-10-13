@@ -567,14 +567,15 @@ fetchIntervalsOrEmpty cfg = do
 -- abandono inventado haría creer en un incidente que nadie reportó.
 dummy :: [LiveTimingRow]
 dummy =
-  [ row 1 "VER" "Red Bull" "LEADER" "-" "1:29.345"
-  , row 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512"
-  , row 3 "NOR" "McLaren" "+3.877" "+2.643" "1:29.701"
+  [ row 1 "3" "VER" "Red Bull" "LEADER" "-" "1:29.345"
+  , row 2 "16" "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512"
+  , row 3 "1" "NOR" "McLaren" "+3.877" "+2.643" "1:29.701"
   ]
   where
-    row pos driver team gap interval lap =
+    row pos car driver team gap interval lap =
       emptyLiveRow
         { ltPosition = pos
+        , ltCar      = car
         , ltDriver   = driver
         , ltTeam     = team
         , ltGap      = gap
