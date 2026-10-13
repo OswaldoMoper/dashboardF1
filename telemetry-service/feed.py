@@ -121,6 +121,26 @@ def _feed_part_bests(line: Dict[str, Any]) -> List[str]:
     return [_feed_text(entry if isinstance(entry, dict) else None) for entry in bests]
 
 
+def _feed_last_sectors(line: Dict[str, Any]) -> List[str]:
+    """Los tres sectores de la última vuelta completa de un coche, como texto.
+
+    Salen de ``Sectors[n].PreviousValue``; ``Value`` es el de la vuelta en curso. Tres
+    entradas, ``"-"`` en el sector que no lo trae, y la lista vacía si la línea no trae
+    ``Sectors``. **No comprueba que sumen la vuelta:** eso lo decide el backend.
+    """
+    sectors = line.get("Sectors")
+    if isinstance(sectors, list):
+        sectors = {str(i): sector for i, sector in enumerate(sectors)}
+    if not isinstance(sectors, dict):
+        return []
+    out = []
+    for i in range(3):
+        sector = sectors.get(str(i))
+        previous = sector.get("PreviousValue") if isinstance(sector, dict) else None
+        out.append(_feed_text(previous))
+    return out
+
+
 def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     """El snapshot del feed como las filas de ``Common.Types.LiveTimingRow``.
 
@@ -163,6 +183,7 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "ltGap": "LEADER" if leader else gap,
                 "ltInterval": "-" if leader else interval,
                 "ltLastLap": _feed_text(line.get("LastLapTime")),
+                "ltLastSectors": _feed_last_sectors(line),
                 "ltStatus": (
                     "Dnf" if line.get("Retired") or line.get("Stopped") else "Running"
                 ),

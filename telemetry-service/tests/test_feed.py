@@ -26,6 +26,7 @@ CLAVES = {
     "ltGap",
     "ltInterval",
     "ltLastLap",
+    "ltLastSectors",
     "ltStatus",
     "ltBestLap",
     "ltPartBestLap",
@@ -61,6 +62,12 @@ posiciones = st.one_of(
     st.sampled_from(["", "x", "nan", "inf"]),
 )
 numeros = st.integers(1, 99).map(str)
+tiempos_de_sector = st.sampled_from(["", " ", "27.241", "1:05.300", " 26.243 "])
+sector = st.fixed_dictionaries({}, optional={"Value": textos, "PreviousValue": tiempos_de_sector})
+sectores = st.one_of(
+    st.lists(sector, max_size=4),
+    st.dictionaries(st.sampled_from(["0", "1", "2", "3"]), sector, max_size=4),
+)
 lineas = st.fixed_dictionaries(
     {},
     optional={
@@ -80,6 +87,7 @@ lineas = st.fixed_dictionaries(
             max_size=3,
         ),
         "BestLapTimes": st.lists(st.fixed_dictionaries({}, optional={"Value": textos}), max_size=3),
+        "Sectors": sectores,
     },
 )
 fotos = st.fixed_dictionaries(
@@ -137,3 +145,17 @@ def test_solo_retirado_o_parado_es_abandono_y_eliminado_no(foto):
         abandono = bool(linea.get("Retired") or linea.get("Stopped"))
         assert (fila["ltStatus"] == "Dnf") == abandono
         assert fila["ltKnockedOut"] == bool(linea.get("KnockedOut"))
+
+
+@given(fotos)
+def test_los_sectores_de_la_ultima_son_los_previousvalue_de_sus_tres_sectores(foto):
+    lineas = foto["TimingData"]["Lines"]
+    for fila in _feed_rows({**foto, "DriverList": {}}):
+        sectores = lineas[fila["ltDriver"]].get("Sectors")
+        if sectores is None:
+            assert fila["ltLastSectors"] == []
+            continue
+        if isinstance(sectores, list):
+            sectores = {str(i): s for i, s in enumerate(sectores)}
+        esperado = [(sectores.get(str(i)) or {}).get("PreviousValue", "").strip() or "-" for i in range(3)]
+        assert fila["ltLastSectors"] == esperado
