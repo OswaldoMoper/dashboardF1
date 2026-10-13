@@ -78,6 +78,9 @@ data FeedRow = FeedRow
   , frCutoff      :: Bool
     -- ^ Sin tiempo dentro del 107 %. __No es la zona de eliminación__ (medido el
     -- 2026-10-03): al empezar la Q1 lo llevan los veintidós.
+  , frLastSectors :: [Text]
+    -- ^ Los tres sectores de 'frLastLap' tal como llegan, @\"-\"@ en el hueco y vacía
+    -- si el feed no los trae. __Sin comprobar que sumen la vuelta.__
   }
   deriving (Eq, Show)
 
@@ -96,6 +99,7 @@ instance FromJSON FeedRow where
       <*> o .:? "ltPartBests"   .!= []
       <*> o .:? "ltKnockedOut"  .!= False
       <*> o .:? "ltCutoff"      .!= False
+      <*> o .:? "ltLastSectors" .!= []
 
 -- | Qué sesión anuncia el feed, tal como el microservicio la entrega.
 --

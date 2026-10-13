@@ -52,8 +52,8 @@ import           Common.Types            (DriverStatus (..), LiveTable (..),
 import           Config                  (Config)
 import           Control.Concurrent      (threadDelay)
 import           Control.Concurrent.MVar (withMVar)
-import           Control.Concurrent.STM  (atomically, modifyTVar', readTVarIO,
-                                          writeTVar)
+import           Control.Concurrent.STM  (atomically, modifyTVar', readTVar,
+                                          readTVarIO, writeTVar)
 import           Control.Exception       (SomeException, displayException, try)
 import           Control.Monad           (forever, void, when)
 import           Data.List               (nub)
@@ -75,8 +75,9 @@ import           Handler.Live.Helper     (ClockVerdict (..), FeedVerdict (..),
                                           fetchFailure, finaliseBox,
                                           freezeClock, inheritFinalised,
                                           meetingNames, openf1ClockPeriod,
-                                          openf1Session, schedule,
-                                          servedFromBox, stillRecent, upNext)
+                                          openf1Session, rememberSectors,
+                                          schedule, servedFromBox, stillRecent,
+                                          upNext, withLapSectors)
 import qualified Handler.Live.Manager    as Manager
 import qualified Handler.OpenF1.Manager  as OpenF1
 import           Outcome                 (httpStatusOf)
@@ -241,11 +242,17 @@ fetchSchedule cfg now = do
 -- si OpenF1 tampoco contesta, lo guardado sigue siendo la última tabla buena con su
 -- sesión, y es lo que 'fromCache' sirve. Con la sesión finalizada, esa tabla pasa a
 -- decirlo ('finaliseBox').
+--
+-- __Toda foto guarda los sectores de sus vueltas__, también la que pide el reloj sin
+-- nadie mirando, y la tabla que se sirve lleva los de la mejor ('withLapSectors').
 fromFeed :: Env -> FeedLive -> IO LiveResult
 fromFeed env live = do
   now <- getCurrentTime
+  memory <- atomically $ do
+    modifyTVar' (envLapSectors env) (rememberSectors live)
+    readTVar (envLapSectors env)
   case feedVerdict now live of
-    FeedServes table      -> serveFresh env now Feed table
+    FeedServes table      -> serveFresh env now Feed (withLapSectors memory table)
     FeedEmpty             -> fromOpenF1 env
     FeedFinalised reading -> do
       atomically $ modifyTVar' (envLiveCache env) (fmap (finaliseBox reading))
@@ -560,7 +567,7 @@ fetchIntervalsOrEmpty cfg = do
 -- abandono inventado haría creer en un incidente que nadie reportó.
 dummy :: [LiveTimingRow]
 dummy =
-  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running "1:29.345" "" [] False False
-  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Running "1:29.512" "" [] False False
-  , LiveTimingRow 3 "NOR" "McLaren" "+3.877" "+2.643" "1:29.701" Running "1:29.701" "" [] False False
+  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running "1:29.345" "" [] False False [] [] []
+  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Running "1:29.512" "" [] False False [] [] []
+  , LiveTimingRow 3 "NOR" "McLaren" "+3.877" "+2.643" "1:29.701" Running "1:29.701" "" [] False False [] [] []
   ]

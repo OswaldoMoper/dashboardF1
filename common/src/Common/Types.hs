@@ -63,28 +63,36 @@ statusLabel Dsq     = "DSQ"
 
 -- | Fila del widget de live timing.
 data LiveTimingRow = LiveTimingRow
-  { ltPosition    :: Int
-  , ltDriver      :: Text
-  , ltTeam        :: Text
-  , ltGap         :: Text  -- ^ Gap al líder (p. ej. @"+1.234"@ o @"LEADER"@).
-  , ltInterval    :: Text  -- ^ Intervalo al coche de delante.
-  , ltLastLap     :: Text  -- ^ Última vuelta (p. ej. @"1:23.456"@).
-  , ltStatus      :: DriverStatus
+  { ltPosition        :: Int
+  , ltDriver          :: Text
+  , ltTeam            :: Text
+  , ltGap             :: Text  -- ^ Gap al líder (p. ej. @"+1.234"@ o @"LEADER"@).
+  , ltInterval        :: Text  -- ^ Intervalo al coche de delante.
+  , ltLastLap         :: Text  -- ^ Última vuelta (p. ej. @"1:23.456"@).
+  , ltStatus          :: DriverStatus
     -- ^ Abandono, no-salida o descalificación; 'Running' si no consta ninguna.
     -- Sin él una fila de abandono es indistinguible de una normal, y sus
     -- 'ltGap' e 'ltInterval' son los de su última muestra: el coche 3 de la
     -- 11353 sale en P22 con @"+5.672"@ habiendo hecho 0 vueltas.
-  , ltBestLap     :: Text  -- ^ Mejor vuelta de la sesión, o @"-"@.
-  , ltPartBestLap :: Text
+  , ltBestLap         :: Text  -- ^ Mejor vuelta de la sesión, o @"-"@.
+  , ltPartBestLap     :: Text
     -- ^ Mejor vuelta en la parte en curso de una clasificación (Q1, Q2 o Q3), o
     -- @"-"@; __vacío__ si la sesión no tiene partes o la fuente no las sabe.
-  , ltPartBests   :: [Text]
+  , ltPartBests       :: [Text]
     -- ^ La mejor de cada parte de una clasificación, en orden, @"-"@ en la que no
     -- tiene vuelta. Vacía fuera de clasificación.
-  , ltKnockedOut  :: Bool  -- ^ Eliminado en una parte anterior de la clasificación.
-  , ltCutoff      :: Bool
+  , ltKnockedOut      :: Bool  -- ^ Eliminado en una parte anterior de la clasificación.
+  , ltCutoff          :: Bool
     -- ^ Sin tiempo dentro del 107 %, también quien aún no ha marcado vuelta. __No es
     -- la zona de eliminación.__
+  , ltLastSectors     :: [Text]
+    -- ^ Los tres sectores de 'ltLastLap', solo si suman su tiempo; vacía si no se
+    -- saben. Solo los da el feed.
+  , ltBestSectors     :: [Text]
+    -- ^ Los tres sectores de 'ltBestLap', vacía si no se vieron en ninguna foto
+    -- (marcada antes de abrir, o antes de un reinicio del backend).
+  , ltPartBestSectors :: [[Text]]
+    -- ^ Los de cada una de 'ltPartBests', en su orden; vacía la de una parte sin ellos.
   }
   deriving stock (Eq, Show, Generic)
 

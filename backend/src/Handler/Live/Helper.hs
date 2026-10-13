@@ -39,6 +39,9 @@ module Handler.Live.Helper
     -- * Transformaciones puras
   , assembleRows
   , feedRows
+  , sectorsAddingUp
+  , rememberSectors
+  , withLapSectors
   , sessionBestLap
   , feedStatus
   , feedSession
@@ -72,7 +75,8 @@ module Handler.Live.Helper
   , classificationGaps
   ) where
 
-import           App                   (ScheduledSession (..))
+import           App                   (ScheduledSession (..),
+                                        SectorMemory (..))
 import           Common.Origin         (Origin (..), Source (..))
 import           Common.Types          (Countdown (..), DriverStatus (..),
                                         LapProgress (..), LiveTable (..),
@@ -338,7 +342,44 @@ feedRows = map toRow . sortOn frPosition
         , ltPartBests   = frPartBests r
         , ltKnockedOut  = frKnockedOut r
         , ltCutoff      = frCutoff r
+        , ltLastSectors = fromMaybe [] (sectorsAddingUp (frLastLap r) (frLastSectors r))
+        , ltBestSectors = []
+        , ltPartBestSectors = map (const []) (frPartBests r)
         }
+
+-- | Los tres sectores de una vuelta, solo si suman su tiempo (±0,05 s). Un sector que
+-- falta, uno que no se lee o una vuelta sin tiempo dan 'Nothing'.
+sectorsAddingUp :: Text -> [Text] -> Maybe [Text]
+sectorsAddingUp lap sectors = do
+  total <- lapSeconds lap
+  parts <- traverse lapSeconds sectors
+  if length parts == 3 && abs (sum parts - total) < 0.05 then Just sectors else Nothing
+
+-- | Guarda los sectores de la última vuelta de cada coche de una foto, con su tiempo.
+-- Una foto que nombra otra sesión empieza de cero; una sin sesión no la cambia. El
+-- mismo tiempo visto otra vez se queda con los últimos sectores.
+rememberSectors :: FeedLive -> SectorMemory -> SectorMemory
+rememberSectors live memory = foldl' remember fresh (flRows live)
+  where
+    named = (\s -> (fsMeeting s, fsName s)) <$> flSession live
+    fresh
+      | isJust named && named /= smSession memory = SectorMemory named Map.empty
+      | otherwise = memory
+    remember m r = case sectorsAddingUp (frLastLap r) (frLastSectors r) of
+      Nothing -> m
+      Just ss ->
+        m { smLaps = Map.insertWith Map.union (frDriver r)
+                       (Map.singleton (frLastLap r) ss) (smLaps m) }
+
+-- | Pone en cada fila los sectores de su mejor vuelta y de la mejor de cada parte,
+-- buscados por su tiempo en lo guardado. No toca los de la última.
+withLapSectors :: SectorMemory -> LiveTable -> LiveTable
+withLapSectors memory table = table { liveRows = map fill (liveRows table) }
+  where
+    fill r =
+      let laps = Map.findWithDefault Map.empty (ltDriver r) (smLaps memory)
+          of_ lap = Map.findWithDefault [] lap laps
+       in r { ltBestSectors = of_ (ltBestLap r), ltPartBestSectors = map of_ (ltPartBests r) }
 
 -- | La mejor vuelta de la sesión de una fila del feed: la menor entre la que trae y
 -- la de cada parte. __En una clasificación el feed vacía la suya al empezar cada
@@ -1367,4 +1408,7 @@ assembleRows drivers positions intervals laps results =
           , ltPartBests   = []
           , ltKnockedOut  = False
           , ltCutoff      = False
+          , ltLastSectors = []
+          , ltBestSectors = []
+          , ltPartBestSectors = []
           }

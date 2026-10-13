@@ -47,7 +47,8 @@
 -- precisamente los campos opcionales, que viven en el decode.
 module Main (main) where
 
-import           App                         (ScheduledSession (..))
+import           App                         (ScheduledSession (..),
+                                              emptySectorMemory)
 import           Common.Carry                (Board (..), Carry (..), Grip (..),
                                               Hand (..), Held (..), Scene (..),
                                               boardOf, heldStyle,
@@ -223,16 +224,18 @@ import           Handler.Live.Helper         (Announced (..), ClockVerdict (..),
                                               feedStatus, feedVerdict,
                                               feedWindowLead, feedWindowOpen,
                                               fetchFailure, finaliseBox,
-                                              freezeClock, inheritFinalised,
-                                              lapProgress, latestByDriver,
-                                              meetingNames, openf1ClockIdle,
+                                              formatLap, freezeClock,
+                                              inheritFinalised, lapProgress,
+                                              latestByDriver, meetingNames,
+                                              openf1ClockIdle,
                                               openf1ClockPeriod, openf1MinGap,
                                               openf1Session, parseFeedInstant,
                                               parseNotice, parseRemaining,
-                                              schedule, servedFromBox,
+                                              rememberSectors, schedule,
+                                              sectorsAddingUp, servedFromBox,
                                               sessionBestLap, sessionClock,
                                               stillRecent, trackCondition,
-                                              upNext)
+                                              upNext, withLapSectors)
 import           Handler.OpenF1.Helper       (Answer (..), Of1Driver (..),
                                               alwaysWritten, answerOf,
                                               brakeWait, brakeWindow,
@@ -255,8 +258,8 @@ import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck       (prop)
-import           Test.QuickCheck             (NonNegative (..), Property,
-                                              (.&&.), (===))
+import           Test.QuickCheck             (NonNegative (..), Positive (..),
+                                              Property, (.&&.), (===), (==>))
 
 main :: IO ()
 main = hspec $ do
@@ -708,8 +711,8 @@ main = hspec $ do
       -- `date`, no la primera.
       rowsOf openF1Grid positionArray intervalArray lapArray resultArray
         `shouldBe`
-          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False
-          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Running "1:16.001" "" [] False False
+          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False [] [] []
+          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Running "1:16.001" "" [] False False [] [] []
           ]
 
     it "marca el DNF que sí trae posición, y la fila sigue en la tabla" $
@@ -719,8 +722,8 @@ main = hspec $ do
       -- dato engañoso que la marca contextualiza.
       rowsOf openF1Grid positionArray intervalArray lapArray resultWithDnf
         `shouldBe`
-          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False
-          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Dnf "1:16.001" "" [] False False
+          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False [] [] []
+          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Dnf "1:16.001" "" [] False False [] [] []
           ]
 
     it "sirve la tabla entera como Running si `/session_result` llega vacía" $
@@ -759,7 +762,7 @@ main = hspec $ do
       -- prueba aquí porque el dato de hoy no la alcanza y vive para la sesión __en
       -- curso__, donde un coche puede no tener posición publicada todavía.
       rowsOf openF1Grid positionOfLecOnly intervalArray lapArray resultWithDnf
-        `shouldBe` [LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False]
+        `shouldBe` [LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False [] [] []]
 
     it "devuelve [] cuando la parrilla llega vacía, aunque haya posiciones" $
       -- Simétrico del caso de 'assembleStints': la unidad de la fila es el piloto
@@ -954,7 +957,7 @@ main = hspec $ do
       -- entera. Aquí degradar es lo correcto porque el precio de no hacerlo es la
       -- tabla de la sesión en marcha, que es el único momento en que OpenF1 calla.
       fmap feedRows (tryFeedRows feedTableMinimal)
-        `shouldBe` Right [LiveTimingRow 4 "ANT" "" "" "" "" Running "" "" [] False False]
+        `shouldBe` Right [LiveTimingRow 4 "ANT" "" "" "" "" Running "" "" [] False False [] [] []]
 
     it "sin ltPosition no decodifica, y eso tumba la tabla entera" $
       -- Sin posición no hay fila que ordenar, que es el criterio que ya aplican
@@ -971,6 +974,67 @@ main = hspec $ do
       -- excepción, sería un fallo del feed y se iría a la cache, dejando la página
       -- sin el dato real que OpenF1 sí tiene fuera de sesión.
       fmap feedRows (tryFeedRows emptyArray) `shouldBe` Right []
+
+  describe "sectorsAddingUp" $ do
+    it "da los tres sectores cuando suman la vuelta" $
+      sectorsAddingUp "1:35.757" lapA `shouldBe` Just lapA
+
+    it "no los da si no suman, si falta uno, si no se leen o si la vuelta no tiene tiempo" $
+      map (uncurry sectorsAddingUp)
+        [ ("1:35.857", lapA)
+        , ("1:35.757", ["34.379", "46.499"])
+        , ("1:35.757", ["34.379", "46.499", "-"])
+        , ("-", lapA)
+        ]
+        `shouldBe` [Nothing, Nothing, Nothing, Nothing]
+
+  describe "rememberSectors y withLapSectors" $ do
+    it "la fila del feed lleva los de su última vuelta solo si suman" $
+      map ltLastSectors (feedRows [sectorRow "1:35.757" lapA "1:35.757" [], sectorRow "1:35.857" lapA "1:35.757" []])
+        `shouldBe` [lapA, []]
+
+    it "la mejor lleva sus sectores aunque la última ya sea otra" $
+      bestSectorsAfter [[sectorRow "1:35.757" lapA "1:35.757" []], [sectorRow "1:36.000" lapB "1:35.757" []]]
+        `shouldBe` [lapA]
+
+    it "si borran la mejor, la nueva mejor sale con los suyos" $
+      -- Medido en seis grabaciones: una mejor deja de valer de 0 a 3 veces por sesión.
+      bestSectorsAfter
+        [ [sectorRow "1:36.000" lapB "1:36.000" []]
+        , [sectorRow "1:35.757" lapA "1:35.757" []]
+        , [sectorRow "1:37.000" [] "1:36.000" []]
+        ]
+        `shouldBe` [lapB]
+
+    it "una mejor que no se vio en ninguna foto sale sin sectores" $
+      bestSectorsAfter [[sectorRow "1:36.000" lapB "1:34.000" []]] `shouldBe` [[]]
+
+    it "la mejor de cada parte, cada una con los suyos" $
+      map ltPartBestSectors (servedAfter [[sectorRow "1:35.757" lapA "1:35.757" []], [sectorRow "1:36.000" lapB "1:35.757" ["1:35.757", "1:36.000", "-"]]])
+        `shouldBe` [[lapA, lapB, []]]
+
+    it "otra sesión empieza de cero, y una foto sin sesión no la cambia" $ do
+      let seen = rememberSectors (FeedLive (Just sectorSession) [sectorRow "1:35.757" lapA "1:35.757" []]) emptySectorMemory
+          other = sectorSession { fsName = "Race" }
+          served memory = map ltBestSectors (liveRows (withLapSectors memory (LiveTable Nothing (feedRows [sectorRow "1:37.000" [] "1:35.757" []]) NextUnknown)))
+      served (rememberSectors (FeedLive Nothing []) seen) `shouldBe` [lapA]
+      served (rememberSectors (FeedLive (Just other) []) seen) `shouldBe` [[]]
+
+    prop "la mejor lleva los sectores de la última foto válida con su tiempo, o ninguno" $
+      \laps -> not (null laps) ==>
+        let photo (a, b, c, valid) =
+              let ms = map (\(Positive x) -> 20000 + x `mod` 40000) [a, b, c]
+                  total = sum ms
+                  shown = map (formatLap . (/ 1000) . fromIntegral) (if valid then ms else take 2 ms ++ [ms !! 2 + 1000])
+               in (total, valid, shown)
+            photos = map photo (laps :: [(Positive Int, Positive Int, Positive Int, Bool)])
+            best = minimum [t | (t, _, _) <- photos]
+            text = formatLap . (/ 1000) . fromIntegral
+            rows = [ [sectorRow (text t) shown (text best) []] | (t, _, shown) <- photos ]
+            expected = case [shown | (t, True, shown) <- photos, t == best] of
+              [] -> []
+              xs -> last xs
+         in bestSectorsAfter rows === [expected]
 
   describe "feedStatus" $ do
     it "lee los cuatro nombres tal cual los emite el microservicio" $
@@ -3092,7 +3156,7 @@ main = hspec $ do
   -- La columna Best Lap: qué se marca en negrita (la más rápida de la sesión) y en
   -- morado (la más rápida de la parte en curso, o de la sesión si no hay partes).
   describe "las marcas de Best Lap" $ do
-    let row best part = LiveTimingRow 1 "X" "" "" "" "" Running best part [] False False
+    let row best part = LiveTimingRow 1 "X" "" "" "" "" Running best part [] False False [] [] []
     it "lee los tiempos de vuelta, y no lo que no lo es" $ do
       map lapSeconds ["1:23.456", "59.876", " 1:00.000 "] `shouldBe` [Just 83.456, Just 59.876, Just 60]
       map lapSeconds ["-", "", "LAP 3", "1:2:3"] `shouldBe` replicate 4 Nothing
@@ -3120,7 +3184,7 @@ main = hspec $ do
     let q1 state cut = raceSessionFixture
           { siType = "Qualifying", siName = "Qualifying", siPart = Just 1
           , siState = Just (StateReading state Heard), siCutOffTime = cut }
-        qrow n d best = LiveTimingRow n d "" "" "" "" Running best "" [best, "-", "-"] False True
+        qrow n d best = LiveTimingRow n d "" "" "" "" Running best "" [best, "-", "-"] False True [] [] []
         baku = [qrow 9 "BOT" "1:48.290", qrow 18 "HAM" "1:57.767", qrow 22 "PER" "-"]
     it "junto al título, el corte solo en la Q1" $ do
       cutOffLabel (q1 SessionStarted (Just "1:45.800")) `shouldBe` Just "107 %: 1:45.800"
@@ -3147,7 +3211,7 @@ main = hspec $ do
   describe "rowBreaks" $ do
     let quali name part = Just raceSessionFixture
           {siType = "Qualifying", siName = name, siPart = Just part, siEntries = [22, 16, 10]}
-        grid knocked = [ LiveTimingRow n "X" "" "" "" "" Running "-" "" [] (n > knocked) False
+        grid knocked = [ LiveTimingRow n "X" "" "" "" "" Running "-" "" [] (n > knocked) False [] [] []
                        | n <- [1 .. 22] ]
         breaks s rows = [ (ltPosition r, b) | (r, Just b) <- zip rows (rowBreaks s rows) ]
     it "en la Q1, y tras su bandera hasta que el feed marca, la raya roja encima del 17" $
@@ -5493,6 +5557,35 @@ feedTableUnordered =
   \{\"ltPosition\":1,\"ltDriver\":\"VER\"},\
   \{\"ltPosition\":2,\"ltDriver\":\"LEC\"}]"
 
+-- | Los sectores de una vuelta de 1:35.757 y de una de 1:36.000.
+lapA, lapB :: [T.Text]
+lapA = ["34.379", "46.499", "14.879"]
+lapB = ["34.500", "46.600", "14.900"]
+
+-- | Una fila del feed de LEC: su última vuelta con sus sectores, su mejor y las de
+-- cada parte.
+sectorRow :: T.Text -> [T.Text] -> T.Text -> [T.Text] -> FeedRow
+sectorRow lastLap sectors best parts =
+  FeedRow
+    { frPosition = 1, frDriver = "LEC", frTeam = "", frGap = "", frInterval = ""
+    , frLastLap = lastLap, frStatus = "Running", frBestLap = best, frPartBestLap = ""
+    , frPartBests = parts, frKnockedOut = False, frCutoff = False, frLastSectors = sectors
+    }
+
+sectorSession :: FeedSession
+sectorSession = either error id (trySession feedSessionMalaysiaQuali)
+
+-- | Las filas que se sirven tras una serie de fotos de la misma sesión: las de la
+-- última, con lo guardado de todas.
+servedAfter :: [[FeedRow]] -> [LiveTimingRow]
+servedAfter photos =
+  liveRows (withLapSectors memory (LiveTable Nothing (feedRows (last photos)) NextUnknown))
+  where
+    memory = foldl' (\m rows -> rememberSectors (FeedLive (Just sectorSession) rows) m) emptySectorMemory photos
+
+bestSectorsAfter :: [[FeedRow]] -> [[T.Text]]
+bestSectorsAfter = map ltBestSectors . servedAfter
+
 -- | Lo mínimo que una fila puede traer sin dejar de ser fila.
 feedTableMinimal :: ByteString
 feedTableMinimal = "[{\"ltPosition\":4,\"ltDriver\":\"ANT\"}]"
@@ -5546,8 +5639,8 @@ feedLiveFinalised =
 -- microservicio, y el segundo con su abandono.
 feedRowsFixture :: [LiveTimingRow]
 feedRowsFixture =
-  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running "" "" [] False False
-  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Dnf "" "" [] False False
+  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running "" "" [] False False [] [] []
+  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Dnf "" "" [] False False [] [] []
   ]
 
 -- El instante en que se sirve la sesión de carrera: media hora después de que el
@@ -6148,8 +6241,8 @@ resultWithoutFlagKeys =
 -- sino lo que 'withProvenance' pone alrededor, así que no pasan por ningún fixture JSON.
 liveRowsFixture :: [LiveTimingRow]
 liveRowsFixture =
-  [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:21.004" Running "-" "" [] False False
-  , LiveTimingRow 2 "NOR" "McLaren" "+0.412" "+0.412" "1:21.390" Running "-" "" [] False False
+  [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:21.004" Running "-" "" [] False False [] [] []
+  , LiveTimingRow 2 "NOR" "McLaren" "+0.412" "+0.412" "1:21.390" Running "-" "" [] False False [] [] []
   ]
 
 -- | La sesión de la carrera 11369 ya mapeada, con los valores que

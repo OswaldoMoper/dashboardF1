@@ -63,6 +63,22 @@ data FeedWindow = FeedWindow
   }
   deriving (Eq, Show)
 
+-- | Los sectores de cada vuelta que se vio en una foto del feed, de una sola sesión.
+--
+-- __Vive en memoria:__ un reinicio del backend la vacía, y las vueltas de antes salen
+-- sin sectores. La llena y la lee 'Handler.Live.Helper.rememberSectors'.
+data SectorMemory = SectorMemory
+  { smSession :: Maybe (Text, Text)
+    -- ^ El gran premio y la sesión a los que pertenece; 'Nothing' antes de la primera
+    -- foto que nombre una.
+  , smLaps    :: Map Text (Map Text [Text])
+    -- ^ Por piloto, los tres sectores de cada tiempo de vuelta.
+  }
+  deriving (Eq, Show)
+
+emptySectorMemory :: SectorMemory
+emptySectorMemory = SectorMemory Nothing Map.empty
+
 data Env = Env
   { envConfig          :: Config
   , envLiveCache       :: TVar (Maybe (UTCTime, Source, LiveTable))
@@ -188,6 +204,9 @@ data Env = Env
     -- lleve es correctitud y no rendimiento — la parrilla es la de __esa__
     -- sesión, y un sustituto o un tercer coche en libres la cambian, así que una
     -- caja única serviría la de otra sesión presentada como la pedida.
+  , envLapSectors      :: TVar SectorMemory
+    -- ^ Los sectores de las vueltas de la sesión en curso, para dar los de la mejor:
+    -- la foto del feed solo trae los de la última.
   }
 
 -- El récord se construye __por nombre__ y no por posición: un campo nuevo en medio
@@ -206,6 +225,7 @@ mkEnv cfg = do
   liveAsked <- newTVarIO Nothing
   liveTried <- newTVarIO Nothing
   liveGate <- newMVar ()
+  lapSectors <- newTVarIO emptySectorMemory
   pure
     Env
       { envConfig          = cfg
@@ -220,4 +240,5 @@ mkEnv cfg = do
       , envLiveTried       = liveTried
       , envLiveGate        = liveGate
       , envDriversCache    = driversCache
+      , envLapSectors      = lapSectors
       }
