@@ -169,11 +169,12 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               bandNote, bandPieces, bandRight,
                                               bestLapMarks, catchUp, clockLabel,
                                               countdownText, cutOffLabel,
-                                              flagName, lapLabel, lapSeconds,
-                                              noParams, overCutOff, pieceFlag,
-                                              pieceSeparator, pieceWord,
-                                              rowBreaks, sessionInProgress,
-                                              sessionIsLive, sessionStateFrom,
+                                              emptyLiveRow, flagName, lapLabel,
+                                              lapSeconds, noParams, overCutOff,
+                                              pieceFlag, pieceSeparator,
+                                              pieceWord, rowBreaks,
+                                              sessionInProgress, sessionIsLive,
+                                              sessionStateFrom,
                                               sessionStateLabel,
                                               sessionStateWord, sessionTitle,
                                               shownClock, shownNext, showsClock,
@@ -710,10 +711,7 @@ main = hspec $ do
       -- muestras por coche de `/position` e `/intervals` se toma la última por
       -- `date`, no la primera.
       rowsOf openF1Grid positionArray intervalArray lapArray resultArray
-        `shouldBe`
-          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False [] [] []
-          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Running "1:16.001" "" [] False False [] [] []
-          ]
+        `shouldBe` [openF1Lec, openF1Nor]
 
     it "marca el DNF que sí trae posición, y la fila sigue en la tabla" $
       -- El caso medido del coche 23, y el que justifica que 'ltStatus' exista: la
@@ -721,10 +719,7 @@ main = hspec $ do
       -- intervalo siguen siendo los de su última muestra, que es exactamente el
       -- dato engañoso que la marca contextualiza.
       rowsOf openF1Grid positionArray intervalArray lapArray resultWithDnf
-        `shouldBe`
-          [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False [] [] []
-          , LiveTimingRow 2 "NOR" "McLaren" "+2.310" "+2.310" "1:16.001" Dnf "1:16.001" "" [] False False [] [] []
-          ]
+        `shouldBe` [openF1Lec, openF1Nor { ltStatus = Dnf }]
 
     it "sirve la tabla entera como Running si `/session_result` llega vacía" $
       -- Degradado __parcial__, y es la única de las cinco respuestas cuya ausencia
@@ -762,7 +757,7 @@ main = hspec $ do
       -- prueba aquí porque el dato de hoy no la alcanza y vive para la sesión __en
       -- curso__, donde un coche puede no tener posición publicada todavía.
       rowsOf openF1Grid positionOfLecOnly intervalArray lapArray resultWithDnf
-        `shouldBe` [LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:15.265" Running "1:15.265" "" [] False False [] [] []]
+        `shouldBe` [openF1Lec]
 
     it "devuelve [] cuando la parrilla llega vacía, aunque haya posiciones" $
       -- Simétrico del caso de 'assembleStints': la unidad de la fila es el piloto
@@ -957,7 +952,7 @@ main = hspec $ do
       -- entera. Aquí degradar es lo correcto porque el precio de no hacerlo es la
       -- tabla de la sesión en marcha, que es el único momento en que OpenF1 calla.
       fmap feedRows (tryFeedRows feedTableMinimal)
-        `shouldBe` Right [LiveTimingRow 4 "ANT" "" "" "" "" Running "" "" [] False False [] [] []]
+        `shouldBe` Right [emptyLiveRow { ltPosition = 4, ltDriver = "ANT" }]
 
     it "sin ltPosition no decodifica, y eso tumba la tabla entera" $
       -- Sin posición no hay fila que ordenar, que es el criterio que ya aplican
@@ -3156,7 +3151,8 @@ main = hspec $ do
   -- La columna Best Lap: qué se marca en negrita (la más rápida de la sesión) y en
   -- morado (la más rápida de la parte en curso, o de la sesión si no hay partes).
   describe "las marcas de Best Lap" $ do
-    let row best part = LiveTimingRow 1 "X" "" "" "" "" Running best part [] False False [] [] []
+    let row best part =
+          emptyLiveRow { ltPosition = 1, ltDriver = "X", ltBestLap = best, ltPartBestLap = part }
     it "lee los tiempos de vuelta, y no lo que no lo es" $ do
       map lapSeconds ["1:23.456", "59.876", " 1:00.000 "] `shouldBe` [Just 83.456, Just 59.876, Just 60]
       map lapSeconds ["-", "", "LAP 3", "1:2:3"] `shouldBe` replicate 4 Nothing
@@ -3184,7 +3180,9 @@ main = hspec $ do
     let q1 state cut = raceSessionFixture
           { siType = "Qualifying", siName = "Qualifying", siPart = Just 1
           , siState = Just (StateReading state Heard), siCutOffTime = cut }
-        qrow n d best = LiveTimingRow n d "" "" "" "" Running best "" [best, "-", "-"] False True [] [] []
+        qrow n d best = emptyLiveRow
+          { ltPosition = n, ltDriver = d, ltBestLap = best, ltPartBests = [best, "-", "-"]
+          , ltCutoff = True }
         baku = [qrow 9 "BOT" "1:48.290", qrow 18 "HAM" "1:57.767", qrow 22 "PER" "-"]
     it "junto al título, el corte solo en la Q1" $ do
       cutOffLabel (q1 SessionStarted (Just "1:45.800")) `shouldBe` Just "107 %: 1:45.800"
@@ -3211,7 +3209,9 @@ main = hspec $ do
   describe "rowBreaks" $ do
     let quali name part = Just raceSessionFixture
           {siType = "Qualifying", siName = name, siPart = Just part, siEntries = [22, 16, 10]}
-        grid knocked = [ LiveTimingRow n "X" "" "" "" "" Running "-" "" [] (n > knocked) False [] [] []
+        grid knocked = [ emptyLiveRow
+                           { ltPosition = n, ltDriver = "X", ltBestLap = "-"
+                           , ltKnockedOut = n > knocked }
                        | n <- [1 .. 22] ]
         breaks s rows = [ (ltPosition r, b) | (r, Just b) <- zip rows (rowBreaks s rows) ]
     it "en la Q1, y tras su bandera hasta que el feed marca, la raya roja encima del 17" $
@@ -5538,6 +5538,16 @@ openF1Grid =
   \{\"driver_number\":16,\"name_acronym\":\"LEC\",\"team_name\":\"Ferrari\",\
   \\"broadcast_name\":\"C LECLERC\",\"team_colour\":\"ED1131\"}]"
 
+-- | Las dos filas que salen de 'openF1Grid' con 'positionArray', 'intervalArray' y
+-- 'lapArray', las dos 'Running'.
+openF1Lec, openF1Nor :: LiveTimingRow
+openF1Lec = emptyLiveRow
+  { ltPosition = 1, ltDriver = "LEC", ltTeam = "Ferrari", ltGap = "LEADER", ltInterval = "-"
+  , ltLastLap = "1:15.265", ltBestLap = "1:15.265" }
+openF1Nor = emptyLiveRow
+  { ltPosition = 2, ltDriver = "NOR", ltTeam = "McLaren", ltGap = "+2.310", ltInterval = "+2.310"
+  , ltLastLap = "1:16.001", ltBestLap = "1:16.001" }
+
 -- | La tabla tal cual la emite @GET \/fastf1\/live@: siete claves por fila, con el
 -- líder ya marcado y el estado como el nombre del constructor.
 feedTable :: ByteString
@@ -5639,8 +5649,12 @@ feedLiveFinalised =
 -- microservicio, y el segundo con su abandono.
 feedRowsFixture :: [LiveTimingRow]
 feedRowsFixture =
-  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running "" "" [] False False [] [] []
-  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Dnf "" "" [] False False [] [] []
+  [ emptyLiveRow
+      { ltPosition = 1, ltDriver = "VER", ltTeam = "Red Bull", ltGap = "LEADER", ltInterval = "-"
+      , ltLastLap = "1:29.345" }
+  , emptyLiveRow
+      { ltPosition = 2, ltDriver = "LEC", ltTeam = "Ferrari", ltGap = "+1.234", ltInterval = "+1.234"
+      , ltLastLap = "1:29.512", ltStatus = Dnf }
   ]
 
 -- El instante en que se sirve la sesión de carrera: media hora después de que el
@@ -6241,8 +6255,12 @@ resultWithoutFlagKeys =
 -- sino lo que 'withProvenance' pone alrededor, así que no pasan por ningún fixture JSON.
 liveRowsFixture :: [LiveTimingRow]
 liveRowsFixture =
-  [ LiveTimingRow 1 "LEC" "Ferrari" "LEADER" "-" "1:21.004" Running "-" "" [] False False [] [] []
-  , LiveTimingRow 2 "NOR" "McLaren" "+0.412" "+0.412" "1:21.390" Running "-" "" [] False False [] [] []
+  [ emptyLiveRow
+      { ltPosition = 1, ltDriver = "LEC", ltTeam = "Ferrari", ltGap = "LEADER", ltInterval = "-"
+      , ltLastLap = "1:21.004", ltBestLap = "-" }
+  , emptyLiveRow
+      { ltPosition = 2, ltDriver = "NOR", ltTeam = "McLaren", ltGap = "+0.412", ltInterval = "+0.412"
+      , ltLastLap = "1:21.390", ltBestLap = "-" }
   ]
 
 -- | La sesión de la carrera 11369 ya mapeada, con los valores que

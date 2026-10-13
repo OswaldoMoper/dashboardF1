@@ -48,7 +48,7 @@ import           App                     (Env (..), FeedWindow (..),
 import           Common.Origin           (Origin (..), Source (..))
 import           Common.Types            (DriverStatus (..), LiveTable (..),
                                           LiveTimingRow (..), SessionInfo,
-                                          UpNext (..))
+                                          UpNext (..), emptyLiveRow)
 import           Config                  (Config)
 import           Control.Concurrent      (threadDelay)
 import           Control.Concurrent.MVar (withMVar)
@@ -567,7 +567,19 @@ fetchIntervalsOrEmpty cfg = do
 -- abandono inventado haría creer en un incidente que nadie reportó.
 dummy :: [LiveTimingRow]
 dummy =
-  [ LiveTimingRow 1 "VER" "Red Bull" "LEADER" "-" "1:29.345" Running "1:29.345" "" [] False False [] [] []
-  , LiveTimingRow 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512" Running "1:29.512" "" [] False False [] [] []
-  , LiveTimingRow 3 "NOR" "McLaren" "+3.877" "+2.643" "1:29.701" Running "1:29.701" "" [] False False [] [] []
+  [ row 1 "VER" "Red Bull" "LEADER" "-" "1:29.345"
+  , row 2 "LEC" "Ferrari" "+1.234" "+1.234" "1:29.512"
+  , row 3 "NOR" "McLaren" "+3.877" "+2.643" "1:29.701"
   ]
+  where
+    row pos driver team gap interval lap =
+      emptyLiveRow
+        { ltPosition = pos
+        , ltDriver   = driver
+        , ltTeam     = team
+        , ltGap      = gap
+        , ltInterval = interval
+        , ltLastLap  = lap
+        , ltStatus   = Running
+        , ltBestLap  = lap
+        }

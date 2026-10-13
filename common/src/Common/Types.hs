@@ -99,6 +99,28 @@ data LiveTimingRow = LiveTimingRow
 instance ToJSON LiveTimingRow
 instance FromJSON LiveTimingRow
 
+-- | Una fila sin nada, de la que se parte para construir otra por nombre: posición 0,
+-- 'Running', los textos vacíos, las listas vacías y las marcas apagadas.
+emptyLiveRow :: LiveTimingRow
+emptyLiveRow =
+  LiveTimingRow
+    { ltPosition        = 0
+    , ltDriver          = ""
+    , ltTeam            = ""
+    , ltGap             = ""
+    , ltInterval        = ""
+    , ltLastLap         = ""
+    , ltStatus          = Running
+    , ltBestLap         = ""
+    , ltPartBestLap     = ""
+    , ltPartBests       = []
+    , ltKnockedOut      = False
+    , ltCutoff          = False
+    , ltLastSectors     = []
+    , ltBestSectors     = []
+    , ltPartBestSectors = []
+    }
+
 -- | Qué vueltas rápidas se marcan en cada fila, en el orden de entrada: la más rápida
 -- de la sesión (en negrita) y la más rápida de la parte en curso (en morado). Sin
 -- partes —ninguna fila trae 'ltPartBestLap'— la parte es la sesión entera, y las dos
