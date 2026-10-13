@@ -348,13 +348,14 @@ feedRows = map toRow . sortOn frPosition
         , ltPartBestSectors = map (const []) (frPartBests r)
         }
 
--- | Los tres sectores de una vuelta, solo si suman su tiempo (±0,05 s). Un sector que
--- falta, uno que no se lee o una vuelta sin tiempo dan 'Nothing'.
+-- | Los tres sectores de una vuelta, solo si suman su tiempo al milésimo (con uno de
+-- redondeo). Un sector que falta, uno que no se lee o una vuelta sin tiempo dan
+-- 'Nothing'.
 sectorsAddingUp :: Text -> [Text] -> Maybe [Text]
 sectorsAddingUp lap sectors = do
   total <- lapSeconds lap
   parts <- traverse lapSeconds sectors
-  if length parts == 3 && abs (sum parts - total) < 0.05 then Just sectors else Nothing
+  if length parts == 3 && abs (sum parts - total) < 0.0015 then Just sectors else Nothing
 
 -- | Guarda los sectores de la última vuelta de cada coche de una foto, con su tiempo.
 -- Una foto que nombra otra sesión empieza de cero; una sin sesión no la cambia. El

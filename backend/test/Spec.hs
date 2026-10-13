@@ -983,6 +983,14 @@ main = hspec $ do
         ]
         `shouldBe` [Nothing, Nothing, Nothing, Nothing]
 
+    it "acepta una milésima de redondeo, y dos ya no" $
+      map (`sectorsAddingUp` lapA) ["1:35.758", "1:35.756", "1:35.759"]
+        `shouldBe` [Just lapA, Just lapA, Nothing]
+
+    it "no da por buena una foto con el S1 de la vuelta siguiente, aunque sume casi la vuelta" $
+      -- Medido en la carrera del 2026-10-04: el 63 con 1:49.122, su S1 de verdad 28.133.
+      sectorsAddingUp "1:49.122" ["28.174", "37.060", "43.929"] `shouldBe` Nothing
+
   describe "rememberSectors y withLapSectors" $ do
     it "la fila del feed lleva los de su última vuelta solo si suman" $
       map ltLastSectors (feedRows [sectorRow "1:35.757" lapA "1:35.757" [], sectorRow "1:35.857" lapA "1:35.757" []])
