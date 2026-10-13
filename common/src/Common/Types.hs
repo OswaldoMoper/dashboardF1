@@ -63,26 +63,26 @@ statusLabel Dsq     = "DSQ"
 
 -- | Fila del widget de live timing.
 data LiveTimingRow = LiveTimingRow
-  { ltPosition :: Int
-  , ltDriver   :: Text
-  , ltTeam     :: Text
-  , ltGap      :: Text  -- ^ Gap al líder (p. ej. @"+1.234"@ o @"LEADER"@).
-  , ltInterval :: Text  -- ^ Intervalo al coche de delante.
-  , ltLastLap  :: Text  -- ^ Última vuelta (p. ej. @"1:23.456"@).
-  , ltStatus   :: DriverStatus
+  { ltPosition    :: Int
+  , ltDriver      :: Text
+  , ltTeam        :: Text
+  , ltGap         :: Text  -- ^ Gap al líder (p. ej. @"+1.234"@ o @"LEADER"@).
+  , ltInterval    :: Text  -- ^ Intervalo al coche de delante.
+  , ltLastLap     :: Text  -- ^ Última vuelta (p. ej. @"1:23.456"@).
+  , ltStatus      :: DriverStatus
     -- ^ Abandono, no-salida o descalificación; 'Running' si no consta ninguna.
     -- Sin él una fila de abandono es indistinguible de una normal, y sus
     -- 'ltGap' e 'ltInterval' son los de su última muestra: el coche 3 de la
     -- 11353 sale en P22 con @"+5.672"@ habiendo hecho 0 vueltas.
-  , ltBestLap  :: Text  -- ^ Mejor vuelta de la sesión, o @"-"@.
+  , ltBestLap     :: Text  -- ^ Mejor vuelta de la sesión, o @"-"@.
   , ltPartBestLap :: Text
     -- ^ Mejor vuelta en la parte en curso de una clasificación (Q1, Q2 o Q3), o
     -- @"-"@; __vacío__ si la sesión no tiene partes o la fuente no las sabe.
-  , ltPartBests :: [Text]
+  , ltPartBests   :: [Text]
     -- ^ La mejor de cada parte de una clasificación, en orden, @"-"@ en la que no
     -- tiene vuelta. Vacía fuera de clasificación.
-  , ltKnockedOut :: Bool  -- ^ Eliminado en una parte anterior de la clasificación.
-  , ltCutoff     :: Bool
+  , ltKnockedOut  :: Bool  -- ^ Eliminado en una parte anterior de la clasificación.
+  , ltCutoff      :: Bool
     -- ^ Sin tiempo dentro del 107 %, también quien aún no ha marcado vuelta. __No es
     -- la zona de eliminación.__
   }
@@ -478,12 +478,12 @@ instance FromJSON SessionClock
 -- así que cuatro de las cinco sesiones de un fin de semana llegan sin ellas; y el
 -- reloj falta si su tema no viene en la foto.
 data SessionInfo = SessionInfo
-  { siType    :: Text  -- ^ Tipo, tal cual lo nombra el feed (@\"Race\"@, @\"Qualifying\"@).
-  , siName    :: Text  -- ^ Nombre de la sesión (@\"Race\"@, @\"Sprint Qualifying\"@).
-  , siMeeting :: Text  -- ^ Gran premio (@\"Spanish Grand Prix\"@).
-  , siCircuit :: Maybe Text
+  { siType       :: Text  -- ^ Tipo, tal cual lo nombra el feed (@\"Race\"@, @\"Qualifying\"@).
+  , siName       :: Text  -- ^ Nombre de la sesión (@\"Race\"@, @\"Sprint Qualifying\"@).
+  , siMeeting    :: Text  -- ^ Gran premio (@\"Spanish Grand Prix\"@).
+  , siCircuit    :: Maybe Text
     -- ^ Circuito (@\"Madring\"@). 'Nothing' cuando quien publica la sesión no lo dice.
-  , siState   :: Maybe StateReading
+  , siState      :: Maybe StateReading
     -- ^ 'Nothing' cuando no se sabe: ni la fuente lo publicó ni el calendario da
     -- para deducirlo. __Es «no se sabe» y no «el emisor lo mandó vacío»__, por el
     -- mismo criterio que 'liveSession' un nivel más arriba.
@@ -493,24 +493,24 @@ data SessionInfo = SessionInfo
     -- la suya y acabó trece antes de la de fin—, así que solo se deduce cuando la
     -- de fin quedó holgadamente atrás, y lo deducido viaja marcado
     -- ('StateBasis').
-  , siLaps    :: Maybe LapProgress
+  , siLaps       :: Maybe LapProgress
     -- ^ 'Nothing' fuera de carrera, que es el caso de cuatro de las cinco sesiones.
-  , siClock   :: Maybe SessionClock
+  , siClock      :: Maybe SessionClock
     -- ^ Ya resuelto al instante de servir, no como el feed lo publicó: el feed lo
     -- emite dos veces en una carrera entera, así que su valor crudo envejece horas.
-  , siPart    :: Maybe Int
+  , siPart       :: Maybe Int
     -- ^ La parte de una clasificación, de @1@ en adelante. 'Nothing' fuera de
     -- clasificación y antes de que el feed anuncie la primera.
-  , siTrack   :: Maybe TrackCondition
+  , siTrack      :: Maybe TrackCondition
     -- ^ Lo que pasa en la pista. 'Nothing' con la pista despejada y cuando la fuente
     -- no lo publica.
-  , siCountdown :: Maybe Countdown
+  , siCountdown  :: Maybe Countdown
     -- ^ Con bandera a cuadros entre partes o con bandera roja, cuándo vuelve a salir,
     -- si control de carrera lo anunció y aún no ha pasado.
-  , siStart   :: Maybe StartNotice
+  , siStart      :: Maybe StartNotice
     -- ^ Con la sesión por empezar, si sale tarde. 'Nothing' si nada dice que se
     -- retrase.
-  , siEntries :: [Int]
+  , siEntries    :: [Int]
     -- ^ Cuántos entran en cada parte de una clasificación, en orden (@[22, 16, 10]@).
     -- Vacía fuera de clasificación.
   , siCutOffTime :: Maybe Text
@@ -653,12 +653,12 @@ countdownAfter k c = c {cdSeconds = max 0 (cdSeconds c - max 0 k)}
 --
 -- Recibe los segundos del día locales de ahora, para la hora de 'NextAnnounced'.
 upNextLabel :: Int -> UpNext -> Text
-upNextLabel _ NextSilent           = ""
-upNextLabel _ NextUnknown          = "Próxima: …"
-upNextLabel _ (NextStartsIn n)     = "empieza en " <> formatCountdown n
-upNextLabel _ (NextAfter l n)      = l <> " · en " <> formatCountdown n
-upNextLabel _ NextDelayed          = "Salida retrasada"
-upNextLabel t (NextAnnounced c)    = countdownText t c
+upNextLabel _ NextSilent        = ""
+upNextLabel _ NextUnknown       = "Próxima: …"
+upNextLabel _ (NextStartsIn n)  = "empieza en " <> formatCountdown n
+upNextLabel _ (NextAfter l n)   = l <> " · en " <> formatCountdown n
+upNextLabel _ NextDelayed       = "Salida retrasada"
+upNextLabel t (NextAnnounced c) = countdownText t c
 
 -- | La misma cuenta atrás un segundo después.
 --
@@ -675,10 +675,10 @@ tickDown = catchUp 1
 -- | La misma cuenta atrás @k@ segundos después: lo que se enseña con @k@ segundos de
 -- retraso, puesto a la hora del calendario. Con @k <= 0@ no cambia; no baja de cero.
 catchUp :: Int -> UpNext -> UpNext
-catchUp k (NextStartsIn n) = NextStartsIn (max 0 (n - max 0 k))
-catchUp k (NextAfter l n)  = NextAfter l (max 0 (n - max 0 k))
+catchUp k (NextStartsIn n)  = NextStartsIn (max 0 (n - max 0 k))
+catchUp k (NextAfter l n)   = NextAfter l (max 0 (n - max 0 k))
 catchUp k (NextAnnounced c) = NextAnnounced (countdownAfter k c)
-catchUp _ other            = other
+catchUp _ other             = other
 
 -- | Lo que dice la derecha de la banda según la tabla que se enseña: 'NextUnknown'
 -- mientras no ha llegado ninguna, que es también con lo que arranca la cuenta de la

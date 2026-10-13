@@ -51,8 +51,7 @@ module Common.ComparisonCard
   , cardPadding
   ) where
 
-import           Common.Chart (axisPoints, axisTicks, chartWidth,
-                               frontierCells)
+import           Common.Chart (axisPoints, axisTicks, chartWidth, frontierCells)
 import           Data.Aeson   (FromJSON (..), ToJSON (..), Value (String),
                                withText)
 import           Data.List    (find, sort, sortOn)

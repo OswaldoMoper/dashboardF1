@@ -94,7 +94,8 @@ import           Data.List             (find, maximumBy, minimumBy, sortOn)
 import           Data.List.NonEmpty    (nonEmpty)
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict       as Map
-import           Data.Maybe            (fromMaybe, isJust, listToMaybe, mapMaybe)
+import           Data.Maybe            (fromMaybe, isJust, listToMaybe,
+                                        mapMaybe)
 import           Data.Ord              (Down (..), comparing)
 import           Data.Text             (Text)
 import qualified Data.Text             as T

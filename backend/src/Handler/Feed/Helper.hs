@@ -62,20 +62,20 @@ instance FromJSON FeedLive where
 -- valor que no se reconozca tiene que poder degradar, y eso lo decide el mapeo
 -- ('Handler.Live.Helper.feedRows'), no el decode.
 data FeedRow = FeedRow
-  { frPosition :: Int
-  , frDriver   :: Text
-  , frTeam     :: Text
-  , frGap      :: Text
-  , frInterval :: Text
-  , frLastLap  :: Text
-  , frStatus   :: Text
-  , frBestLap  :: Text
+  { frPosition    :: Int
+  , frDriver      :: Text
+  , frTeam        :: Text
+  , frGap         :: Text
+  , frInterval    :: Text
+  , frLastLap     :: Text
+  , frStatus      :: Text
+  , frBestLap     :: Text
   , frPartBestLap :: Text
-  , frPartBests :: [Text]
+  , frPartBests   :: [Text]
     -- ^ La mejor de cada parte de una clasificación, en orden, @\"-\"@ en la que no
     -- tiene vuelta. Vacía fuera de clasificación.
-  , frKnockedOut :: Bool  -- ^ Eliminado en una parte anterior de la clasificación.
-  , frCutoff     :: Bool
+  , frKnockedOut  :: Bool  -- ^ Eliminado en una parte anterior de la clasificación.
+  , frCutoff      :: Bool
     -- ^ Sin tiempo dentro del 107 %. __No es la zona de eliminación__ (medido el
     -- 2026-10-03): al empezar la Q1 lo llevan los veintidós.
   }

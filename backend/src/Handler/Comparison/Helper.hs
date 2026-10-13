@@ -26,8 +26,8 @@ module Handler.Comparison.Helper
   , resolveParams
   ) where
 
-import           Common.Types          (ComparisonEntry (..), LapComparison (..),
-                                        TracePoint)
+import           Common.Types          (ComparisonEntry (..),
+                                        LapComparison (..), TracePoint)
 import           Data.Aeson            (FromJSON (..), withObject, (.!=), (.:),
                                         (.:?))
 import           Data.Maybe            (isJust)

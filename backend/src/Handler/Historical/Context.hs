@@ -8,12 +8,14 @@
 module Handler.Historical.Context where
 
 import           App                        (Env (..))
-import           Common.Types               (HistoricalStat (..), StatEntity (..))
+import           Common.Types               (HistoricalStat (..),
+                                             StatEntity (..))
 import           Config                     (Config)
 import           Control.Concurrent.STM     (atomically, readTVarIO, writeTVar)
 import           Control.Exception          (SomeException, try)
 import           Data.Maybe                 (fromMaybe)
-import           Handler.Historical.Helper  (assembleConstructorStats, assembleStats)
+import           Handler.Historical.Helper  (assembleConstructorStats,
+                                             assembleStats)
 import qualified Handler.Historical.Manager as Manager
 
 getHistorical :: Env -> IO [HistoricalStat]

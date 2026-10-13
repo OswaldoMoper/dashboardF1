@@ -173,19 +173,19 @@ keepLast Nothing  k = k {keptStale = isJust (keptValue k)}
 -- ya es gris— pero sí el tooltip: «se muestra la tabla anterior» es falso cuando
 -- no hay tabla anterior, que es justo el caso del fallo en la primera carga.
 data Indicator = Indicator
-  { indShown   :: Bool
+  { indShown     :: Bool
     -- ^ Hay algo en pantalla, aunque sea de una respuesta vieja.
-  , indOrigin  :: Maybe Origin
+  , indOrigin    :: Maybe Origin
     -- ^ Procedencia de lo que se ve; 'Nothing' si la cabecera faltaba, no se
     -- reconoció o aún no ha llegado ninguna respuesta.
-  , indSource  :: Maybe Source
+  , indSource    :: Maybe Source
     -- ^ Fuente de lo que se ve; 'Nothing' también cuando el dato es el respaldo
     -- estático, que no salió de ninguna.
-  , indFetched :: Maybe Text
+  , indFetched   :: Maybe Text
     -- ^ El instante tal cual viajó en la cabecera, sin formatear.
-  , indFailed  :: Bool
+  , indFailed    :: Bool
     -- ^ El último refresco no volvió.
-  , indRunning :: Bool
+  , indRunning   :: Bool
     -- ^ Consta que hay una sesión en curso. __No sale de los otros campos__: un
     -- dato recién traído fuera de sesión sigue siendo fresco, y el sello no dice
     -- nada de si hay carrera.

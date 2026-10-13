@@ -19,22 +19,22 @@ module Common.Saved
 
 import           Common.ComparisonCard (CardControl (..), ChartMode, Side,
                                         defaultControl)
-import           Common.Layout   (fitsAt, overlaps)
-import           Common.Types    (LayoutId (..), WidgetConfig (..), WidgetId,
-                                  WidgetType (..))
-import           Control.Monad   (guard)
-import           Data.Aeson      (FromJSON, Options (..), ToJSON (..),
-                                  decodeStrictText, defaultOptions,
-                                  genericToEncoding, genericToJSON)
-import           Data.Aeson.Text (encodeToLazyText)
-import           Data.List       (find, tails)
-import           Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import           Data.Maybe      (fromMaybe)
-import           Data.Text       (Text)
-import qualified Data.Text       as T
-import qualified Data.Text.Lazy  as LT
-import           GHC.Generics    (Generic)
+import           Common.Layout         (fitsAt, overlaps)
+import           Common.Types          (LayoutId (..), WidgetConfig (..),
+                                        WidgetId, WidgetType (..))
+import           Control.Monad         (guard)
+import           Data.Aeson            (FromJSON, Options (..), ToJSON (..),
+                                        decodeStrictText, defaultOptions,
+                                        genericToEncoding, genericToJSON)
+import           Data.Aeson.Text       (encodeToLazyText)
+import           Data.List             (find, tails)
+import           Data.Map.Strict       (Map)
+import qualified Data.Map.Strict       as Map
+import           Data.Maybe            (fromMaybe)
+import           Data.Text             (Text)
+import qualified Data.Text             as T
+import qualified Data.Text.Lazy        as LT
+import           GHC.Generics          (Generic)
 
 -- | El rectángulo de una tarjeta, como se guarda, y si es una Lap Comparison, el
 -- lado de su tabla de mando, la banda y el modo. Lo que no tiene no se escribe;

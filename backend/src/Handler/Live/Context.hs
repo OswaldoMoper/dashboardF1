@@ -72,12 +72,11 @@ import           Handler.Live.Helper     (ClockVerdict (..), FeedVerdict (..),
                                           Of1Session (..), assembleRows,
                                           clockVerdict, closesFeedWindow,
                                           feedVerdict, feedWindowOpen,
-                                          fetchFailure,
-                                          finaliseBox, freezeClock,
-                                          inheritFinalised, meetingNames,
-                                          openf1ClockPeriod, openf1Session,
-                                          schedule, servedFromBox, stillRecent,
-                                          upNext)
+                                          fetchFailure, finaliseBox,
+                                          freezeClock, inheritFinalised,
+                                          meetingNames, openf1ClockPeriod,
+                                          openf1Session, schedule,
+                                          servedFromBox, stillRecent, upNext)
 import qualified Handler.Live.Manager    as Manager
 import qualified Handler.OpenF1.Manager  as OpenF1
 import           Outcome                 (httpStatusOf)

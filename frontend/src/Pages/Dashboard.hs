@@ -27,64 +27,76 @@
 --
 module Pages.Dashboard where
 
-import           Common.Carry       (Board (..), Grip (..), Hand (..), Held (..),
-                                     Scene (..), boardOf, heldStyle, scene,
-                                     stepBoard)
-import           Common.ComparisonCard (CardControl, defaultControl)
-import           Common.Format      (ClockForm (..), formatClock)
-import           Common.Layout      (slotStyle, touchesTopRight)
-import           Common.Origin      (Sourced (..))
-import           Common.Saved       (Restored (..), atFactory, factoryControls,
-                                     restoreLayout, sameShown, saveLayout,
-                                     savedKey, unfitNote)
-import           Common.Shown      (Kept (..), Poll (..), delayDefaultSeconds,
-                                     delayFromUrl, keepLast, keptNothing,
-                                     landed, readDelay)
-import           Common.Types       (BandFlag (..), BandPiece, Countdown,
-                                     Layout (..), LayoutId (..),
-                                     LiveTable (..), SessionClock,
-                                     SessionInfo (..), StateReading (..),
-                                     TrackCondition, UpNext (..),
-                                     WidgetConfig (..), WidgetId (..),
-                                     WidgetType (..), bandMark, bandNote,
-                                     bandPieces, bandRight, countdownAfter,
-                                     countdownText, flagName, isDerived,
-                                     noParams, pieceFlag, pieceSeparator,
-                                     pieceWord, sessionTitle, shownClock,
-                                     shownNext,
-                                     tickClock, catchUp)
-import           Control.Exception  (SomeException, try)
-import           Control.Monad.IO.Class (liftIO)
-import           Data.IORef         (IORef, newIORef, readIORef, writeIORef)
-import           Data.List          (find)
-import           Data.Map           (Map)
-import qualified Data.Map           as Map
-import           Data.Maybe         (fromMaybe, isJust, isNothing, listToMaybe)
-import           Data.Text          (Text)
-import qualified Data.Text          as T
-import           Data.Time.Clock    (UTCTime (..), getCurrentTime)
-import qualified GHCJS.DOM          as DOM (currentWindowUnchecked)
-import qualified GHCJS.DOM.DOMRectReadOnly as DOM (getHeight, getWidth)
-import qualified GHCJS.DOM.Element as DOM (closest, getBoundingClientRect)
-import qualified GHCJS.DOM.EventM   as DOM (event, mouseClientXY, on,
-                                            preventDefault, target)
+import           Common.Carry                  (Board (..), Grip (..),
+                                                Hand (..), Held (..),
+                                                Scene (..), boardOf, heldStyle,
+                                                scene, stepBoard)
+import           Common.ComparisonCard         (CardControl, defaultControl)
+import           Common.Format                 (ClockForm (..), formatClock)
+import           Common.Layout                 (slotStyle, touchesTopRight)
+import           Common.Origin                 (Sourced (..))
+import           Common.Saved                  (Restored (..), atFactory,
+                                                factoryControls, restoreLayout,
+                                                sameShown, saveLayout, savedKey,
+                                                unfitNote)
+import           Common.Shown                  (Kept (..), Poll (..),
+                                                delayDefaultSeconds,
+                                                delayFromUrl, keepLast,
+                                                keptNothing, landed, readDelay)
+import           Common.Types                  (BandFlag (..), BandPiece,
+                                                Countdown, Layout (..),
+                                                LayoutId (..), LiveTable (..),
+                                                SessionClock, SessionInfo (..),
+                                                StateReading (..),
+                                                TrackCondition, UpNext (..),
+                                                WidgetConfig (..),
+                                                WidgetId (..), WidgetType (..),
+                                                bandMark, bandNote, bandPieces,
+                                                bandRight, catchUp,
+                                                countdownAfter, countdownText,
+                                                flagName, isDerived, noParams,
+                                                pieceFlag, pieceSeparator,
+                                                pieceWord, sessionTitle,
+                                                shownClock, shownNext,
+                                                tickClock)
+import           Control.Exception             (SomeException, try)
+import           Control.Monad.IO.Class        (liftIO)
+import           Data.IORef                    (IORef, newIORef, readIORef,
+                                                writeIORef)
+import           Data.List                     (find)
+import           Data.Map                      (Map)
+import qualified Data.Map                      as Map
+import           Data.Maybe                    (fromMaybe, isJust, isNothing,
+                                                listToMaybe)
+import           Data.Text                     (Text)
+import qualified Data.Text                     as T
+import           Data.Time.Clock               (UTCTime (..), getCurrentTime)
+import qualified GHCJS.DOM                     as DOM (currentWindowUnchecked)
+import qualified GHCJS.DOM.DOMRectReadOnly     as DOM (getHeight, getWidth)
+import qualified GHCJS.DOM.Element             as DOM (closest,
+                                                       getBoundingClientRect)
+import qualified GHCJS.DOM.EventM              as DOM (event, mouseClientXY, on,
+                                                       preventDefault, target)
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM (click, keyDown, keyUp,
                                                        mouseDown, mouseMove,
                                                        mouseUp)
-import qualified GHCJS.DOM.KeyboardEvent as Key (getKey)
-import qualified GHCJS.DOM.MouseEvent as Mouse (getAltKey, getButton)
-import qualified GHCJS.DOM.Storage  as Storage (getItem, setItem)
-import qualified GHCJS.DOM.Types    as DOM (Element (..), HTMLElement (..),
-                                            MouseEvent (..),
-                                            uncheckedCastTo)
-import qualified GHCJS.DOM.Window   as Window (getLocalStorage)
-import           Language.Javascript.JSaddle (JSM, eval, liftJSM, valToNumber)
+import qualified GHCJS.DOM.KeyboardEvent       as Key (getKey)
+import qualified GHCJS.DOM.MouseEvent          as Mouse (getAltKey, getButton)
+import qualified GHCJS.DOM.Storage             as Storage (getItem, setItem)
+import qualified GHCJS.DOM.Types               as DOM (Element (..),
+                                                       HTMLElement (..),
+                                                       MouseEvent (..),
+                                                       uncheckedCastTo)
+import qualified GHCJS.DOM.Window              as Window (getLocalStorage)
+import           Language.Javascript.JSaddle   (JSM, eval, liftJSM, valToNumber)
 import           Reflex.Dom
-import           Widgets.Comparison (comparisonWidget)
-import           Widgets.Historical (constructorStatsWidget, driverStatsWidget)
-import           Widgets.LiveTiming (LiveView (..), delayedLive, livePoll,
-                                     liveTimingWidget, sessionOf)
-import           Widgets.Telemetry  (telemetryWidget)
+import           Widgets.Comparison            (comparisonWidget)
+import           Widgets.Historical            (constructorStatsWidget,
+                                                driverStatsWidget)
+import           Widgets.LiveTiming            (LiveView (..), delayedLive,
+                                                livePoll, liveTimingWidget,
+                                                sessionOf)
+import           Widgets.Telemetry             (telemetryWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
 -- __banda de sesión__ y el __lienzo__ con los dos layouts, cada widget en su
@@ -567,9 +579,9 @@ windowHands carrying = do
       k    <- Key.getKey =<< DOM.event
       held <- liftIO (readIORef carrying)
       case (k :: Text) of
-        "Alt" | held             -> Just (AltKey down) <$ DOM.preventDefault
-        "Escape" | held && down  -> pure (Just Cancel)
-        _                        -> pure Nothing
+        "Alt" | held            -> Just (AltKey down) <$ DOM.preventDefault
+        "Escape" | held && down -> pure (Just Cancel)
+        _                       -> pure Nothing
 
 -- | El contorno de donde caerá la tarjeta que se lleva; escondido si no se lleva
 -- ninguna o si donde está no se deja.

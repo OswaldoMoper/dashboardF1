@@ -50,63 +50,79 @@
 -- @backend-test@ (2026-08-06).
 module Widgets.Comparison where
 
-import           Client        (fetchJson)
-import           Common.Chart  (SectorPace (..), SectorSpan (..), axisPolyline,
-                                axisTicks, axisZeroY, chartHeight,
-                                chartWidth, frontierCells, frontierCellsAt,
-                                sectorSpans)
-import           Common.ComparisonCard (CardControl (..), CardLayout (..),
-                                        ChartMode, Side (..),
-                                        axisColumnWidth, cardLayout, curveInset,
-                                        tracesInset,
-                                        insideAxisLabels, modeEnabled,
-                                        modeFromKey, modeKey, modeOption,
-                                        modesInOrder, otherSide, rowHeight,
-                                        rowTitle,
-                                        shownMode, showsNames, showsValues,
-                                        valueHeight, valuesFitMeasured,
-                                        vsBeside)
-import           Common.Comparison (Axis, Baseline (..), ChartType, Pair (..),
-                                    axesInOrder, axisFromKey, axisKey,
-                                    axisLabel, axisNotice, baselineFromKey,
-                                    baselineKey, baselineLabel, baselineRole,
-                                    baselinesInOrder, chartTypeFromKey,
-                                    chartTypeKey, chartTypeLabel,
-                                    chartTypeReady, chartTypeTraces,
-                                    chartTypesInOrder, defaultAxis,
-                                    defaultChartType, deltaFormula, lapShown,
-                                    missingReference, noLapFor, pairWith)
-import           Common.Format (formatFixed)
-import           Common.Route  (comparisonPathFor, driversParam, driversPathFor)
-import           Common.Traces (Channel, TraceLayout (..), TracePiece (..),
-                                TraceRows (..), axisEnd, axisEndLabel,
-                                boundaryXs, channelCaption, channelHeight,
-                                channelRange, channelTop, channelsSpan,
-                                frontierXs, pieceFlex, readSamples,
-                                samplesMax, samplesMin, samplesStart,
-                                samplesStep, spanPiece, traceChannels,
-                                traceLayout, traceXs, tracePoints,
-                                tracesHeight, tracesWidth, xPercent)
-import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
-                                LapComparison (..))
-import           Control.Monad (forM_, unless, when)
-import           Control.Monad.IO.Class (liftIO)
-import           Data.List     (find)
-import           Data.Map      (Map)
-import qualified Data.Map      as Map
-import           Data.Maybe    (fromMaybe, listToMaybe)
-import           Data.Text     (Text)
-import qualified Data.Text     as T
-import qualified GHCJS.DOM     as DOM (currentWindowUnchecked)
-import qualified GHCJS.DOM.DOMRectReadOnly as DOM (getHeight)
-import qualified GHCJS.DOM.Element as DOM (getBoundingClientRect, getClientHeight)
-import qualified GHCJS.DOM.EventM as DOM (on)
+import           Client                        (fetchJson)
+import           Common.Chart                  (SectorPace (..),
+                                                SectorSpan (..), axisPolyline,
+                                                axisTicks, axisZeroY,
+                                                chartHeight, chartWidth,
+                                                frontierCells, frontierCellsAt,
+                                                sectorSpans)
+import           Common.Comparison             (Axis, Baseline (..), ChartType,
+                                                Pair (..), axesInOrder,
+                                                axisFromKey, axisKey, axisLabel,
+                                                axisNotice, baselineFromKey,
+                                                baselineKey, baselineLabel,
+                                                baselineRole, baselinesInOrder,
+                                                chartTypeFromKey, chartTypeKey,
+                                                chartTypeLabel, chartTypeReady,
+                                                chartTypeTraces,
+                                                chartTypesInOrder, defaultAxis,
+                                                defaultChartType, deltaFormula,
+                                                lapShown, missingReference,
+                                                noLapFor, pairWith)
+import           Common.ComparisonCard         (CardControl (..),
+                                                CardLayout (..), ChartMode,
+                                                Side (..), axisColumnWidth,
+                                                cardLayout, curveInset,
+                                                insideAxisLabels, modeEnabled,
+                                                modeFromKey, modeKey,
+                                                modeOption, modesInOrder,
+                                                otherSide, rowHeight, rowTitle,
+                                                shownMode, showsNames,
+                                                showsValues, tracesInset,
+                                                valueHeight, valuesFitMeasured,
+                                                vsBeside)
+import           Common.Format                 (formatFixed)
+import           Common.Route                  (comparisonPathFor, driversParam,
+                                                driversPathFor)
+import           Common.Traces                 (Channel, TraceLayout (..),
+                                                TracePiece (..), TraceRows (..),
+                                                axisEnd, axisEndLabel,
+                                                boundaryXs, channelCaption,
+                                                channelHeight, channelRange,
+                                                channelTop, channelsSpan,
+                                                frontierXs, pieceFlex,
+                                                readSamples, samplesMax,
+                                                samplesMin, samplesStart,
+                                                samplesStep, spanPiece,
+                                                traceChannels, traceLayout,
+                                                tracePoints, traceXs,
+                                                tracesHeight, tracesWidth,
+                                                xPercent)
+import           Common.Types                  (ComparisonEntry (..),
+                                                DriverEntry (..),
+                                                LapComparison (..))
+import           Control.Monad                 (forM_, unless, when)
+import           Control.Monad.IO.Class        (liftIO)
+import           Data.List                     (find)
+import           Data.Map                      (Map)
+import qualified Data.Map                      as Map
+import           Data.Maybe                    (fromMaybe, listToMaybe)
+import           Data.Text                     (Text)
+import qualified Data.Text                     as T
+import qualified GHCJS.DOM                     as DOM (currentWindowUnchecked)
+import qualified GHCJS.DOM.DOMRectReadOnly     as DOM (getHeight)
+import qualified GHCJS.DOM.Element             as DOM (getBoundingClientRect,
+                                                       getClientHeight)
+import qualified GHCJS.DOM.EventM              as DOM (on)
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM (resize)
-import qualified GHCJS.DOM.HTMLElement as DOM (getOffsetHeight, getOffsetWidth)
-import qualified GHCJS.DOM.ParentNode as DOM (querySelector)
-import qualified GHCJS.DOM.Types as DOM (Element (..), HTMLElement (..),
-                                         liftJSM, uncheckedCastTo)
-import qualified Language.Javascript.JSaddle as JS
+import qualified GHCJS.DOM.HTMLElement         as DOM (getOffsetHeight,
+                                                       getOffsetWidth)
+import qualified GHCJS.DOM.ParentNode          as DOM (querySelector)
+import qualified GHCJS.DOM.Types               as DOM (Element (..),
+                                                       HTMLElement (..),
+                                                       liftJSM, uncheckedCastTo)
+import qualified Language.Javascript.JSaddle   as JS
 import           Reflex.Dom
 
 -- | Estado del fetch de @\/api\/comparison@. 'Failed' (no 'Error') para no

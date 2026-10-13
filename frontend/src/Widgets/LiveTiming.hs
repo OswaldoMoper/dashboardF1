@@ -24,33 +24,31 @@
 -- (@nth-child@) cambiaría de columna al cerrar otra.
 module Widgets.LiveTiming where
 
-import           Client        (fetchJsonSourced)
+import           Client         (fetchJsonSourced)
 import           Common.Columns (LiveColumn (..), canClose, liveColumnClass,
                                  liveColumnLabel, menuColumns, shownColumns,
                                  toggleColumn)
-import           Common.Origin (Sourced (..))
-import           Common.Route  (livePath)
-import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
-                                canRequest, delayNote, delayWait,
-                                delayWaitLabel, delayedPoll, indicatorClass,
-                                indicatorFrom, indicatorTooltip, landed,
-                                liveRefreshSeconds, pollIdle, pollStep,
-                                recordArrival, shownAge)
-import           Common.Types  (DriverStatus (..), LiveTable (..),
-                                LiveTimingRow (..), RowBreak (..),
-                                SessionInfo (..),
-                                SessionState (..), StateReading (..),
-                                bestLapMarks, cutOffLabel, overCutOff,
-                                rowBreaks, sessionInProgress,
-                                statusLabel,
-                                waitingTable)
-import           Control.Monad (forM_)
-import           Data.List     (zip4)
-import           Data.Maybe    (fromMaybe)
-import           Data.Set      (Set)
-import qualified Data.Set      as Set
-import           Data.Text     (Text)
-import qualified Data.Text     as T
+import           Common.Origin  (Sourced (..))
+import           Common.Route   (livePath)
+import           Common.Shown   (Indicator, Poll (..), PollEvent (..),
+                                 canRequest, delayNote, delayWait,
+                                 delayWaitLabel, delayedPoll, indicatorClass,
+                                 indicatorFrom, indicatorTooltip, landed,
+                                 liveRefreshSeconds, pollIdle, pollStep,
+                                 recordArrival, shownAge)
+import           Common.Types   (DriverStatus (..), LiveTable (..),
+                                 LiveTimingRow (..), RowBreak (..),
+                                 SessionInfo (..), SessionState (..),
+                                 StateReading (..), bestLapMarks, cutOffLabel,
+                                 overCutOff, rowBreaks, sessionInProgress,
+                                 statusLabel, waitingTable)
+import           Control.Monad  (forM_)
+import           Data.List      (zip4)
+import           Data.Maybe     (fromMaybe)
+import           Data.Set       (Set)
+import qualified Data.Set       as Set
+import           Data.Text      (Text)
+import qualified Data.Text      as T
 import           Reflex.Dom
 
 -- | Qué enseña la tarjeta. 'Failed' (no 'Error') para no chocar con
