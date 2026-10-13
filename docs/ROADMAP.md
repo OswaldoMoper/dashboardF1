@@ -739,7 +739,9 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       en botones junto al tipo, con excepción por piloto en un desplegable junto a su tiempo, aplicada al momento y sin
       «Comparar»; los sectores de la mejor, guardados por el backend de las fotos del feed, que pide él mismo cada 20 s
       (2026-10-10 (c)). **Hecho el 2026-10-12 (a):** con la ventana del feed abierta, el reloj pide la foto aunque
-      nadie mire (~22 s con la sesión en marcha); falta guardar de ella los sectores de la mejor. Con cuenta, la
+      nadie mire (~22 s con la sesión en marcha). **Hecho el 2026-10-12 (e):** de cada foto el backend guarda los
+      sectores de cada vuelta, y cada fila del directo lleva los de la última, los de la mejor y los de la mejor de
+      cada parte, buscados por su tiempo (una mejor borrada no deja los suyos); la página aún no los pinta. Con cuenta, la
       predicción llega en directo; las tablas se fechan midiendo si llega sin cuenta (2026-10-10 (a)), en la carrera
       de EE. UU.: la de Singapur no se grabó.
 - [x] **El final de una sesión, dicho como es** (2026-10-03 (a) y (b)). Tras cada bandera a cuadros la banda dice
