@@ -42,6 +42,15 @@ module Common.Comparison
   , endedNotice
   , keepChosen
   , leadingPair
+    -- * El mando de la vuelta
+  , lapChoiceKey
+  , lapChoiceFromKey
+  , lapChoiceLabel
+  , lapChoiceShort
+  , lapFor
+  , lapButtons
+  , LapPick (..)
+  , lapPicks
     -- * El tipo de gráfica
   , ChartType (..)
   , chartTypesInOrder
@@ -63,6 +72,8 @@ import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
                                 StateReading (..), lapSeconds, partLabel,
                                 sessionIsLive)
 import           Control.Monad (join)
+import           Data.Aeson    (FromJSON (..), ToJSON (..), Value (String),
+                                withText)
 import           Data.List     (find, minimumBy, sortOn)
 import           Data.Maybe    (fromMaybe, isJust, isNothing, listToMaybe)
 import           Data.Ord      (comparing)
@@ -401,6 +412,76 @@ keepChosen cars (r, o) = (r', pick o (maybe [] pure r'))
     pick c avoid
       | c `elem` cars = Just c
       | otherwise     = find (`notElem` avoid) cars
+
+-- | Cómo se guarda una vuelta: @fastest@, @last@ o @part-2@.
+lapChoiceKey :: LapChoice -> Text
+lapChoiceKey FastestLap  = "fastest"
+lapChoiceKey LastLap     = "last"
+lapChoiceKey (PartLap n) = "part-" <> T.pack (show n)
+
+-- | 'lapChoiceKey' al revés; una parte que no sea de 1 en adelante no se lee.
+lapChoiceFromKey :: Text -> Maybe LapChoice
+lapChoiceFromKey "fastest" = Just FastestLap
+lapChoiceFromKey "last"    = Just LastLap
+lapChoiceFromKey k = do
+  n <- readMaybe . T.unpack =<< T.stripPrefix "part-" k
+  if n >= 1 then Just (PartLap n) else Nothing
+
+instance ToJSON LapChoice where
+  toJSON = String . lapChoiceKey
+
+instance FromJSON LapChoice where
+  parseJSON = withText "LapChoice" $ \k ->
+    maybe (fail "LapChoice: no es una vuelta") pure (lapChoiceFromKey k)
+
+-- | El nombre de una vuelta en los botones de la cabecera: @«más rápida»@, @«última»@,
+-- @«Q2»@ (@«SQ2»@ en la clasificación Sprint).
+lapChoiceLabel :: Maybe SessionInfo -> LapChoice -> Text
+lapChoiceLabel _ FastestLap  = "más rápida"
+lapChoiceLabel _ LastLap     = "última"
+lapChoiceLabel s (PartLap n) = maybe ("Q" <> T.pack (show n)) (`partLabel` n) s
+
+-- | El nombre en el desplegable corto de cada piloto: @«rápida»@, y los demás como
+-- 'lapChoiceLabel'.
+lapChoiceShort :: Maybe SessionInfo -> LapChoice -> Text
+lapChoiceShort _ FastestLap = "rápida"
+lapChoiceShort s c          = lapChoiceLabel s c
+
+-- | La vuelta que lleva un piloto entre las que se ofrecen: su excepción; si no, la
+-- regla; si tampoco se ofrece, la más rápida (la regla se sigue recordando).
+lapFor :: [LapChoice] -> LapChoice -> Maybe LapChoice -> LapChoice
+lapFor offered rule exception =
+  case filter (`elem` offered) (maybe [] pure exception <> [rule]) of
+    c : _ -> c
+    []    -> FastestLap
+
+-- | Los botones de la regla, con su nombre y si se pueden pulsar: en directo
+-- ('Just' con su sesión), los que se ofrecen; con FastF1 ('Nothing'), «más rápida» y
+-- «última» apagada.
+lapButtons :: Maybe (Maybe SessionInfo) -> [(LapChoice, Text, Bool)]
+lapButtons Nothing  = [(FastestLap, lapChoiceLabel Nothing FastestLap, True), (LastLap, lapChoiceLabel Nothing LastLap, False)]
+lapButtons (Just s) = [(c, lapChoiceLabel s c, True) | c <- lapChoicesOffered s]
+
+-- | El desplegable corto de un piloto: sus opciones con su nombre, la vuelta que lleva,
+-- si difiere de la regla y si se puede tocar (con FastF1, no).
+data LapPick = LapPick
+  { lpOptions :: [(LapChoice, Text)]
+  , lpValue   :: LapChoice
+  , lpDiffers :: Bool
+  , lpEnabled :: Bool
+  }
+  deriving stock (Eq, Show)
+
+-- | Los desplegables cortos de los dos pilotos, con la regla y la excepción de cada
+-- uno ('lapFor'). Con FastF1 ('Nothing'), los dos en «rápida» y apagados.
+lapPicks :: Maybe (Maybe SessionInfo) -> LapChoice -> (Maybe LapChoice, Maybe LapChoice) -> [LapPick]
+lapPicks Nothing _ _ = replicate 2 (LapPick [(c, lapChoiceShort Nothing c) | c <- [FastestLap, LastLap]] FastestLap False False)
+lapPicks (Just s) rule (a, b) = map pick [a, b]
+  where
+    offered  = lapChoicesOffered s
+    options  = [(c, lapChoiceShort s c) | c <- offered]
+    shown    = lapFor offered rule Nothing
+    pick exc = let v = lapFor offered rule exc in LapPick options v (v /= shown) True
 
 -- | El tipo de gráfica de Lap Comparison, elegido en el título.
 data ChartType = SectorDelta | LapSpeedTrace | TelemetryTraces | LapDeltaBars

@@ -67,9 +67,9 @@ import           Common.Columns              (LiveColumn (..), canClose,
                                               shownColumns, toggleColumn)
 import           Common.Comparison           (Axis (..), Baseline (..),
                                               ChartType (..), LapChoice (..),
-                                              LapGeometry (..), LiveCard (..),
-                                              LiveEntry (..), Pair (..),
-                                              anchored, axesInOrder,
+                                              LapGeometry (..), LapPick (..),
+                                              LiveCard (..), LiveEntry (..),
+                                              Pair (..), anchored, axesInOrder,
                                               axisFromKey, axisKey, axisLabel,
                                               axisNotice, axisXs, baseIndex,
                                               baselineFromKey, baselineKey,
@@ -82,8 +82,11 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               comparisonIsLive, defaultAxis,
                                               defaultChartType, deltaFormula,
                                               deltasAgainst, endedNotice,
-                                              keepChosen, lapChoicesOffered,
-                                              lapShown, leadingPair,
+                                              keepChosen, lapButtons,
+                                              lapChoiceFromKey, lapChoiceKey,
+                                              lapChoiceLabel, lapChoiceShort,
+                                              lapChoicesOffered, lapFor,
+                                              lapPicks, lapShown, leadingPair,
                                               liveCardRows, liveCardStep,
                                               liveComparison, liveDrivers,
                                               liveLapLines,
@@ -3321,6 +3324,45 @@ main = hspec $ do
       leadingPair [at 1 "", at 3 "44", at 2 "1"] `shouldBe` Just ("1", "44")
       leadingPair [at 1 "16"] `shouldBe` Nothing
 
+  -- El mando de la vuelta: la regla de la cabecera y el desplegable corto de cada piloto.
+  describe "Common.Comparison: el mando de la vuelta" $ do
+    let race   = stateOf SessionStarted
+        quali  = race {siName = "Qualifying", siPart = Just 2}
+        sprint = quali {siName = "Sprint Qualifying"}
+    it "cada vuelta se guarda con su clave y se lee de vuelta; lo que no es una vuelta, no" $ do
+      map lapChoiceKey [FastestLap, LastLap, PartLap 2] `shouldBe` ["fastest", "last", "part-2"]
+      map (lapChoiceFromKey . lapChoiceKey) [FastestLap, LastLap, PartLap 1, PartLap 3]
+        `shouldBe` map Just [FastestLap, LastLap, PartLap 1, PartLap 3]
+      map lapChoiceFromKey ["part-0", "part-x", "rapida", ""] `shouldBe` replicate 4 Nothing
+
+    it "los nombres: en la cabecera y en el corto; la parte, Q o SQ" $ do
+      map (lapChoiceLabel (Just quali)) [FastestLap, LastLap, PartLap 2] `shouldBe` ["más rápida", "última", "Q2"]
+      lapChoiceLabel (Just sprint) (PartLap 2) `shouldBe` "SQ2"
+      map (lapChoiceShort (Just quali)) [FastestLap, LastLap, PartLap 1] `shouldBe` ["rápida", "última", "Q1"]
+
+    it "la vuelta de un piloto: su excepción, la regla o, si no se ofrecen, la más rápida" $ do
+      let offered = lapChoicesOffered (Just quali)
+      lapFor offered (PartLap 2) Nothing `shouldBe` PartLap 2
+      lapFor offered (PartLap 2) (Just LastLap) `shouldBe` LastLap
+      lapFor offered (PartLap 3) Nothing `shouldBe` FastestLap
+      lapFor offered LastLap (Just (PartLap 3)) `shouldBe` LastLap
+      lapFor (lapChoicesOffered (Just race)) (PartLap 2) Nothing `shouldBe` FastestLap
+
+    it "los botones: con FastF1, «más rápida» y «última» apagada; en directo, los que se ofrecen" $ do
+      lapButtons Nothing `shouldBe` [(FastestLap, "más rápida", True), (LastLap, "última", False)]
+      lapButtons (Just (Just quali))
+        `shouldBe` [(FastestLap, "más rápida", True), (LastLap, "última", True), (PartLap 1, "Q1", True), (PartLap 2, "Q2", True)]
+
+    it "los cortos: con FastF1, apagados en «rápida»; en directo, la regla y la excepción que difiere" $ do
+      map (\p -> (lpValue p, lpDiffers p, lpEnabled p)) (lapPicks Nothing LastLap (Just LastLap, Nothing))
+        `shouldBe` replicate 2 (FastestLap, False, False)
+      map (\p -> (lpValue p, lpDiffers p, lpEnabled p)) (lapPicks (Just (Just race)) LastLap (Nothing, Just FastestLap))
+        `shouldBe` [(LastLap, False, True), (FastestLap, True, True)]
+      map (\p -> (lpValue p, lpDiffers p)) (lapPicks (Just (Just race)) (PartLap 2) (Nothing, Just LastLap))
+        `shouldBe` [(FastestLap, False), (LastLap, True)]
+      map lpOptions (take 1 (lapPicks (Just (Just quali)) FastestLap (Nothing, Nothing)))
+        `shouldBe` [[(FastestLap, "rápida"), (LastLap, "última"), (PartLap 1, "Q1"), (PartLap 2, "Q2")]]
+
   -- Las trazas del tipo 3 sobre dos vueltas de juguete: la referencia, 100 s y 4000 m
   -- con S1 y S2 a los 1200 y 2800 m; el otro, 110 s y 4200 m, a los 1300 y 2900 m.
   -- Los valores, de GHC.
@@ -4176,12 +4218,12 @@ main = hspec $ do
 
     it "solo Lap Comparison lleva lado, banda y modo, los de fábrica, y los escribe siempre" $ do
       raceSides `shouldBe` Map.singleton (WidgetId "lap-comparison") defaultControl
-      defaultControl `shouldBe` CardControl SideLeft False ModeAxisValues
+      defaultControl `shouldBe` CardControl {ccSide = SideLeft, ccBand = False, ccMode = ModeAxisValues, ccLap = FastestLap}
       factoryControls qualyFixture `shouldBe` Map.empty
       let lapOnly  = filter ((== LapComparison) . widgetType) raceOverviewFixture
           expected = decodeStrictText
             "[{\"savedId\":\"lap-comparison\",\"savedX\":60,\"savedY\":35,\"savedW\":60,\"savedH\":50,\
-            \\"savedSide\":\"left\",\"savedBand\":false,\"savedMode\":\"axis-values\"}]"
+            \\"savedSide\":\"left\",\"savedBand\":false,\"savedMode\":\"axis-values\",\"savedLap\":\"fastest\"}]"
       expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
       decodeStrictText (save lapOnly) `shouldBe` expected
 
@@ -4196,19 +4238,27 @@ main = hspec $ do
       noBand `shouldSatisfy` (not . T.isInfixOf "savedBand")
       restoreLayout raceOverviewFixture (Just noBand) `shouldBe` FromSaved moved rightSides
 
+    it "la regla de la vuelta guardada vuelve; sin ella (guardado antes de que existiera), la más rápida" $ do
+      let partLap = lapCard (\c -> c { ccLap = PartLap 2 }) rightSides
+          noLap   = T.replace ",\"savedLap\":\"part-2\"" "" (saveLayout partLap moved)
+      restoreLayout raceOverviewFixture (Just (saveLayout partLap moved)) `shouldBe` FromSaved moved partLap
+      noLap `shouldSatisfy` (not . T.isInfixOf "savedLap")
+      restoreLayout raceOverviewFixture (Just noLap) `shouldBe` FromSaved moved rightSides
+
     it "un lado en una tarjeta que no es Lap Comparison se ignora" $
       restoreLayout raceOverviewFixture
           (Just (saveLayout (Map.insert (WidgetId "telemetry") defaultControl { ccSide = SideRight } rightSides) moved))
         `shouldBe` FromSaved moved rightSides
 
-    it "un lado, una banda o un modo ilegibles no se leen, y lo que no encaja no conserva nada" $
+    it "un lado, una banda, un modo o una vuelta ilegibles no se leen, y lo que no encaja no conserva nada" $
       map (restoreLayout raceOverviewFixture . Just)
         [ T.replace "\"right\"" "\"up\"" (saveLayout rightSides moved)
         , T.replace "\"savedBand\":false" "\"savedBand\":\"no\"" (saveLayout rightSides moved)
         , T.replace "\"axis-values\"" "\"ejes\"" (saveLayout rightSides moved)
+        , T.replace "\"fastest\"" "\"part-0\"" (saveLayout rightSides moved)
         , saveLayout rightSides (moving "lap-comparison" (60, 35, 60, 45))
         ]
-        `shouldBe` replicate 4 Unfit
+        `shouldBe` replicate 5 Unfit
 
     it "no encaja si no se lee, si las tarjetas no son las de fábrica, si alguna queda bajo su mínimo, fuera o encima de otra" $
       map (restoreLayout raceOverviewFixture . Just)

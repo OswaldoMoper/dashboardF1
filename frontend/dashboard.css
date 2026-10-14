@@ -813,7 +813,6 @@ body {
    conserva, que es lo que 2026-08-21 (c) unificó. Los bloques siguen siendo
    distintos. */
 .switcher__btn,
-.car-selector__btn,
 .header-toggle,
 .comparison__swap {
   padding: var(--sp-1) var(--sp-3);
@@ -827,27 +826,17 @@ body {
 }
 
 .switcher__btn:hover,
-.car-selector__btn:hover,
 .header-toggle:hover,
 .comparison__swap:hover {
   border-color: var(--c-muted);
 }
 
 .switcher__btn:focus-visible,
-.car-selector__btn:focus-visible,
 .car-selector__select:focus-visible,
 .header-toggle:focus-visible,
 .comparison__swap:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 1px;
-}
-
-/* El de comparar dispara la petición: es la acción primaria de su widget. */
-.car-selector__btn {
-  background: var(--c-accent);
-  border-color: var(--c-accent);
-  color: #fff;
-  font-weight: 600;
 }
 
 /* En edición, «✓ Terminar edición» queda marcado, y al pasar el ratón su borde es
@@ -1145,7 +1134,7 @@ body {
    los bordes. */
 .comparison__body:not(.comparison__body--stacked) .comparison__header {
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: auto auto auto;
   justify-content: space-evenly;
   align-items: baseline;
   row-gap: var(--sp-1);
@@ -1288,6 +1277,60 @@ body {
 
 .comparison__live[hidden] {
   display: none;
+}
+
+/* «Vuelta [más rápida | última | Q1…]»: los botones de la regla, pegados; si no caben,
+   bajan de línea con la cabecera. */
+.comparison__rule {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--c-muted);
+}
+
+.comparison__rule-seg {
+  display: inline-flex;
+}
+
+.comparison__rule-seg .switcher__btn {
+  border-radius: 0;
+}
+
+.comparison__rule-seg .switcher__btn:first-child {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+}
+
+.comparison__rule-seg .switcher__btn:last-child {
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+
+.comparison__rule-seg .switcher__btn + .switcher__btn {
+  margin-left: -1px;
+}
+
+.comparison__rule-btn--on {
+  background: var(--c-surface-3);
+}
+
+.comparison__rule-seg .switcher__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* El desplegable corto de cada piloto; en verde si su vuelta no es la de la regla. */
+.comparison__pick {
+  padding: 0 var(--sp-1);
+  font-size: var(--fs-sm);
+}
+
+.comparison__pick--differs {
+  color: var(--c-ok);
+  border-color: var(--c-ok);
+}
+
+.comparison__pick:disabled {
+  opacity: 0.45;
 }
 
 /* Solo la caja del lienzo. `stroke`/`fill` de la serie y de la línea del cero

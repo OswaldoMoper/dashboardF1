@@ -30,7 +30,7 @@
 -- filtran __en cliente__ sobre datos ya recibidos
 -- (2026-08-01); aquí no se puede, porque la comparación de otros dos coches
 -- sencillamente no está en la respuesta actual. De ahí las dos cosas nuevas:
--- un 'Event' de URL que nace de un clic y un estado de recarga que __no borra__
+-- un 'Event' de URL que nace de elegir un coche y un estado de recarga que __no borra__
 -- lo que ya se veía.
 --
 -- __Se eligen coches de la parrilla, no se teclean números.__ Es el desajuste de
@@ -59,22 +59,25 @@ import           Common.Chart                  (SectorPace (..),
                                                 sectorSpans)
 import           Common.Comparison             (Axis, Baseline (..),
                                                 ChartType (..), LapChoice (..),
-                                                LiveCard (..), LiveEntry (..),
-                                                Pair (..), axesInOrder,
-                                                axisFromKey, axisKey, axisLabel,
-                                                axisNotice, baselineFromKey,
-                                                baselineKey, baselineLabel,
-                                                baselineRole, baselinesInOrder,
+                                                LapPick (..), LiveCard (..),
+                                                LiveEntry (..), Pair (..),
+                                                axesInOrder, axisFromKey,
+                                                axisKey, axisLabel, axisNotice,
+                                                baselineFromKey, baselineKey,
+                                                baselineLabel, baselineRole,
+                                                baselinesInOrder,
                                                 chartTypeFromKey, chartTypeKey,
                                                 chartTypeLabel, chartTypeReady,
                                                 chartTypeTraces,
                                                 chartTypesInOrder, defaultAxis,
                                                 defaultChartType, deltaFormula,
                                                 endedNotice, keepChosen,
-                                                lapShown, leadingPair,
-                                                liveCardRows, liveCardStep,
-                                                liveComparison, liveDrivers,
-                                                liveLapLines,
+                                                lapButtons, lapChoiceFromKey,
+                                                lapChoiceKey, lapChoicesOffered,
+                                                lapFor, lapPicks, lapShown,
+                                                leadingPair, liveCardRows,
+                                                liveCardStep, liveComparison,
+                                                liveDrivers, liveLapLines,
                                                 liveMissingReference,
                                                 liveNoLapFor, missingReference,
                                                 noLapFor, pairWith)
@@ -114,7 +117,7 @@ import           Common.Types                  (ComparisonEntry (..),
                                                 LapComparison (..),
                                                 LiveTable (..), LiveTimingRow,
                                                 SessionInfo)
-import           Control.Monad                 (forM_, unless, when)
+import           Control.Monad                 (forM, forM_, unless, when)
 import           Control.Monad.IO.Class        (liftIO)
 import           Data.List                     (find)
 import           Data.Map                      (Map)
@@ -184,28 +187,29 @@ data CState
 comparisonWidget :: MonadWidget t m
                  => LiveView t -> Event t () -> CardControl -> Event t CardControl -> m (Event t CardControl)
 comparisonWidget live revealed start put = mdo
-  (root, (card, (userMode, state, view, side, band))) <-
+  (root, (card, (userMode, state, view, side, band, rule))) <-
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
-      (swap, ty, (axis, frontiers, samples)) <- divClass "widget__head" $ do
+      (swap, ty, (axis, frontiers, samples), ruleClicks) <- divClass "widget__head" $ do
         el "h2" $ text "Lap Comparison"
         t  <- typeSelect
+        rc <- ruleButtons buttons marked
         tc <- traceControls t
         elDynAttr "span" (badgeAttrs <$> (liveFor <$> liveCard <*> t)) $
           liveBadge (lvDelay live) (indicatorOf <$> lvPoll live)
         s  <- swapButton (clStacked <$> layout)
-        pure (s, t, tc)
+        pure (s, t, tc, rc)
       side    <- foldDyn ($) (ccSide start) (leftmost [const . ccSide <$> put, otherSide <$ swap])
       pb      <- getPostBuild
       gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
       fastGrid <- holdDyn [] (fromMaybe [] <$> gridRsp)
       grid    <- holdUniqDyn (gridFor <$> liveData <*> fastGrid)
-      (((picked, livePicked), cars, chosenE), rowClicks) <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
+      ((((picked, livePicked), cars, chosenE), pickE), rowClicks) <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
         r <- elDynAttr "div" (controlAttrs <$> layout) $ do
           r' <- carSelector grid (shownComparison <$> stFast) (noLapNote <$> liveEntries <*> st)
                   (isJust <$> liveData) ((leadingPair . snd =<<) <$> liveData) (vsNextTo <$> layout)
                   (modeSelect (ccMode start) fits shown)
-          dyn_ (controlState <$> liveEntries <*> st)
-          pure r'
+          p  <- switchHold never =<< dyn (controlState <$> liveEntries <*> picks <*> st)
+          pure (r', p)
         clicks <- divClass "comparison__plot" $
           switchHold never =<< dyn
             ( plotView (dyn_ (overlayFor <$> liveCard <*> liveEntries <*> refresh <*> st))
@@ -222,13 +226,23 @@ comparisonWidget live revealed start put = mdo
             , attachWith (\n d -> comparisonPathFor Nothing (Just d) n) (current wanted) picked
             , attachWith (comparisonPathFor Nothing) (current drivers) (ffilter (> 0) (updated wanted))
             ]
-          liveData    = liveCardRows <$> (liveFor <$> liveCard <*> ty)
-          liveEntries = liveEntriesFor <$> liveData <*> cars
-          st          = shownState <$> liveEntries <*> stFast
+          liveData     = liveCardRows <$> (liveFor <$> liveCard <*> ty)
+          shownSession = fmap fst <$> liveData
+          marked       = markedRule <$> shownSession <*> rule
+          picks        = lapPicks <$> shownSession <*> rule <*> excs
+          st           = shownState <$> liveEntries <*> stFast
+      buttons     <- holdUniqDyn (lapButtons <$> shownSession)
+      liveEntries <- holdUniqDyn (liveEntriesFor <$> liveData <*> cars <*> rule <*> excs)
+      rule        <- holdDyn (ccLap start) (leftmost [ccLap <$> put, ruleClicks])
+      excs        <- foldDyn ($) (Nothing, Nothing) $ leftmost
+                       [ const (Nothing, Nothing) <$ leftmost [() <$ ruleClicks, () <$ put]
+                       , attachWith clearChanged (current cars) (updated cars)
+                       , attachWith setPick (current marked) pickE
+                       ]
       resp    <- fetchJson request
       refresh <- holdDyn InFlight (leftmost [InFlight <$ request, refreshOf <$> resp])
       stFast  <- foldDyn step Loading resp
-      pure (chosenE, st, v, side, band)
+      pure (chosenE, st, v, side, band, rule)
   liveIn   <- holdUniqDyn (liveInput <$> lvWait live <*> lvPoll live)
   first    <- sample (current liveIn)
   liveCard <- holdUniqDyn
@@ -245,11 +259,18 @@ comparisonWidget live revealed start put = mdo
       changed  = leftmost
                    [ () <$ updated shown, () <$ updated state, () <$ updated view
                    , () <$ updated stacked, revealed ]
-  pure (updated (CardControl <$> side <*> band <*> chosen))
+  pure (updated (control <$> side <*> band <*> chosen <*> rule))
   where
-    controlState :: MonadWidget t m => Maybe [LiveEntry] -> CState -> m ()
-    controlState les (Loaded c) = lapHeader les c
-    controlState _ _            = blank
+    control s b m l = CardControl {ccSide = s, ccBand = b, ccMode = m, ccLap = l}
+    controlState :: MonadWidget t m => Maybe [LiveEntry] -> [LapPick] -> CState -> m (Event t (Int, LapChoice))
+    controlState les ps (Loaded c) = lapHeader les ps c
+    controlState _ _ _             = pure never
+    -- Un piloto que cambia pierde su excepción.
+    clearChanged (r0, o0) (r1, o1) (a, b) = (if r0 == r1 then a else Nothing, if o0 == o1 then b else Nothing)
+    -- La que coincide con la regla no es excepción.
+    setPick r (i, c) (a, b) =
+      let e = if c == r then Nothing else Just c
+       in if i == 0 then (e, b) else (a, e)
 
 -- | La fuente, la sesión y las filas del directo que se enseña, para 'liveCardStep';
 -- 'Nothing' mientras se espera el retraso o antes de la primera respuesta buena.
@@ -276,10 +297,38 @@ gridFor :: Maybe (Maybe SessionInfo, [LiveTimingRow]) -> [DriverEntry] -> [Drive
 gridFor (Just (_, rows)) _ = liveDrivers rows
 gridFor Nothing grid       = grid
 
--- | La comparación del directo de los dos coches elegidos, con la más rápida de cada uno.
-liveEntriesFor :: Maybe (Maybe SessionInfo, [LiveTimingRow]) -> (Maybe Text, Maybe Text) -> Maybe [LiveEntry]
-liveEntriesFor (Just (s, rows)) (Just r, Just o) = Just (liveComparison s rows [(r, FastestLap), (o, FastestLap)])
-liveEntriesFor _ _                               = Nothing
+-- | La comparación del directo de los dos coches elegidos, cada uno con su vuelta: la
+-- regla o su excepción ('Common.Comparison.lapFor').
+liveEntriesFor
+  :: Maybe (Maybe SessionInfo, [LiveTimingRow]) -> (Maybe Text, Maybe Text) -> LapChoice
+  -> (Maybe LapChoice, Maybe LapChoice) -> Maybe [LiveEntry]
+liveEntriesFor (Just (s, rows)) (Just r, Just o) rule (a, b) =
+  Just (liveComparison s rows [(r, lapFor offered rule a), (o, lapFor offered rule b)])
+  where
+    offered = lapChoicesOffered s
+liveEntriesFor _ _ _ _ = Nothing
+
+-- | La regla marcada en la cabecera: con FastF1, la más rápida; en directo, la regla si
+-- se ofrece ('Common.Comparison.lapFor').
+markedRule :: Maybe (Maybe SessionInfo) -> LapChoice -> LapChoice
+markedRule Nothing _     = FastestLap
+markedRule (Just s) rule = lapFor (lapChoicesOffered s) rule Nothing
+
+-- | «Vuelta [más rápida | última | Q1…]»: un botón por vuelta ('Common.Comparison.lapButtons'),
+-- marcado el de @marked@; los apagados dicen «solo en directo». Devuelve la pulsada.
+ruleButtons :: MonadWidget t m => Dynamic t [(LapChoice, Text, Bool)] -> Dynamic t LapChoice -> m (Event t LapChoice)
+ruleButtons buttons marked = divClass "comparison__rule" $ do
+  text "Vuelta"
+  clicks <- elClass "span" "comparison__rule-seg" $ dyn $ ffor buttons $ \bs ->
+    fmap leftmost $ forM bs $ \(c, label, enabled) -> do
+      (e, _) <- elDynAttr' "button" (attrs c enabled <$> marked) $ text label
+      pure (c <$ domEvent Click e)
+  switchHold never clicks
+  where
+    attrs c enabled m =
+      ("type" =: "button")
+        <> ("class" =: ("switcher__btn" <> if c == m then " comparison__rule-btn--on" else ""))
+        <> (if enabled then mempty else "disabled" =: "disabled" <> "title" =: "solo en directo")
 
 -- | Lo que se pinta: la comparación del directo si la hay, o lo último de FastF1.
 shownState :: Maybe [LiveEntry] -> CState -> CState
@@ -596,8 +645,9 @@ refreshLine LastFailed =
   elClass "p" "status status--stale" $
     text "No se pudo recargar: se muestra la comparación anterior"
 
--- | Los dos selectores de coche y el botón, y el valor de @?drivers=@ que sale de
--- pulsarlo; la URL la compone 'comparisonWidget' con las muestras del tipo.
+-- | Los dos selectores de coche, y el valor de @?drivers=@ que sale de elegir uno;
+-- la URL la compone 'comparisonWidget' con las muestras del tipo. Se aplica al
+-- momento: al intercambiar los dos se pasa por la pareja repetida.
 --
 -- __Dos controles separados y no uno solo con @\"16,1\"@:__ así la cardinalidad
 -- es estructural —la tarjeta pinta un par—. El primero es la referencia, y va
@@ -613,14 +663,14 @@ refreshLine LastFailed =
 --
 -- El segundo argumento es la comparación de FastF1, de la que sale el prefill; el
 -- tercero, el tooltip de un coche sin barras; el cuarto, si la tarjeta va con el
--- directo; el quinto, P1 y P2 del directo; el sexto, si el «VS» va a la derecha del primer desplegable
--- ('vsNextTo'). El último se pinta junto a «Comparar», en la misma fila, y su
--- resultado se devuelve con los coches.
+-- directo; el quinto, P1 y P2 del directo; el sexto, si el «VS» va a la derecha del
+-- primer desplegable ('vsNextTo'). El último se pinta debajo, y su resultado se
+-- devuelve con los coches.
 --
 -- __Cuando cambia la lista, siguen los mismos coches__ ('Common.Comparison.keepChosen'):
--- el que no está pasa al primero libre. __En directo no hay prefill ni hace falta
--- «Comparar»__: lo elegido se pinta al momento y sale por el segundo evento, también
--- al entrar en directo. __Si se abre ya en directo__ —sin comparación de FastF1 todavía—,
+-- el que no está pasa al primero libre. __En directo no hay prefill ni petición__: lo
+-- elegido se pinta al momento y sale por el segundo evento, también al entrar en
+-- directo. __Si se abre ya en directo__ —sin comparación de FastF1 todavía—,
 -- el par es P1 contra P2.
 carSelector
   :: MonadWidget t m
@@ -651,18 +701,21 @@ carSelector grid shown noLap liveOn leaders vsNext beside = divClass "car-select
       setPos i  = leftmost [fmapMaybe (sideOf i) opening, fmapMaybe (sideOf i) kept, prefill i]
       refCar    = zipDynWith carAt indexed posRef
       otherCar  = zipDynWith carAt indexed posOther
-  (posRef, posOther) <- elDynAttr "div" (pairAttrs <$> vsNext) $ do
+  (refDrop, otherDrop) <- elDynAttr "div" (pairAttrs <$> vsNext) $ do
     r <- carDropdown 1 labels (setPos (0 :: Int)) (carSelectAttrs <$> refCar <*> noLap)
     elClass "span" "car-selector__vs" $ text "vs"
     o <- carDropdown 0 labels (setPos 1) (carSelectAttrs <$> otherCar <*> noLap)
     pure (r, o)
+  let (posRef, chRef)     = refDrop
+      (posOther, chOther) = otherDrop
   cars <- holdUniqDyn (zipDyn refCar otherCar)
-  (click, a) <- divClass "comparison__actions" $ (,) <$> compareButton <*> beside
-  let live = leftmost
+  a <- divClass "comparison__actions" beside
+  let chosenByUser = gate (not <$> current liveOn) (tagPromptlyDyn cars (leftmost [() <$ chRef, () <$ chOther]))
+      live = leftmost
         [ attachWithMaybe (\on c -> if on then Just c else Nothing) (current liveOn) (updated cars)
         , tagPromptlyDyn cars (ffilter id (updated liveOn))
         ]
-  pure ((fmapMaybe driversFor (tagPromptlyDyn cars click), fmapMaybe driversFor live), cars, a)
+  pure ((fmapMaybe driversFor chosenByUser, fmapMaybe driversFor live), cars, a)
   where
     keptAt (Just r, Just o) idx =
       let (r', o') = keepChosen (map deNumber (Map.elems idx)) (r, o)
@@ -676,7 +729,7 @@ carSelector grid shown noLap liveOn leaders vsNext beside = divClass "car-select
     -- defecto presentada como la que se pidió.
     --
     -- Los dos 'Nothing' que hay que absorber son el mismo: parrilla vacía. Pasa
-    -- entre el arranque y la respuesta de @\/api\/drivers@, y ahí un clic no
+    -- entre el arranque y la respuesta de @\/api\/drivers@, y ahí elegir no
     -- puede significar nada.
     driversFor :: (Maybe Text, Maybe Text) -> Maybe Text
     driversFor (mref, mother) = do
@@ -769,16 +822,17 @@ driverLabel d
 -- 'dropdown' une la clave de @setValue@ a las opciones (2026-08-07).
 --
 -- La config se arma con lentes (@&@ y @.~@) y no con @def { ... }@, que aquí no
--- compila (@GHC-39999@, 2026-08-11 (b)).
+-- compila (@GHC-39999@, 2026-08-11 (b)). Devuelve la posición y, aparte, la que
+-- elige el usuario.
 carDropdown
   :: MonadWidget t m
   => Int
   -> Dynamic t (Map Int Text)
   -> Event t Int
   -> Dynamic t (Map Text Text)
-  -> m (Dynamic t Int)
+  -> m (Dynamic t Int, Event t Int)
 carDropdown initial options setPos attrs =
-  fmap _dropdown_value . dropdown initial options $
+  fmap (\d -> (_dropdown_value d, _dropdown_change d)) . dropdown initial options $
     def
       &  dropdownConfig_attributes .~ attrs
       &  dropdownConfig_setValue   .~ setPos
@@ -792,14 +846,6 @@ carSelectAttrs car noLap =
     Just note ->
       Map.fromList [("class", "car-selector__select car-selector__select--nolap"), ("title", note)]
     Nothing -> Map.fromList [("class", "car-selector__select")]
-
--- | Botón que dispara la comparación. Replicado aquí en lugar de importado de
--- 'Widgets.Historical' o 'Widgets.Telemetry': mismo criterio que allí, no
--- acoplar dos widgets entre sí por tres líneas de DOM.
-compareButton :: DomBuilder t m => m (Event t ())
-compareButton = do
-  (e, _) <- elClass' "button" "car-selector__btn" $ text "Comparar"
-  pure (domEvent Click e)
 
 -- | El desplegable de modos, nativo: arranca en @start@, enseña el modo que se ve,
 -- apaga «Eje y valores» cuando la fila no cabe, y devuelve solo lo que elige el
@@ -829,18 +875,23 @@ modeSelect start fits shown = do
 -- | Los dos primeros coches con su tiempo de vuelta, la referencia primero. El
 -- tiempo llega ya formateado (@M:SS.mmm@) por el microservicio, y un coche sin
 -- vuelta dice «sin vuelta» ('Common.Comparison.lapShown'). En directo, el texto de
--- cada coche es el suyo ('Common.Comparison.liveLapLines').
-lapHeader :: DomBuilder t m => Maybe [LiveEntry] -> LapComparison -> m ()
-lapHeader les c = divClass "comparison__header" $
+-- cada coche es el suyo ('Common.Comparison.liveLapLines'). Tras el tiempo, el
+-- desplegable corto de su vuelta ('Common.Comparison.LapPick'); devuelve la que se
+-- elige en cada uno, por su posición (0, la referencia).
+lapHeader
+  :: MonadWidget t m => Maybe [LiveEntry] -> [LapPick] -> LapComparison -> m (Event t (Int, LapChoice))
+lapHeader les ps c = divClass "comparison__header" $
   case lcEntries c of
     ref : other : _ -> do
-      lapLabel ref (linesOf 0 ref)
+      a <- lapLabel ref (linesOf 0 ref) (pickAt 0)
       elClass "span" "comparison__vs" $ text "vs"
-      lapLabel other (linesOf 1 other)
-    [ref] -> lapLabel ref (linesOf 0 ref)
-    []    -> blank
+      b <- lapLabel other (linesOf 1 other) (pickAt 1)
+      pure (leftmost [(,) 0 <$> a, (,) 1 <$> b])
+    [ref] -> fmap ((,) 0) <$> lapLabel ref (linesOf 0 ref) (pickAt 0)
+    []    -> pure never
   where
     linesOf i e = maybe (lapShown e, Nothing) liveLapLines (listToMaybe . drop i =<< les)
+    pickAt i = listToMaybe (drop i ps)
 
 -- | Un piloto, su coche y su tiempo.
 --
@@ -850,15 +901,36 @@ lapHeader les c = divClass "comparison__header" $
 -- ver que __no__ corresponde: el dummy siempre habla de @16@ y @1@, así que pedir
 -- @44@ y leer @#16@ es exactamente la señal de que el microservicio no contestó.
 --
--- El tiempo va en una línea y, si hay, la nota debajo, más pequeña.
-lapLabel :: DomBuilder t m => ComparisonEntry -> (Text, Maybe Text) -> m ()
-lapLabel e (time, note) = divClass "comparison__lap" $ do
+-- El tiempo va en una línea y, si hay, la nota debajo, más pequeña; después, si lo
+-- hay, el desplegable corto de su vuelta.
+lapLabel :: MonadWidget t m => ComparisonEntry -> (Text, Maybe Text) -> Maybe LapPick -> m (Event t LapChoice)
+lapLabel e (time, note) pick = divClass "comparison__lap" $ do
   elClass "span" "comparison__who" $ do
     elClass "span" "comparison__driver" $ text (ceDriver e)
     elClass "span" "comparison__car" $ text ("#" <> ceCar e)
   elClass "span" "comparison__time" $ do
     text time
     forM_ note $ \n -> el "br" blank >> elClass "span" "comparison__time-note" (text n)
+  maybe (pure never) lapPickSelect pick
+
+-- | El desplegable corto de la vuelta de un piloto: en verde si difiere de la regla;
+-- apagado, con «solo en directo», con FastF1. Devuelve lo que elige el usuario.
+lapPickSelect :: MonadWidget t m => LapPick -> m (Event t LapChoice)
+lapPickSelect p = do
+  -- Las opciones reciben su @value@ después de montarse: escrito antes, no casa con
+  -- ninguna y el desplegable queda vacío ('modeSelect').
+  mounted <- delay 0 =<< getPostBuild
+  let cfg = def
+        & selectElementConfig_initialValue .~ lapChoiceKey (lpValue p)
+        & selectElementConfig_setValue .~ (lapChoiceKey (lpValue p) <$ mounted)
+        & selectElementConfig_elementConfig . elementConfig_initialAttributes .~ attrs
+  (sel, _) <- selectElement cfg $ forM_ (lpOptions p) $ \(c, label) ->
+    elAttr "option" ("value" =: lapChoiceKey c) $ text label
+  pure (fmapMaybe lapChoiceFromKey (_selectElement_change sel))
+  where
+    attrs =
+      ("class" =: ("car-selector__select comparison__pick" <> if lpDiffers p then " comparison__pick--differs" else ""))
+        <> (if lpEnabled p then mempty else "disabled" =: "disabled" <> "title" =: "solo en directo")
 
 -- | Lo que la fila de fronteras necesita para turnarse con la banda de sectores: el
 -- modo elegido, que decide qué lleva la banda; el que se ve, que decide la fila y su

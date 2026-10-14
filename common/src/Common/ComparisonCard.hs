@@ -51,13 +51,15 @@ module Common.ComparisonCard
   , cardPadding
   ) where
 
-import           Common.Chart (axisPoints, axisTicks, chartWidth, frontierCells)
-import           Data.Aeson   (FromJSON (..), ToJSON (..), Value (String),
-                               withText)
-import           Data.List    (find, sort, sortOn)
-import           Data.Maybe   (mapMaybe)
-import           Data.Ord     (Down (..))
-import           Data.Text    (Text)
+import           Common.Chart      (axisPoints, axisTicks, chartWidth,
+                                    frontierCells)
+import           Common.Comparison (LapChoice (..))
+import           Data.Aeson        (FromJSON (..), ToJSON (..), Value (String),
+                                    withText)
+import           Data.List         (find, sort, sortOn)
+import           Data.Maybe        (mapMaybe)
+import           Data.Ord          (Down (..))
+import           Data.Text         (Text)
 
 -- | Qué lleva la fila de fronteras, debajo de la gráfica. El eje vertical va
 -- siempre, en los tres.
@@ -179,16 +181,20 @@ otherSide SideLeft  = SideRight
 otherSide SideRight = SideLeft
 
 -- | Lo que se recuerda de una Lap Comparison: el lado de su tabla de mando, si la
--- banda de sectores está puesta y el modo elegido en el desplegable.
+-- banda de sectores está puesta, el modo elegido en el desplegable y la regla de la
+-- vuelta (las excepciones de cada piloto, no).
 data CardControl = CardControl
   { ccSide :: Side
   , ccBand :: Bool
   , ccMode :: ChartMode
+  , ccLap  :: LapChoice
   } deriving stock (Eq, Show)
 
--- | Como abre la tarjeta: la tabla a la izquierda, sin banda y en 'defaultMode'.
+-- | Como abre la tarjeta: la tabla a la izquierda, sin banda, en 'defaultMode' y con
+-- la vuelta más rápida.
 defaultControl :: CardControl
-defaultControl = CardControl defaultControlSide False defaultMode
+defaultControl =
+  CardControl {ccSide = defaultControlSide, ccBand = False, ccMode = defaultMode, ccLap = FastestLap}
 
 -- | El reparto de la tarjeta a lo ancho, en px.
 data CardLayout = CardLayout

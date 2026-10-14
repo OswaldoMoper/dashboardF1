@@ -17,6 +17,7 @@ module Common.Saved
   , unfitNote
   ) where
 
+import           Common.Comparison     (LapChoice)
 import           Common.ComparisonCard (CardControl (..), ChartMode, Side,
                                         defaultControl)
 import           Common.Layout         (fitsAt, overlaps)
@@ -48,6 +49,7 @@ data SavedCard = SavedCard
   , savedSide :: Maybe Side
   , savedBand :: Maybe Bool
   , savedMode :: Maybe ChartMode
+  , savedLap  :: Maybe LapChoice
   } deriving stock (Eq, Show, Generic)
 
 instance ToJSON SavedCard where
@@ -85,8 +87,8 @@ atFactory :: [WidgetConfig] -> Map WidgetId CardControl -> [WidgetConfig] -> Boo
 atFactory factory controls shown = sameShown (factoryControls factory, factory) (controls, shown)
 
 -- | Si dos estados de un layout se ven igual: cada tarjeta en el mismo rectángulo,
--- sin importar el orden, y cada Lap Comparison con el mismo lado, banda y modo. El
--- imán no cuenta.
+-- sin importar el orden, y cada Lap Comparison con el mismo lado, banda, modo y
+-- vuelta. El imán no cuenta.
 sameShown :: (Map WidgetId CardControl, [WidgetConfig]) -> (Map WidgetId CardControl, [WidgetConfig])
           -> Bool
 sameShown (controlsA, a) (controlsB, b) = controlsA == controlsB && rects a == rects b
@@ -99,7 +101,7 @@ saveLayout :: Map WidgetId CardControl -> [WidgetConfig] -> Text
 saveLayout controls = LT.toStrict . encodeToLazyText . map card
   where
     card w = SavedCard (widgetId w) (wcX w) (wcY w) (wcW w) (wcH w)
-               (ccSide <$> c) (ccBand <$> c) (ccMode <$> c)
+               (ccSide <$> c) (ccBand <$> c) (ccMode <$> c) (ccLap <$> c)
       where
         c = Map.lookup (widgetId w) controls
 
@@ -108,8 +110,8 @@ saveLayout controls = LT.toStrict . encodeToLazyText . map card
 -- mínimo, se sale del lienzo ('fitsAt') o se encima con otra ('overlaps').
 --
 -- Cada Lap Comparison lleva lo guardado; lo que no trae (guardado antes de que
--- existiera), el de fábrica. Un lado, una banda o un modo ilegibles hacen que lo
--- guardado no se lea, y lo que no encaja no conserva nada.
+-- existiera), el de fábrica. Un lado, una banda, un modo o una vuelta ilegibles hacen
+-- que lo guardado no se lea, y lo que no encaja no conserva nada.
 --
 -- Supone que los ids del de fábrica no se repiten.
 restoreLayout :: [WidgetConfig] -> Maybe Text -> Restored
@@ -129,6 +131,7 @@ restoreLayout factory (Just t) = maybe Unfit (uncurry FromSaved) $ do
       { ccSide = fromMaybe (ccSide defaultControl) (savedSide c)
       , ccBand = fromMaybe (ccBand defaultControl) (savedBand c)
       , ccMode = fromMaybe (ccMode defaultControl) (savedMode c)
+      , ccLap  = fromMaybe (ccLap defaultControl) (savedLap c)
       }
 
 -- | La nota de los layouts que volvieron al de fábrica, con sus nombres. Con uno solo
