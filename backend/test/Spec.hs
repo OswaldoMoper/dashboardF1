@@ -67,8 +67,9 @@ import           Common.Columns              (LiveColumn (..), canClose,
                                               shownColumns, toggleColumn)
 import           Common.Comparison           (Axis (..), Baseline (..),
                                               ChartType (..), LapChoice (..),
-                                              LapGeometry (..), LiveEntry (..),
-                                              Pair (..), anchored, axesInOrder,
+                                              LapGeometry (..), LiveCard (..),
+                                              LiveEntry (..), Pair (..),
+                                              anchored, axesInOrder,
                                               axisFromKey, axisKey, axisLabel,
                                               axisNotice, axisXs, baseIndex,
                                               baselineFromKey, baselineKey,
@@ -80,9 +81,14 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               chartTypesInOrder,
                                               comparisonIsLive, defaultAxis,
                                               defaultChartType, deltaFormula,
-                                              deltasAgainst, lapChoicesOffered,
-                                              lapShown, liveComparison,
-                                              liveDrivers, missingReference,
+                                              deltasAgainst, endedNotice,
+                                              keepChosen, lapChoicesOffered,
+                                              lapShown, leadingPair,
+                                              liveCardRows, liveCardStep,
+                                              liveComparison, liveDrivers,
+                                              liveLapLines,
+                                              liveMissingReference,
+                                              liveNoLapFor, missingReference,
                                               noLapFor, pairWith)
 import           Common.ComparisonCard       (CardControl (..), CardLayout (..),
                                               ChartMode (..), Side (..),
@@ -3252,6 +3258,68 @@ main = hspec $ do
       shown ["28.300", "", "25.400"] `shouldBe` ["1:33.100 · sin sectores"]
       shown ["28.300", "39.200"] `shouldBe` ["1:33.100 · sin sectores"]
       shown ["28.300", "39.400", "25.400"] `shouldBe` ["1:33.100"]
+
+  -- Lo que la tarjeta hace con el directo que le llega, y sus textos.
+  describe "Common.Comparison: la tarjeta en vivo" $ do
+    let rowsA   = [emptyLiveRow {ltCar = "16", ltDriver = "LEC"}]
+        rowsB   = [emptyLiveRow {ltCar = "1", ltDriver = "NOR"}]
+        started = Just (stateOf SessionStarted)
+        step s  = liveCardStep (Just Feed) (Just (stateOf s))
+        entry c d t secs = LiveEntry (MkComparisonEntry c d t Nothing secs Nothing []) ""
+    it "sin haber visto el directo, nada que no esté en vivo la saca de FastF1" $ do
+      liveCardStep (Just OpenF1) started rowsA Offline `shouldBe` Offline
+      step SessionFinalised rowsA Offline `shouldBe` Offline
+      step SessionInactive rowsA Offline `shouldBe` Offline
+
+    it "en vivo sigue cada foto" $ do
+      liveCardStep (Just Feed) started rowsA Offline `shouldBe` Following started rowsA
+      liveCardStep (Just Feed) started rowsB (Following started rowsA) `shouldBe` Following started rowsB
+
+    it "si deja de venir del feed a media sesión, se congela con lo último" $ do
+      liveCardStep (Just OpenF1) started rowsB (Following started rowsA) `shouldBe` Frozen started rowsA
+      liveCardStep Nothing started rowsB (Following started rowsA) `shouldBe` Frozen started rowsA
+      liveCardStep (Just Feed) started rowsB (Frozen started rowsA) `shouldBe` Following started rowsB
+
+    it "al finalizar, o al anunciarse la siguiente, se acaba con lo último hasta otra en vivo" $ do
+      step SessionFinalised rowsB (Following started rowsA) `shouldBe` Ended started rowsA
+      step SessionInactive rowsB (Following started rowsA) `shouldBe` Ended started rowsA
+      step SessionFinalised rowsB (Frozen started rowsA) `shouldBe` Ended started rowsA
+      liveCardStep (Just OpenF1) started rowsB (Ended started rowsA) `shouldBe` Ended started rowsA
+      liveCardStep (Just Feed) started rowsB (Ended started rowsA) `shouldBe` Following started rowsB
+
+    it "las filas que se pintan: las de cada estado, ninguna sin directo" $ do
+      map liveCardRows [Following started rowsA, Frozen started rowsA, Ended started rowsA]
+        `shouldBe` replicate 3 (Just (started, rowsA))
+      liveCardRows Offline `shouldBe` Nothing
+
+    it "con tiempo y sin sectores, «sin sectores» va debajo; si no, el texto en una línea" $ do
+      liveLapLines (entry "1" "NOR" "1:33.100" Nothing) `shouldBe` ("1:33.100", Just "sin sectores")
+      liveLapLines ((entry "1" "NOR" "1:33.100" (Just (30, 33, 30.1))) {leShown = "1:33.100"})
+        `shouldBe` ("1:33.100", Nothing)
+      liveLapLines ((entry "1" "NOR" "" Nothing) {leShown = "sin vuelta en Q2"}) `shouldBe` ("sin vuelta en Q2", Nothing)
+
+    it "los avisos en directo dicen el texto de la vuelta" $ do
+      let lec = (entry "16" "LEC" "1:33.100" Nothing) {leShown = "1:33.100 · sin sectores"}
+          nor = (entry "1" "NOR" "1:32.900" (Just (28.3, 39.2, 25.4))) {leShown = "1:32.900"}
+      liveMissingReference AgainstReference [lec, nor] `shouldBe` Just "LEC: 1:33.100 · sin sectores. Elige otra referencia."
+      liveMissingReference AgainstFastest [lec, nor] `shouldBe` Nothing
+      liveMissingReference AgainstReference [nor, lec] `shouldBe` Nothing
+      liveNoLapFor "16" [lec, nor] `shouldBe` Just "LEC: 1:33.100 · sin sectores"
+      liveNoLapFor "1" [lec, nor] `shouldBe` Nothing
+      endedNotice `shouldBe` "Sesión acabada: lo último del directo"
+
+    it "los elegidos en una lista nueva: el que está se queda; el que no, el primero libre" $ do
+      keepChosen ["1", "3", "16", "38"] ("16", "1") `shouldBe` (Just "16", Just "1")
+      keepChosen ["1", "3", "38"] ("16", "1") `shouldBe` (Just "3", Just "1")
+      keepChosen ["1", "3", "38"] ("1", "16") `shouldBe` (Just "1", Just "3")
+      keepChosen ["3", "38"] ("16", "1") `shouldBe` (Just "3", Just "38")
+      keepChosen [] ("16", "1") `shouldBe` (Nothing, Nothing)
+
+    it "al abrir ya en directo: P1 contra P2, sin contar las filas sin número" $ do
+      let at p c = emptyLiveRow {ltPosition = p, ltCar = c}
+      leadingPair [at 3 "44", at 2 "1", at 1 "16"] `shouldBe` Just ("16", "1")
+      leadingPair [at 1 "", at 3 "44", at 2 "1"] `shouldBe` Just ("1", "44")
+      leadingPair [at 1 "16"] `shouldBe` Nothing
 
   -- Las trazas del tipo 3 sobre dos vueltas de juguete: la referencia, 100 s y 4000 m
   -- con S1 y S2 a los 1200 y 2800 m; el otro, 110 s y 4200 m, a los 1300 y 2900 m.

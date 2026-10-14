@@ -33,6 +33,15 @@ module Common.Comparison
   , liveComparison
   , liveDrivers
   , comparisonIsLive
+  , LiveCard (..)
+  , liveCardStep
+  , liveCardRows
+  , liveLapLines
+  , liveMissingReference
+  , liveNoLapFor
+  , endedNotice
+  , keepChosen
+  , leadingPair
     -- * El tipo de gráfica
   , ChartType (..)
   , chartTypesInOrder
@@ -55,7 +64,7 @@ import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
                                 sessionIsLive)
 import           Control.Monad (join)
 import           Data.List     (find, minimumBy, sortOn)
-import           Data.Maybe    (fromMaybe, isNothing, listToMaybe)
+import           Data.Maybe    (fromMaybe, isJust, isNothing, listToMaybe)
 import           Data.Ord      (comparing)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
@@ -309,6 +318,89 @@ comparisonIsLive (Just Feed) session =
     Just s               -> sessionIsLive s
     Nothing              -> True
 comparisonIsLive _ _ = False
+
+-- | Qué hace la tarjeta con el directo: nunca lo vio (pinta FastF1); lo sigue; lo
+-- congela porque dejó de venir del feed con la sesión sin acabar; o la sesión acabó y
+-- se queda con lo último. Las dos últimas guardan la sesión y las filas de la última
+-- foto en vivo.
+data LiveCard
+  = Offline
+  | Following (Maybe SessionInfo) [LiveTimingRow]
+  | Frozen (Maybe SessionInfo) [LiveTimingRow]
+  | Ended (Maybe SessionInfo) [LiveTimingRow]
+  deriving stock (Eq, Show)
+
+-- | El paso con cada directo que llega (la fuente, la sesión y las filas). En vivo
+-- ('comparisonIsLive') se sigue; si no, lo que había se queda: acabado si la sesión dice
+-- «finalizada» o ya anuncia la siguiente, congelado si no. Solo una sesión en vivo saca
+-- de 'Ended'.
+liveCardStep :: Maybe Source -> Maybe SessionInfo -> [LiveTimingRow] -> LiveCard -> LiveCard
+liveCardStep src session rows prev
+  | comparisonIsLive src session = Following session rows
+  | otherwise = case prev of
+      Following s r -> leave s r
+      Frozen s r    -> leave s r
+      other         -> other
+  where
+    leave s r
+      | over      = Ended s r
+      | otherwise = Frozen s r
+    over = (srState <$> (siState =<< session)) `elem` map Just [SessionFinalised, SessionInactive]
+
+-- | La sesión y las filas que se pintan, si la tarjeta va con el directo.
+liveCardRows :: LiveCard -> Maybe (Maybe SessionInfo, [LiveTimingRow])
+liveCardRows Offline         = Nothing
+liveCardRows (Following s r) = Just (s, r)
+liveCardRows (Frozen s r)    = Just (s, r)
+liveCardRows (Ended s r)     = Just (s, r)
+
+-- | El tiempo de un coche en dos líneas: con tiempo y sin sectores, el tiempo y debajo
+-- @«sin sectores»@; en otro caso, su texto y nada debajo.
+liveLapLines :: LiveEntry -> (Text, Maybe Text)
+liveLapLines (LiveEntry e shown)
+  | not (T.null (ceLap e)) && isNothing (ceSectors e) = (ceLap e, Just "sin sectores")
+  | otherwise                                         = (shown, Nothing)
+
+-- | 'missingReference' en directo: @«LEC: 1:33.100 · sin sectores. Elige otra
+-- referencia.»@.
+liveMissingReference :: Baseline -> [LiveEntry] -> Maybe Text
+liveMissingReference AgainstFastest _ = Nothing
+liveMissingReference AgainstReference es =
+  case es of
+    (ref : _) | isNothing (ceSectors (leEntry ref)) -> Just (liveNote ref <> ". Elige otra referencia.")
+    _ -> Nothing
+
+-- | 'noLapFor' en directo: @«LEC: 1:33.100 · sin sectores»@.
+liveNoLapFor :: Text -> [LiveEntry] -> Maybe Text
+liveNoLapFor car es =
+  liveNote <$> find (\le -> ceCar (leEntry le) == car && isNothing (ceSectors (leEntry le))) es
+
+liveNote :: LiveEntry -> Text
+liveNote le = ceDriver (leEntry le) <> ": " <> leShown le
+
+-- | El aviso sobre la gráfica cuando la sesión acabó ('Ended').
+endedNotice :: Text
+endedNotice = "Sesión acabada: lo último del directo"
+
+-- | P1 y P2 del directo (por posición; las filas sin número no cuentan), el par con el
+-- que abre la tarjeta si la página se abre ya en directo. 'Nothing' sin dos coches.
+leadingPair :: [LiveTimingRow] -> Maybe (Text, Text)
+leadingPair rows =
+  case map ltCar (sortOn ltPosition (filter numbered rows)) of
+    p1 : p2 : _ -> Just (p1, p2)
+    _           -> Nothing
+  where
+    numbered r = isJust (readMaybe (T.unpack (ltCar r)) :: Maybe Int)
+
+-- | Los dos coches elegidos (referencia y otro) en una lista de números nueva: el que
+-- está se queda; el que no, pasa al primero de la lista que no sea el otro.
+keepChosen :: [Text] -> (Text, Text) -> (Maybe Text, Maybe Text)
+keepChosen cars (r, o) = (r', pick o (maybe [] pure r'))
+  where
+    r' = pick r [o]
+    pick c avoid
+      | c `elem` cars = Just c
+      | otherwise     = find (`notElem` avoid) cars
 
 -- | El tipo de gráfica de Lap Comparison, elegido en el título.
 data ChartType = SectorDelta | LapSpeedTrace | TelemetryTraces | LapDeltaBars

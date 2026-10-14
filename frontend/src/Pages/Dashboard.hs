@@ -830,7 +830,7 @@ renderWidget :: MonadWidget t m
 renderWidget live revealed control put wc = case widgetType wc of
   LiveTiming       -> never <$ liveTimingWidget live
   Telemetry        -> never <$ telemetryWidget
-  LapComparison    -> comparisonWidget revealed control put
+  LapComparison    -> comparisonWidget live revealed control put
   TyreStrategy     -> never <$ placeholderWidget "Tyre Strategy"
   HistoricalStats  -> never <$ driverStatsWidget
   ConstructorStats -> never <$ constructorStatsWidget

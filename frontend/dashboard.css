@@ -1273,6 +1273,23 @@ body {
   font-size: var(--fs-lg);
 }
 
+/* En directo, con tiempo y sin sectores: «sin sectores» en su línea, bajo el tiempo. */
+.comparison__time-note {
+  font-size: var(--fs-sm);
+  color: var(--c-muted);
+}
+
+/* El «Live» de la tarjeta: a la derecha, como en Live Timing. Al acabar la sesión se
+   oculta sin soltar su sitio, para que la cabecera no cambie de ancho. */
+.comparison__live {
+  display: flex;
+  margin-left: auto;
+}
+
+.comparison__live[hidden] {
+  display: none;
+}
+
 /* Solo la caja del lienzo. `stroke`/`fill` de la serie y de la línea del cero
    los pone `Widgets.Comparison` como atributos de presentación, y una regla CSS
    aquí los sobrescribiría en silencio (el CSS gana a los atributos). */
