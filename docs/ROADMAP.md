@@ -747,7 +747,13 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
       pilotos del directo por número de coche. **Hecho el 2026-10-13 (b)–(e):** cada fila del directo lleva el número
       de coche; el directo que comparten las tarjetas tiene su propio módulo; los sectores de la última también se
       buscan en lo guardado, y valen solo si suman la vuelta al milésimo (con ±0,05 s, una foto a mitad de vuelta
-      colaba sectores de dos vueltas). Falta pintarlo: la vuelta del directo, la tarjeta y el mando. Con cuenta, la
+      colaba sectores de dos vueltas). **Hecho el 2026-10-13 (f)–(h):** el tipo 1 en vivo. Entra sola cuando la sesión
+      empieza, con los pilotos del directo (P1 contra P2 si la página se abre ya en directo; los mismos coches si
+      entra con la página abierta); una vuelta con tiempo y sin sectores dice «sin sectores»; si el directo deja de
+      venir del feed se queda con lo último, y al acabar lo dice un aviso. «Vuelta [más rápida | última | Q1…]»
+      junto al tipo, con la regla recordada y un desplegable por piloto, en verde si difiere; con FastF1, solo «más
+      rápida». «Comparar» ya no existe: todo se aplica al momento. Falta el mando con FastF1, que FastF1 diga de qué
+      sesión es su respuesta, y verlo con una sesión real. Con cuenta, la
       predicción llega en directo; las tablas se fechan midiendo si llega sin cuenta (2026-10-10 (a)), en la carrera
       de EE. UU.: la de Singapur no se grabó.
 - [x] **El final de una sesión, dicho como es** (2026-10-03 (a) y (b)). Tras cada bandera a cuadros la banda dice
