@@ -26,6 +26,13 @@ module Common.Comparison
   , lapShown
   , missingReference
   , noLapFor
+    -- * La vuelta del directo
+  , LapChoice (..)
+  , lapChoicesOffered
+  , LiveEntry (..)
+  , liveComparison
+  , liveDrivers
+  , comparisonIsLive
     -- * El tipo de gráfica
   , ChartType (..)
   , chartTypesInOrder
@@ -40,12 +47,19 @@ module Common.Comparison
   , deltaFormula
   ) where
 
-import           Common.Types  (ComparisonEntry (..), LapComparison (..))
+import           Common.Origin (Source (..))
+import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
+                                LapComparison (..), LiveTimingRow (..),
+                                SessionInfo (..), SessionState (..),
+                                StateReading (..), lapSeconds, partLabel,
+                                sessionIsLive)
 import           Control.Monad (join)
-import           Data.List     (find, minimumBy)
-import           Data.Maybe    (isNothing, listToMaybe)
+import           Data.List     (find, minimumBy, sortOn)
+import           Data.Maybe    (fromMaybe, isNothing, listToMaybe)
 import           Data.Ord      (comparing)
 import           Data.Text     (Text)
+import qualified Data.Text     as T
+import           Text.Read     (readMaybe)
 
 -- | Los tres tiempos de sector de una vuelta, en segundos.
 type Sectors = (Double, Double, Double)
@@ -222,6 +236,79 @@ noLapNote e = ceDriver e <> " no tiene vuelta en esta sesión"
 noLapFor :: Text -> LapComparison -> Maybe Text
 noLapFor car c =
   noLapNote <$> find (\e -> ceCar e == car && isNothing (ceSectors e)) (lcEntries c)
+
+-- | Qué vuelta de un coche se compara en directo: la más rápida de toda la sesión, la
+-- última, o la más rápida de una parte de la clasificación, de 1 en adelante.
+data LapChoice = FastestLap | LastLap | PartLap Int
+  deriving stock (Eq, Show)
+
+-- | Las vueltas que se ofrecen: la más rápida y la última, y en una clasificación cada
+-- parte desde que empieza.
+lapChoicesOffered :: Maybe SessionInfo -> [LapChoice]
+lapChoicesOffered session =
+  FastestLap : LastLap : maybe [] (\n -> map PartLap [1 .. n]) (siPart =<< session)
+
+-- | Un coche de la comparación en directo y su tiempo como se pinta, que solo en directo
+-- dice por qué no hay barras: @«1:33.100 · sin sectores»@ o @«sin vuelta en Q2»@.
+data LiveEntry = LiveEntry
+  { leEntry :: ComparisonEntry
+  , leShown :: Text
+  }
+  deriving stock (Eq, Show)
+
+-- | Los coches pedidos (número y vuelta), en el orden pedido, con lo que traen las filas
+-- del directo. Un coche que no está en las filas sale «sin vuelta», con su número por
+-- nombre.
+liveComparison :: Maybe SessionInfo -> [LiveTimingRow] -> [(Text, LapChoice)] -> [LiveEntry]
+liveComparison session rows = map entryOf
+  where
+    entryOf (car, choice) = case find ((== car) . ltCar) rows of
+      Just r  -> liveEntry session r choice
+      Nothing -> LiveEntry (MkComparisonEntry car car "" Nothing Nothing Nothing []) "sin vuelta"
+
+liveEntry :: Maybe SessionInfo -> LiveTimingRow -> LapChoice -> LiveEntry
+liveEntry session r choice =
+  case (lapSeconds lap, sectorsFrom sectors) of
+    (Nothing, _)      -> LiveEntry (entry "" Nothing) noLap
+    (Just _, Nothing) -> LiveEntry (entry lap Nothing) (lap <> " · sin sectores")
+    (Just _, Just s)  -> LiveEntry (entry lap (Just s)) lap
+  where
+    (lap, sectors) = case choice of
+      FastestLap -> (ltBestLap r, ltBestSectors r)
+      LastLap    -> (ltLastLap r, ltLastSectors r)
+      PartLap n  -> (fromMaybe "" (nth n (ltPartBests r)), fromMaybe [] (nth n (ltPartBestSectors r)))
+    part = case choice of
+      PartLap n -> (`partLabel` n) <$> session
+      _         -> Nothing
+    noLap = maybe "sin vuelta" ("sin vuelta en " <>) part
+    entry l s = MkComparisonEntry (ltCar r) (ltDriver r) l part s Nothing []
+    nth n xs
+      | n >= 1    = listToMaybe (drop (n - 1) xs)
+      | otherwise = Nothing
+
+-- | Los tres sectores en segundos, si los tres se leen.
+sectorsFrom :: [Text] -> Maybe Sectors
+sectorsFrom [a, b, c] = (,,) <$> lapSeconds a <*> lapSeconds b <*> lapSeconds c
+sectorsFrom _         = Nothing
+
+-- | Los pilotos del directo para los desplegables, por número de coche de menor a mayor.
+-- Una fila sin número —o con uno que no se lee— no entra.
+liveDrivers :: [LiveTimingRow] -> [DriverEntry]
+liveDrivers rows =
+  map snd $ sortOn fst
+    [ (n, MkDriverEntry (ltCar r) (ltDriver r) (ltTeam r))
+    | r <- rows, Just n <- [readMaybe (T.unpack (ltCar r)) :: Maybe Int] ]
+
+-- | Si Lap Comparison va con el directo: lo sirve el feed y su sesión empezó y no ha
+-- finalizado. Un estado desconocido, o ninguno, cuenta como directo (el criterio de
+-- 'sessionIsLive'); «anunciada sin empezar» no.
+comparisonIsLive :: Maybe Source -> Maybe SessionInfo -> Bool
+comparisonIsLive (Just Feed) session =
+  case srState <$> (siState =<< session) of
+    Just SessionInactive -> False
+    Just s               -> sessionIsLive s
+    Nothing              -> True
+comparisonIsLive _ _ = False
 
 -- | El tipo de gráfica de Lap Comparison, elegido en el título.
 data ChartType = SectorDelta | LapSpeedTrace | TelemetryTraces | LapDeltaBars

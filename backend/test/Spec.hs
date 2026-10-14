@@ -66,7 +66,8 @@ import           Common.Columns              (LiveColumn (..), canClose,
                                               liveColumnsInOrder, menuColumns,
                                               shownColumns, toggleColumn)
 import           Common.Comparison           (Axis (..), Baseline (..),
-                                              ChartType (..), LapGeometry (..),
+                                              ChartType (..), LapChoice (..),
+                                              LapGeometry (..), LiveEntry (..),
                                               Pair (..), anchored, axesInOrder,
                                               axisFromKey, axisKey, axisLabel,
                                               axisNotice, axisXs, baseIndex,
@@ -76,11 +77,13 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               chartTypeFromKey, chartTypeKey,
                                               chartTypeLabel, chartTypeReady,
                                               chartTypeTraces,
-                                              chartTypesInOrder, defaultAxis,
+                                              chartTypesInOrder,
+                                              comparisonIsLive, defaultAxis,
                                               defaultChartType, deltaFormula,
-                                              deltasAgainst, lapShown,
-                                              missingReference, noLapFor,
-                                              pairWith)
+                                              deltasAgainst, lapChoicesOffered,
+                                              lapShown, liveComparison,
+                                              liveDrivers, missingReference,
+                                              noLapFor, pairWith)
 import           Common.ComparisonCard       (CardControl (..), CardLayout (..),
                                               ChartMode (..), Side (..),
                                               carSelectWidth, cardLayout,
@@ -3163,6 +3166,92 @@ main = hspec $ do
       baseIndex AgainstFastest [Nothing, ceSectors nor, ceSectors lec] `shouldBe` Just 1
       baseIndex AgainstReference [Nothing, ceSectors nor] `shouldBe` Nothing
       baseIndex AgainstFastest [Nothing, Nothing] `shouldBe` Nothing
+
+  -- La vuelta del directo en una Q2: el 16 con la más rápida (la de Q1) vista entera, la
+  -- última sin sectores y sin vuelta en Q2; el 1 con la más rápida sin sectores y lo
+  -- demás entero.
+  describe "Common.Comparison: el directo" $ do
+    let quali  = (stateOf SessionStarted) {siName = "Qualifying", siPart = Just 2}
+        sprint = quali {siName = "Sprint Qualifying"}
+        lec = emptyLiveRow
+          { ltCar = "16", ltDriver = "LEC", ltTeam = "Ferrari"
+          , ltBestLap = "1:32.274", ltBestSectors = ["28.100", "39.000", "25.174"]
+          , ltLastLap = "1:33.100", ltLastSectors = []
+          , ltPartBests = ["1:32.274", "-"], ltPartBestSectors = [["28.100", "39.000", "25.174"], []] }
+        nor = emptyLiveRow
+          { ltCar = "1", ltDriver = "NOR", ltTeam = "McLaren"
+          , ltBestLap = "1:32.500", ltBestSectors = []
+          , ltLastLap = "1:32.900", ltLastSectors = ["28.300", "39.200", "25.400"]
+          , ltPartBests = ["1:32.600", "1:32.500"]
+          , ltPartBestSectors = [["28.200", "39.200", "25.200"], ["28.100", "39.200", "25.200"]] }
+        rows        = [lec, nor]
+        live s      = liveComparison (Just s) rows
+        shownIn s   = map leShown . live s
+        sectorsIn s = map (ceSectors . leEntry) . live s
+    it "la más rápida, con sus sectores en segundos" $
+      live quali [("16", FastestLap)]
+        `shouldBe` [LiveEntry (MkComparisonEntry "16" "LEC" "1:32.274" Nothing (Just (28.1, 39.0, 25.174)) Nothing []) "1:32.274"]
+
+    it "la última, con los suyos" $
+      live quali [("1", LastLap)]
+        `shouldBe` [LiveEntry (MkComparisonEntry "1" "NOR" "1:32.900" Nothing (Just (28.3, 39.2, 25.4)) Nothing []) "1:32.900"]
+
+    it "la de una parte, con los suyos y su nombre: Q2, o SQ2 en la Sprint" $ do
+      live quali [("1", PartLap 2)]
+        `shouldBe` [LiveEntry (MkComparisonEntry "1" "NOR" "1:32.500" (Just "Q2") (Just (28.1, 39.2, 25.2)) Nothing []) "1:32.500"]
+      map (cePart . leEntry) (live sprint [("1", PartLap 2)]) `shouldBe` [Just "SQ2"]
+
+    it "sin vuelta en esa parte: «sin vuelta en Q2», sin barras" $ do
+      shownIn quali [("16", PartLap 2)] `shouldBe` ["sin vuelta en Q2"]
+      sectorsIn quali [("16", PartLap 2)] `shouldBe` [Nothing]
+      shownIn sprint [("16", PartLap 2)] `shouldBe` ["sin vuelta en SQ2"]
+
+    it "con tiempo y sin sectores, la más rápida y la última dicen «· sin sectores»" $ do
+      shownIn quali [("1", FastestLap), ("16", LastLap)]
+        `shouldBe` ["1:32.500 · sin sectores", "1:33.100 · sin sectores"]
+      sectorsIn quali [("1", FastestLap), ("16", LastLap)] `shouldBe` [Nothing, Nothing]
+      map (ceLap . leEntry) (live quali [("1", FastestLap), ("16", LastLap)]) `shouldBe` ["1:32.500", "1:33.100"]
+
+    it "sin tiempo, «sin vuelta» y sin tiempo que pintar" $ do
+      let out = liveComparison (Just quali) [lec {ltLastLap = "-", ltBestLap = ""}] [("16", LastLap), ("16", FastestLap)]
+      map leShown out `shouldBe` ["sin vuelta", "sin vuelta"]
+      map (ceLap . leEntry) out `shouldBe` ["", ""]
+
+    it "un coche que no está en las filas: su número por nombre y «sin vuelta»" $
+      live quali [("44", FastestLap)]
+        `shouldBe` [LiveEntry (MkComparisonEntry "44" "44" "" Nothing Nothing Nothing []) "sin vuelta"]
+
+    it "en el orden pedido: la referencia, primero" $ do
+      map (ceDriver . leEntry) (live quali [("1", LastLap), ("16", FastestLap)]) `shouldBe` ["NOR", "LEC"]
+      map (ceDriver . leEntry) (live quali [("16", FastestLap), ("1", LastLap)]) `shouldBe` ["LEC", "NOR"]
+
+    it "la lista de pilotos: por número de verdad, reservas incluidos, sin las filas sin número" $ do
+      let car n d = emptyLiveRow {ltCar = n, ltDriver = d}
+      map deNumber (liveDrivers [car "16" "LEC", car "38" "BEA", car "" "XXX", car "3" "VER", car "10" "GAS", car "1" "NOR"])
+        `shouldBe` ["1", "3", "10", "16", "38"]
+      liveDrivers [lec] `shouldBe` [MkDriverEntry "16" "LEC" "Ferrari"]
+
+    it "las vueltas que se ofrecen: la más rápida, la última y cada parte empezada" $ do
+      lapChoicesOffered (Just (stateOf SessionStarted)) `shouldBe` [FastestLap, LastLap]
+      lapChoicesOffered (Just quali) `shouldBe` [FastestLap, LastLap, PartLap 1, PartLap 2]
+      lapChoicesOffered (Just quali {siPart = Nothing}) `shouldBe` [FastestLap, LastLap]
+      lapChoicesOffered Nothing `shouldBe` [FastestLap, LastLap]
+
+    it "en vivo: el feed con la sesión empezada y sin finalizar; desconocido o sin estado, también" $ do
+      map (comparisonIsLive (Just Feed) . Just . stateOf)
+          [SessionStarted, SessionChequered, SessionRedFlag, SessionUnknown "Nuevo"]
+        `shouldBe` replicate 4 True
+      map (comparisonIsLive (Just Feed) . Just . stateOf) [SessionInactive, SessionFinalised] `shouldBe` [False, False]
+      comparisonIsLive (Just Feed) (Just (stateless "Singapore Grand Prix")) `shouldBe` True
+      comparisonIsLive (Just Feed) Nothing `shouldBe` True
+      comparisonIsLive (Just OpenF1) (Just (stateOf SessionStarted)) `shouldBe` False
+      comparisonIsLive Nothing (Just (stateOf SessionStarted)) `shouldBe` False
+
+    it "un sector que no se lee, o que falta, deja la vuelta sin barras" $ do
+      let shown ss = map leShown (liveComparison (Just quali) [lec {ltLastSectors = ss}] [("16", LastLap)])
+      shown ["28.300", "", "25.400"] `shouldBe` ["1:33.100 · sin sectores"]
+      shown ["28.300", "39.200"] `shouldBe` ["1:33.100 · sin sectores"]
+      shown ["28.300", "39.400", "25.400"] `shouldBe` ["1:33.100"]
 
   -- Las trazas del tipo 3 sobre dos vueltas de juguete: la referencia, 100 s y 4000 m
   -- con S1 y S2 a los 1200 y 2800 m; el otro, 110 s y 4200 m, a los 1300 y 2900 m.
