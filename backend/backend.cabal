@@ -27,6 +27,7 @@ library
     exposed-modules:
         Config
         App
+        Auto.Context
         Auto.Helper
         Server
         Html
@@ -69,12 +70,14 @@ library
       , bytestring
       , common
       , containers
+      , directory
       , filepath
       , http-client
       , http-types
       , lucid
       , mtl
       , network
+      , process
       , req
       , retry
       , servant
@@ -98,6 +101,18 @@ executable backend
       , time
       , warp
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
+executable dashboardF1-auto
+    import:           shared
+    hs-source-dirs:   auto
+    main-is:          Main.hs
+    build-depends:
+        base            >= 4.14 && < 5
+      , backend
+      , directory
+      , filepath
+      , text
+      , time
 
 test-suite backend-test
     import:           shared

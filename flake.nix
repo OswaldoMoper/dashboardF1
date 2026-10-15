@@ -143,6 +143,15 @@
           '';
         };
 
+        # Runs the store copy, so the timers it leaves survive a rebuild of the tree.
+        autoLauncher = pkgs.writeShellApplication {
+          name = "dashboardF1-auto";
+          text = ''
+            ${guardRoot}
+            exec nix run .#auto -- "$@"
+          '';
+        };
+
         e2eRecordLauncher = pkgs.writeShellApplication {
           name = "dashboardF1-e2e-record";
           text = ''
@@ -184,6 +193,12 @@
           program = "${self'.packages.backend}/bin/backend";
         };
         apps.default = self'.apps.backend;
+
+        # `dashboardF1-auto` — programa las comprobaciones de un día de GP.
+        apps.auto = {
+          type = "app";
+          program = "${self'.packages.backend}/bin/dashboardF1-auto";
+        };
 
         # ── Entorno de desarrollo completo: microservicio + backend ──
         packages.dev = pkgs.writeShellApplication {
@@ -525,6 +540,7 @@
             pkg-config
           ]) ++ [
             devLauncher
+            autoLauncher
             e2eLauncher
             e2eRecordLauncher
             self'.packages.pytest
@@ -551,6 +567,7 @@
             echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
             echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"
             echo "  grabar  : dashboardF1-record [--f1tv] <fichero> [segundos]"
+            echo "  auto    : dashboardF1-auto [día] [--horas p1=HH:MM,…] [--ensayo] | estado | cancela"
           '';
         };
 

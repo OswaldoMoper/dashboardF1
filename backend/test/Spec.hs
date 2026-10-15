@@ -5078,17 +5078,17 @@ main = hspec $ do
   describe "Auto.dayPlan" $ do
     it "el viernes lanzado a las 10:00: vigía y comprobaciones ya, cada grabación a T−45" $
       Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-        `shouldBe` [ Auto.Planned Auto.Checks                   (atUtc 23 16 0)  Nothing
-                   , Auto.Planned Auto.Vigia                    (atUtc 23 16 0)  (Just (atUtc 24 3 0))
-                   , Auto.Planned (Auto.Recording "Practice 1") (atUtc 23 16 45) (Just (atUtc 23 23 30))
-                   , Auto.Planned Auto.Checks                   (atUtc 23 16 45) Nothing
-                   , Auto.Planned (Auto.Recording "Practice 2") (atUtc 23 20 15) (Just (atUtc 24 3 0))
-                   , Auto.Planned Auto.Checks                   (atUtc 23 20 15) Nothing
+        `shouldBe` [ Auto.Planned (Auto.Checks Nothing)             (atUtc 23 16 0)  Nothing
+                   , Auto.Planned Auto.Vigia                        (atUtc 23 16 0)  (Just (atUtc 24 3 0))
+                   , Auto.Planned (Auto.Recording "Practice 1")     (atUtc 23 16 45) (Just (atUtc 23 23 30))
+                   , Auto.Planned (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
+                   , Auto.Planned (Auto.Recording "Practice 2")     (atUtc 23 20 15) (Just (atUtc 24 3 0))
+                   , Auto.Planned (Auto.Checks (Just "Practice 2")) (atUtc 23 20 15) Nothing
                    ]
 
     it "lanzado tarde, lo que debía haber arrancado arranca ya y su tanda sobra" $
       take 3 (Auto.dayPlan Auto.capAfterStart (atUtc 23 17 0) austinSlots)
-        `shouldBe` [ Auto.Planned Auto.Checks                   (atUtc 23 17 0) Nothing
+        `shouldBe` [ Auto.Planned (Auto.Checks Nothing)         (atUtc 23 17 0) Nothing
                    , Auto.Planned Auto.Vigia                    (atUtc 23 17 0) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Recording "Practice 1") (atUtc 23 17 0) (Just (atUtc 23 23 30))
                    ]
@@ -5097,11 +5097,11 @@ main = hspec $ do
       ( map Auto.plPiece (Auto.dayPlan Auto.capAfterStart (atUtc 23 23 40) austinSlots)
       , Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) []
       )
-        `shouldBe` ([Auto.Checks, Auto.Vigia, Auto.Recording "Practice 2"], [])
+        `shouldBe` ([Auto.Checks Nothing, Auto.Vigia, Auto.Recording "Practice 2"], [])
 
     it "el tope es el que se le da: el ensayo lo acorta" $
       Auto.dayPlan (15 * 60) (atUtc 23 16 0) [Auto.Slot "Ensayo" (atUtc 23 16 10)]
-        `shouldBe` [ Auto.Planned Auto.Checks              (atUtc 23 16 0) Nothing
+        `shouldBe` [ Auto.Planned (Auto.Checks Nothing)    (atUtc 23 16 0) Nothing
                    , Auto.Planned Auto.Vigia               (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    , Auto.Planned (Auto.Recording "Ensayo") (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    ]
@@ -5197,6 +5197,142 @@ main = hspec $ do
 
     it "la carpeta del día" $
       Auto.dayFolder "viernes" austinFriday `shouldBe` "dashboardF1-auto-viernes-2026-10-23"
+
+  describe "Auto: los nombres" $ do
+    it "las sesiones del feed, cortas en unidades y ficheros y legibles en pantalla" $
+      map (\n -> (Auto.sessionShort n, Auto.sessionLabel n))
+          ["Practice 1", "Qualifying", "Sprint Qualifying", "Sprint", "Race", "Day 1"]
+        `shouldBe` [ ("p1", "P1"), ("q", "Q"), ("sq", "SQ"), ("sprint", "Sprint")
+                   , ("carrera", "carrera"), ("day-1", "day-1") ]
+
+    it "cada pieza tiene su unidad: la carpeta y la pieza (D190)" $
+      map (Auto.unitName "dashboardF1-auto-viernes-2026-10-23")
+          [Auto.Checks Nothing, Auto.Checks (Just "Practice 1"), Auto.Vigia, Auto.Recording "Race"]
+        `shouldBe` [ "dashboardF1-auto-viernes-2026-10-23-comprobaciones-inicio"
+                   , "dashboardF1-auto-viernes-2026-10-23-comprobaciones-p1"
+                   , "dashboardF1-auto-viernes-2026-10-23-vigia"
+                   , "dashboardF1-auto-viernes-2026-10-23-grabacion-carrera"
+                   ]
+
+    it "relanzar el mismo día abre la primera carpeta libre: -2, -3…" $
+      map (Auto.nextFolder "d") [[], ["otra"], ["d"], ["d", "d-2"], ["d", "d-3"]]
+        `shouldBe` ["d", "d", "d-2", "d-3", "d-2"]
+
+    it "el día sale del nombre de la carpeta, también con -2 y en el ensayo" $
+      map Auto.folderDay
+          [ "dashboardF1-auto-viernes-2026-10-23-2"
+          , "dashboardF1-auto-ensayo-2026-10-15"
+          , "dashboardF1-vigia-viernes-2026-10-23"
+          ]
+        `shouldBe` [Just austinFriday, Just (fromGregorian 2026 10 15), Nothing]
+
+  describe "Auto: lo que pide quien lo lanza" $ do
+    it "el día, --horas y --ensayo, en cualquier orden" $
+      map Auto.parseLaunch [[], ["--ensayo", "--horas", "p1=11:50", "viernes"]]
+        `shouldBe` [ Right (Auto.Launch Nothing Nothing False)
+                   , Right (Auto.Launch (Just "viernes") (Just "p1=11:50") True)
+                   ]
+
+    it "lo que no se entiende no se adivina" $
+      map (isLeft . Auto.parseLaunch) [["--horas"], ["viernes", "sabado"], ["--hora", "p1=11:50"]]
+        `shouldBe` [True, True, True]
+
+    it "las horas a mano son de México, ese día, y salen ordenadas" $
+      map (Auto.parseHoras austinFriday) ["p1=11:30,p2=15:00", " P2=15:00 , p1=11:30 "]
+        `shouldBe` [Right austinSlots, Right austinSlots]
+
+    it "una hora mal escrita, una sesión que no existe o repetida: el mensaje, nada programado" $
+      map (isLeft . Auto.parseHoras austinFriday)
+          ["", "p1", "p4=11:30", "p1=25:00", "p1=11h30", "p1=11:30,p1=12:00"]
+        `shouldBe` [True, True, True, True, True, True]
+
+    it "la respuesta de /api/calendar: la lista, el 404 del clon o lo que no se entiende" $
+      let entry = CalendarEntry "Practice 1" "United States Grand Prix" (atUtc 23 17 30) (atUtc 23 18 30)
+       in map (uncurry Auto.readCalendar) [(200, encode [entry]), (404, ""), (500, ""), (200, "<html>")]
+            `shouldSatisfy` \answers -> case answers of
+              [Auto.Calendar [e], Auto.CalendarMissing, Auto.CalendarUnreadable "HTTP 500", Auto.CalendarUnreadable _] ->
+                e == entry
+              _ -> False
+
+    it "la FALLA dice la causa; un calendario con sesiones, aunque no ese día, no es FALLA" $
+      map Auto.calendarFailure [Auto.Calendar [], Auto.CalendarMissing, Auto.Calendar [calendarEntryAt 24]]
+        `shouldBe` [ Just "lista vacía"
+                   , Just "esta instancia no sirve el calendario (código anterior)"
+                   , Nothing
+                   ]
+
+  describe "Auto: lo que enseña el comando" $ do
+    it "la cabecera del día, como en D189" $
+      Auto.dayHeader austinFriday (Just "United States Grand Prix")
+        `shouldBe` "Viernes 23 de octubre · United States Grand Prix · horas de México (UTC)"
+
+    it "la tabla: lo de ahora dice «ahora»; cada pieza, su hora y lo que la para" $
+      let rows = Auto.dayTable (atUtc 23 16 0) Nothing (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots)
+       in map (\needle -> any (needle `T.isInfixOf`) rows)
+            [ "comprobaciones de arranque        ahora"
+            , "OpenF1 en 200 cinco min seguidos tras la P2 · tope 21:00 (03:00)"
+            , "grabación P1, sin cuenta          10:45 (16:45)    estado=Finalised de la P1 · tope 17:30 (23:30)"
+            , "comprobaciones antes de la P2     14:15 (20:15)    —"
+            ]
+            `shouldBe` [True, True, True, True]
+
+    it "con horas a mano, una columna con la hora tecleada de la sesión de cada fila" $
+      let rows = Auto.dayTable (atUtc 23 16 0) (Just austinSlots) (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots)
+       in map (\needle -> any (needle `T.isInfixOf`) rows)
+            [ "Qué                               Sesión (a mano)  Empieza"
+            , "vigía                             —                ahora"
+            , "grabación P1, sin cuenta          11:30 (17:30)    10:45 (16:45)    estado=Finalised"
+            , "comprobaciones antes de la P2     15:00 (21:00)    14:15 (20:15)    —"
+            ]
+            `shouldBe` [True, True, True, True]
+
+    it "lo que decía el calendario, en una línea" $
+      Auto.slotsSummary austinSlots `shouldBe` "P1 11:30, P2 15:00"
+
+    it "la hora del temporizador va en UTC" $
+      Auto.onCalendar (atUtc 23 16 45) `shouldBe` "2026-10-23 16:45:00 UTC"
+
+    it "cancela dice de qué día es lo que para (D193)" $
+      map Auto.cancelHeader [Just austinFriday, Nothing]
+        `shouldBe` ["Se paran (viernes 23):", "Se paran:"]
+
+    it "la cabecera de la vista sale de la carpeta (D191)" $
+      Auto.viewHeader "dashboardF1-auto-viernes-2026-10-23-2"
+        `shouldBe` "Viernes 23 · ~/MOPER/dashboardF1-auto-viernes-2026-10-23-2/"
+
+  describe "Auto: la carpeta contra systemd" $ do
+    it "lo de systemd, por descripción (salida real de list-units): pendiente con su hora, corriendo, falló" $
+      Auto.unitStates
+          (fromMaybe [] (decodeStrictText systemdUnits))
+          [Auto.TimerRow "dashboardF1-auto-viernes-2026-10-23-grabacion-p1.timer" 1792773900000000]
+        `shouldBe` [ ("grabación P1, sin cuenta", "pendiente · 10:45 (16:45)")
+                   , ("vigía", "corriendo")
+                   , ("comprobaciones de arranque", "falló")
+                   ]
+
+    it "pendiente según la carpeta: lo programado para luego que no arrancó ni se canceló" $
+      let p = Auto.Planned
+          launched = atUtc 23 16 0
+          programmed = map (Auto.programLine launched)
+            [ p (Auto.Checks Nothing) launched Nothing
+            , p (Auto.Recording "Practice 1") (atUtc 23 16 45) Nothing
+            , p (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
+            ]
+          fired = Auto.firedLine (atUtc 23 16 45) "grabación P1, sin cuenta"
+       in ( Auto.expectedPending (programmed <> [fired])
+          , Auto.expectedPending (programmed <> [Auto.cancelLine (atUtc 23 16 10)])
+          )
+            `shouldBe` (["comprobaciones antes de la P1"], [])
+
+    it "si la carpeta y systemd no cuadran, un AVISO por cada lado" $
+      ( Auto.reconcile ["vigía"] [("vigía", "pendiente · 10:00 (16:00)")]
+      , Auto.reconcile ["vigía"] [("grabación P1, sin cuenta", "pendiente · 10:45 (16:45)")]
+      )
+        `shouldBe` ( []
+                   , [ "AVISO  programado y no está en systemd: vigía"
+                     , "AVISO  en systemd y no en la carpeta: grabación P1, sin cuenta"
+                     ]
+                   )
 
 -- * Propiedades
 
@@ -6919,6 +7055,21 @@ atUtc d h m = UTCTime (fromGregorian 2026 10 (fromInteger d)) (fromInteger (h * 
 -- | Las dos sesiones del viernes, a sus horas del calendario (11:30 y 15:00 de México).
 austinSlots :: [Auto.Slot]
 austinSlots = [Auto.Slot "Practice 1" (atUtc 23 17 30), Auto.Slot "Practice 2" (atUtc 23 21 0)]
+
+-- | Una sesión del calendario que empieza ese día de octubre a las 17:30 UTC.
+calendarEntryAt :: Integer -> CalendarEntry
+calendarEntryAt d = CalendarEntry "Practice 3" "" (atUtc d 17 30) (atUtc d 18 30)
+
+-- | @systemctl --user list-units 'dashboardF1-auto-*' --all -o json@, con la forma de
+-- la salida real: el servicio de un temporizador pendiente sale «dead», y el
+-- temporizador de un servicio que corre, «running».
+systemdUnits :: T.Text
+systemdUnits =
+  "[{\"unit\":\"dashboardF1-auto-viernes-2026-10-23-grabacion-p1.service\",\"load\":\"loaded\",\"active\":\"inactive\",\"sub\":\"dead\",\"description\":\"grabación P1, sin cuenta\"},\
+  \{\"unit\":\"dashboardF1-auto-viernes-2026-10-23-grabacion-p1.timer\",\"load\":\"loaded\",\"active\":\"active\",\"sub\":\"waiting\",\"description\":\"grabación P1, sin cuenta\"},\
+  \{\"unit\":\"dashboardF1-auto-viernes-2026-10-23-vigia.service\",\"load\":\"loaded\",\"active\":\"active\",\"sub\":\"running\",\"description\":\"vigía\"},\
+  \{\"unit\":\"dashboardF1-auto-viernes-2026-10-23-vigia.timer\",\"load\":\"loaded\",\"active\":\"active\",\"sub\":\"running\",\"description\":\"vigía\"},\
+  \{\"unit\":\"dashboardF1-auto-viernes-2026-10-23-comprobaciones-inicio.service\",\"load\":\"loaded\",\"active\":\"failed\",\"sub\":\"failed\",\"description\":\"comprobaciones de arranque\"}]"
 
 -- | @\/api\/live@ con esa sesión en ese estado, y sin filas.
 liveOf :: T.Text -> SessionState -> StateBasis -> LiveTable
