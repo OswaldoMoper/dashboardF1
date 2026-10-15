@@ -3,7 +3,7 @@
 module Main where
 
 import           App                      (mkEnv)
-import           Config                   (Config (..), loadConfig)
+import           Config                   (Config (..), loadConfig, startupMark)
 import           Control.Concurrent       (forkIO)
 import           Control.Monad            (void)
 import           Data.Maybe               (fromMaybe)
@@ -37,7 +37,7 @@ main = do
   now <- getCurrentTime
   putStrLn $
     T.unpack (isoInstant now)
-      <> " F1 Dashboard backend en http://localhost:"
+      <> startupMark
       <> show (cfgPort cfg)
       <> "/"
   putStrLn $

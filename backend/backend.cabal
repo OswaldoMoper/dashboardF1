@@ -27,6 +27,7 @@ library
     exposed-modules:
         Config
         App
+        Auto.Helper
         Server
         Html
         Outcome

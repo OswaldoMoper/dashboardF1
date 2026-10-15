@@ -49,6 +49,7 @@ module Main (main) where
 
 import           App                         (ScheduledSession (..),
                                               emptySectorMemory)
+import qualified Auto.Helper                 as Auto
 import           Common.Carry                (Board (..), Carry (..), Grip (..),
                                               Hand (..), Held (..), Scene (..),
                                               boardOf, heldStyle,
@@ -206,7 +207,7 @@ import           Data.Maybe                  (fromMaybe, listToMaybe)
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
-import           Data.Time.Calendar          (fromGregorian)
+import           Data.Time.Calendar          (Day, fromGregorian)
 import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
                                               addUTCTime)
 import           GHC.TypeLits                (symbolVal)
@@ -5043,6 +5044,160 @@ main = hspec $ do
       map fetchedAtLabel ["", "   ", "2026-09-11", "ayer", "2026-09-11T4:03:22Z"]
         `shouldBe` [Nothing, Nothing, Nothing, Nothing, Nothing]
 
+  -- El automatismo del GP: las reglas, con las horas del viernes de Austin.
+  describe "Auto.resolveDay" $ do
+    it "sin nada es hoy, y el día de la semana es el próximo, HOY INCLUIDO" $
+      -- El viernes 23 se lanza el mismo viernes: «viernes» no puede saltar al 30.
+      map (Auto.resolveDay austinFriday) [Nothing, Just "viernes", Just "sabado", Just "jueves"]
+        `shouldBe` [ Right ("viernes", austinFriday)
+                   , Right ("viernes", austinFriday)
+                   , Right ("sabado", fromGregorian 2026 10 24)
+                   , Right ("jueves", fromGregorian 2026 10 29)
+                   ]
+
+    it "acepta acentos, mayúsculas y espacios, y nombra la carpeta sin acentos" $
+      map (Auto.resolveDay austinFriday) [Just " SÁBADO ", Just "Miércoles"]
+        `shouldBe` [ Right ("sabado", fromGregorian 2026 10 24)
+                   , Right ("miercoles", fromGregorian 2026 10 28)
+                   ]
+
+    it "lo que no es un día no se adivina" $
+      map (isLeft . Auto.resolveDay austinFriday . Just) ["vier", "", "friday"]
+        `shouldBe` [True, True, True]
+
+  describe "Auto.slotsOn" $
+    it "cuenta el día en hora de México, no en UTC, y ordena por hora" $
+      -- Las 02:00 UTC del sábado son las 20:00 del viernes en México.
+      Auto.slotsOn austinFriday
+          [ Auto.Slot "Practice 3" (atUtc 24 17 30)
+          , Auto.Slot "Tarde"      (atUtc 24 2 0)
+          , Auto.Slot "Practice 1" (atUtc 23 17 30)
+          ]
+        `shouldBe` [Auto.Slot "Practice 1" (atUtc 23 17 30), Auto.Slot "Tarde" (atUtc 24 2 0)]
+
+  describe "Auto.dayPlan" $ do
+    it "el viernes lanzado a las 10:00: vigía y comprobaciones ya, cada grabación a T−45" $
+      Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
+        `shouldBe` [ Auto.Planned Auto.Checks                   (atUtc 23 16 0)  Nothing
+                   , Auto.Planned Auto.Vigia                    (atUtc 23 16 0)  (Just (atUtc 24 3 0))
+                   , Auto.Planned (Auto.Recording "Practice 1") (atUtc 23 16 45) (Just (atUtc 23 23 30))
+                   , Auto.Planned Auto.Checks                   (atUtc 23 16 45) Nothing
+                   , Auto.Planned (Auto.Recording "Practice 2") (atUtc 23 20 15) (Just (atUtc 24 3 0))
+                   , Auto.Planned Auto.Checks                   (atUtc 23 20 15) Nothing
+                   ]
+
+    it "lanzado tarde, lo que debía haber arrancado arranca ya y su tanda sobra" $
+      take 3 (Auto.dayPlan Auto.capAfterStart (atUtc 23 17 0) austinSlots)
+        `shouldBe` [ Auto.Planned Auto.Checks                   (atUtc 23 17 0) Nothing
+                   , Auto.Planned Auto.Vigia                    (atUtc 23 17 0) (Just (atUtc 24 3 0))
+                   , Auto.Planned (Auto.Recording "Practice 1") (atUtc 23 17 0) (Just (atUtc 23 23 30))
+                   ]
+
+    it "una sesión con el tope pasado no se programa, y sin sesiones no hay nada" $
+      ( map Auto.plPiece (Auto.dayPlan Auto.capAfterStart (atUtc 23 23 40) austinSlots)
+      , Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) []
+      )
+        `shouldBe` ([Auto.Checks, Auto.Vigia, Auto.Recording "Practice 2"], [])
+
+    it "el tope es el que se le da: el ensayo lo acorta" $
+      Auto.dayPlan (15 * 60) (atUtc 23 16 0) [Auto.Slot "Ensayo" (atUtc 23 16 10)]
+        `shouldBe` [ Auto.Planned Auto.Checks              (atUtc 23 16 0) Nothing
+                   , Auto.Planned Auto.Vigia               (atUtc 23 16 0) (Just (atUtc 23 16 25))
+                   , Auto.Planned (Auto.Recording "Ensayo") (atUtc 23 16 0) (Just (atUtc 23 16 25))
+                   ]
+
+  describe "Auto.sessionFinalised" $
+    it "solo la sesión con ESE nombre y en Finalised, oído o deducido" $
+      -- La P1 finalizada sigue en /api/live cuando arranca la grabación de la P2: si
+      -- el nombre no contara, la P2 pararía al arrancar.
+      map (Auto.sessionFinalised "Practice 2")
+          [ Just (liveOf "Practice 2" SessionFinalised Derived)
+          , Just (liveOf "Practice 2" SessionFinalised Heard)
+          , Just (liveOf "Practice 1" SessionFinalised Heard)
+          , Just (liveOf "Practice 2" SessionChequered Heard)
+          , Nothing
+          ]
+        `shouldBe` [True, True, False, False, False]
+
+  describe "Auto.vigiaStep" $ do
+    it "para tras el Finalised de la última sesión y CINCO minutos seguidos de 200" $
+      map (Auto.vigiaDone . runVigia)
+          [ finalP2 : replicate 4 quiet200
+          , finalP2 : replicate 5 quiet200
+          ]
+        `shouldBe` [False, True]
+
+    it "un minuto sin 200 vuelve a contar de cero" $
+      Auto.vigiaDone (runVigia (finalP2 : replicate 3 quiet200 ++ [(Nothing, Just 401)] ++ replicate 4 quiet200))
+        `shouldBe` False
+
+    it "los 200 antes del Finalised, o el Finalised de otra sesión, no cuentan" $
+      map runVigia
+          [ replicate 10 runningP2
+          , (Just (liveOf "Practice 1" SessionFinalised Heard), Just 200) : replicate 10 runningP2
+          ]
+        `shouldBe` [Auto.Watching, Auto.Watching]
+
+  describe "Auto.openf1Verdict" $
+    it "200 OK; 401 (cerrado) y 429 (ritmo) son AVISO; lo demás y sin respuesta, FALLA" $
+      map Auto.openf1Verdict [Just 200, Just 401, Just 429, Just 500, Nothing]
+        `shouldBe` [Auto.Ok, Auto.Aviso, Auto.Aviso, Auto.Falla, Auto.Falla]
+
+  describe "Auto.countLog y logCheck" $ do
+    it "los 429 de OpenF1 y los cortes del feed no son errores (líneas de un log de GP)" $
+      Auto.countLog gpLogLines `shouldBe` Auto.LogCount 0 1 6
+
+    it "un error de verdad es FALLA aunque haya avisos; solo avisos, AVISO; nada, OK" $
+      map (fst . Auto.logCheck . Auto.countLog)
+          [ "src/Handler/Live.hs:12:3: error: [GHC-88464]" : gpLogLines
+          , gpLogLines
+          , ["backend | 2026-10-23T16:00:01.200Z [openf1] meetings?year=2026 200 0.412 s"]
+          ]
+        `shouldBe` [Auto.Falla, Auto.Aviso, Auto.Ok]
+
+    it "solo cuenta la instancia que corre: lo de antes del último arranque no" $
+      -- Malasia se reinició a las 06:07 UTC: un error de antes no puede dejar FALLA
+      -- a la instancia nueva. La línea de arranque es la del log, tal cual.
+      Auto.countLog
+          (Auto.sinceLastStart
+             ( "src/Handler/Live.hs:12:3: error: [GHC-88464]"
+             : "backend | 2026-10-02T06:07:25Z F1 Dashboard backend en http://localhost:3000/"
+             : take 1 gpLogLines
+             ))
+        `shouldBe` Auto.LogCount 0 1 0
+
+    it "sin línea de arranque, el log entero" $
+      Auto.sinceLastStart gpLogLines `shouldBe` gpLogLines
+
+    it "el detalle dice cuántas de cada clase" $
+      snd (Auto.logCheck (Auto.LogCount 0 3 6))
+        `shouldBe` "0 con «error», 3 de OpenF1 429, 6 de Broken pipe/SSL"
+
+  describe "Auto: las líneas de los ficheros" $ do
+    it "comprobaciones.txt: hora de México y UTC, palabra, qué y detalle (D189)" $
+      Auto.checkLine (addUTCTime 11 (atUtc 23 16 2)) Auto.Ok "instancia" "master en :3000 responde"
+        `shouldBe` "10:02:11 (16:02:11) OK     instancia   master en :3000 responde"
+
+    it "resumen.txt: al minuto, con el verbo alineado" $
+      map (uncurry (Auto.eventLine (atUtc 23 16 45))) [("arranca", "vigía"), ("para", "grabación P1")]
+        `shouldBe` [ "10:45 (16:45) arranca  vigía"
+                   , "10:45 (16:45) para     grabación P1"
+                   ]
+
+    it "vigia.txt tiene la forma de la línea del vigía manual, para compararlas" $
+      map Auto.vigiaLine
+          [ Auto.VigiaReading (atUtc 23 17 31) (Just "live") (Just "feed") (Just "2026-10-23T17:31:00Z")
+              (Just ((liveOf "Practice 1" SessionStarted Heard) {liveRows = [emptyLiveRow, emptyLiveRow]}))
+              0.0042 (Just 401)
+          , Auto.VigiaReading (atUtc 23 17 32) Nothing Nothing Nothing Nothing 60.0 Nothing
+          ]
+        `shouldBe` [ "17:31:00 live=live/feed fetched=2026-10-23T17:31:00Z sesion=Practice 1 estado=Started vuelta=- filas=2 t=0.004200s openf1=401"
+                   , "17:32:00 live=-/- fetched=- sesion=- estado=- vuelta=- filas=0 t=60.000000s openf1=000"
+                   ]
+
+    it "la carpeta del día" $
+      Auto.dayFolder "viernes" austinFriday `shouldBe` "dashboardF1-auto-viernes-2026-10-23"
+
 -- * Propiedades
 
 -- | @points@\/@wins@ llegan de Ergast como enteros en cadena; es la forma que
@@ -6750,3 +6905,51 @@ lastDeltaIsLapDiff (NonNegative r1, NonNegative r2, NonNegative r3) (NonNegative
 noneEndsBelowFastest :: [(NonNegative Double, NonNegative Double, NonNegative Double)] -> Bool
 noneEndsBelowFastest laps =
   all (>= 0) [last d | d <- deltasAgainst AgainstFastest [Just (a, b, c) | (NonNegative a, NonNegative b, NonNegative c) <- laps]]
+
+-- * El automatismo del GP
+
+-- | El viernes 23 de octubre de 2026, el de la P1 y la P2 de Austin.
+austinFriday :: Day
+austinFriday = fromGregorian 2026 10 23
+
+-- | Un instante de octubre de 2026 en UTC: día, hora y minuto.
+atUtc :: Integer -> Integer -> Integer -> UTCTime
+atUtc d h m = UTCTime (fromGregorian 2026 10 (fromInteger d)) (fromInteger (h * 3600 + m * 60))
+
+-- | Las dos sesiones del viernes, a sus horas del calendario (11:30 y 15:00 de México).
+austinSlots :: [Auto.Slot]
+austinSlots = [Auto.Slot "Practice 1" (atUtc 23 17 30), Auto.Slot "Practice 2" (atUtc 23 21 0)]
+
+-- | @\/api\/live@ con esa sesión en ese estado, y sin filas.
+liveOf :: T.Text -> SessionState -> StateBasis -> LiveTable
+liveOf name st basis =
+  LiveTable
+    (Just ((stateless "United States Grand Prix") {siName = name, siState = Just (StateReading st basis)}))
+    []
+    NextUnknown
+
+-- | El vigía de un viernes cuya última sesión es la P2, minuto a minuto.
+runVigia :: [(Maybe LiveTable, Maybe Int)] -> Auto.VigiaWatch
+runVigia = foldl (\w (t, c) -> Auto.vigiaStep "Practice 2" t c w) Auto.Watching
+
+runningP2, finalP2, quiet200 :: (Maybe LiveTable, Maybe Int)
+runningP2 = (Just (liveOf "Practice 2" SessionStarted Heard), Just 200)
+finalP2 = (Just (liveOf "Practice 2" SessionFinalised Heard), Just 401)
+quiet200 = (Just (liveOf "Practice 2" SessionFinalised Heard), Just 200)
+
+-- | Líneas tal cual de los logs de días de GP: un 429 de OpenF1 y dos cortes del feed
+-- (un `Broken pipe` y un `SSLError`, con las tres líneas de cada uno que dicen «error»),
+-- y otras del mismo log que no lo dicen aunque nombren `ssl` o el corte.
+gpLogLines :: [T.Text]
+gpLogLines =
+  [ "backend | 2026-10-10T08:10:13.721Z [openf1] laps?session_key=latest 429 0.153 s: {\"detail\":\"Rate limit exceeded. Max 3 requests/second.\",\"error\":\"Too Many Requests\"}"
+  , "fastf1  | 2026-10-10T14:45:40Z Receive error: [Errno 32] Broken pipe"
+  , "fastf1  | 2026-10-10T14:45:40Z   File \"/nix/store/h097imm3w6dpx10qynrd2sz9fks2wbq8-python3-3.12.11/lib/python3.12/ssl.py\", line 1232, in recv"
+  , "fastf1  | 2026-10-10T14:45:40Z BrokenPipeError: [Errno 32] Broken pipe"
+  , "fastf1  | 2026-10-10T14:45:40Z <signalrcore.transport.websockets.websocket_transport.WebsocketTransport object at 0x7425096da4e0> [Errno 32] Broken pipe"
+  , "fastf1  | 2026-10-10T14:45:40Z [Errno 32] Broken pipe <class 'BrokenPipeError'>"
+  , "fastf1  | 2026-10-02T05:50:26Z Receive error: [SSL] record layer failure (_ssl.c:2580)"
+  , "fastf1  | 2026-10-02T05:50:26Z ssl.SSLError: [SSL] record layer failure (_ssl.c:2580)"
+  , "fastf1  | 2026-10-02T05:50:26Z [SSL] record layer failure (_ssl.c:2580) <class 'ssl.SSLError'>"
+  , "backend | 2026-10-10T08:08:47.986Z [openf1] sessions?date_end>=2026-10-10T08:08:47Z 200 0.757 s"
+  ]

@@ -31,6 +31,12 @@ data Config = Config
   , cfgOpenF1Brake      :: MVar [UTCTime] -- ^ las horas de las últimas salidas a OpenF1, la más reciente primero ('Handler.OpenF1.Helper.brakeWait')
   }
 
+-- | Lo que la línea de arranque del backend dice tras su instante, y antes del puerto.
+-- Es por lo que el automatismo reconoce en el log dónde empieza la instancia que corre
+-- ('Auto.Helper.sinceLastStart').
+startupMark :: String
+startupMark = " F1 Dashboard backend en http://localhost:"
+
 loadConfig :: IO Config
 loadConfig = do
   mport  <- lookupEnv "PORT"
