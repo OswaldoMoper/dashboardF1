@@ -204,7 +204,7 @@ import qualified Data.ByteString.Lazy        as LBS
 import           Data.Either                 (isLeft)
 import           Data.List                   (find, nub)
 import qualified Data.Map.Strict             as Map
-import           Data.Maybe                  (fromMaybe, listToMaybe)
+import           Data.Maybe                  (fromMaybe, isJust, listToMaybe)
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
@@ -5196,8 +5196,85 @@ main = hspec $ do
                    , "17:32:00 live=-/- fetched=- sesion=- estado=- vuelta=- filas=0 t=60.000000s openf1=000"
                    ]
 
+    it "la línea del vigía en palabras, con la línea real del 10 de octubre (D196)" $
+      Auto.vigiaWords "09:59:20 live=fresh/feed fetched=- sesion=Sprint estado=Started vuelta=11 filas=22 t=1.859218s openf1=401"
+        `shouldBe` "vigía 03:59 (09:59): Sprint · Started · vuelta 11 · 22 filas · feed (fresh) · OpenF1 401 · 1,9 s"
+
+    it "lo que falta dice «sin …»; sin instancia, solo eso y OpenF1 (D201)" $
+      map Auto.vigiaWords
+          [ "16:21:00 live=recent/openf1 fetched=2026-10-23T16:20:00Z sesion=Practice 1 estado=- vuelta=- filas=1 t=0.081000s openf1=200"
+          , "17:10:00 live=-/- fetched=- sesion=- estado=- vuelta=- filas=0 t=30.000000s openf1=200"
+          , "03:00:00 live=fresh/feed fetched=- sesion=- estado=- vuelta=- filas=0 t=0.004000s openf1=000"
+          ]
+        `shouldBe` [ "vigía 10:21 (16:21): Practice 1 · sin estado · sin vuelta · 1 fila · openf1 (recent) · OpenF1 200 · 0,1 s"
+                   , "vigía 11:10 (17:10): no contesta ninguna instancia · OpenF1 200"
+                   , "vigía 21:00 (03:00): sin sesión · sin estado · sin vuelta · 0 filas · feed (fresh) · OpenF1 sin respuesta · 0,0 s"
+                   ]
+
+    it "lo que escribe el vigía se vuelve a leer en palabras; una línea con otra forma sale tal cual" $
+      ( Auto.vigiaWords (Auto.vigiaLine (Auto.vigiaReading (atUtc 23 17 31) 0.0042 (Just practice1Reply) (Just 200)))
+      , Auto.vigiaWords "vigía manual sin la forma"
+      )
+        `shouldBe` ( "vigía 11:31 (17:31): Practice 1 · Started · sin vuelta · 0 filas · feed (fresh) · OpenF1 200 · 0,0 s"
+                   , "vigía vigía manual sin la forma"
+                   )
+
+    it "la lectura del minuto: sin respuesta no hay tabla; un cuerpo que no se entiende, tampoco, pero contestó" $
+      map (\r -> let v = Auto.vigiaReading (atUtc 23 17 31) 1 r Nothing in (Auto.vrOrigin v, isJust (Auto.vrTable v)))
+          [Just practice1Reply, Nothing, Just practice1Reply {Auto.lrBody = "<html>"}]
+        `shouldBe` [(Just "fresh", True), (Nothing, False), (Just "fresh", False)]
+
+    it "el .json de cada minuto lleva la hora UTC, como el manual" $
+      Auto.vigiaJsonName (addUTCTime 5 (atUtc 23 16 5)) `shouldBe` "160505.json"
+
+    it "cómo para el vigía, y lo que arranca o para no cambia lo pendiente (D197, D200)" $
+      ( map (Auto.vigiaStopLine (atUtc 23 22 20)) [Auto.VigiaQuiet, Auto.VigiaCapped, Auto.VigiaCancelled]
+      , Auto.expectedPending
+          [ Auto.programLine (atUtc 23 16 0) (Auto.Planned Auto.Vigia (atUtc 23 16 0) Nothing)
+          , Auto.startLine (atUtc 23 16 0) "vigía"
+          , Auto.vigiaStopLine (atUtc 23 22 20) Auto.VigiaQuiet
+          ]
+      )
+        `shouldBe` ( [ "16:20 (22:20) para     vigía (OpenF1 en 200 cinco min)"
+                     , "16:20 (22:20) para     vigía (tope)"
+                     , "16:20 (22:20) para     vigía (cancelado)"
+                     ]
+                   , []
+                   )
+
     it "la carpeta del día" $
       Auto.dayFolder "viernes" austinFriday `shouldBe` "dashboardF1-auto-viernes-2026-10-23"
+
+  describe "Auto: lo que recibe cada pieza al disparar" $ do
+    it "el vigía mira la última sesión del día; cada grabación, la suya; todos, la instancia y su tope" $
+      let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
+       in map (Auto.dispatchArgs . Auto.dispatchFor 3001 plan) (take 3 plan)
+            `shouldBe` [ ["--puerto", "3001"]
+                       , ["--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--sesion", "Practice 2"]
+                       , ["--puerto", "3001", "--tope", "2026-10-23T23:30:00Z", "--sesion", "Practice 1"]
+                       ]
+
+    it "lo que se programa se vuelve a leer igual al disparar (ida y vuelta)" $
+      let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
+          dispatches = map (Auto.dispatchFor 3000 plan) plan
+       in map (Auto.parseDispara . Auto.dispatchArgs) dispatches `shouldBe` map Right dispatches
+
+    it "sin puerto, o con algo que no entiende, no dispara" $
+      map (isLeft . Auto.parseDispara) [[], ["--puerto", "x"], ["--puerto", "3000", "--tope", "mañana"], ["--otra"]]
+        `shouldBe` [True, True, True, True]
+
+    it "pregunta primero a la del lanzamiento y después a la otra" $
+      map (Auto.askOrder [3000, 3001]) [3000, 3001] `shouldBe` [[3000, 3001], [3001, 3000]]
+
+    it "cada cambio de quién contesta deja su línea, también al volver y al no contestar nadie (D198)" $
+      map (uncurry (Auto.instanceChange (atUtc 23 17 10) "vigía"))
+          [(Just 3000, Just 3000), (Just 3000, Just 3001), (Just 3001, Just 3000), (Just 3001, Nothing), (Nothing, Nothing)]
+        `shouldBe` [ Nothing
+                   , Just "11:10 (17:10) cambia   vigía a clon en :3001"
+                   , Just "11:10 (17:10) cambia   vigía a master en :3000"
+                   , Just "11:10 (17:10) pierde   vigía: no contesta ninguna instancia"
+                   , Nothing
+                   ]
 
   describe "Auto: los nombres" $ do
     it "las sesiones del feed, cortas en unidades y ficheros y legibles en pantalla" $
@@ -7131,6 +7208,11 @@ liveOf name st basis =
     (Just ((stateless "United States Grand Prix") {siName = name, siState = Just (StateReading st basis)}))
     []
     NextUnknown
+
+-- | Lo que contesta la instancia con la P1 empezada, oída en el feed.
+practice1Reply :: Auto.LiveReply
+practice1Reply =
+  Auto.LiveReply (Just "fresh") (Just "feed") Nothing (encode (liveOf "Practice 1" SessionStarted Heard))
 
 -- | El vigía de un viernes cuya última sesión es la P2, minuto a minuto.
 runVigia :: [(Maybe LiveTable, Maybe Int)] -> Auto.VigiaWatch

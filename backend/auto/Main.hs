@@ -31,10 +31,10 @@ main = do
   hSetBuffering stdout LineBuffering
   args <- map T.pack <$> getArgs
   case args of
-    ["estado"]                 -> estado
-    ["cancela"]                -> cancela
-    ["dispara", folder, label] -> dispara (T.unpack folder) label
-    _                          -> either quit launch (parseLaunch args)
+    ["estado"]                        -> estado
+    ["cancela"]                       -> cancela
+    "dispara" : folder : label : rest -> dispara (T.unpack folder) label rest
+    _                                 -> either quit launch (parseLaunch args)
 
 say :: Text -> IO ()
 say = TIO.putStrLn
@@ -63,7 +63,7 @@ launch l = do
     say "Ya hay algo programado:"
     mapM_ (say . ("  " <>) . urUnit) busy
     quit "Para volver a lanzar, antes: dashboardF1-auto cancela"
-  (_, answer) <- pickInstance
+  (port, answer) <- pickInstance
   let entries = case answer of
         Calendar es -> filter ((== day) . mexicoDay . ceStart) es
         _           -> []
@@ -117,7 +117,9 @@ launch l = do
   forM_ plan $ \p -> do
     let piece = plPiece p
         at = if plStart p <= now then Nothing else Just (plStart p)
-    done <- schedule exe workDir path (unitName folder piece) (pieceLabel piece) at
+    done <-
+      schedule exe workDir path (unitName folder piece) (pieceLabel piece)
+        (dispatchArgs (dispatchFor port plan p)) at
     case done of
       Right () -> appendLine (path </> "resumen.txt") (programLine now p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
@@ -178,14 +180,18 @@ cancela = do
   mapM_ (\(label, st) -> say ("  " <> T.justifyLeft 34 ' ' label <> st)) states
   ok <- confirm "¿Cancelar? [s/N] "
   unless ok $ say "No se cancela nada." >> exitSuccess
-  stopUnits "dashboardF1-auto-"
   now <- getCurrentTime
   base <- mainFolder
+  -- Antes de parar: lo que corre escribe su «para … (cancelado)» al pararse (D200).
   mapM_ (\f -> appendLine (base </> f </> "resumen.txt") (cancelLine now)) newest
+  stopUnits "dashboardF1-auto-"
   say "Cancelado."
 
--- | Lo que corre un temporizador al disparar: por ahora, la constancia.
-dispara :: FilePath -> Text -> IO ()
-dispara path label = do
-  now <- getCurrentTime
-  appendLine (path </> "resumen.txt") (firedLine now label)
+-- | Lo que corre un temporizador al disparar: el vigía, de verdad; lo demás, por ahora,
+-- la constancia.
+dispara :: FilePath -> Text -> [Text] -> IO ()
+dispara path label rest
+  | label == pieceLabel Vigia = either quit (runVigia path label) (parseDispara rest)
+  | otherwise = do
+      now <- getCurrentTime
+      appendLine (path </> "resumen.txt") (firedLine now label)

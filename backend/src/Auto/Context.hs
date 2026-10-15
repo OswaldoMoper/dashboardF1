@@ -3,6 +3,9 @@
 module Auto.Context
   ( instancePorts
   , askCalendar
+  , askLive
+  , openf1Status
+  , runVigia
   , jolpicaDay
   , autoUnits
   , autoTimers
@@ -15,26 +18,46 @@ module Auto.Context
   , readLines
   ) where
 
-import           Auto.Helper                (CalendarAnswer, Slot, TimerRow,
-                                             UnitRow, jolpicaSlots, onCalendar,
-                                             readCalendar, slotsOn)
+import           Auto.Helper                (CalendarAnswer, Dispatch (..),
+                                             LiveReply (..), Slot, TimerRow,
+                                             UnitRow, VigiaEnd (..),
+                                             VigiaReading (..), VigiaWatch (..),
+                                             askOrder, instanceChange,
+                                             jolpicaSlots, onCalendar,
+                                             readCalendar, slotsOn, startLine,
+                                             vigiaDone, vigiaJsonName,
+                                             vigiaLine, vigiaReading, vigiaStep,
+                                             vigiaStopLine)
+import           Common.Origin              (fetchedAtHeader, originHeader,
+                                             sourceHeader)
 import           Config                     (loadConfig)
-import           Control.Exception          (SomeException, try)
+import           Control.Concurrent         (threadDelay)
+import           Control.Exception          (AsyncException (..), SomeException,
+                                             handleJust, try)
+import           Control.Monad              (forM_)
+import           Control.Retry              (limitRetries)
 import           Data.Aeson                 (FromJSON, eitherDecode)
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Lazy       as BL
 import           Data.List                  (isPrefixOf, sortOn)
+import           Data.Maybe                 (fromMaybe)
+import           Data.String                (fromString)
 import           Data.Text                  (Text)
 import qualified Data.Text                  as T
 import           Data.Text.Encoding         (decodeUtf8With, encodeUtf8)
 import           Data.Text.Encoding.Error   (lenientDecode)
 import           Data.Time.Calendar         (Day)
-import           Data.Time.Clock            (UTCTime)
+import           Data.Time.Clock            (NominalDiffTime, UTCTime,
+                                             addUTCTime, diffUTCTime,
+                                             getCurrentTime)
 import           Handler.Historical.Manager (fetchSeasonSchedule)
+import           Handler.OpenF1.Manager     (latestSession, openf1Base)
 import qualified Network.HTTP.Client        as HC
+import qualified Network.HTTP.Req           as R
 import           Network.HTTP.Types.Header  (hContentType)
 import           Network.HTTP.Types.Status  (statusCode)
-import           System.Directory           (doesDirectoryExist, doesFileExist,
+import           System.Directory           (createDirectoryIfMissing,
+                                             doesDirectoryExist, doesFileExist,
                                              getHomeDirectory,
                                              getModificationTime, listDirectory)
 import           System.Exit                (ExitCode (..))
@@ -67,6 +90,114 @@ askCalendar port = do
         )
     _ -> Nothing
 
+-- | Lo que espera el vigía a cada instancia y a OpenF1: 15 s, para que preguntar a las
+-- dos y a OpenF1 quepa en su minuto.
+askTimeout :: Int
+askTimeout = 15000000
+
+-- | @GET \/api\/live@ de la instancia de ese puerto. 'Nothing' si no contesta 200 en
+-- 'askTimeout'.
+askLive :: Int -> IO (Maybe LiveReply)
+askLive port = do
+  manager <-
+    HC.newManager
+      HC.defaultManagerSettings {HC.managerResponseTimeout = HC.responseTimeoutMicro askTimeout}
+  request <- HC.parseRequest ("http://127.0.0.1:" <> show port <> "/api/live")
+  answer <-
+    timeout (askTimeout + 1000000) (try (HC.httpLbs request manager))
+      :: IO (Maybe (Either SomeException (HC.Response BL.ByteString)))
+  pure $ case answer of
+    Just (Right response) | statusCode (HC.responseStatus response) == 200 ->
+      let header name =
+            decodeUtf8With lenientDecode
+              <$> lookup (fromString (T.unpack name)) (HC.responseHeaders response)
+       in Just
+            LiveReply
+              { lrOrigin = header originHeader
+              , lrSource = header sourceHeader
+              , lrFetched = header fetchedAtHeader
+              , lrBody = HC.responseBody response
+              }
+    _ -> Nothing
+
+-- | El código de @sessions?session_key=latest@ de OpenF1, sin reintentos; 'Nothing' si
+-- no contesta en 'askTimeout'. Un 401 o un 429 es un código, no un fallo.
+openf1Status :: IO (Maybe Int)
+openf1Status = do
+  answer <-
+    timeout (askTimeout + 1000000) (try (R.runReq config request))
+      :: IO (Maybe (Either SomeException Int))
+  pure $ case answer of
+    Just (Right code) -> Just code
+    _                 -> Nothing
+  where
+    request =
+      R.responseStatusCode
+        <$> R.req R.GET (openf1Base R./: "sessions") R.NoReqBody R.ignoreResponse
+              (latestSession <> R.responseTimeout askTimeout)
+    config =
+      R.defaultHttpConfig
+        { R.httpConfigCheckResponse = \_ _ _ -> Nothing
+        , R.httpConfigRetryPolicy = limitRetries 0
+        }
+
+-- | Cada cuánto escribe el vigía.
+vigiaPeriod :: NominalDiffTime
+vigiaPeriod = 60
+
+-- | El vigía, en la carpeta del día: cada 'vigiaPeriod' pregunta a @\/api\/live@ (la
+-- instancia del lanzamiento y, si no contesta, la otra) y a OpenF1, añade su línea a
+-- @vigia.txt@ y guarda el cuerpo en @vigia\/@. Para con 'vigiaDone', con su tope o con
+-- SIGINT (lo que manda @cancela@), y cada parada y cada cambio de instancia dejan su
+-- línea en @resumen.txt@.
+runVigia :: FilePath -> Text -> Dispatch -> IO ()
+runVigia folder label d = do
+  start <- getCurrentTime
+  appendLine summary (startLine start label)
+  createDirectoryIfMissing True (folder </> "vigia")
+  end <- handleJust cancelled pure (watch start Watching (Just (diPort d)))
+  stopped <- getCurrentTime
+  appendLine summary (vigiaStopLine stopped end)
+  where
+    summary = folder </> "resumen.txt"
+    cancelled e = if e == UserInterrupt then Just VigiaCancelled else Nothing
+    watch start seen answering = do
+      now <- getCurrentTime
+      if maybe False (now >=) (diCap d)
+        then pure VigiaCapped
+        else do
+          (port, reply, seconds, at) <- firstAnswer (askOrder instancePorts (diPort d))
+          code <- openf1Status
+          let reading = vigiaReading at seconds reply code
+              seen' = vigiaStep (fromMaybe "" (diSession d)) (vrTable reading) code seen
+          forM_ (instanceChange at "vigía" answering port) (appendLine summary)
+          appendLine (folder </> "vigia.txt") (vigiaLine reading)
+          forM_ reply $ \r -> BL.writeFile (folder </> "vigia" </> vigiaJsonName at) (lrBody r)
+          if vigiaDone seen'
+            then pure VigiaQuiet
+            else do
+              after <- getCurrentTime
+              let ticks = floor (diffUTCTime after start / vigiaPeriod) + 1 :: Integer
+                  next = addUTCTime (fromInteger ticks * vigiaPeriod) start
+              threadDelay (ceiling (realToFrac (diffUTCTime next after) * 1000000 :: Double))
+              watch start seen' port
+
+-- | La primera instancia que contesta, por orden: su puerto, la respuesta, lo que tardó
+-- ella y cuándo llegó. Sin ninguna, lo que se esperó en total.
+firstAnswer :: [Int] -> IO (Maybe Int, Maybe LiveReply, Double, UTCTime)
+firstAnswer ports = getCurrentTime >>= go ports
+  where
+    go [] begun = do
+      now <- getCurrentTime
+      pure (Nothing, Nothing, realToFrac (diffUTCTime now begun), now)
+    go (p : rest) begun = do
+      asked <- getCurrentTime
+      reply <- askLive p
+      now <- getCurrentTime
+      case reply of
+        Just r  -> pure (Just p, Just r, realToFrac (diffUTCTime now asked), now)
+        Nothing -> go rest begun
+
 -- | Las sesiones de ese día según Jolpica. 'Nothing' si no contesta, no se entiende o no
 -- trae ninguna ese día.
 jolpicaDay :: Day -> IO (Maybe [Slot])
@@ -93,10 +224,11 @@ systemctlJson args = do
     _           -> Left (T.strip (T.pack err))
 
 -- | Programa una pieza con @systemd-run --user@: a esa hora (UTC) o, con 'Nothing', al
--- segundo. Al disparar corre @\<ejecutable\> dispara \<carpeta\> \<descripción\>@ desde ese
--- directorio. La descripción es la que luego enseña la vista.
-schedule :: FilePath -> FilePath -> FilePath -> Text -> Text -> Maybe UTCTime -> IO (Either Text ())
-schedule exe workDir folder unit label at = do
+-- segundo. Al disparar corre @\<ejecutable\> dispara \<carpeta\> \<descripción\> \<args\>@
+-- desde ese directorio. La descripción es la que luego enseña la vista. Parar la unidad
+-- le manda SIGINT, como Ctrl+C, para que la pieza diga que la cancelaron.
+schedule :: FilePath -> FilePath -> FilePath -> Text -> Text -> [Text] -> Maybe UTCTime -> IO (Either Text ())
+schedule exe workDir folder unit label args at = do
   (code, _, err) <-
     readProcessWithExitCode
       "systemd-run"
@@ -105,6 +237,7 @@ schedule exe workDir folder unit label at = do
         , "--description=" <> T.unpack label
         , maybe "--on-active=1s" (("--on-calendar=" <>) . onCalendar) at
         , "--timer-property=AccuracySec=1s"
+        , "--property=KillSignal=SIGINT"
         , "--working-directory=" <> workDir
         , "--"
         , exe
@@ -112,6 +245,7 @@ schedule exe workDir folder unit label at = do
         , folder
         , T.unpack label
         ]
+          <> map T.unpack args
       )
       ""
   pure $ case code of

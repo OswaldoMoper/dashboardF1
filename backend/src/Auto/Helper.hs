@@ -36,8 +36,22 @@ module Auto.Helper
   , checkLine
   , eventLine
   , VigiaReading (..)
+  , LiveReply (..)
+  , vigiaReading
   , vigiaLine
+  , vigiaWords
+  , vigiaJsonName
+  , startLine
+  , VigiaEnd (..)
+  , vigiaStopLine
   , dayFolder
+    -- * Lo que recibe cada pieza al disparar
+  , Dispatch (..)
+  , dispatchFor
+  , dispatchArgs
+  , parseDispara
+  , askOrder
+  , instanceChange
     -- * Los nombres
   , sessionShort
   , sessionLabel
@@ -84,7 +98,7 @@ import           Data.Aeson.Types      (parseEither)
 import qualified Data.ByteString.Lazy  as BL
 import           Data.List             (find, nub, sortOn, (\\))
 import           Data.Maybe            (catMaybes, fromMaybe, isNothing,
-                                        mapMaybe)
+                                        listToMaybe, mapMaybe)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
 import           Data.Time.Calendar    (Day, DayOfWeek (..), addDays, dayOfWeek,
@@ -320,6 +334,157 @@ vigiaLine r =
   where
     session = liveSession =<< vrTable r
     dash = fromMaybe "-"
+
+-- | Lo que contestó una instancia a @\/api\/live@: las tres cabeceras de 'Common.Origin'
+-- y el cuerpo tal cual, que es lo que se guarda en @vigia\/@.
+data LiveReply = LiveReply
+  { lrOrigin  :: Maybe Text
+  , lrSource  :: Maybe Text
+  , lrFetched :: Maybe Text
+  , lrBody    :: BL.ByteString
+  }
+
+-- | Lo leído en un minuto: cuándo llegó @\/api\/live@, lo que tardó, lo que contestó
+-- ('Nothing' si ninguna instancia) y el código de OpenF1. Un cuerpo que no se entiende
+-- cuenta como contestado y sin tabla.
+vigiaReading :: UTCTime -> Double -> Maybe LiveReply -> Maybe Int -> VigiaReading
+vigiaReading at seconds reply code =
+  VigiaReading
+    { vrAt = at
+    , vrOrigin = lrOrigin =<< reply
+    , vrSource = lrSource =<< reply
+    , vrFetched = lrFetched =<< reply
+    , vrTable = either (const Nothing) Just . eitherDecode . lrBody =<< reply
+    , vrSeconds = seconds
+    , vrOpenF1 = code
+    }
+
+-- | El fichero de @vigia\/@ de ese minuto, con la hora UTC como el manual: @160500.json@.
+vigiaJsonName :: UTCTime -> FilePath
+vigiaJsonName = formatTime defaultTimeLocale "%H%M%S.json"
+
+-- | La línea de @vigia.txt@ en palabras, para la vista (D196): las dos horas y, por
+-- orden, sesión, estado, vuelta, filas, fuente, OpenF1 y lo que tardó; lo que falta,
+-- «sin …» (D201). Sin instancia (@live=-\/-@), solo eso y OpenF1. Una línea que no tiene
+-- la forma de 'vigiaLine' sale tal cual.
+vigiaWords :: Text -> Text
+vigiaWords line = fromMaybe ("vigía " <> line) $ do
+  [live, _, sesion, estado, vuelta, filas, secs, openf1] <- vigiaFields rest
+  clock' <- mexicoClock clock
+  seconds <- case reads (T.unpack (T.dropWhileEnd (== 's') secs)) of
+    [(s, "")] -> Just (s :: Double)
+    _         -> Nothing
+  let (origin, source) = T.breakOn "/" live
+      openf1Words = "OpenF1 " <> (if openf1 == "000" then "sin respuesta" else openf1)
+      body
+        | live == "-/-" = ["no contesta ninguna instancia", openf1Words]
+        | otherwise =
+            [ orNone "sesión" sesion
+            , orNone "estado" estado
+            , if vuelta == "-" then "sin vuelta" else "vuelta " <> vuelta
+            , filas <> if filas == "1" then " fila" else " filas"
+            , orNone "fuente" (T.drop 1 source) <> (if origin == "-" then "" else " (" <> origin <> ")")
+            , openf1Words
+            , T.replace "." "," (T.pack (printf "%.1f" seconds)) <> " s"
+            ]
+  pure ("vigía " <> clock' <> ": " <> T.intercalate " · " body)
+  where
+    (clock, rest) = T.breakOn " live=" line
+    orNone what v = if v == "-" || T.null v then "sin " <> what else v
+
+-- | Los valores de una línea de 'vigiaLine', en su orden; 'Nothing' si no tiene esa forma.
+vigiaFields :: Text -> Maybe [Text]
+vigiaFields = go ["live", "fetched", "sesion", "estado", "vuelta", "filas", "t", "openf1"]
+  where
+    go [] r = if T.null r then Just [] else Nothing
+    go (k : ks) r = do
+      r1 <- T.stripPrefix (" " <> k <> "=") r
+      let (v, r2) = case ks of
+            []    -> (r1, "")
+            n : _ -> T.breakOn (" " <> n <> "=") r1
+      (v :) <$> go ks r2
+
+-- | @HH:MM:SS@ en UTC como «HH:MM (HH:MM)», México primero.
+mexicoClock :: Text -> Maybe Text
+mexicoClock clock = case T.splitOn ":" clock of
+  [h, m, _] | [(hh, "")] <- reads (T.unpack h), [(mm, "")] <- reads (T.unpack m), hh < 24, mm < (60 :: Int) ->
+    let utc = hh * 60 + mm
+        mx = (utc + 24 * 60 - 6 * 60) `mod` (24 * 60)
+        hhmm x = T.pack (printf "%02d:%02d" (x `div` 60) (x `mod` 60))
+     in Just (hhmm mx <> " (" <> hhmm utc <> ")")
+  _ -> Nothing
+
+-- | La línea de @resumen.txt@ de una pieza que arranca de verdad: su etiqueta, tal cual,
+-- que es por donde 'expectedPending' la da por arrancada.
+startLine :: UTCTime -> Text -> Text
+startLine t label = eventLine t "arranca" label
+
+-- | Por qué para el vigía.
+data VigiaEnd = VigiaQuiet | VigiaCapped | VigiaCancelled
+  deriving (Eq, Show)
+
+vigiaStopLine :: UTCTime -> VigiaEnd -> Text
+vigiaStopLine t end = eventLine t "para" ("vigía (" <> why <> ")")
+  where
+    why = case end of
+      VigiaQuiet     -> "OpenF1 en 200 cinco min"
+      VigiaCapped    -> "tope"
+      VigiaCancelled -> "cancelado"
+
+-- | Lo que una pieza necesita al disparar, además de la carpeta y su etiqueta: la
+-- instancia del lanzamiento, su tope y la sesión que mira (la suya; el vigía, la
+-- última del día).
+data Dispatch = Dispatch
+  { diPort    :: Int
+  , diCap     :: Maybe UTCTime
+  , diSession :: Maybe Text
+  }
+  deriving (Eq, Show)
+
+dispatchFor :: Int -> [Planned] -> Planned -> Dispatch
+dispatchFor port plan p = Dispatch port (plCap p) session
+  where
+    session = case plPiece p of
+      Recording s -> Just s
+      Checks s    -> s
+      Vigia       -> listToMaybe (reverse [s | Recording s <- map plPiece plan])
+
+-- | Los argumentos de @dispara@ tras la carpeta y la etiqueta; 'parseDispara' los lee.
+dispatchArgs :: Dispatch -> [Text]
+dispatchArgs d =
+  ["--puerto", T.pack (show (diPort d))]
+    <> maybe [] (\t -> ["--tope", T.pack (formatTime defaultTimeLocale isoUtc t)]) (diCap d)
+    <> maybe [] (\s -> ["--sesion", s]) (diSession d)
+
+parseDispara :: [Text] -> Either Text Dispatch
+parseDispara = go (Nothing, Nothing, Nothing)
+  where
+    go (Just port, cap, session) [] = Right (Dispatch port cap session)
+    go (Nothing, _, _) [] = Left "dispara necesita --puerto"
+    go (_, cap, session) ("--puerto" : n : rest)
+      | [(port, "")] <- reads (T.unpack n) = go (Just port, cap, session) rest
+    go (port, _, session) ("--tope" : t : rest)
+      | Just cap <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go (port, Just cap, session) rest
+    go (port, cap, _) ("--sesion" : s : rest) = go (port, cap, Just s) rest
+    go _ (word : _) = Left ("dispara: no entiendo «" <> word <> "»")
+
+isoUtc :: String
+isoUtc = "%Y-%m-%dT%H:%M:%SZ"
+
+-- | A quién se pregunta cada minuto, por orden: la instancia del lanzamiento y
+-- después las demás.
+askOrder :: [Int] -> Int -> [Int]
+askOrder ports home = home : filter (/= home) ports
+
+-- | La línea de @resumen.txt@ cuando cambia quién contesta a esa pieza ('Nothing' si
+-- es la misma): «cambia vigía a clon en :3001», o «pierde vigía: no contesta ninguna
+-- instancia» cuando no contesta nadie.
+instanceChange :: UTCTime -> Text -> Maybe Int -> Maybe Int -> Maybe Text
+instanceChange t who before after
+  | before == after = Nothing
+  | otherwise = Just $ case after of
+      Just p  -> eventLine t "cambia" (who <> " a " <> instanceName p <> " en :" <> T.pack (show p))
+      Nothing -> eventLine t "pierde" (who <> ": no contesta ninguna instancia")
 
 -- | La carpeta del día, dentro de @~\/MOPER@.
 dayFolder :: Text -> Day -> FilePath
@@ -662,13 +827,13 @@ viewHeader folder = maybe "" dayPart (folderDay folder) <> "~/MOPER/" <> T.pack 
        in weekdayDisplay (dayOfWeek d) <> " " <> T.pack (show dom) <> " · "
 
 -- | La vista (D191): la cabecera, los sucesos, lo que sigue en systemd, los avisos y
--- la última línea del vigía.
+-- la última línea del vigía, en palabras ('vigiaWords').
 viewLines :: Text -> [Text] -> [(Text, Text)] -> [Text] -> Maybe Text -> [Text]
 viewLines header events states avisos vigia =
   [header, ""]
     <> events
     <> (if null states then [] else "" : "En systemd:" : map stateRow states)
     <> (if null avisos then [] else "" : avisos)
-    <> ["", maybe "vigía: todavía sin líneas" ("vigía " <>) vigia, "Ctrl+C sale; lo programado sigue"]
+    <> ["", maybe "vigía: todavía sin líneas" vigiaWords vigia, "Ctrl+C sale; lo programado sigue"]
   where
     stateRow (label, st) = "  " <> T.justifyLeft 34 ' ' label <> st
