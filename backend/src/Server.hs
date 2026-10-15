@@ -19,6 +19,7 @@ import qualified Handler.Comparison             as Comparison
 import qualified Handler.Drivers                as Drivers
 import qualified Handler.Historical             as Historical
 import qualified Handler.Live                   as Live
+import           Handler.Live.Helper            (CalendarEntry)
 import qualified Handler.Telemetry              as Telemetry
 import qualified Handler.TyreStrategy           as TyreStrategy
 import           Network.HTTP.Types             (hContentType, status200)
@@ -63,6 +64,7 @@ instance ToJSON Home
 type Api =
        "home" :> Get '[JSON] Home
   :<|> "api" :> "live" :> Get '[JSON] Live.LiveResponse
+  :<|> "api" :> "calendar" :> Get '[JSON] [CalendarEntry]
   :<|> "api" :> "historical" :> Get '[JSON] [HistoricalStat]
   :<|> "api" :> "telemetry"
          :> QueryParam "session" Text
@@ -91,6 +93,7 @@ server :: Env -> Server Api
 server env =
   homeH
     :<|> Live.liveHandler env
+    :<|> Live.calendarHandler env
     :<|> Historical.historicalHandler env
     :<|> Telemetry.telemetryHandler env
     :<|> Comparison.comparisonHandler env

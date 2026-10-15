@@ -67,9 +67,10 @@ import           Data.Time.Calendar      (toGregorian)
 import           Data.Time.Clock         (UTCTime, getCurrentTime, utctDay)
 import           Handler.Feed.Helper     (FeedLive (..))
 import qualified Handler.Feed.Manager    as Feed
-import           Handler.Live.Helper     (ClockVerdict (..), FeedVerdict (..),
-                                          Of1Interval, Of1Meeting (..),
-                                          Of1Session (..), assembleRows,
+import           Handler.Live.Helper     (CalendarEntry, ClockVerdict (..),
+                                          FeedVerdict (..), Of1Interval,
+                                          Of1Meeting (..), Of1Session (..),
+                                          assembleRows, calendarEntries,
                                           clockVerdict, closesFeedWindow,
                                           feedVerdict, feedWindowOpen,
                                           fetchFailure, finaliseBox,
@@ -119,6 +120,14 @@ getLiveTiming env = do
         either (const (fromCache env)) (fromFeed env) feed
       else fromOpenF1 env
   withUpNext env result
+
+-- | El calendario que la instancia tiene guardado, sin salir a la red.
+--
+-- __No cuenta como alguien mirando__: a diferencia de 'getLiveTiming', no toca
+-- 'envLiveAsked'. Vacío mientras el calendario no haya llegado nunca
+-- ('refreshFeedWindow').
+getCalendar :: Env -> IO [CalendarEntry]
+getCalendar env = calendarEntries . fwSessions <$> readTVarIO (envFeedWindow env)
 
 -- | Deja dicho en el log por qué no salió un fetch.
 --

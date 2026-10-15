@@ -195,7 +195,8 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               waitingTable)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (Value (..), decodeStrictText,
-                                              eitherDecodeStrict, toJSON)
+                                              eitherDecode, eitherDecodeStrict,
+                                              encode, toJSON)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import           Data.Either                 (isLeft)
@@ -223,13 +224,16 @@ import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
 import           Handler.Live                (LiveResponse)
-import           Handler.Live.Helper         (Announced (..), ClockVerdict (..),
+import           Handler.Live.Helper         (Announced (..),
+                                              CalendarEntry (..),
+                                              ClockVerdict (..),
                                               FeedVerdict (..), Notice (..),
                                               Of1Interval, Of1Lap,
                                               Of1Meeting (..), Of1Position,
                                               Of1Result (..), Of1Session (..),
                                               advanceClock, announcedAt,
-                                              assembleRows, chequeredGrace,
+                                              assembleRows, calendarEntries,
+                                              chequeredGrace,
                                               classificationGaps,
                                               classificationTime, clockVerdict,
                                               closesFeedWindow, derivedState,
@@ -2060,6 +2064,28 @@ main = hspec $ do
              ]
              [])
         `shouldBe` [bakuP1, raceStartsAt]
+
+  -- Lo que sirve `/api/calendar` y lee el comando del automatismo.
+  describe "calendarEntries" $ do
+    it "lleva cada campo al suyo y conserva el orden, que no es el de las horas" $
+      -- Dos sesiones con nombres, grandes premios y horas distintos y en orden
+      -- cruzado: un campo cruzado con otro o una lista reordenada no pasarían.
+      calendarEntries
+          [ ScheduledSession "Race"       1294 "Spanish Grand Prix" raceStartsAt raceEndsAt
+          , ScheduledSession "Practice 1" 1295 ""                   bakuP1       bakuP1End
+          ]
+        `shouldBe` [ CalendarEntry "Race"       "Spanish Grand Prix" raceStartsAt raceEndsAt
+                   , CalendarEntry "Practice 1" ""                   bakuP1       bakuP1End
+                   ]
+
+    it "lo que manda el servidor es lo que decodifica el comando" $
+      -- El mismo tipo en los dos extremos: si 'ToJSON' y 'FromJSON' dejaran de ser
+      -- simétricos, el comando leería otras horas que las que tiene la instancia.
+      let entries =
+            [ CalendarEntry "Practice 1" "United States Grand Prix" bakuP1 bakuP1End
+            , CalendarEntry "Race"       ""                         raceStartsAt raceEndsAt
+            ]
+       in eitherDecode (encode entries) `shouldBe` Right entries
 
   -- El índice que `schedule` usa para juntar y que el `Env` guarda para no volver a
   -- preguntar. Tiene DOS consumidores, y de ahí que exista aparte: escrito en los dos

@@ -33,6 +33,8 @@ module Handler.Live.Helper
   , derivedState
   , meetingNames
   , schedule
+  , CalendarEntry (..)
+  , calendarEntries
   , upNext
     -- * Lo que se deja dicho cuando un fetch no sale
   , fetchFailure
@@ -89,8 +91,8 @@ import           Common.Types          (Countdown (..), DriverStatus (..),
                                         sessionStateFrom)
 import           Control.Applicative   ((<|>))
 import           Control.Monad         (mfilter)
-import           Data.Aeson            (FromJSON (..), Value (..), withObject,
-                                        (.!=), (.:), (.:?))
+import           Data.Aeson            (FromJSON (..), ToJSON, Value (..),
+                                        withObject, (.!=), (.:), (.:?))
 import           Data.Aeson.Types      (Parser)
 import           Data.Foldable         (toList)
 import           Data.Function         (on)
@@ -107,6 +109,7 @@ import           Data.Text.Read        (decimal)
 import           Data.Time.Clock       (NominalDiffTime, UTCTime (..),
                                         addUTCTime, diffUTCTime)
 import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
+import           GHC.Generics          (Generic)
 import           Handler.Feed.Helper   (FeedFlag (..), FeedLive (..),
                                         FeedNotice (..), FeedRow (..),
                                         FeedSession (..), FeedTrack (..))
@@ -919,6 +922,33 @@ schedule sessions meetings = map toScheduled sessions
         , ssGrandPrix = Map.findWithDefault "" (osMeeting os) names
         , ssStart     = osStart os
         , ssEnd       = osEnd os
+        }
+
+-- | Una sesión del calendario tal como la sirve @GET \/api\/calendar@.
+--
+-- __Lo lee el comando del automatismo, no la página__, y por eso vive aquí y no en
+-- @common@. Las horas son las previstas, con lo que eso implica ('ScheduledSession').
+data CalendarEntry = CalendarEntry
+  { ceName      :: Text
+  , ceGrandPrix :: Text     -- ^ Vacío si no se supo.
+  , ceStart     :: UTCTime
+  , ceEnd       :: UTCTime
+  }
+  deriving (Eq, Show, Generic)
+
+instance ToJSON CalendarEntry
+instance FromJSON CalendarEntry
+
+-- | El calendario guardado, para servirlo. Conserva el orden, como 'schedule'.
+calendarEntries :: [ScheduledSession] -> [CalendarEntry]
+calendarEntries = map toEntry
+  where
+    toEntry ss =
+      CalendarEntry
+        { ceName      = ssName ss
+        , ceGrandPrix = ssGrandPrix ss
+        , ceStart     = ssStart ss
+        , ceEnd       = ssEnd ss
         }
 
 -- | El nombre de cada gran premio indexado por su clave, que es como llega de
