@@ -57,9 +57,11 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   vuelve a bajar a OpenF1 si lo que guardó tiene menos de 15 s y lo sirve como `recent`; el feed, que es
   propio, no se frena.
 - **NEGOCIO (`Handler/`) por área:** `Handler.<Área>{,.Context,.Helper,.Manager}` (interfaz → orquestación → efectos → pureza). Áreas: `Live`, `Historical`, `Telemetry`, `Comparison`, `TyreStrategy`; luego `OpenF1`/`Jolpica`/`FastF1` como `Manager`s. Cache en memoria (STM) como infra cuando llegue (Fase 3).
-- **AUTOMATISMO (`Auto/`):** `Auto.Helper` (puro) para el comando `dashboardF1-auto`, que programa con temporizadores
-  de `systemd-run --user` las comprobaciones de un día de GP. No es INFRA ni un área: no tiene endpoint. Lee
-  `GET /api/calendar`, el calendario que la instancia ya tiene en memoria.
+- **AUTOMATISMO (`Auto/`):** `Auto.Helper` (puro) y `Auto.Context` (efectos) para el comando `dashboardF1-auto`
+  (`backend/auto/`), que programa con temporizadores de `systemd-run --user` las comprobaciones de un día de GP. No es
+  INFRA ni un área: no tiene endpoint. Lee `GET /api/calendar`, el calendario que la instancia ya tiene en memoria. Se
+  lanza desde el store (`nix run .#auto`), así que cada temporizador corre la copia del momento de lanzar aunque el árbol
+  se recompile.
 - **DTOs compartidos:** paquete `common` (`Common.Types`). Un tipo que la página no usa vive en el backend
   (`Handler.Live.Helper.CalendarEntry`): en `common` recompilaría el frontend sin consumidor.
 - **DB:** `Database.Esqueleto.Legacy` + `Database.Esqueleto.PostgreSQL`; `Persist` solo modelos.
