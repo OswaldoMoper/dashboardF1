@@ -574,16 +574,16 @@ eventParts line
   | T.length line > 23 = Just (T.strip (T.take 8 (T.drop 14 line)), T.strip (T.drop 23 line))
   | otherwise = Nothing
 
--- | Lo que @resumen.txt@ da por pendiente: lo programado que no ha arrancado ni se canceló.
+-- | Lo que @resumen.txt@ da por pendiente: lo programado que no ha arrancado ni se canceló,
+-- también lo de «ahora» hasta que su temporizador dispare.
 expectedPending :: [Text] -> [Text]
 expectedPending = foldl step [] . mapMaybe eventParts
   where
     step acc (verb, what) = case verb of
-      "programa" | not (isStartNow what) -> acc <> [fst (T.breakOn " · " what)]
+      "programa" -> acc <> [fst (T.breakOn " · " what)]
       "arranca" -> filter (/= fromMaybe what (T.stripSuffix firedSuffix what)) acc
       "cancela" -> []
       _ -> acc
-    isStartNow = (" · ahora" `T.isSuffixOf`)
 
 -- | Los avisos cuando la carpeta y systemd no cuadran sobre lo pendiente.
 reconcile :: [Text] -> [(Text, Text)] -> [Text]

@@ -5310,7 +5310,7 @@ main = hspec $ do
                    , ("comprobaciones de arranque", "falló")
                    ]
 
-    it "pendiente según la carpeta: lo programado para luego que no arrancó ni se canceló" $
+    it "pendiente según la carpeta: lo programado que no arrancó ni se canceló" $
       let p = Auto.Planned
           launched = atUtc 23 16 0
           programmed = map (Auto.programLine launched)
@@ -5318,11 +5318,26 @@ main = hspec $ do
             , p (Auto.Recording "Practice 1") (atUtc 23 16 45) Nothing
             , p (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
             ]
-          fired = Auto.firedLine (atUtc 23 16 45) "grabación P1, sin cuenta"
-       in ( Auto.expectedPending (programmed <> [fired])
+          fired =
+            [ Auto.firedLine launched "comprobaciones de arranque"
+            , Auto.firedLine (atUtc 23 16 45) "grabación P1, sin cuenta"
+            ]
+       in ( Auto.expectedPending (programmed <> fired)
           , Auto.expectedPending (programmed <> [Auto.cancelLine (atUtc 23 16 10)])
           )
             `shouldBe` (["comprobaciones antes de la P1"], [])
+
+    it "justo tras programar, lo de «ahora» aún no disparó y no es AVISO (el ensayo)" $
+      let launched = atUtc 15 18 43
+          programmed = map (Auto.programLine launched)
+            [ Auto.Planned (Auto.Checks Nothing) launched Nothing
+            , Auto.Planned Auto.Vigia launched Nothing
+            ]
+       in Auto.reconcile (Auto.expectedPending programmed)
+            [ ("comprobaciones de arranque", "pendiente · 12:43 (18:43)")
+            , ("vigía", "pendiente · 12:43 (18:43)")
+            ]
+            `shouldBe` []
 
     it "si la carpeta y systemd no cuadran, un AVISO por cada lado" $
       ( Auto.reconcile ["vigía"] [("vigía", "pendiente · 10:00 (16:00)")]
