@@ -464,14 +464,18 @@ jolpicaSlots body = eitherDecode body >>= parseEither season
 -- | Lo que contestó una instancia a @\/api\/calendar@.
 data CalendarAnswer
   = Calendar [CalendarEntry]
-  | CalendarMissing          -- ^ 404: una instancia con código anterior a la ruta.
+  | CalendarMissing          -- ^ 404 o la página: una instancia con código anterior a la ruta.
   | CalendarUnreadable Text
   deriving (Eq, Show)
 
-readCalendar :: Int -> BL.ByteString -> CalendarAnswer
-readCalendar 200 body = either (CalendarUnreadable . T.pack) Calendar (eitherDecode body)
-readCalendar 404 _ = CalendarMissing
-readCalendar code _ = CalendarUnreadable ("HTTP " <> T.pack (show code))
+-- | El código, el @Content-Type@ y el cuerpo. Una página HTML es la instancia que no
+-- conoce la ruta y sirve @index.html@: lo mismo que el 404.
+readCalendar :: Int -> Maybe Text -> BL.ByteString -> CalendarAnswer
+readCalendar 200 ctype body
+  | maybe False (("text/html" `T.isPrefixOf`) . T.toLower) ctype = CalendarMissing
+  | otherwise = either (CalendarUnreadable . T.pack) Calendar (eitherDecode body)
+readCalendar 404 _ _ = CalendarMissing
+readCalendar code _ _ = CalendarUnreadable ("HTTP " <> T.pack (show code))
 
 -- | Por qué no hay calendario, para la línea de FALLA; 'Nothing' si lo hay, aunque ese
 -- día no traiga sesiones.

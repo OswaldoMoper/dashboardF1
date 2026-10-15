@@ -32,6 +32,7 @@ import           Data.Time.Calendar         (Day)
 import           Data.Time.Clock            (UTCTime)
 import           Handler.Historical.Manager (fetchSeasonSchedule)
 import qualified Network.HTTP.Client        as HC
+import           Network.HTTP.Types.Header  (hContentType)
 import           Network.HTTP.Types.Status  (statusCode)
 import           System.Directory           (doesDirectoryExist, doesFileExist,
                                              getHomeDirectory,
@@ -58,7 +59,12 @@ askCalendar port = do
       :: IO (Maybe (Either SomeException (HC.Response BL.ByteString)))
   pure $ case answer of
     Just (Right response) ->
-      Just (readCalendar (statusCode (HC.responseStatus response)) (HC.responseBody response))
+      Just
+        ( readCalendar
+            (statusCode (HC.responseStatus response))
+            (decodeUtf8With lenientDecode <$> lookup hContentType (HC.responseHeaders response))
+            (HC.responseBody response)
+        )
     _ -> Nothing
 
 -- | Las sesiones de ese día según Jolpica. 'Nothing' si no contesta, no se entiende o no

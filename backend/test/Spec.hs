@@ -5247,12 +5247,21 @@ main = hspec $ do
           ["", "p1", "p4=11:30", "p1=25:00", "p1=11h30", "p1=11:30,p1=12:00"]
         `shouldBe` [True, True, True, True, True, True]
 
-    it "la respuesta de /api/calendar: la lista, el 404 del clon o lo que no se entiende" $
+    it "la respuesta de /api/calendar: la lista, la página del clon, el 404 o lo que no se entiende" $
+      -- El clon no conoce la ruta y responde con index.html (200, text/html), como
+      -- toda ruta que la instancia no conoce.
       let entry = CalendarEntry "Practice 1" "United States Grand Prix" (atUtc 23 17 30) (atUtc 23 18 30)
-       in map (uncurry Auto.readCalendar) [(200, encode [entry]), (404, ""), (500, ""), (200, "<html>")]
+          answer (code, ctype, body) = Auto.readCalendar code ctype body
+       in map answer
+            [ (200, Just "application/json;charset=utf-8", encode [entry])
+            , (200, Just "text/html; charset=utf-8", "<!DOCTYPE html>\n<html lang=\"es\">")
+            , (404, Nothing, "")
+            , (500, Nothing, "")
+            , (200, Just "application/json;charset=utf-8", "<html>")
+            ]
             `shouldSatisfy` \answers -> case answers of
-              [Auto.Calendar [e], Auto.CalendarMissing, Auto.CalendarUnreadable "HTTP 500", Auto.CalendarUnreadable _] ->
-                e == entry
+              [ Auto.Calendar [e], Auto.CalendarMissing, Auto.CalendarMissing
+                , Auto.CalendarUnreadable "HTTP 500", Auto.CalendarUnreadable _ ] -> e == entry
               _ -> False
 
     it "la FALLA dice la causa; un calendario con sesiones, aunque no ese día, no es FALLA" $
