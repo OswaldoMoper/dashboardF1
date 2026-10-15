@@ -49,6 +49,7 @@ module Auto.Helper
   , Launch (..)
   , parseLaunch
   , parseHoras
+  , jolpicaSlots
   , CalendarAnswer (..)
   , readCalendar
   , calendarFailure
@@ -57,6 +58,7 @@ module Auto.Helper
   , dayHeader
   , dayTable
   , slotsSummary
+  , horasFlag
   , onCalendar
   , programLine
   , firedLine
@@ -76,11 +78,13 @@ import           Common.Types          (LapProgress (..), LiveTable (..),
                                         SessionInfo (..), SessionState (..),
                                         StateReading (..), sessionStateLabel)
 import           Config                (startupMark)
-import           Data.Aeson            (FromJSON (..), eitherDecode, withObject,
-                                        (.:))
+import           Data.Aeson            (FromJSON (..), Value, eitherDecode,
+                                        withObject, (.:), (.:?))
+import           Data.Aeson.Types      (parseEither)
 import qualified Data.ByteString.Lazy  as BL
 import           Data.List             (find, nub, sortOn, (\\))
-import           Data.Maybe            (fromMaybe, isNothing, mapMaybe)
+import           Data.Maybe            (catMaybes, fromMaybe, isNothing,
+                                        mapMaybe)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
 import           Data.Time.Calendar    (Day, DayOfWeek (..), addDays, dayOfWeek,
@@ -425,6 +429,38 @@ parseHoras day spec
         (Right . localTimeToUTC mexicoZone . LocalTime day)
         (parseTimeM False defaultTimeLocale "%H:%M" (T.unpack hhmm))
 
+-- | Las sesiones de la temporada de Jolpica (@current\/races.json@) con el nombre del
+-- feed, para cuando el calendario de la instancia falla. Una sesión que la carrera no
+-- trae (la P2 de un fin de semana con sprint) no sale.
+jolpicaSlots :: BL.ByteString -> Either String [Slot]
+jolpicaSlots body = eitherDecode body >>= parseEither season
+  where
+    season = withObject "Jolpica" $ \o -> do
+      mr <- o .: "MRData"
+      table <- mr .: "RaceTable"
+      races <- table .: "Races"
+      concat <$> mapM race (races :: [Value])
+    race = withObject "carrera" $ \r -> do
+      main <- slotAt "Race" r
+      sessions <-
+        mapM (\(key, name) -> traverse (withObject "sesión" (slotAt name)) =<< (r .:? key)) jolpicaSessions
+      pure (main : catMaybes sessions)
+    slotAt name o = do
+      date <- o .: "date"
+      time <- o .: "time"
+      maybe
+        (fail ("hora de Jolpica ilegible: " <> date <> " " <> time))
+        (pure . Slot name)
+        (parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" (date <> "T" <> time))
+    jolpicaSessions =
+      [ ("FirstPractice", "Practice 1")
+      , ("SecondPractice", "Practice 2")
+      , ("ThirdPractice", "Practice 3")
+      , ("Qualifying", "Qualifying")
+      , ("SprintQualifying", "Sprint Qualifying")
+      , ("Sprint", "Sprint")
+      ]
+
 -- | Lo que contestó una instancia a @\/api\/calendar@.
 data CalendarAnswer
   = Calendar [CalendarEntry]
@@ -475,12 +511,15 @@ weekdayDisplay d = case d of
   Saturday  -> "Sábado"
   Sunday    -> "Domingo"
 
--- | La tabla del día antes del OK (D189). Con las horas a mano ('Just'), una columna
--- más con la hora tecleada de la sesión de cada fila.
-dayTable :: UTCTime -> Maybe [Slot] -> [Planned] -> [Text]
-dayTable now typed plan =
-  cols "Qué" "Sesión (a mano)" "Empieza" "Para (lo primero que llegue)" : map row plan
+-- | La tabla del día antes del OK (D189). Con horas que no son del calendario de la
+-- instancia ('Just' con su origen, «a mano» o «Jolpica»), una columna más con la hora
+-- de la sesión de cada fila.
+dayTable :: UTCTime -> Maybe (Text, [Slot]) -> [Planned] -> [Text]
+dayTable now other plan =
+  cols "Qué" ("Sesión (" <> maybe "" fst other <> ")") "Empieza" "Para (lo primero que llegue)"
+    : map row plan
   where
+    typed = snd <$> other
     cols a s b c =
       "  " <> T.justifyLeft 34 ' ' a <> maybe "" (const (T.justifyLeft 17 ' ' s)) typed
         <> T.justifyLeft 17 ' ' b <> c
@@ -509,6 +548,14 @@ slotsSummary = T.intercalate ", " . map one
   where
     one s =
       sessionLabel (slotName s) <> " "
+        <> T.pack (formatTime defaultTimeLocale "%H:%M" (utcToZonedTime mexicoZone (slotStart s)))
+
+-- | Las sesiones escritas como las lee 'parseHoras': «p1=11:30,p2=15:00».
+horasFlag :: [Slot] -> Text
+horasFlag = T.intercalate "," . map one
+  where
+    one s =
+      sessionShort (slotName s) <> "="
         <> T.pack (formatTime defaultTimeLocale "%H:%M" (utcToZonedTime mexicoZone (slotStart s)))
 
 -- | La hora de un temporizador de systemd, en UTC.

@@ -13,9 +13,11 @@ module Handler.Historical.Manager
   ( jolpicaBase
   , fetchStandings
   , fetchConstructorStandings
+  , fetchSeasonSchedule
   ) where
 
 import           Config                    (Config)
+import qualified Data.ByteString.Lazy      as LBS
 import           Handler.Historical.Helper (Root)
 import           Handler.PublicApi.Manager (publicApiConfig, publicApiOptions)
 import           Network.HTTP.Req
@@ -49,5 +51,19 @@ fetchConstructorStandings cfg = runReq publicApiConfig $ do
       (jolpicaBase /: "current" /: "constructorStandings")
       NoReqBody
       jsonResponse
+      (publicApiOptions cfg)
+  pure (responseBody res)
+
+-- | El calendario de la temporada en curso (@\/current\/races.json@), sin leer: todas
+-- las carreras caben en la página por defecto. Sin @.json@ la API responde con una
+-- redirección.
+fetchSeasonSchedule :: Config -> IO LBS.ByteString
+fetchSeasonSchedule cfg = runReq publicApiConfig $ do
+  res <-
+    req
+      GET
+      (jolpicaBase /: "current" /: "races.json")
+      NoReqBody
+      lbsResponse
       (publicApiOptions cfg)
   pure (responseBody res)

@@ -200,6 +200,7 @@ import           Data.Aeson                  (Value (..), decodeStrictText,
                                               encode, toJSON)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
+import qualified Data.ByteString.Lazy        as LBS
 import           Data.Either                 (isLeft)
 import           Data.List                   (find, nub)
 import qualified Data.Map.Strict             as Map
@@ -5277,7 +5278,7 @@ main = hspec $ do
             `shouldBe` [True, True, True, True]
 
     it "con horas a mano, una columna con la hora tecleada de la sesión de cada fila" $
-      let rows = Auto.dayTable (atUtc 23 16 0) (Just austinSlots) (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots)
+      let rows = Auto.dayTable (atUtc 23 16 0) (Just ("a mano", austinSlots)) (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots)
        in map (\needle -> any (needle `T.isInfixOf`) rows)
             [ "Qué                               Sesión (a mano)  Empieza"
             , "vigía                             —                ahora"
@@ -5285,6 +5286,26 @@ main = hspec $ do
             , "comprobaciones antes de la P2     15:00 (21:00)    14:15 (20:15)    —"
             ]
             `shouldBe` [True, True, True, True]
+
+    it "con las horas de Jolpica, la columna dice de dónde salen (D195)" $
+      take 1 (Auto.dayTable (atUtc 23 16 0) (Just ("Jolpica", austinSlots)) [])
+        `shouldBe` ["  Qué                               Sesión (Jolpica) Empieza          Para (lo primero que llegue)"]
+
+    it "las horas de Jolpica de ese día, con el nombre del feed (respuesta real, sin sprint y con sprint)" $
+      ( fmap (Auto.slotsOn austinFriday) (Auto.jolpicaSlots jolpicaRaces)
+      , fmap (map Auto.slotName . Auto.slotsOn (fromGregorian 2026 10 10)) (Auto.jolpicaSlots jolpicaRaces)
+      )
+        `shouldBe` (Right austinSlots, Right ["Sprint", "Qualifying"])
+
+    it "una respuesta de Jolpica que no es la temporada no se adivina" $
+      map (isLeft . Auto.jolpicaSlots) ["", "{}", "{\"MRData\":{\"RaceTable\":{\"Races\":[{\"date\":\"2026-10-25\"}]}}}"]
+        `shouldBe` [True, True, True]
+
+    it "el comando relleno con unas horas se vuelve a leer igual (ida y vuelta por --horas)" $
+      ( Auto.horasFlag austinSlots
+      , Auto.parseHoras austinFriday (Auto.horasFlag austinSlots)
+      )
+        `shouldBe` ("p1=11:30,p2=15:00", Right austinSlots)
 
     it "lo que decía el calendario, en una línea" $
       Auto.slotsSummary austinSlots `shouldBe` "P1 11:30, P2 15:00"
@@ -7070,6 +7091,14 @@ atUtc d h m = UTCTime (fromGregorian 2026 10 (fromInteger d)) (fromInteger (h * 
 -- | Las dos sesiones del viernes, a sus horas del calendario (11:30 y 15:00 de México).
 austinSlots :: [Auto.Slot]
 austinSlots = [Auto.Slot "Practice 1" (atUtc 23 17 30), Auto.Slot "Practice 2" (atUtc 23 21 0)]
+
+-- | @current\/races.json@ de Jolpica (2026-10-15) con dos carreras tal cual, sin el
+-- circuito: EE. UU. (ronda 18, con P2 y P3) y Singapur (ronda 17, con sprint).
+jolpicaRaces :: LBS.ByteString
+jolpicaRaces =
+  "{\"MRData\":{\"xmlns\":\"\",\"series\":\"f1\",\"limit\":\"30\",\"offset\":\"0\",\"total\":\"23\",\"RaceTable\":{\"season\":\"2026\",\"Races\":[\
+  \{\"season\":\"2026\",\"round\":\"17\",\"raceName\":\"Singapore Grand Prix\",\"date\":\"2026-10-11\",\"time\":\"12:00:00Z\",\"FirstPractice\":{\"date\":\"2026-10-09\",\"time\":\"08:30:00Z\"},\"Qualifying\":{\"date\":\"2026-10-10\",\"time\":\"13:00:00Z\"},\"Sprint\":{\"date\":\"2026-10-10\",\"time\":\"09:00:00Z\"},\"SprintQualifying\":{\"date\":\"2026-10-09\",\"time\":\"12:30:00Z\"}},\
+  \{\"season\":\"2026\",\"round\":\"18\",\"raceName\":\"United States Grand Prix\",\"date\":\"2026-10-25\",\"time\":\"20:00:00Z\",\"FirstPractice\":{\"date\":\"2026-10-23\",\"time\":\"17:30:00Z\"},\"SecondPractice\":{\"date\":\"2026-10-23\",\"time\":\"21:00:00Z\"},\"ThirdPractice\":{\"date\":\"2026-10-24\",\"time\":\"17:30:00Z\"},\"Qualifying\":{\"date\":\"2026-10-24\",\"time\":\"21:00:00Z\"}}]}}}"
 
 -- | Una sesión del calendario que empieza ese día de octubre a las 17:30 UTC.
 calendarEntryAt :: Integer -> CalendarEntry

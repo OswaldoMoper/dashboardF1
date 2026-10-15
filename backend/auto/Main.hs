@@ -11,7 +11,7 @@ import           Auto.Context
 import           Auto.Helper
 import           Control.Concurrent  (threadDelay)
 import           Control.Monad       (forM_, forever, unless, when)
-import           Data.Maybe          (fromMaybe, isJust, isNothing, listToMaybe)
+import           Data.Maybe          (isJust, isNothing, listToMaybe)
 import           Data.Text           (Text)
 import qualified Data.Text           as T
 import qualified Data.Text.IO        as TIO
@@ -69,23 +69,30 @@ launch l = do
         _           -> []
       fromCalendar = slotsOn day (slotsFromCalendar entries)
       failure = calendarFailure answer
-      slots = fromMaybe fromCalendar manual
+      relaunch hours = "  dashboardF1-auto " <> label <> " --horas " <> hours
+  jolpica <-
+    if isJust failure && isNothing manual then jolpicaDay day else pure Nothing
+  forM_ failure $ \why -> do
+    say (checkLine now Falla "calendario" why)
+    when (isNothing manual && isNothing jolpica) $ do
+      say "Vuelve a lanzar con las horas del día, p. ej.:"
+      say (relaunch "p1=11:30,p2=15:00")
+      say "(no se programa nada)"
+      exitFailure
+  let other = case (manual, jolpica) of
+        (Just typed, _)   -> Just ("a mano", typed)
+        (Nothing, Just j) -> Just ("Jolpica", j)
+        _                 -> Nothing
+      slots = maybe fromCalendar snd other
       cap = if laEnsayo l then 15 * 60 else capAfterStart
       plan = dayPlan cap now slots
       gp = listToMaybe (filter (not . T.null) (map ceGrandPrix entries))
-  forM_ failure $ \why -> do
-    say (checkLine now Falla "calendario" why)
-    when (isNothing manual) $ do
-      say "Vuelve a lanzar con las horas del día, p. ej.:"
-      say ("  dashboardF1-auto " <> label <> " --horas p1=11:30,p2=15:00")
-      say "(no se programa nada)"
-      exitFailure
   when (null plan) $ do
     say "Ese día no hay sesiones por delante: no se programa nada."
     exitSuccess
   say (dayHeader day gp)
   say ""
-  mapM_ say (dayTable now manual plan)
+  mapM_ say (dayTable now other plan)
   when (isJust manual && not (null fromCalendar)) $
     say ("  El calendario decía: " <> slotsSummary fromCalendar)
   base <- mainFolder
@@ -95,10 +102,16 @@ launch l = do
   say ""
   say ("Carpeta: ~/MOPER/" <> T.pack folder <> "/")
   ok <- confirm "¿Programar? [s/N] "
-  unless ok $ say "No se programa nada." >> exitSuccess
+  unless ok $ do
+    say "No se programa nada."
+    forM_ jolpica $ \j -> do
+      say "Para corregir una hora, vuelve a lanzar con:"
+      say (relaunch (horasFlag j))
+    exitSuccess
   createDirectoryIfMissing True path
-  forM_ failure $ \why ->
-    appendLine (path </> "comprobaciones.txt") (checkLine now Falla "calendario" (why <> "; horas a mano"))
+  forM_ ((,) <$> failure <*> other) $ \(why, (source, _)) ->
+    appendLine (path </> "comprobaciones.txt")
+      (checkLine now Falla "calendario" (why <> "; horas " <> (if source == "Jolpica" then "de Jolpica" else source)))
   exe <- getExecutablePath
   workDir <- getCurrentDirectory
   forM_ plan $ \p -> do

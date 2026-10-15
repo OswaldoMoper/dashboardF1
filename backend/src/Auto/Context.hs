@@ -3,6 +3,7 @@
 module Auto.Context
   ( instancePorts
   , askCalendar
+  , jolpicaDay
   , autoUnits
   , autoTimers
   , schedule
@@ -14,27 +15,31 @@ module Auto.Context
   , readLines
   ) where
 
-import           Auto.Helper               (CalendarAnswer, TimerRow, UnitRow,
-                                            onCalendar, readCalendar)
-import           Control.Exception         (SomeException, try)
-import           Data.Aeson                (FromJSON, eitherDecode)
-import qualified Data.ByteString           as BS
-import qualified Data.ByteString.Lazy      as BL
-import           Data.List                 (isPrefixOf, sortOn)
-import           Data.Text                 (Text)
-import qualified Data.Text                 as T
-import           Data.Text.Encoding        (decodeUtf8With, encodeUtf8)
-import           Data.Text.Encoding.Error  (lenientDecode)
-import           Data.Time.Clock           (UTCTime)
-import qualified Network.HTTP.Client       as HC
-import           Network.HTTP.Types.Status (statusCode)
-import           System.Directory          (doesDirectoryExist, doesFileExist,
-                                            getHomeDirectory,
-                                            getModificationTime, listDirectory)
-import           System.Exit               (ExitCode (..))
-import           System.FilePath           ((</>))
-import           System.Process            (readProcessWithExitCode)
-import           System.Timeout            (timeout)
+import           Auto.Helper                (CalendarAnswer, Slot, TimerRow,
+                                             UnitRow, jolpicaSlots, onCalendar,
+                                             readCalendar, slotsOn)
+import           Config                     (loadConfig)
+import           Control.Exception          (SomeException, try)
+import           Data.Aeson                 (FromJSON, eitherDecode)
+import qualified Data.ByteString            as BS
+import qualified Data.ByteString.Lazy       as BL
+import           Data.List                  (isPrefixOf, sortOn)
+import           Data.Text                  (Text)
+import qualified Data.Text                  as T
+import           Data.Text.Encoding         (decodeUtf8With, encodeUtf8)
+import           Data.Text.Encoding.Error   (lenientDecode)
+import           Data.Time.Calendar         (Day)
+import           Data.Time.Clock            (UTCTime)
+import           Handler.Historical.Manager (fetchSeasonSchedule)
+import qualified Network.HTTP.Client        as HC
+import           Network.HTTP.Types.Status  (statusCode)
+import           System.Directory           (doesDirectoryExist, doesFileExist,
+                                             getHomeDirectory,
+                                             getModificationTime, listDirectory)
+import           System.Exit                (ExitCode (..))
+import           System.FilePath            ((</>))
+import           System.Process             (readProcessWithExitCode)
+import           System.Timeout             (timeout)
 
 -- | Donde puede correr la instancia: @master@ y el clon del plan del GP.
 instancePorts :: [Int]
@@ -55,6 +60,16 @@ askCalendar port = do
     Just (Right response) ->
       Just (readCalendar (statusCode (HC.responseStatus response)) (HC.responseBody response))
     _ -> Nothing
+
+-- | Las sesiones de ese día según Jolpica. 'Nothing' si no contesta, no se entiende o no
+-- trae ninguna ese día.
+jolpicaDay :: Day -> IO (Maybe [Slot])
+jolpicaDay day = do
+  cfg <- loadConfig
+  body <- try (fetchSeasonSchedule cfg) :: IO (Either SomeException BL.ByteString)
+  pure $ case slotsOn day <$> (either (Left . show) Right body >>= jolpicaSlots) of
+    Right slots@(_ : _) -> Just slots
+    _                   -> Nothing
 
 -- | Las unidades cuyo nombre casa con el patrón, también las que fallaron.
 autoUnits :: Text -> IO (Either Text [UnitRow])
