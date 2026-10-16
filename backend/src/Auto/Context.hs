@@ -6,6 +6,7 @@ module Auto.Context
   , askLive
   , openf1Status
   , runVigia
+  , runRecording
   , jolpicaDay
   , autoUnits
   , autoTimers
@@ -19,14 +20,20 @@ module Auto.Context
   ) where
 
 import           Auto.Helper                (CalendarAnswer, Dispatch (..),
-                                             LiveReply (..), Slot, TimerRow,
+                                             LiveReply (..), RecordingEnd (..),
+                                             RecordingStep (..), Slot, TimerRow,
                                              UnitRow, VigiaEnd (..),
                                              VigiaReading (..), VigiaWatch (..),
                                              askOrder, instanceChange,
-                                             jolpicaSlots, onCalendar,
-                                             readCalendar, slotsOn, startLine,
-                                             vigiaDone, vigiaJsonName,
-                                             vigiaLine, vigiaReading, vigiaStep,
+                                             jolpicaSlots, liveTable,
+                                             onCalendar, readCalendar,
+                                             recordingFile,
+                                             recordingIdleSeconds, recordingLog,
+                                             recordingName, recordingStep,
+                                             recordingStopLine, relaunchLine,
+                                             slotsOn, startLine, vigiaDone,
+                                             vigiaJsonName, vigiaLine,
+                                             vigiaReading, vigiaStep,
                                              vigiaStopLine)
 import           Common.Origin              (fetchedAtHeader, originHeader,
                                              sourceHeader)
@@ -34,13 +41,14 @@ import           Config                     (loadConfig)
 import           Control.Concurrent         (threadDelay)
 import           Control.Exception          (AsyncException (..), SomeException,
                                              handleJust, try)
-import           Control.Monad              (forM_)
+import           Control.Monad              (forM_, when)
 import           Control.Retry              (limitRetries)
 import           Data.Aeson                 (FromJSON, eitherDecode)
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Lazy       as BL
+import           Data.IORef                 (newIORef, readIORef, writeIORef)
 import           Data.List                  (isPrefixOf, sortOn)
-import           Data.Maybe                 (fromMaybe)
+import           Data.Maybe                 (fromMaybe, isNothing)
 import           Data.String                (fromString)
 import           Data.Text                  (Text)
 import qualified Data.Text                  as T
@@ -60,9 +68,16 @@ import           System.Directory           (createDirectoryIfMissing,
                                              doesDirectoryExist, doesFileExist,
                                              getHomeDirectory,
                                              getModificationTime, listDirectory)
+import           System.Environment         (getEnvironment)
 import           System.Exit                (ExitCode (..))
 import           System.FilePath            ((</>))
-import           System.Process             (readProcessWithExitCode)
+import           System.IO                  (IOMode (..), openFile)
+import           System.Process             (CreateProcess (..), ProcessHandle,
+                                             StdStream (..), createProcess,
+                                             getProcessExitCode,
+                                             interruptProcessGroupOf, proc,
+                                             readProcessWithExitCode,
+                                             waitForProcess)
 import           System.Timeout             (timeout)
 
 -- | Donde puede correr la instancia: @master@ y el clon del plan del GP.
@@ -175,12 +190,70 @@ runVigia folder label d = do
           forM_ reply $ \r -> BL.writeFile (folder </> "vigia" </> vigiaJsonName at) (lrBody r)
           if vigiaDone seen'
             then pure VigiaQuiet
-            else do
-              after <- getCurrentTime
-              let ticks = floor (diffUTCTime after start / vigiaPeriod) + 1 :: Integer
-                  next = addUTCTime (fromInteger ticks * vigiaPeriod) start
-              threadDelay (ceiling (realToFrac (diffUTCTime next after) * 1000000 :: Double))
-              watch start seen' port
+            else waitNextMinute start >> watch start seen' port
+
+-- | Duerme hasta el siguiente múltiplo de 'vigiaPeriod' contado desde ese arranque, para
+-- que un minuto lento no corra los demás.
+waitNextMinute :: UTCTime -> IO ()
+waitNextMinute start = do
+  now <- getCurrentTime
+  let ticks = floor (diffUTCTime now start / vigiaPeriod) + 1 :: Integer
+      next = addUTCTime (fromInteger ticks * vigiaPeriod) start
+  threadDelay (ceiling (realToFrac (diffUTCTime next now) * 1000000 :: Double))
+
+-- | La grabación sin cuenta de esa sesión: lanza @dashboardF1-record@ (ese ejecutable)
+-- a @grabacion-\<s\>.txt@ con su salida en @grabacion-\<s\>.log@, y cada minuto mira
+-- @\/api\/live@ como el vigía ('recordingStep'). Con el Finalised o el tope le manda
+-- SIGINT, como Ctrl+C, y espera a que cierre; si salió solo, lo relanza a @-2@, @-3@…
+-- Con SIGINT (lo que manda @cancela@ a toda la unidad) espera al grabador y dice que la
+-- cancelaron. Cada paso deja su línea en @resumen.txt@.
+runRecording :: FilePath -> Text -> Text -> FilePath -> Dispatch -> IO ()
+runRecording folder label session recorder d = do
+  start <- getCurrentTime
+  appendLine summary (startLine start label)
+  current <- newIORef =<< launchRecorder 1
+  (end, runs) <-
+    handleJust cancelled (\e -> pure (e, 0)) (watch start current 1 (Just (diPort d)))
+  readIORef current >>= mapM_ (\ph -> do
+    alive <- isNothing <$> getProcessExitCode ph
+    when (alive && end /= RecCancelled) (interruptProcessGroupOf ph)
+    waitForProcess ph)
+  stopped <- getCurrentTime
+  appendLine summary (recordingStopLine stopped session runs end)
+  where
+    summary = folder </> "resumen.txt"
+    cancelled e = if e == UserInterrupt then Just RecCancelled else Nothing
+    launchRecorder n = do
+      withoutAccount <- filter ((/= "F1TV") . fst) <$> getEnvironment
+      started <-
+        try
+          ( do
+              logHandle <- openFile (folder </> recordingLog session) AppendMode
+              (_, _, _, ph) <-
+                createProcess
+                  (proc recorder [folder </> recordingFile session n, show recordingIdleSeconds])
+                    { std_out = UseHandle logHandle
+                    , std_err = UseHandle logHandle
+                    , create_group = True
+                    , env = Just withoutAccount
+                    }
+              pure ph
+          )
+          :: IO (Either SomeException ProcessHandle)
+      pure (either (const Nothing) Just started)
+    watch start current runs answering = do
+      waitNextMinute start
+      (port, reply, _, at) <- firstAnswer (askOrder instancePorts (diPort d))
+      forM_ (instanceChange at (recordingName session) answering port) (appendLine summary)
+      alive <- maybe (pure False) (fmap isNothing . getProcessExitCode) =<< readIORef current
+      now <- getCurrentTime
+      case recordingStep now (diCap d) session (liveTable =<< reply) alive runs of
+        KeepRecording -> watch start current runs port
+        Relaunch n -> do
+          appendLine summary (relaunchLine now session n)
+          writeIORef current =<< launchRecorder n
+          watch start current n port
+        StopRecording end -> pure (end, runs)
 
 -- | La primera instancia que contesta, por orden: su puerto, la respuesta, lo que tardó
 -- ella y cuándo llegó. Sin ninguna, lo que se esperó en total.

@@ -37,6 +37,7 @@ module Auto.Helper
   , eventLine
   , VigiaReading (..)
   , LiveReply (..)
+  , liveTable
   , vigiaReading
   , vigiaLine
   , vigiaWords
@@ -44,6 +45,16 @@ module Auto.Helper
   , startLine
   , VigiaEnd (..)
   , vigiaStopLine
+  , recordingIdleSeconds
+  , maxRelaunches
+  , recordingFile
+  , recordingLog
+  , RecordingEnd (..)
+  , RecordingStep (..)
+  , recordingStep
+  , recordingStopLine
+  , relaunchLine
+  , recordingName
   , dayFolder
     -- * Lo que recibe cada pieza al disparar
   , Dispatch (..)
@@ -354,10 +365,14 @@ vigiaReading at seconds reply code =
     , vrOrigin = lrOrigin =<< reply
     , vrSource = lrSource =<< reply
     , vrFetched = lrFetched =<< reply
-    , vrTable = either (const Nothing) Just . eitherDecode . lrBody =<< reply
+    , vrTable = liveTable =<< reply
     , vrSeconds = seconds
     , vrOpenF1 = code
     }
+
+-- | La tabla de una respuesta; 'Nothing' si el cuerpo no se entiende.
+liveTable :: LiveReply -> Maybe LiveTable
+liveTable = either (const Nothing) Just . eitherDecode . lrBody
 
 -- | El fichero de @vigia\/@ de ese minuto, con la hora UTC como el manual: @160500.json@.
 vigiaJsonName :: UTCTime -> FilePath
@@ -431,23 +446,95 @@ vigiaStopLine t end = eventLine t "para" ("vigía (" <> why <> ")")
       VigiaCapped    -> "tope"
       VigiaCancelled -> "cancelado"
 
+-- | El tiempo de inactividad del feed que se le da a @dashboardF1-record@, como a mano:
+-- no es la duración, y con él no para solo en una bandera roja.
+recordingIdleSeconds :: Int
+recordingIdleSeconds = 7200
+
+-- | Cuántas veces se relanza una grabación que se cortó antes de su Finalised.
+maxRelaunches :: Int
+maxRelaunches = 5
+
+-- | El fichero de la vez @n@ (desde 1) de la grabación de esa sesión:
+-- @grabacion-p1.txt@, y al relanzar @grabacion-p1-2.txt@, @-3@…
+recordingFile :: Text -> Int -> FilePath
+recordingFile session n =
+  "grabacion-" <> T.unpack (sessionShort session) <> (if n <= 1 then "" else "-" <> show n) <> ".txt"
+
+-- | Donde va lo que imprime @dashboardF1-record@: uno por sesión, para todas las veces.
+recordingLog :: Text -> FilePath
+recordingLog session = "grabacion-" <> T.unpack (sessionShort session) <> ".log"
+
+-- | Cómo acaba la grabación de una sesión.
+data RecordingEnd
+  = RecFinalised
+  | RecCapped
+  | RecCancelled
+  | RecGaveUp     -- ^ Se cortó la última vez que se podía relanzar.
+  deriving (Eq, Show)
+
+-- | Lo que hace la grabación en un minuto.
+data RecordingStep
+  = KeepRecording
+  | Relaunch Int            -- ^ Se cortó: relanza en la vez @n@.
+  | StopRecording RecordingEnd
+  deriving (Eq, Show)
+
+-- | Un minuto de la grabación de esa sesión, con su tope, lo que dice @\/api\/live@, si
+-- @dashboardF1-record@ sigue vivo y cuántas veces lleva lanzado. El Finalised manda
+-- sobre todo; después el tope; un grabador que salió solo se relanza hasta
+-- 'maxRelaunches' veces.
+recordingStep :: UTCTime -> Maybe UTCTime -> Text -> Maybe LiveTable -> Bool -> Int -> RecordingStep
+recordingStep now cap session table alive runs
+  | sessionFinalised session table = StopRecording RecFinalised
+  | maybe False (now >=) cap = StopRecording RecCapped
+  | alive = KeepRecording
+  | runs <= maxRelaunches = Relaunch (runs + 1)
+  | otherwise = StopRecording RecGaveUp
+
+-- | La línea de @resumen.txt@ de cómo acabó (D197, D200): «para grabación P1 (Finalised)»,
+-- «(tope)», «(cancelada)», o «deja grabación P1 (se cortó 6 veces; no relanza más)».
+recordingStopLine :: UTCTime -> Text -> Int -> RecordingEnd -> Text
+recordingStopLine t session runs end = case end of
+  RecFinalised -> eventLine t "para" (what <> " (Finalised)")
+  RecCapped    -> eventLine t "para" (what <> " (tope)")
+  RecCancelled -> eventLine t "para" (what <> " (cancelada)")
+  RecGaveUp    ->
+    eventLine t "deja" (what <> " (se cortó " <> T.pack (show runs) <> " veces; no relanza más)")
+  where
+    what = recordingName session
+
+-- | «relanza grabación P1 en grabacion-p1-2.txt (se cortó)» (D197).
+relaunchLine :: UTCTime -> Text -> Int -> Text
+relaunchLine t session n =
+  eventLine t "relanza" (recordingName session <> " en " <> T.pack (recordingFile session n) <> " (se cortó)")
+
+-- | Cómo se nombra la grabación en las líneas: «grabación P1».
+recordingName :: Text -> Text
+recordingName session = "grabación " <> sessionLabel session
+
 -- | Lo que una pieza necesita al disparar, además de la carpeta y su etiqueta: la
--- instancia del lanzamiento, su tope y la sesión que mira (la suya; el vigía, la
--- última del día).
+-- instancia del lanzamiento, su tope, la sesión que mira (la suya; el vigía, la
+-- última del día) y, la grabación, la ruta de @dashboardF1-record@.
 data Dispatch = Dispatch
-  { diPort    :: Int
-  , diCap     :: Maybe UTCTime
-  , diSession :: Maybe Text
+  { diPort     :: Int
+  , diCap      :: Maybe UTCTime
+  , diSession  :: Maybe Text
+  , diRecorder :: Maybe FilePath
   }
   deriving (Eq, Show)
 
-dispatchFor :: Int -> [Planned] -> Planned -> Dispatch
-dispatchFor port plan p = Dispatch port (plCap p) session
+-- | Con la ruta del grabador, la instancia y el plan del día.
+dispatchFor :: FilePath -> Int -> [Planned] -> Planned -> Dispatch
+dispatchFor recorder port plan p = Dispatch port (plCap p) session (recorderFor (plPiece p))
   where
     session = case plPiece p of
       Recording s -> Just s
       Checks s    -> s
       Vigia       -> listToMaybe (reverse [s | Recording s <- map plPiece plan])
+    recorderFor piece = case piece of
+      Recording _ -> Just recorder
+      _           -> Nothing
 
 -- | Los argumentos de @dispara@ tras la carpeta y la etiqueta; 'parseDispara' los lee.
 dispatchArgs :: Dispatch -> [Text]
@@ -455,18 +542,20 @@ dispatchArgs d =
   ["--puerto", T.pack (show (diPort d))]
     <> maybe [] (\t -> ["--tope", T.pack (formatTime defaultTimeLocale isoUtc t)]) (diCap d)
     <> maybe [] (\s -> ["--sesion", s]) (diSession d)
+    <> maybe [] (\r -> ["--grabador", T.pack r]) (diRecorder d)
 
 parseDispara :: [Text] -> Either Text Dispatch
-parseDispara = go (Nothing, Nothing, Nothing)
+parseDispara = go (Dispatch 0 Nothing Nothing Nothing) False
   where
-    go (Just port, cap, session) [] = Right (Dispatch port cap session)
-    go (Nothing, _, _) [] = Left "dispara necesita --puerto"
-    go (_, cap, session) ("--puerto" : n : rest)
-      | [(port, "")] <- reads (T.unpack n) = go (Just port, cap, session) rest
-    go (port, _, session) ("--tope" : t : rest)
-      | Just cap <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go (port, Just cap, session) rest
-    go (port, cap, _) ("--sesion" : s : rest) = go (port, cap, Just s) rest
-    go _ (word : _) = Left ("dispara: no entiendo «" <> word <> "»")
+    go d True [] = Right d
+    go _ False [] = Left "dispara necesita --puerto"
+    go d _ ("--puerto" : n : rest)
+      | [(port, "")] <- reads (T.unpack n) = go d {diPort = port} True rest
+    go d hasPort ("--tope" : t : rest)
+      | Just cap <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diCap = Just cap} hasPort rest
+    go d hasPort ("--sesion" : s : rest) = go d {diSession = Just s} hasPort rest
+    go d hasPort ("--grabador" : r : rest) = go d {diRecorder = Just (T.unpack r)} hasPort rest
+    go _ _ (word : _) = Left ("dispara: no entiendo «" <> word <> "»")
 
 isoUtc :: String
 isoUtc = "%Y-%m-%dT%H:%M:%SZ"

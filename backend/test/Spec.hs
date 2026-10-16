@@ -5246,17 +5246,18 @@ main = hspec $ do
       Auto.dayFolder "viernes" austinFriday `shouldBe` "dashboardF1-auto-viernes-2026-10-23"
 
   describe "Auto: lo que recibe cada pieza al disparar" $ do
-    it "el vigía mira la última sesión del día; cada grabación, la suya; todos, la instancia y su tope" $
+    it "el vigía mira la última sesión del día; cada grabación, la suya y el grabador; todos, la instancia y su tope" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-       in map (Auto.dispatchArgs . Auto.dispatchFor 3001 plan) (take 3 plan)
+       in map (Auto.dispatchArgs . Auto.dispatchFor storeRecorder 3001 plan) (take 3 plan)
             `shouldBe` [ ["--puerto", "3001"]
                        , ["--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--sesion", "Practice 2"]
-                       , ["--puerto", "3001", "--tope", "2026-10-23T23:30:00Z", "--sesion", "Practice 1"]
+                       , [ "--puerto", "3001", "--tope", "2026-10-23T23:30:00Z", "--sesion", "Practice 1"
+                         , "--grabador", T.pack storeRecorder ]
                        ]
 
     it "lo que se programa se vuelve a leer igual al disparar (ida y vuelta)" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-          dispatches = map (Auto.dispatchFor 3000 plan) plan
+          dispatches = map (Auto.dispatchFor storeRecorder 3000 plan) plan
        in map (Auto.parseDispara . Auto.dispatchArgs) dispatches `shouldBe` map Right dispatches
 
     it "sin puerto, o con algo que no entiende, no dispara" $
@@ -5275,6 +5276,53 @@ main = hspec $ do
                    , Just "11:10 (17:10) pierde   vigía: no contesta ninguna instancia"
                    , Nothing
                    ]
+
+  describe "Auto: la grabación" $ do
+    it "un fichero por vez, -2, -3… al relanzar, y un solo .log por sesión" $
+      ( map (Auto.recordingFile "Practice 1") [1, 2, 6]
+      , Auto.recordingLog "Race"
+      )
+        `shouldBe` (["grabacion-p1.txt", "grabacion-p1-2.txt", "grabacion-p1-6.txt"], "grabacion-carrera.log")
+
+    it "cada minuto: el Finalised de SU sesión manda, después el tope, y uno que salió solo se relanza" $
+      let step = Auto.recordingStep (atUtc 23 18 30) (Just (atUtc 23 23 30)) "Practice 1"
+          p1 st = Just (liveOf "Practice 1" st Heard)
+       in [ step (p1 SessionStarted) True 1
+          , step (p1 SessionFinalised) True 1
+          , step (p1 SessionFinalised) False 3
+          , step (Just (liveOf "Qualifying" SessionFinalised Heard)) True 1
+          , step Nothing True 1
+          , step (p1 SessionStarted) False 1
+          ]
+            `shouldBe` [ Auto.KeepRecording
+                       , Auto.StopRecording Auto.RecFinalised
+                       , Auto.StopRecording Auto.RecFinalised
+                       , Auto.KeepRecording
+                       , Auto.KeepRecording
+                       , Auto.Relaunch 2
+                       ]
+
+    it "el tope para aunque siga grabando; tras cinco relanzamientos, no relanza más" $
+      ( Auto.recordingStep (atUtc 23 23 30) (Just (atUtc 23 23 30)) "Practice 1" Nothing True 1
+      , map (Auto.recordingStep (atUtc 23 18 30) Nothing "Practice 1" Nothing False) [5, 6]
+      )
+        `shouldBe` (Auto.StopRecording Auto.RecCapped, [Auto.Relaunch 6, Auto.StopRecording Auto.RecGaveUp])
+
+    it "lo que escribe en resumen.txt (D197, D198, D200)" $
+      let t = atUtc 23 17 40
+       in ( Auto.relaunchLine t "Practice 1" 2
+          , map (Auto.recordingStopLine t "Practice 1" 6)
+              [Auto.RecFinalised, Auto.RecCapped, Auto.RecCancelled, Auto.RecGaveUp]
+          , Auto.instanceChange t (Auto.recordingName "Practice 1") (Just 3000) Nothing
+          )
+            `shouldBe` ( "11:40 (17:40) relanza  grabación P1 en grabacion-p1-2.txt (se cortó)"
+                       , [ "11:40 (17:40) para     grabación P1 (Finalised)"
+                         , "11:40 (17:40) para     grabación P1 (tope)"
+                         , "11:40 (17:40) para     grabación P1 (cancelada)"
+                         , "11:40 (17:40) deja     grabación P1 (se cortó 6 veces; no relanza más)"
+                         ]
+                       , Just "11:40 (17:40) pierde   grabación P1: no contesta ninguna instancia"
+                       )
 
   describe "Auto: los nombres" $ do
     it "las sesiones del feed, cortas en unidades y ficheros y legibles en pantalla" $
@@ -7225,6 +7273,10 @@ liveOf name st basis =
     (Just ((stateless "United States Grand Prix") {siName = name, siState = Just (StateReading st basis)}))
     []
     NextUnknown
+
+-- | Una ruta de @dashboardF1-record@ del store, como la que pone @nix run .#auto@.
+storeRecorder :: FilePath
+storeRecorder = "/nix/store/l1n2f98y39fnd80fy8ig28x4hskbliql-dashboardF1-record/bin/dashboardF1-record"
 
 -- | Lo que contesta la instancia con la P1 empezada, oída en el feed.
 practice1Reply :: Auto.LiveReply

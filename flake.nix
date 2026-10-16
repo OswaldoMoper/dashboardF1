@@ -197,7 +197,13 @@
         # `dashboardF1-auto` — programa las comprobaciones de un día de GP.
         apps.auto = {
           type = "app";
-          program = "${self'.packages.backend}/bin/dashboardF1-auto";
+          program = "${pkgs.writeShellApplication {
+            name = "dashboardF1-auto-store";
+            text = ''
+              export DASHBOARDF1_RECORD=${self'.packages.record}/bin/dashboardF1-record
+              exec ${self'.packages.backend}/bin/dashboardF1-auto "$@"
+            '';
+          }}/bin/dashboardF1-auto-store";
         };
 
         # ── Entorno de desarrollo completo: microservicio + backend ──

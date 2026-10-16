@@ -17,9 +17,9 @@ import qualified Data.Text           as T
 import qualified Data.Text.IO        as TIO
 import           Data.Time.Clock     (getCurrentTime)
 import           Handler.Live.Helper (CalendarEntry (..))
-import           System.Directory    (createDirectoryIfMissing,
+import           System.Directory    (createDirectoryIfMissing, findExecutable,
                                       getCurrentDirectory, listDirectory)
-import           System.Environment  (getArgs, getExecutablePath)
+import           System.Environment  (getArgs, getExecutablePath, lookupEnv)
 import           System.Exit         (exitFailure, exitSuccess)
 import           System.FilePath     ((</>))
 import           System.IO           (BufferMode (..), hFlush, hSetBuffering,
@@ -90,6 +90,8 @@ launch l = do
   when (null plan) $ do
     say "Ese día no hay sesiones por delante: no se programa nada."
     exitSuccess
+  recorder <-
+    maybe (quit "no encuentro dashboardF1-record: lanza con dashboardF1-auto") pure =<< findRecorder
   say (dayHeader day gp)
   say ""
   mapM_ say (dayTable now other plan)
@@ -119,7 +121,7 @@ launch l = do
         at = if plStart p <= now then Nothing else Just (plStart p)
     done <-
       schedule exe workDir path (unitName folder piece) (pieceLabel piece)
-        (dispatchArgs (dispatchFor port plan p)) at
+        (dispatchArgs (dispatchFor recorder port plan p)) at
     case done of
       Right () -> appendLine (path </> "resumen.txt") (programLine now p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
@@ -187,11 +189,18 @@ cancela = do
   stopUnits "dashboardF1-auto-"
   say "Cancelado."
 
--- | Lo que corre un temporizador al disparar: el vigía, de verdad; lo demás, por ahora,
--- la constancia.
+-- | El grabador del store que pone @nix run .#auto@ en @DASHBOARDF1_RECORD@; sin ella, el
+-- del @PATH@.
+findRecorder :: IO (Maybe FilePath)
+findRecorder = lookupEnv "DASHBOARDF1_RECORD" >>= maybe (findExecutable "dashboardF1-record") (pure . Just)
+
+-- | Lo que corre un temporizador al disparar: el vigía y las grabaciones, de verdad; las
+-- comprobaciones, por ahora, la constancia.
 dispara :: FilePath -> Text -> [Text] -> IO ()
 dispara path label rest
   | label == pieceLabel Vigia = either quit (runVigia path label) (parseDispara rest)
+  | Right d <- parseDispara rest, Just s <- diSession d, label == pieceLabel (Recording s) =
+      maybe (quit "dispara: la grabación necesita --grabador") (\r -> runRecording path label s r d) (diRecorder d)
   | otherwise = do
       now <- getCurrentTime
       appendLine (path </> "resumen.txt") (firedLine now label)
