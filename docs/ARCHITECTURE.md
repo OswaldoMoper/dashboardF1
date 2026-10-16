@@ -62,7 +62,9 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   INFRA ni un área: no tiene endpoint. Lee `GET /api/calendar`, el calendario que la instancia ya tiene en memoria, y
   si falla (lista vacía, 404 o la página de una instancia sin la ruta), la temporada de Jolpica por
   `Handler.Historical.Manager.fetchSeasonSchedule`. Se lanza desde el store (`nix run .#auto`), así que cada
-  temporizador corre la copia del momento de lanzar aunque el árbol se recompile.
+  temporizador corre la copia del momento de lanzar aunque el árbol se recompile. El vigía pregunta cada minuto a
+  `/api/live` y a OpenF1; la grabación lanza `dashboardF1-record` sin cuenta, el del store, cuya ruta pone `apps.auto`
+  (`DASHBOARDF1_RECORD`) y viaja en la orden de su temporizador, y lo para con SIGINT.
 - **DTOs compartidos:** paquete `common` (`Common.Types`). Un tipo que la página no usa vive en el backend
   (`Handler.Live.Helper.CalendarEntry`): en `common` recompilaría el frontend sin consumidor.
 - **DB:** `Database.Esqueleto.Legacy` + `Database.Esqueleto.PostgreSQL`; `Persist` solo modelos.
