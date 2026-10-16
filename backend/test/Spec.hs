@@ -5346,6 +5346,122 @@ main = hspec $ do
                        , Just "11:40 (17:40) pierde   grabación P1: no contesta ninguna instancia"
                        )
 
+  describe "Auto: las comprobaciones" $ do
+    it "OpenF1 con su código, o «sin respuesta» (D202)" $
+      map Auto.openf1Check [Just 200, Just 401, Nothing]
+        `shouldBe` [(Auto.Ok, "200"), (Auto.Aviso, "401"), (Auto.Falla, "sin respuesta")]
+
+    it "del token solo se lee la caducidad; un fichero vacío o que no es un token, nada" $
+      map Auto.tokenExpiry [fakeToken, fakeToken <> "\n", "", "no-es-un-token"]
+        `shouldBe` [Just (atUtc 25 18 40), Just (atUtc 25 18 40), Nothing, Nothing]
+
+    it "los dos umbrales del token y lo que dice cada uno (D202, D203)" $
+      let check = Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 22 0) (Just (atUtc 25 22 0)) . Auto.TokenExpires
+       in map check [atUtc 26 16 40, atUtc 25 18 40, atUtc 23 19 10, atUtc 13 15 40]
+            `shouldBe` [ (Auto.Ok, "vale hasta lun 26 10:40 (16:40)")
+                       , (Auto.Aviso, "vale hoy; caduca el dom 25 12:40 (18:40), antes del fin del GP")
+                       , (Auto.Falla, "caduca a las 13:10 (19:10), antes del fin de hoy")
+                       , (Auto.Falla, "caducó el mar 13 09:40 (15:40)")
+                       ]
+
+    it "sin token, FALLA; sin calendario, lo dice" $
+      let check = Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 22 0) (Just (atUtc 25 22 0))
+       in ( check Auto.TokenMissing
+          , check Auto.TokenUnreadable
+          , Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 21 0) Nothing (Auto.TokenExpires (atUtc 26 16 40))
+          )
+            `shouldBe` ( (Auto.Falla, "no hay token (no existe ~/.local/share/fastf1/f1auth.json)")
+                       , (Auto.Falla, "no hay token (no se entiende f1auth.json)")
+                       , (Auto.Ok, "vale hasta lun 26 10:40 (16:40); sin calendario: comparado con el inicio de la última sesión de hoy")
+                       )
+
+    it "la línea del token no lleva nada del token" $
+      let now = atUtc 23 16 0
+          (verdict, detail) = Auto.tokenCheck now (atUtc 23 22 0) (Just (atUtc 25 22 0)) (Auto.tokenFile fakeToken)
+          line = Auto.checkLine now verdict "token F1TV" detail
+       in filter (`T.isInfixOf` line) (fakeTokenParts <> ["Nadie"]) `shouldBe` []
+
+    it "hasta cuándo tiene que valer: hoy y su gran premio; sin calendario, el inicio de la última de hoy" $
+      let us name s e = CalendarEntry name "United States Grand Prix" s e
+          calendar =
+            [ us "Practice 1" (atUtc 23 17 30) (atUtc 23 18 30)
+            , us "Practice 2" (atUtc 23 21 0) (atUtc 23 22 0)
+            , us "Race" (atUtc 25 20 0) (atUtc 25 22 0)
+            , CalendarEntry "Race" "Siguiente Grand Prix" (atUtc 30 20 0) (atUtc 30 22 0)
+            ]
+       in ( Auto.tokenNeed calendar austinFriday austinSlots
+          , Auto.tokenNeed [] austinFriday austinSlots
+          , Auto.tokenNeed [CalendarEntry "Practice 1" "" (atUtc 23 17 30) (atUtc 23 18 30)] austinFriday austinSlots
+          , Auto.tokenNeed [] austinFriday []
+          )
+            `shouldBe` ( Just (atUtc 23 22 0, Just (atUtc 25 22 0))
+                       , Just (atUtc 23 21 0, Nothing)
+                       , Just (atUtc 23 18 30, Just (atUtc 23 18 30))
+                       , Nothing
+                       )
+
+    it "la página: los tres códigos y la sesión; si contesta la otra, AVISO; si ninguna, FALLA (D202, D203)" $
+      let page p = Auto.PageReply p 200 (Just "text/html; charset=utf-8") (Just 200) (Just (200, encode (liveOf "Race" SessionFinalised Derived)))
+       in [ Auto.pageCheck [3000, 3001] (Just (page 3000))
+          , Auto.pageCheck [3000, 3001] (Just (page 3001))
+          , Auto.pageCheck [3000, 3001] Nothing
+          ]
+            `shouldBe` [ (Auto.Ok, "/ 200 · all.js 200 · /api/live 200 (Race)")
+                       , (Auto.Aviso, "clon en :3001; master no contesta · / 200 · all.js 200 · /api/live 200 (Race)")
+                       , (Auto.Falla, "no contesta master en :3000 ni clon en :3001")
+                       ]
+
+    it "cualquier petición que no da lo esperado es FALLA; sin sesión, OK" $
+      let base = Auto.PageReply 3000 200 (Just "text/html") (Just 200) (Just (200, encode (liveOf "Race" SessionFinalised Derived)))
+       in map (Auto.pageCheck [3000, 3001] . Just)
+            [ base {Auto.pgScript = Just 404}
+            , base {Auto.pgLive = Just (200, "<html>")}
+            , base {Auto.pgLive = Just (200, encode (LiveTable Nothing [] NextUnknown))}
+            , base {Auto.pgIndexType = Just "application/json"}
+            , base {Auto.pgLive = Nothing}
+            ]
+            `shouldBe` [ (Auto.Falla, "/ 200 · all.js 404 · /api/live 200 (Race)")
+                       , (Auto.Falla, "/ 200 · all.js 200 · /api/live 200 sin entender")
+                       , (Auto.Ok, "/ 200 · all.js 200 · /api/live 200 (sin sesión)")
+                       , (Auto.Falla, "/ 200 sin HTML · all.js 200 · /api/live 200 (Race)")
+                       , (Auto.Falla, "/ 200 · all.js 200 · /api/live sin respuesta")
+                       ]
+
+    it "el log: sin --log, AVISO; un fichero que no existe, FALLA; si existe, desde el último arranque" $
+      map Auto.logVerdict [Nothing, Just ("/home/x/dev.txt", Nothing), Just ("/home/x/dev.txt", Just gpLogLines)]
+        `shouldBe` [ (Auto.Aviso, "sin --log: no se mira")
+                   , (Auto.Falla, "no existe /home/x/dev.txt")
+                   , (Auto.Aviso, "0 con «error», 1 de OpenF1 429, 6 de Broken pipe/SSL")
+                   ]
+
+    it "lo que escribe una tanda: su línea en comprobaciones.txt y la cuenta en resumen.txt (D202, D203)" $
+      ( Auto.checkLine (addUTCTime 1 (atUtc 23 16 0)) Auto.Aviso "token F1TV"
+          "vale hoy; caduca el dom 25 12:40 (18:40), antes del fin del GP"
+      , Auto.checksSummary (atUtc 23 16 0) "comprobaciones de arranque"
+          [("OpenF1", Auto.Ok), ("token F1TV", Auto.Ok), ("página", Auto.Ok), ("log", Auto.Ok)]
+      , Auto.checksSummary (atUtc 23 16 45) "comprobaciones antes de la P1"
+          [("OpenF1", Auto.Ok), ("token F1TV", Auto.Ok), ("página", Auto.Falla), ("log", Auto.Aviso)]
+      )
+        `shouldBe` ( "10:00:01 (16:00:01) AVISO  token F1TV  vale hoy; caduca el dom 25 12:40 (18:40), antes del fin del GP"
+                   , "10:00 (16:00) acaba    comprobaciones de arranque: 4 OK"
+                   , "10:45 (16:45) acaba    comprobaciones antes de la P1: 2 OK, 1 AVISO (log), 1 FALLA (página)"
+                   )
+
+    it "la orden de una tanda lleva el log y hasta cuándo el token; las demás piezas no (ida y vuelta)" $
+      let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
+          need = Just (atUtc 23 22 0, Just (atUtc 25 22 0))
+          orders =
+            map (\p -> Auto.withChecks (Just "/home/x/dev.txt") need p (Auto.dispatchFor storeRecorder 3000 austinSlots plan p)) plan
+       in ( map Auto.dispatchArgs (take 1 orders)
+          , map Auto.diLog orders
+          , map (Auto.parseDispara . Auto.dispatchArgs) orders == map Right orders
+          )
+            `shouldBe` ( [ [ "--puerto", "3000", "--log", "/home/x/dev.txt"
+                           , "--fin-hoy", "2026-10-23T22:00:00Z", "--fin-gp", "2026-10-25T22:00:00Z" ] ]
+                       , [Just "/home/x/dev.txt", Nothing, Nothing, Just "/home/x/dev.txt", Nothing, Just "/home/x/dev.txt"]
+                       , True
+                       )
+
   describe "Auto: los nombres" $ do
     it "las sesiones del feed, cortas en unidades y ficheros y legibles en pantalla" $
       map (\n -> (Auto.sessionShort n, Auto.sessionLabel n))
@@ -5375,15 +5491,15 @@ main = hspec $ do
         `shouldBe` [Just austinFriday, Just (fromGregorian 2026 10 15), Nothing]
 
   describe "Auto: lo que pide quien lo lanza" $ do
-    it "el día, --horas y --ensayo, en cualquier orden" $
-      map Auto.parseLaunch [[], ["--ensayo", "--horas", "p1=11:50", "viernes"]]
-        `shouldBe` [ Right (Auto.Launch Nothing Nothing False)
-                   , Right (Auto.Launch (Just "viernes") (Just "p1=11:50") True)
+    it "el día, --horas, --ensayo y --log, en cualquier orden" $
+      map Auto.parseLaunch [[], ["--ensayo", "--log", "/tmp/dev.txt", "--horas", "p1=11:50", "viernes"]]
+        `shouldBe` [ Right (Auto.Launch Nothing Nothing False Nothing)
+                   , Right (Auto.Launch (Just "viernes") (Just "p1=11:50") True (Just "/tmp/dev.txt"))
                    ]
 
     it "lo que no se entiende no se adivina" $
-      map (isLeft . Auto.parseLaunch) [["--horas"], ["viernes", "sabado"], ["--hora", "p1=11:50"]]
-        `shouldBe` [True, True, True]
+      map (isLeft . Auto.parseLaunch) [["--horas"], ["--log"], ["viernes", "sabado"], ["--hora", "p1=11:50"]]
+        `shouldBe` [True, True, True, True]
 
     it "las horas a mano son de México, ese día, y salen ordenadas" $
       map (Auto.parseHoras austinFriday) ["p1=11:30,p2=15:00", " P2=15:00 , p1=11:30 "]
@@ -5505,8 +5621,9 @@ main = hspec $ do
             , p (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
             ]
           fired =
-            [ Auto.firedLine launched "comprobaciones de arranque"
-            , Auto.firedLine (atUtc 23 16 45) "grabación P1, sin cuenta"
+            [ Auto.startLine launched "comprobaciones de arranque"
+            , Auto.startLine (atUtc 23 16 45) "grabación P1, sin cuenta"
+            , Auto.checksSummary launched "comprobaciones de arranque" [("OpenF1", Auto.Ok)]
             ]
        in ( Auto.expectedPending (programmed <> fired)
           , Auto.expectedPending (programmed <> [Auto.cancelLine (atUtc 23 16 10)])
@@ -7299,6 +7416,18 @@ liveOf name st basis =
     (Just ((stateless "United States Grand Prix") {siName = name, siState = Just (StateReading st basis)}))
     []
     NextUnknown
+
+-- | Un token inventado con la forma del de F1TV (un JWT): caduca el domingo 25 a las
+-- 18:40 UTC y lleva un nombre que no puede salir en ninguna línea.
+fakeTokenParts :: [T.Text]
+fakeTokenParts =
+  [ "eyJhbGciOiJub25lIn0"
+  , "eyJleHAiOjE3OTI5NTM2MDAsIkZpcnN0TmFtZSI6Ik5hZGllIiwiU3Vic2NyaWJlcklkIjoiMCJ9"
+  , "firma"
+  ]
+
+fakeToken :: ByteString
+fakeToken = BC.pack (T.unpack (T.intercalate "." fakeTokenParts))
 
 -- | Una ruta de @dashboardF1-record@ del store, como la que pone @nix run .#auto@.
 storeRecorder :: FilePath

@@ -32,6 +32,18 @@ module Auto.Helper
   , sinceLastStart
   , countLog
   , logCheck
+    -- * Las comprobaciones de una tanda
+  , openf1Check
+  , TokenFile (..)
+  , tokenExpiry
+  , tokenFile
+  , tokenNeed
+  , tokenCheck
+  , isHtml
+  , PageReply (..)
+  , pageCheck
+  , logVerdict
+  , checksSummary
     -- * Las líneas de los ficheros
   , checkLine
   , eventLine
@@ -59,6 +71,7 @@ module Auto.Helper
     -- * Lo que recibe cada pieza al disparar
   , Dispatch (..)
   , dispatchFor
+  , withChecks
   , watchedSlot
   , dispatchArgs
   , parseDispara
@@ -80,6 +93,7 @@ module Auto.Helper
   , readCalendar
   , calendarFailure
   , instanceName
+  , instanceAt
     -- * Lo que enseña el comando
   , dayHeader
   , dayTable
@@ -87,7 +101,6 @@ module Auto.Helper
   , horasFlag
   , onCalendar
   , programLine
-  , firedLine
   , cancelLine
     -- * Lo que dice systemd
   , UnitRow (..)
@@ -100,30 +113,38 @@ module Auto.Helper
   , viewLines
   ) where
 
-import           Common.Types          (LapProgress (..), LiveTable (..),
-                                        SessionInfo (..), SessionState (..),
-                                        StateReading (..), sessionStateLabel)
-import           Config                (startupMark)
-import           Data.Aeson            (FromJSON (..), Value, eitherDecode,
-                                        withObject, (.:), (.:?))
-import           Data.Aeson.Types      (parseEither)
-import qualified Data.ByteString.Lazy  as BL
-import           Data.List             (find, nub, sortOn, (\\))
-import           Data.Maybe            (catMaybes, fromMaybe, isNothing,
-                                        listToMaybe, mapMaybe)
-import           Data.Text             (Text)
-import qualified Data.Text             as T
-import           Data.Time.Calendar    (Day, DayOfWeek (..), addDays, dayOfWeek,
-                                        showGregorian, toGregorian)
-import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime)
-import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import           Data.Time.Format      (defaultTimeLocale, formatTime,
-                                        parseTimeM)
-import           Data.Time.LocalTime   (LocalTime (..), TimeZone, localDay,
-                                        localTimeToUTC, minutesToTimeZone,
-                                        utcToLocalTime, utcToZonedTime)
-import           Handler.Live.Helper   (CalendarEntry (..))
-import           Text.Printf           (printf)
+import           Common.Types               (LapProgress (..), LiveTable (..),
+                                             SessionInfo (..),
+                                             SessionState (..),
+                                             StateReading (..),
+                                             sessionStateLabel)
+import           Config                     (startupMark)
+import           Data.Aeson                 (FromJSON (..), Value, eitherDecode,
+                                             eitherDecodeStrict, withObject,
+                                             (.:), (.:?))
+import           Data.Aeson.Types           (parseEither)
+import qualified Data.ByteString            as BS
+import qualified Data.ByteString.Base64.URL as B64U
+import qualified Data.ByteString.Char8      as BS8
+import qualified Data.ByteString.Lazy       as BL
+import           Data.List                  (find, nub, sortOn, (\\))
+import           Data.Maybe                 (catMaybes, fromMaybe, isNothing,
+                                             listToMaybe, mapMaybe)
+import           Data.Text                  (Text)
+import qualified Data.Text                  as T
+import           Data.Time.Calendar         (Day, DayOfWeek (..), addDays,
+                                             dayOfWeek, showGregorian,
+                                             toGregorian)
+import           Data.Time.Clock            (NominalDiffTime, UTCTime,
+                                             addUTCTime)
+import           Data.Time.Clock.POSIX      (posixSecondsToUTCTime)
+import           Data.Time.Format           (defaultTimeLocale, formatTime,
+                                             parseTimeM)
+import           Data.Time.LocalTime        (LocalTime (..), TimeZone, localDay,
+                                             localTimeToUTC, minutesToTimeZone,
+                                             utcToLocalTime, utcToZonedTime)
+import           Handler.Live.Helper        (CalendarEntry (..))
+import           Text.Printf                (printf)
 
 -- | La hora de México, fija en UTC−6: sin horario de verano desde 2022, y sin
 -- depender de la zona del proceso, que bajo systemd es la del sistema (UTC).
@@ -308,6 +329,130 @@ logCheck c = (verdict, T.pack (printf "%d con «error», %d de OpenF1 429, %d de
       | lcErrors c > 0                          = Falla
       | lcRateLimited c > 0 || lcBrokenPipe c > 0 = Aviso
       | otherwise                               = Ok
+
+-- | OpenF1 con su código, o «sin respuesta» (D202).
+openf1Check :: Maybe Int -> (Verdict, Text)
+openf1Check code = (openf1Verdict code, maybe "sin respuesta" (T.pack . show) code)
+
+-- | Lo que hay en @f1auth.json@, el fichero en que FastF1 guarda el token de F1TV.
+data TokenFile
+  = TokenMissing
+  | TokenUnreadable          -- ^ Vacío (FastF1 lo crea así) o algo que no es un token.
+  | TokenExpires UTCTime
+  deriving (Eq, Show)
+
+-- | La caducidad (@exp@) del token, un JWT en texto. __Solo devuelve la hora__: el resto
+-- del token lleva datos del suscriptor y no sale de aquí.
+tokenExpiry :: BS.ByteString -> Maybe UTCTime
+tokenExpiry raw = case BS8.split '.' (BS8.strip raw) of
+  [_, payload, _] -> do
+    claims <- either (const Nothing) Just (B64U.decodeUnpadded payload)
+    secs <- either (const Nothing) Just (eitherDecodeStrict claims >>= parseEither (withObject "token" (.: "exp")))
+    pure (posixSecondsToUTCTime (fromInteger secs))
+  _ -> Nothing
+
+tokenFile :: BS.ByteString -> TokenFile
+tokenFile = maybe TokenUnreadable TokenExpires . tokenExpiry
+
+-- | Hasta cuándo tiene que valer el token, con todo el calendario, ese día y sus sesiones:
+-- el fin de la última sesión de hoy y el de la última de su gran premio (el de hoy si no se
+-- sabe cuál es). Sin calendario de ese día, el inicio de la última sesión y 'Nothing'.
+-- 'Nothing' del todo si no hay sesiones.
+tokenNeed :: [CalendarEntry] -> Day -> [Slot] -> Maybe (UTCTime, Maybe UTCTime)
+tokenNeed entries day slots = case todays of
+  [] -> (\s -> (maximum s, Nothing)) <$> nonEmpty (map slotStart slots)
+  _ ->
+    let todayEnd = maximum (map ceEnd todays)
+        gp = find (not . T.null) (map ceGrandPrix todays)
+        gpEnd = maybe todayEnd (\g -> maximum (todayEnd : [ceEnd e | e <- entries, ceGrandPrix e == g])) gp
+     in Just (todayEnd, Just gpEnd)
+  where
+    todays = filter ((== day) . mexicoDay . ceStart) entries
+    nonEmpty xs = if null xs then Nothing else Just xs
+
+-- | El juicio del token en ese instante, con lo que tiene que cubrir ('tokenNeed': hoy y,
+-- con calendario, el gran premio) y lo que hay en el fichero (D202, D203).
+tokenCheck :: UTCTime -> UTCTime -> Maybe UTCTime -> TokenFile -> (Verdict, Text)
+tokenCheck now today gp file = case file of
+  TokenMissing    -> (Falla, "no hay token (no existe ~/.local/share/fastf1/f1auth.json)")
+  TokenUnreadable -> (Falla, "no hay token (no se entiende f1auth.json)")
+  TokenExpires e
+    | e <= now -> (Falla, "caducó el " <> dated e)
+    | e < today -> withoutCalendar (Falla, "caduca a las " <> clockPair "%H:%M" e <> ", antes del fin de hoy")
+    | maybe False (e <) gp -> (Aviso, "vale hoy; caduca el " <> dated e <> ", antes del fin del GP")
+    | otherwise -> withoutCalendar (Ok, "vale hasta " <> dated e)
+  where
+    dated t =
+      T.take 3 (weekdayName (dayOfWeek (mexicoDay t))) <> " "
+        <> T.pack (formatTime defaultTimeLocale "%-d" (utcToLocalTime mexicoZone t)) <> " "
+        <> clockPair "%H:%M" t
+    withoutCalendar (v, detail) = case gp of
+      Nothing -> (v, detail <> "; sin calendario: comparado con el inicio de la última sesión de hoy")
+      Just _  -> (v, detail)
+
+-- | Si un @Content-Type@ es el de una página HTML.
+isHtml :: Maybe Text -> Bool
+isHtml = maybe False (("text/html" `T.isPrefixOf`) . T.toLower)
+
+-- | Lo que contestó a la página la primera instancia que contestó @/@: su puerto, el código
+-- y el tipo de @/@, el código de @/all.js@ y el código y el cuerpo de @\/api\/live@
+-- ('Nothing': no contestó).
+data PageReply = PageReply
+  { pgPort      :: Int
+  , pgIndex     :: Int
+  , pgIndexType :: Maybe Text
+  , pgScript    :: Maybe Int
+  , pgLive      :: Maybe (Int, BL.ByteString)
+  }
+
+-- | El juicio de la página, con las instancias por el orden en que se preguntó (la del
+-- lanzamiento primero) y lo que contestó la primera que contestó (D202, D203). Si contestó
+-- otra, AVISO; cualquier petición que no dé lo esperado, FALLA.
+pageCheck :: [Int] -> Maybe PageReply -> (Verdict, Text)
+pageCheck asked Nothing = (Falla, "no contesta " <> T.intercalate " ni " (map instanceAt asked))
+pageCheck asked (Just r) = (verdict, prefix <> T.intercalate " · " [indexPart, scriptPart, livePart])
+  where
+    home = listToMaybe asked
+    moved = home /= Just (pgPort r)
+    prefix
+      | moved = instanceAt (pgPort r) <> "; " <> maybe "" instanceName home <> " no contesta · "
+      | otherwise = ""
+    indexOk = pgIndex r == 200 && isHtml (pgIndexType r)
+    indexPart = "/ " <> code (pgIndex r) <> (if pgIndex r == 200 && not indexOk then " sin HTML" else "")
+    scriptPart = "all.js " <> maybe "sin respuesta" code (pgScript r)
+    (liveOk, livePart) = case pgLive r of
+      Nothing -> (False, "/api/live sin respuesta")
+      Just (200, body) -> case eitherDecode body of
+        Right t -> (True, "/api/live 200 (" <> maybe "sin sesión" siName (liveSession t) <> ")")
+        Left _  -> (False, "/api/live 200 sin entender")
+      Just (c, _) -> (False, "/api/live " <> code c)
+    verdict
+      | not (indexOk && pgScript r == Just 200 && liveOk) = Falla
+      | moved = Aviso
+      | otherwise = Ok
+    code = T.pack . show
+
+-- | El juicio del log de la instancia: sin @--log@ ('Nothing'), AVISO; si el fichero no
+-- existe (sus líneas, 'Nothing'), FALLA; si existe, sus líneas desde el último arranque.
+logVerdict :: Maybe (FilePath, Maybe [Text]) -> (Verdict, Text)
+logVerdict given = case given of
+  Nothing                -> (Aviso, "sin --log: no se mira")
+  Just (path, Nothing)   -> (Falla, "no existe " <> T.pack path)
+  Just (_, Just content) -> logCheck (countLog (sinceLastStart content))
+
+-- | La línea «acaba» de una tanda en @resumen.txt@ (D202, D203): cuántas salieron con cada
+-- palabra y, entre paréntesis, cuáles no salieron OK.
+checksSummary :: UTCTime -> Text -> [(Text, Verdict)] -> Text
+checksSummary t label results = eventLine t "acaba" (label <> ": " <> T.intercalate ", " counts)
+  where
+    counts =
+      [ T.pack (show (length names)) <> " " <> verdictWord v <> listed v names
+      | v <- [Ok, Aviso, Falla]
+      , let names = [what | (what, w) <- results, w == v]
+      , not (null names)
+      ]
+    listed Ok _    = ""
+    listed _ names = " (" <> T.intercalate ", " names <> ")"
 
 -- | La hora de México y, entre paréntesis, la UTC.
 clockPair :: String -> UTCTime -> Text
@@ -522,19 +667,29 @@ recordingName session = "grabación " <> sessionLabel session
 -- | Lo que una pieza necesita al disparar, además de la carpeta y su etiqueta: la
 -- instancia del lanzamiento, su tope, la sesión que mira (la suya; el vigía, la
 -- última del día) con su hora prevista y, la grabación, la ruta de @dashboardF1-record@.
+-- Las comprobaciones, además, el log de la instancia y hasta cuándo tiene que valer el
+-- token ('tokenNeed').
 data Dispatch = Dispatch
-  { diPort     :: Int
-  , diCap      :: Maybe UTCTime
-  , diSession  :: Maybe Text
-  , diStart    :: Maybe UTCTime
-  , diRecorder :: Maybe FilePath
+  { diPort       :: Int
+  , diCap        :: Maybe UTCTime
+  , diSession    :: Maybe Text
+  , diStart      :: Maybe UTCTime
+  , diRecorder   :: Maybe FilePath
+  , diLog        :: Maybe FilePath
+  , diTokenToday :: Maybe UTCTime
+  , diTokenGp    :: Maybe UTCTime
   }
   deriving (Eq, Show)
 
 -- | Con la ruta del grabador, la instancia, las sesiones y el plan del día.
 dispatchFor :: FilePath -> Int -> [Slot] -> [Planned] -> Planned -> Dispatch
 dispatchFor recorder port slots plan p =
-  Dispatch port (plCap p) session (startOf =<< session) (recorderFor (plPiece p))
+  (bareDispatch port)
+    { diCap = plCap p
+    , diSession = session
+    , diStart = startOf =<< session
+    , diRecorder = recorderFor (plPiece p)
+    }
   where
     session = case plPiece p of
       Recording s -> Just s
@@ -544,6 +699,13 @@ dispatchFor recorder port slots plan p =
     recorderFor piece = case piece of
       Recording _ -> Just recorder
       _           -> Nothing
+
+-- | A la orden de una tanda de comprobaciones, el log que se dio con @--log@ y lo que
+-- tiene que cubrir el token ('tokenNeed'); las demás piezas, igual.
+withChecks :: Maybe FilePath -> Maybe (UTCTime, Maybe UTCTime) -> Planned -> Dispatch -> Dispatch
+withChecks logFile need p d = case plPiece p of
+  Checks _ -> d {diLog = logFile, diTokenToday = fst <$> need, diTokenGp = snd =<< need}
+  _        -> d
 
 -- | La sesión que mira la pieza, con su hora; 'Nothing' si a la orden le falta alguna.
 watchedSlot :: Dispatch -> Maybe Slot
@@ -557,11 +719,27 @@ dispatchArgs d =
     <> maybe [] (\s -> ["--sesion", s]) (diSession d)
     <> maybe [] (\t -> ["--inicio", isoText t]) (diStart d)
     <> maybe [] (\r -> ["--grabador", T.pack r]) (diRecorder d)
+    <> maybe [] (\l -> ["--log", T.pack l]) (diLog d)
+    <> maybe [] (\t -> ["--fin-hoy", isoText t]) (diTokenToday d)
+    <> maybe [] (\t -> ["--fin-gp", isoText t]) (diTokenGp d)
   where
     isoText = T.pack . formatTime defaultTimeLocale isoUtc
 
+-- | La orden de esa instancia sin nada más.
+bareDispatch :: Int -> Dispatch
+bareDispatch port = Dispatch
+  { diPort = port
+  , diCap = Nothing
+  , diSession = Nothing
+  , diStart = Nothing
+  , diRecorder = Nothing
+  , diLog = Nothing
+  , diTokenToday = Nothing
+  , diTokenGp = Nothing
+  }
+
 parseDispara :: [Text] -> Either Text Dispatch
-parseDispara = go (Dispatch 0 Nothing Nothing Nothing Nothing) False
+parseDispara = go (bareDispatch 0) False
   where
     go d True [] = Right d
     go _ False [] = Left "dispara necesita --puerto"
@@ -572,6 +750,11 @@ parseDispara = go (Dispatch 0 Nothing Nothing Nothing Nothing) False
     go d hasPort ("--sesion" : s : rest) = go d {diSession = Just s} hasPort rest
     go d hasPort ("--inicio" : t : rest)
       | Just start <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diStart = Just start} hasPort rest
+    go d hasPort ("--log" : l : rest) = go d {diLog = Just (T.unpack l)} hasPort rest
+    go d hasPort ("--fin-hoy" : t : rest)
+      | Just end <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diTokenToday = Just end} hasPort rest
+    go d hasPort ("--fin-gp" : t : rest)
+      | Just end <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diTokenGp = Just end} hasPort rest
     go d hasPort ("--grabador" : r : rest) = go d {diRecorder = Just (T.unpack r)} hasPort rest
     go _ _ (word : _) = Left ("dispara: no entiendo «" <> word <> "»")
 
@@ -590,7 +773,7 @@ instanceChange :: UTCTime -> Text -> Maybe Int -> Maybe Int -> Maybe Text
 instanceChange t who before after
   | before == after = Nothing
   | otherwise = Just $ case after of
-      Just p  -> eventLine t "cambia" (who <> " a " <> instanceName p <> " en :" <> T.pack (show p))
+      Just p  -> eventLine t "cambia" (who <> " a " <> instanceAt p)
       Nothing -> eventLine t "pierde" (who <> ": no contesta ninguna instancia")
 
 -- | La carpeta del día, dentro de @~\/MOPER@.
@@ -655,22 +838,27 @@ folderDay folder = do
   let date = T.take 10 (T.drop 1 (T.dropWhile (/= '-') rest))
   parseTimeM False defaultTimeLocale "%Y-%m-%d" (T.unpack date)
 
--- | Lo que pide quien lanza el día: el día, las horas a mano y si es un ensayo.
+-- | Lo que pide quien lanza el día: el día, las horas a mano, si es un ensayo y el log de
+-- la instancia.
 data Launch = Launch
   { laDay    :: Maybe Text
   , laHoras  :: Maybe Text
   , laEnsayo :: Bool
+  , laLog    :: Maybe FilePath
   }
   deriving (Eq, Show)
 
--- | Los argumentos de @dashboardF1-auto [día] [--horas …] [--ensayo]@, en cualquier orden.
+-- | Los argumentos de @dashboardF1-auto [día] [--horas …] [--ensayo] [--log …]@, en
+-- cualquier orden.
 parseLaunch :: [Text] -> Either Text Launch
-parseLaunch = go (Launch Nothing Nothing False)
+parseLaunch = go (Launch Nothing Nothing False Nothing)
   where
     go l [] = Right l
     go l ("--ensayo" : rest) = go l {laEnsayo = True} rest
     go _ ["--horas"] = Left "--horas necesita las horas: p. ej. --horas p1=11:30,p2=15:00"
     go l ("--horas" : spec : rest) = go l {laHoras = Just spec} rest
+    go _ ["--log"] = Left "--log necesita el fichero: p. ej. --log ~/MOPER/dashboardF1-openf1-viernes-2026-10-23.txt"
+    go l ("--log" : file : rest) = go l {laLog = Just (T.unpack file)} rest
     go l (word : rest)
       | not ("--" `T.isPrefixOf` word) && isNothing (laDay l) = go l {laDay = Just word} rest
     go _ (word : _) = Left ("no entiendo «" <> word <> "»")
@@ -744,7 +932,7 @@ data CalendarAnswer
 -- conoce la ruta y sirve @index.html@: lo mismo que el 404.
 readCalendar :: Int -> Maybe Text -> BL.ByteString -> CalendarAnswer
 readCalendar 200 ctype body
-  | maybe False (("text/html" `T.isPrefixOf`) . T.toLower) ctype = CalendarMissing
+  | isHtml ctype = CalendarMissing
   | otherwise = either (CalendarUnreadable . T.pack) Calendar (eitherDecode body)
 readCalendar 404 _ _ = CalendarMissing
 readCalendar code _ _ = CalendarUnreadable ("HTTP " <> T.pack (show code))
@@ -763,6 +951,10 @@ instanceName :: Int -> Text
 instanceName 3000 = "master"
 instanceName 3001 = "clon"
 instanceName p    = "la de :" <> T.pack (show p)
+
+-- | El camino con su puerto: «master en :3000».
+instanceAt :: Int -> Text
+instanceAt p = instanceName p <> " en :" <> T.pack (show p)
 
 -- | La cabecera de la tabla (D189): el día, el gran premio si se sabe y las horas.
 dayHeader :: Day -> Maybe Text -> Text
@@ -844,13 +1036,6 @@ programLine now p = eventLine now "programa" (pieceLabel (plPiece p) <> " · " <
   where
     start = if plStart p <= now then "ahora" else clockPair "%H:%M" (plStart p)
 
-firedSuffix :: Text
-firedSuffix = " (sin hacer todavía)"
-
--- | La constancia de una pieza que disparó y que aún no hace nada.
-firedLine :: UTCTime -> Text -> Text
-firedLine t label = eventLine t "arranca" (label <> firedSuffix)
-
 cancelLine :: UTCTime -> Text
 cancelLine t = eventLine t "cancela" "todo lo pendiente"
 
@@ -905,9 +1090,9 @@ expectedPending = foldl step [] . mapMaybe eventParts
   where
     step acc (verb, what) = case verb of
       "programa" -> acc <> [fst (T.breakOn " · " what)]
-      "arranca" -> filter (/= fromMaybe what (T.stripSuffix firedSuffix what)) acc
-      "cancela" -> []
-      _ -> acc
+      "arranca"  -> filter (/= what) acc
+      "cancela"  -> []
+      _          -> acc
 
 -- | Los avisos cuando la carpeta y systemd no cuadran sobre lo pendiente.
 reconcile :: [Text] -> [(Text, Text)] -> [Text]

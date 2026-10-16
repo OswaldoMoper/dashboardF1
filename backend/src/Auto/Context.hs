@@ -7,6 +7,7 @@ module Auto.Context
   , openf1Status
   , runVigia
   , runRecording
+  , runChecks
   , jolpicaDay
   , autoUnits
   , autoTimers
@@ -20,18 +21,22 @@ module Auto.Context
   ) where
 
 import           Auto.Helper                (CalendarAnswer, Dispatch (..),
-                                             LiveReply (..), RecordingEnd (..),
+                                             LiveReply (..), PageReply (..),
+                                             RecordingEnd (..),
                                              RecordingStep (..), Slot (..),
-                                             TimerRow, UnitRow, VigiaEnd (..),
-                                             VigiaReading (..), VigiaWatch (..),
-                                             askOrder, instanceChange,
-                                             jolpicaSlots, liveTable,
-                                             onCalendar, readCalendar,
-                                             recordingFile,
+                                             TimerRow, TokenFile (..), UnitRow,
+                                             VigiaEnd (..), VigiaReading (..),
+                                             VigiaWatch (..), askOrder,
+                                             checkLine, checksSummary,
+                                             instanceChange, jolpicaSlots,
+                                             liveTable, logVerdict, onCalendar,
+                                             openf1Check, pageCheck,
+                                             readCalendar, recordingFile,
                                              recordingIdleSeconds, recordingLog,
                                              recordingName, recordingStep,
                                              recordingStopLine, relaunchLine,
-                                             slotsOn, startLine, vigiaDone,
+                                             slotsOn, startLine, tokenCheck,
+                                             tokenFile, vigiaDone,
                                              vigiaJsonName, vigiaLine,
                                              vigiaReading, vigiaStep,
                                              vigiaStopLine)
@@ -62,7 +67,7 @@ import           Handler.Historical.Manager (fetchSeasonSchedule)
 import           Handler.OpenF1.Manager     (latestSession, openf1Base)
 import qualified Network.HTTP.Client        as HC
 import qualified Network.HTTP.Req           as R
-import           Network.HTTP.Types.Header  (hContentType)
+import           Network.HTTP.Types.Header  (ResponseHeaders, hContentType)
 import           Network.HTTP.Types.Status  (statusCode)
 import           System.Directory           (createDirectoryIfMissing,
                                              doesDirectoryExist, doesFileExist,
@@ -110,29 +115,50 @@ askCalendar port = do
 askTimeout :: Int
 askTimeout = 15000000
 
+-- | Lo que contestó una instancia a un @GET@: el código, las cabeceras y el cuerpo.
+data Answer = Answer
+  { anCode    :: Int
+  , anHeaders :: ResponseHeaders
+  , anBody    :: BL.ByteString
+  }
+
+-- | La cabecera de ese nombre, en texto.
+answerHeader :: Answer -> Text -> Maybe Text
+answerHeader a name = decodeUtf8With lenientDecode <$> lookup (fromString (T.unpack name)) (anHeaders a)
+
+-- | @GET@ de esa ruta en la instancia de ese puerto; el cuerpo, solo si se pide (el de
+-- @all.js@ pesa unos 24 MB). 'Nothing' si no contesta en 'askTimeout'.
+askPath :: Bool -> Int -> String -> IO (Maybe Answer)
+askPath withBody port path = do
+  manager <-
+    HC.newManager
+      HC.defaultManagerSettings {HC.managerResponseTimeout = HC.responseTimeoutMicro askTimeout}
+  request <- HC.parseRequest ("http://127.0.0.1:" <> show port <> path)
+  answer <-
+    timeout (askTimeout + 1000000) (try (HC.withResponse request manager readAnswer))
+      :: IO (Maybe (Either SomeException Answer))
+  pure $ case answer of
+    Just (Right a) -> Just a
+    _              -> Nothing
+  where
+    readAnswer response = do
+      body <- if withBody then BL.fromChunks <$> HC.brConsume (HC.responseBody response) else pure BL.empty
+      pure (Answer (statusCode (HC.responseStatus response)) (HC.responseHeaders response) body)
+
 -- | @GET \/api\/live@ de la instancia de ese puerto. 'Nothing' si no contesta 200 en
 -- 'askTimeout'.
 askLive :: Int -> IO (Maybe LiveReply)
 askLive port = do
-  manager <-
-    HC.newManager
-      HC.defaultManagerSettings {HC.managerResponseTimeout = HC.responseTimeoutMicro askTimeout}
-  request <- HC.parseRequest ("http://127.0.0.1:" <> show port <> "/api/live")
-  answer <-
-    timeout (askTimeout + 1000000) (try (HC.httpLbs request manager))
-      :: IO (Maybe (Either SomeException (HC.Response BL.ByteString)))
+  answer <- askPath True port "/api/live"
   pure $ case answer of
-    Just (Right response) | statusCode (HC.responseStatus response) == 200 ->
-      let header name =
-            decodeUtf8With lenientDecode
-              <$> lookup (fromString (T.unpack name)) (HC.responseHeaders response)
-       in Just
-            LiveReply
-              { lrOrigin = header originHeader
-              , lrSource = header sourceHeader
-              , lrFetched = header fetchedAtHeader
-              , lrBody = HC.responseBody response
-              }
+    Just a | anCode a == 200 ->
+      Just
+        LiveReply
+          { lrOrigin = answerHeader a originHeader
+          , lrSource = answerHeader a sourceHeader
+          , lrFetched = answerHeader a fetchedAtHeader
+          , lrBody = anBody a
+          }
     _ -> Nothing
 
 -- | El código de @sessions?session_key=latest@ de OpenF1, sin reintentos; 'Nothing' si
@@ -271,6 +297,66 @@ firstAnswer ports = getCurrentTime >>= go ports
       case reply of
         Just r  -> pure (Just p, Just r, realToFrac (diffUTCTime now asked), now)
         Nothing -> go rest begun
+
+-- | Una tanda de comprobaciones en la carpeta del día, con la hora hasta la que tiene que
+-- valer el token hoy (D202, D203): OpenF1, el token de F1TV, la página y el log de la
+-- instancia, cada una con su línea en @comprobaciones.txt@; en @resumen.txt@, «arranca»
+-- al empezar y «acaba» con la cuenta. __Del token solo sale la caducidad__ ('tokenExpiry').
+runChecks :: FilePath -> Text -> UTCTime -> Dispatch -> IO ()
+runChecks folder label tokenToday d = do
+  start <- getCurrentTime
+  appendLine summary (startLine start label)
+  results <-
+    mapM check
+      [ ("OpenF1", openf1Check <$> openf1Status)
+      , ("token F1TV", (\now -> tokenCheck now tokenToday (diTokenGp d)) <$> getCurrentTime <*> readTokenFile)
+      , ("página", pageCheck asked <$> askPage asked)
+      , ("log", logVerdict <$> traverse (\f -> (,) f <$> readIfExists f) (diLog d))
+      ]
+  done <- getCurrentTime
+  appendLine summary (checksSummary done label results)
+  where
+    summary = folder </> "resumen.txt"
+    asked = askOrder instancePorts (diPort d)
+    check (what, judge) = do
+      (verdict, detail) <- judge
+      at <- getCurrentTime
+      appendLine (folder </> "comprobaciones.txt") (checkLine at verdict what detail)
+      pure (what, verdict)
+    readIfExists f = do
+      exists <- doesFileExist f
+      if exists then Just <$> readLines f else pure Nothing
+
+-- | Lo que hay en @~\/.local\/share\/fastf1\/f1auth.json@, donde FastF1 guarda el token.
+readTokenFile :: IO TokenFile
+readTokenFile = do
+  file <- (</> ".local/share/fastf1/f1auth.json") <$> getHomeDirectory
+  exists <- doesFileExist file
+  if not exists
+    then pure TokenMissing
+    else either (const TokenUnreadable) tokenFile
+           <$> (try (BS.readFile file) :: IO (Either SomeException BS.ByteString))
+
+-- | La página en la primera instancia que contesta @/@, por ese orden: @/@, @/all.js@
+-- (sin leer el cuerpo) y @\/api\/live@. 'Nothing' si no contesta ninguna.
+askPage :: [Int] -> IO (Maybe PageReply)
+askPage [] = pure Nothing
+askPage (port : rest) = do
+  index <- askPath True port "/"
+  case index of
+    Nothing -> askPage rest
+    Just i -> do
+      script <- askPath False port "/all.js"
+      live <- askPath True port "/api/live"
+      pure $
+        Just
+          PageReply
+            { pgPort = port
+            , pgIndex = anCode i
+            , pgIndexType = answerHeader i "Content-Type"
+            , pgScript = anCode <$> script
+            , pgLive = (\a -> (anCode a, anBody a)) <$> live
+            }
 
 -- | Las sesiones de ese día según Jolpica. 'Nothing' si no contesta, no se entiende o no
 -- trae ninguna ese día.

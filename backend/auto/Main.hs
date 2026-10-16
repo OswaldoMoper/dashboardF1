@@ -1,7 +1,8 @@
 -- | @dashboardF1-auto@: programa las comprobaciones de un día de GP en systemd.
 --
--- * @dashboardF1-auto [día] [--horas p1=11:30,…] [--ensayo]@ — enseña el día, pide el
---   OK y programa; después se queda enseñando la vista (Ctrl+C sale sin cancelar).
+-- * @dashboardF1-auto [día] [--horas p1=11:30,…] [--ensayo] [--log \<fichero\>]@ — enseña
+--   el día, pide el OK y programa; después se queda enseñando la vista (Ctrl+C sale sin
+--   cancelar). @--log@ es el fichero al que va la terminal de la instancia.
 -- * @dashboardF1-auto estado@ — vuelve a enseñar la vista de la última carpeta.
 -- * @dashboardF1-auto cancela@ — enseña lo que queda en systemd y, con el OK, lo para.
 -- * @dashboardF1-auto dispara \<carpeta\> \<pieza\>@ — lo que corre cada temporizador.
@@ -17,8 +18,9 @@ import qualified Data.Text           as T
 import qualified Data.Text.IO        as TIO
 import           Data.Time.Clock     (getCurrentTime)
 import           Handler.Live.Helper (CalendarEntry (..))
-import           System.Directory    (createDirectoryIfMissing, findExecutable,
-                                      getCurrentDirectory, listDirectory)
+import           System.Directory    (createDirectoryIfMissing, doesFileExist,
+                                      findExecutable, getCurrentDirectory,
+                                      listDirectory, makeAbsolute)
 import           System.Environment  (getArgs, getExecutablePath, lookupEnv)
 import           System.Exit         (exitFailure, exitSuccess)
 import           System.FilePath     ((</>))
@@ -58,6 +60,10 @@ launch l = do
   when (laEnsayo l && isNothing (laHoras l)) $
     quit "el ensayo necesita --horas: p. ej. dashboardF1-auto --horas p1=11:50,p2=12:05 --ensayo"
   manual <- traverse (either quit pure . parseHoras day) (laHoras l)
+  logFile <- traverse makeAbsolute (laLog l)
+  forM_ logFile $ \f -> do
+    exists <- doesFileExist f
+    unless exists $ quit ("no existe " <> T.pack f <> ": revisa --log")
   busy <- either quit pure =<< autoUnits "dashboardF1-auto-*"
   unless (null busy) $ do
     say "Ya hay algo programado:"
@@ -87,6 +93,7 @@ launch l = do
       cap = if laEnsayo l then 15 * 60 else capAfterStart
       plan = dayPlan cap now slots
       gp = listToMaybe (filter (not . T.null) (map ceGrandPrix entries))
+      need = tokenNeed (case answer of Calendar es -> es; _ -> []) day slots
   when (null plan) $ do
     say "Ese día no hay sesiones por delante: no se programa nada."
     exitSuccess
@@ -121,7 +128,7 @@ launch l = do
         at = if plStart p <= now then Nothing else Just (plStart p)
     done <-
       schedule exe workDir path (unitName folder piece) (pieceLabel piece)
-        (dispatchArgs (dispatchFor recorder port slots plan p)) at
+        (dispatchArgs (withChecks logFile need p (dispatchFor recorder port slots plan p))) at
     case done of
       Right () -> appendLine (path </> "resumen.txt") (programLine now p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
@@ -136,7 +143,7 @@ pickInstance = do
     [] -> quit "No hay instancia en :3000 ni en :3001: arráncala y vuelve a lanzar."
     [(p, a)] -> do
       let other = [q | q <- instancePorts, q /= p]
-      say ( "Instancia: " <> instanceName p <> " en :" <> T.pack (show p)
+      say ( "Instancia: " <> instanceAt p
               <> T.concat ["  (en :" <> T.pack (show q) <> " no corre nada)" | q <- other] )
       pure (p, a)
     found -> choose found
@@ -146,7 +153,7 @@ pickInstance = do
       hFlush stdout
       picked <- T.strip <$> TIO.getLine
       case [(p, a) | (p, a) <- found, T.pack (show p) == picked] of
-        chosen@(p, _) : _ -> say ("Instancia: " <> instanceName p <> " en :" <> picked) >> pure chosen
+        chosen@(p, _) : _ -> say ("Instancia: " <> instanceAt p) >> pure chosen
         []                -> choose found
 
 -- | Repinta la vista de esa carpeta cada minuto, hasta Ctrl+C.
@@ -194,16 +201,15 @@ cancela = do
 findRecorder :: IO (Maybe FilePath)
 findRecorder = lookupEnv "DASHBOARDF1_RECORD" >>= maybe (findExecutable "dashboardF1-record") (pure . Just)
 
--- | Lo que corre un temporizador al disparar: el vigía y las grabaciones, de verdad; las
--- comprobaciones, por ahora, la constancia.
+-- | Lo que corre un temporizador al disparar: la pieza de su etiqueta.
 dispara :: FilePath -> Text -> [Text] -> IO ()
 dispara path label rest
   | label == pieceLabel Vigia = either quit (\d -> withSlot d (\s -> runVigia path label s d)) (parseDispara rest)
   | Right d <- parseDispara rest, Just s <- diSession d, label == pieceLabel (Recording s) =
       maybe (quit "dispara: la grabación necesita --grabador")
         (\r -> withSlot d (\slot -> runRecording path label slot r d)) (diRecorder d)
-  | otherwise = do
-      now <- getCurrentTime
-      appendLine (path </> "resumen.txt") (firedLine now label)
+  | Right d <- parseDispara rest, label == pieceLabel (Checks (diSession d)) =
+      maybe (quit "dispara: las comprobaciones necesitan --fin-hoy") (\t -> runChecks path label t d) (diTokenToday d)
+  | otherwise = either quit (const (quit ("dispara: no conozco la pieza «" <> label <> "»"))) (parseDispara rest)
   where
     withSlot d go = maybe (quit "dispara: falta --sesion o --inicio") go (watchedSlot d)
