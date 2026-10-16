@@ -121,7 +121,7 @@ launch l = do
         at = if plStart p <= now then Nothing else Just (plStart p)
     done <-
       schedule exe workDir path (unitName folder piece) (pieceLabel piece)
-        (dispatchArgs (dispatchFor recorder port plan p)) at
+        (dispatchArgs (dispatchFor recorder port slots plan p)) at
     case done of
       Right () -> appendLine (path </> "resumen.txt") (programLine now p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
@@ -198,9 +198,12 @@ findRecorder = lookupEnv "DASHBOARDF1_RECORD" >>= maybe (findExecutable "dashboa
 -- comprobaciones, por ahora, la constancia.
 dispara :: FilePath -> Text -> [Text] -> IO ()
 dispara path label rest
-  | label == pieceLabel Vigia = either quit (runVigia path label) (parseDispara rest)
+  | label == pieceLabel Vigia = either quit (\d -> withSlot d (\s -> runVigia path label s d)) (parseDispara rest)
   | Right d <- parseDispara rest, Just s <- diSession d, label == pieceLabel (Recording s) =
-      maybe (quit "dispara: la grabación necesita --grabador") (\r -> runRecording path label s r d) (diRecorder d)
+      maybe (quit "dispara: la grabación necesita --grabador")
+        (\r -> withSlot d (\slot -> runRecording path label slot r d)) (diRecorder d)
   | otherwise = do
       now <- getCurrentTime
       appendLine (path </> "resumen.txt") (firedLine now label)
+  where
+    withSlot d go = maybe (quit "dispara: falta --sesion o --inicio") go (watchedSlot d)

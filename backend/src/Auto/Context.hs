@@ -21,8 +21,8 @@ module Auto.Context
 
 import           Auto.Helper                (CalendarAnswer, Dispatch (..),
                                              LiveReply (..), RecordingEnd (..),
-                                             RecordingStep (..), Slot, TimerRow,
-                                             UnitRow, VigiaEnd (..),
+                                             RecordingStep (..), Slot (..),
+                                             TimerRow, UnitRow, VigiaEnd (..),
                                              VigiaReading (..), VigiaWatch (..),
                                              askOrder, instanceChange,
                                              jolpicaSlots, liveTable,
@@ -48,7 +48,7 @@ import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Lazy       as BL
 import           Data.IORef                 (newIORef, readIORef, writeIORef)
 import           Data.List                  (isPrefixOf, sortOn)
-import           Data.Maybe                 (fromMaybe, isNothing)
+import           Data.Maybe                 (isNothing)
 import           Data.String                (fromString)
 import           Data.Text                  (Text)
 import qualified Data.Text                  as T
@@ -160,13 +160,13 @@ openf1Status = do
 vigiaPeriod :: NominalDiffTime
 vigiaPeriod = 60
 
--- | El vigía, en la carpeta del día: cada 'vigiaPeriod' pregunta a @\/api\/live@ (la
--- instancia del lanzamiento y, si no contesta, la otra) y a OpenF1, añade su línea a
--- @vigia.txt@ y guarda el cuerpo en @vigia\/@. Para con 'vigiaDone', con su tope o con
--- SIGINT (lo que manda @cancela@), y cada parada y cada cambio de instancia dejan su
--- línea en @resumen.txt@.
-runVigia :: FilePath -> Text -> Dispatch -> IO ()
-runVigia folder label d = do
+-- | El vigía, en la carpeta del día, con la última sesión del día: cada 'vigiaPeriod'
+-- pregunta a @\/api\/live@ (la instancia del lanzamiento y, si no contesta, la otra) y a
+-- OpenF1, añade su línea a @vigia.txt@ y guarda el cuerpo en @vigia\/@. Para con
+-- 'vigiaDone', con su tope o con SIGINT (lo que manda @cancela@), y cada parada y cada
+-- cambio de instancia dejan su línea en @resumen.txt@.
+runVigia :: FilePath -> Text -> Slot -> Dispatch -> IO ()
+runVigia folder label lastSlot d = do
   start <- getCurrentTime
   appendLine summary (startLine start label)
   createDirectoryIfMissing True (folder </> "vigia")
@@ -184,7 +184,7 @@ runVigia folder label d = do
           (port, reply, seconds, at) <- firstAnswer (askOrder instancePorts (diPort d))
           code <- openf1Status
           let reading = vigiaReading at seconds reply code
-              seen' = vigiaStep (fromMaybe "" (diSession d)) (vrTable reading) code seen
+              seen' = vigiaStep at lastSlot (vrTable reading) code seen
           forM_ (instanceChange at "vigía" answering port) (appendLine summary)
           appendLine (folder </> "vigia.txt") (vigiaLine reading)
           forM_ reply $ \r -> BL.writeFile (folder </> "vigia" </> vigiaJsonName at) (lrBody r)
@@ -207,8 +207,8 @@ waitNextMinute start = do
 -- SIGINT, como Ctrl+C, y espera a que cierre; si salió solo, lo relanza a @-2@, @-3@…
 -- Con SIGINT (lo que manda @cancela@ a toda la unidad) espera al grabador y dice que la
 -- cancelaron. Cada paso deja su línea en @resumen.txt@.
-runRecording :: FilePath -> Text -> Text -> FilePath -> Dispatch -> IO ()
-runRecording folder label session recorder d = do
+runRecording :: FilePath -> Text -> Slot -> FilePath -> Dispatch -> IO ()
+runRecording folder label slot recorder d = do
   start <- getCurrentTime
   appendLine summary (startLine start label)
   current <- newIORef =<< launchRecorder 1
@@ -221,6 +221,7 @@ runRecording folder label session recorder d = do
   stopped <- getCurrentTime
   appendLine summary (recordingStopLine stopped session runs end)
   where
+    session = slotName slot
     summary = folder </> "resumen.txt"
     cancelled e = if e == UserInterrupt then Just RecCancelled else Nothing
     launchRecorder n = do
@@ -247,7 +248,7 @@ runRecording folder label session recorder d = do
       forM_ (instanceChange at (recordingName session) answering port) (appendLine summary)
       alive <- maybe (pure False) (fmap isNothing . getProcessExitCode) =<< readIORef current
       now <- getCurrentTime
-      case recordingStep now (diCap d) session (liveTable =<< reply) alive runs of
+      case recordingStep now (diCap d) slot (liveTable =<< reply) alive runs of
         KeepRecording -> watch start current runs port
         Relaunch n -> do
           appendLine summary (relaunchLine now session n)

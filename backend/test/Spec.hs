@@ -5107,11 +5107,11 @@ main = hspec $ do
                    , Auto.Planned (Auto.Recording "Ensayo") (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    ]
 
-  describe "Auto.sessionFinalised" $
+  describe "Auto.sessionFinalised" $ do
     it "solo la sesión con ESE nombre y en Finalised, oído o deducido" $
       -- La P1 finalizada sigue en /api/live cuando arranca la grabación de la P2: si
       -- el nombre no contara, la P2 pararía al arrancar.
-      map (Auto.sessionFinalised "Practice 2")
+      map (Auto.sessionFinalised (atUtc 23 22 0) practice2Slot)
           [ Just (liveOf "Practice 2" SessionFinalised Derived)
           , Just (liveOf "Practice 2" SessionFinalised Heard)
           , Just (liveOf "Practice 1" SessionFinalised Heard)
@@ -5119,6 +5119,16 @@ main = hspec $ do
           , Nothing
           ]
         `shouldBe` [True, True, False, False, False]
+
+    it "antes de su hora no cuenta: la «Race» acabada de la carrera anterior (ensayo de la 95)" $
+      -- Un día sin GP, /api/live enseñaba la carrera anterior acabada y la grabación de
+      -- un ensayo llamado «carrera» paró al primer minuto.
+      let race = Auto.Slot "Race" (atUtc 25 20 0)
+          previous = Just (liveOf "Race" SessionFinalised Derived)
+       in ( map (\t -> Auto.sessionFinalised t race previous) [atUtc 25 19 15, atUtc 25 19 59, atUtc 25 20 0]
+          , Auto.recordingStep (atUtc 25 19 16) (Just (atUtc 26 2 0)) race previous True 1
+          )
+            `shouldBe` ([False, False, True], Auto.KeepRecording)
 
   describe "Auto.vigiaStep" $ do
     it "para tras el Finalised de la última sesión y CINCO minutos seguidos de 200" $
@@ -5138,6 +5148,10 @@ main = hspec $ do
           , (Just (liveOf "Practice 1" SessionFinalised Heard), Just 200) : replicate 10 runningP2
           ]
         `shouldBe` [Auto.Watching, Auto.Watching]
+
+    it "el Finalised de la última sesión antes de su hora no cuenta" $
+      uncurry (Auto.vigiaStep (atUtc 23 16 0) practice2Slot) quiet200 Auto.Watching
+        `shouldBe` Auto.Watching
 
   describe "Auto.openf1Verdict" $
     it "200 OK; 401 (cerrado) y 429 (ritmo) son AVISO; lo demás y sin respuesta, FALLA" $
@@ -5248,21 +5262,29 @@ main = hspec $ do
   describe "Auto: lo que recibe cada pieza al disparar" $ do
     it "el vigía mira la última sesión del día; cada grabación, la suya y el grabador; todos, la instancia y su tope" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-       in map (Auto.dispatchArgs . Auto.dispatchFor storeRecorder 3001 plan) (take 3 plan)
+       in map (Auto.dispatchArgs . Auto.dispatchFor storeRecorder 3001 austinSlots plan) (take 3 plan)
             `shouldBe` [ ["--puerto", "3001"]
-                       , ["--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--sesion", "Practice 2"]
+                       , [ "--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--sesion", "Practice 2"
+                         , "--inicio", "2026-10-23T21:00:00Z" ]
                        , [ "--puerto", "3001", "--tope", "2026-10-23T23:30:00Z", "--sesion", "Practice 1"
-                         , "--grabador", T.pack storeRecorder ]
+                         , "--inicio", "2026-10-23T17:30:00Z", "--grabador", T.pack storeRecorder ]
                        ]
 
     it "lo que se programa se vuelve a leer igual al disparar (ida y vuelta)" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-          dispatches = map (Auto.dispatchFor storeRecorder 3000 plan) plan
+          dispatches = map (Auto.dispatchFor storeRecorder 3000 austinSlots plan) plan
        in map (Auto.parseDispara . Auto.dispatchArgs) dispatches `shouldBe` map Right dispatches
 
+    it "la sesión que mira, con su hora; sin la hora no hay sesión que mirar" $
+      let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
+          vigia = Auto.dispatchFor storeRecorder 3000 austinSlots plan (plan !! 1)
+       in (Auto.watchedSlot vigia, Auto.watchedSlot vigia {Auto.diStart = Nothing})
+            `shouldBe` (Just practice2Slot, Nothing)
+
     it "sin puerto, o con algo que no entiende, no dispara" $
-      map (isLeft . Auto.parseDispara) [[], ["--puerto", "x"], ["--puerto", "3000", "--tope", "mañana"], ["--otra"]]
-        `shouldBe` [True, True, True, True]
+      map (isLeft . Auto.parseDispara)
+          [[], ["--puerto", "x"], ["--puerto", "3000", "--tope", "mañana"], ["--puerto", "3000", "--inicio", "x"], ["--otra"]]
+        `shouldBe` [True, True, True, True, True]
 
     it "pregunta primero a la del lanzamiento y después a la otra" $
       map (Auto.askOrder [3000, 3001]) [3000, 3001] `shouldBe` [[3000, 3001], [3001, 3000]]
@@ -5285,7 +5307,7 @@ main = hspec $ do
         `shouldBe` (["grabacion-p1.txt", "grabacion-p1-2.txt", "grabacion-p1-6.txt"], "grabacion-carrera.log")
 
     it "cada minuto: el Finalised de SU sesión manda, después el tope, y uno que salió solo se relanza" $
-      let step = Auto.recordingStep (atUtc 23 18 30) (Just (atUtc 23 23 30)) "Practice 1"
+      let step = Auto.recordingStep (atUtc 23 18 30) (Just (atUtc 23 23 30)) practice1Slot
           p1 st = Just (liveOf "Practice 1" st Heard)
        in [ step (p1 SessionStarted) True 1
           , step (p1 SessionFinalised) True 1
@@ -5303,8 +5325,8 @@ main = hspec $ do
                        ]
 
     it "el tope para aunque siga grabando; tras cinco relanzamientos, no relanza más" $
-      ( Auto.recordingStep (atUtc 23 23 30) (Just (atUtc 23 23 30)) "Practice 1" Nothing True 1
-      , map (Auto.recordingStep (atUtc 23 18 30) Nothing "Practice 1" Nothing False) [5, 6]
+      ( Auto.recordingStep (atUtc 23 23 30) (Just (atUtc 23 23 30)) practice1Slot Nothing True 1
+      , map (Auto.recordingStep (atUtc 23 18 30) Nothing practice1Slot Nothing False) [5, 6]
       )
         `shouldBe` (Auto.StopRecording Auto.RecCapped, [Auto.Relaunch 6, Auto.StopRecording Auto.RecGaveUp])
 
@@ -7233,7 +7255,11 @@ atUtc d h m = UTCTime (fromGregorian 2026 10 (fromInteger d)) (fromInteger (h * 
 
 -- | Las dos sesiones del viernes, a sus horas del calendario (11:30 y 15:00 de México).
 austinSlots :: [Auto.Slot]
-austinSlots = [Auto.Slot "Practice 1" (atUtc 23 17 30), Auto.Slot "Practice 2" (atUtc 23 21 0)]
+austinSlots = [practice1Slot, practice2Slot]
+
+practice1Slot, practice2Slot :: Auto.Slot
+practice1Slot = Auto.Slot "Practice 1" (atUtc 23 17 30)
+practice2Slot = Auto.Slot "Practice 2" (atUtc 23 21 0)
 
 -- | @current\/races.json@ de Jolpica (2026-10-15) con dos carreras tal cual, sin el
 -- circuito: EE. UU. (ronda 18, con P2 y P3) y Singapur (ronda 17, con sprint).
@@ -7283,9 +7309,9 @@ practice1Reply :: Auto.LiveReply
 practice1Reply =
   Auto.LiveReply (Just "fresh") (Just "feed") Nothing (encode (liveOf "Practice 1" SessionStarted Heard))
 
--- | El vigía de un viernes cuya última sesión es la P2, minuto a minuto.
+-- | El vigía de un viernes cuya última sesión es la P2, minuto a minuto, ya pasada su hora.
 runVigia :: [(Maybe LiveTable, Maybe Int)] -> Auto.VigiaWatch
-runVigia = foldl (\w (t, c) -> Auto.vigiaStep "Practice 2" t c w) Auto.Watching
+runVigia = foldl (\w (t, c) -> Auto.vigiaStep (atUtc 23 22 0) practice2Slot t c w) Auto.Watching
 
 runningP2, finalP2, quiet200 :: (Maybe LiveTable, Maybe Int)
 runningP2 = (Just (liveOf "Practice 2" SessionStarted Heard), Just 200)

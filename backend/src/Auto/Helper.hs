@@ -59,6 +59,7 @@ module Auto.Helper
     -- * Lo que recibe cada pieza al disparar
   , Dispatch (..)
   , dispatchFor
+  , watchedSlot
   , dispatchArgs
   , parseDispara
   , askOrder
@@ -222,12 +223,17 @@ dayPlan cap now slots =
 pastCap :: UTCTime -> Planned -> Bool
 pastCap now = maybe False (now >=) . plCap
 
--- | Si @\/api\/live@ da esa sesión por finalizada. Cuenta igual el estado oído que el
--- deducido del calendario, como el @estado=@ del vigía manual.
-sessionFinalised :: Text -> Maybe LiveTable -> Bool
-sessionFinalised name table =
+-- | Si @\/api\/live@ da esa sesión por finalizada en ese instante. Cuenta igual el estado
+-- oído que el deducido del calendario, como el @estado=@ del vigía manual. __Antes de su
+-- hora prevista no cuenta__: hasta entonces @\/api\/live@ puede enseñar otra sesión acabada
+-- que se llame igual.
+sessionFinalised :: UTCTime -> Slot -> Maybe LiveTable -> Bool
+sessionFinalised now slot table =
   case liveSession =<< table of
-    Just si -> siName si == name && fmap srState (siState si) == Just SessionFinalised
+    Just si ->
+      now >= slotStart slot
+        && siName si == slotName slot
+        && fmap srState (siState si) == Just SessionFinalised
     Nothing -> False
 
 -- | Lo que el vigía lleva visto para saber cuándo parar.
@@ -239,14 +245,14 @@ data VigiaWatch
 openf1QuietMinutes :: Int
 openf1QuietMinutes = 5
 
--- | Un minuto más del vigía: la última sesión del día, la respuesta de @\/api\/live@
--- y el código de OpenF1 ('Nothing' si no contestó). Los minutos en 200 cuentan
--- __después__ del de @Finalised@, y uno que no sea 200 los vuelve a cero.
-vigiaStep :: Text -> Maybe LiveTable -> Maybe Int -> VigiaWatch -> VigiaWatch
-vigiaStep lastName table _ Watching
-  | sessionFinalised lastName table = QuietFor 0
-  | otherwise                       = Watching
-vigiaStep _ _ code (QuietFor n)
+-- | Un minuto más del vigía: el instante, la última sesión del día, la respuesta de
+-- @\/api\/live@ y el código de OpenF1 ('Nothing' si no contestó). Los minutos en 200
+-- cuentan __después__ del de @Finalised@, y uno que no sea 200 los vuelve a cero.
+vigiaStep :: UTCTime -> Slot -> Maybe LiveTable -> Maybe Int -> VigiaWatch -> VigiaWatch
+vigiaStep now lastSlot table _ Watching
+  | sessionFinalised now lastSlot table = QuietFor 0
+  | otherwise                           = Watching
+vigiaStep _ _ _ code (QuietFor n)
   | code == Just 200 = QuietFor (n + 1)
   | otherwise        = QuietFor 0
 
@@ -484,9 +490,9 @@ data RecordingStep
 -- @dashboardF1-record@ sigue vivo y cuántas veces lleva lanzado. El Finalised manda
 -- sobre todo; después el tope; un grabador que salió solo se relanza hasta
 -- 'maxRelaunches' veces.
-recordingStep :: UTCTime -> Maybe UTCTime -> Text -> Maybe LiveTable -> Bool -> Int -> RecordingStep
-recordingStep now cap session table alive runs
-  | sessionFinalised session table = StopRecording RecFinalised
+recordingStep :: UTCTime -> Maybe UTCTime -> Slot -> Maybe LiveTable -> Bool -> Int -> RecordingStep
+recordingStep now cap slot table alive runs
+  | sessionFinalised now slot table = StopRecording RecFinalised
   | maybe False (now >=) cap = StopRecording RecCapped
   | alive = KeepRecording
   | runs <= maxRelaunches = Relaunch (runs + 1)
@@ -515,37 +521,47 @@ recordingName session = "grabación " <> sessionLabel session
 
 -- | Lo que una pieza necesita al disparar, además de la carpeta y su etiqueta: la
 -- instancia del lanzamiento, su tope, la sesión que mira (la suya; el vigía, la
--- última del día) y, la grabación, la ruta de @dashboardF1-record@.
+-- última del día) con su hora prevista y, la grabación, la ruta de @dashboardF1-record@.
 data Dispatch = Dispatch
   { diPort     :: Int
   , diCap      :: Maybe UTCTime
   , diSession  :: Maybe Text
+  , diStart    :: Maybe UTCTime
   , diRecorder :: Maybe FilePath
   }
   deriving (Eq, Show)
 
--- | Con la ruta del grabador, la instancia y el plan del día.
-dispatchFor :: FilePath -> Int -> [Planned] -> Planned -> Dispatch
-dispatchFor recorder port plan p = Dispatch port (plCap p) session (recorderFor (plPiece p))
+-- | Con la ruta del grabador, la instancia, las sesiones y el plan del día.
+dispatchFor :: FilePath -> Int -> [Slot] -> [Planned] -> Planned -> Dispatch
+dispatchFor recorder port slots plan p =
+  Dispatch port (plCap p) session (startOf =<< session) (recorderFor (plPiece p))
   where
     session = case plPiece p of
       Recording s -> Just s
       Checks s    -> s
       Vigia       -> listToMaybe (reverse [s | Recording s <- map plPiece plan])
+    startOf s = lookup s [(slotName x, slotStart x) | x <- slots]
     recorderFor piece = case piece of
       Recording _ -> Just recorder
       _           -> Nothing
+
+-- | La sesión que mira la pieza, con su hora; 'Nothing' si a la orden le falta alguna.
+watchedSlot :: Dispatch -> Maybe Slot
+watchedSlot d = Slot <$> diSession d <*> diStart d
 
 -- | Los argumentos de @dispara@ tras la carpeta y la etiqueta; 'parseDispara' los lee.
 dispatchArgs :: Dispatch -> [Text]
 dispatchArgs d =
   ["--puerto", T.pack (show (diPort d))]
-    <> maybe [] (\t -> ["--tope", T.pack (formatTime defaultTimeLocale isoUtc t)]) (diCap d)
+    <> maybe [] (\t -> ["--tope", isoText t]) (diCap d)
     <> maybe [] (\s -> ["--sesion", s]) (diSession d)
+    <> maybe [] (\t -> ["--inicio", isoText t]) (diStart d)
     <> maybe [] (\r -> ["--grabador", T.pack r]) (diRecorder d)
+  where
+    isoText = T.pack . formatTime defaultTimeLocale isoUtc
 
 parseDispara :: [Text] -> Either Text Dispatch
-parseDispara = go (Dispatch 0 Nothing Nothing Nothing) False
+parseDispara = go (Dispatch 0 Nothing Nothing Nothing Nothing) False
   where
     go d True [] = Right d
     go _ False [] = Left "dispara necesita --puerto"
@@ -554,6 +570,8 @@ parseDispara = go (Dispatch 0 Nothing Nothing Nothing) False
     go d hasPort ("--tope" : t : rest)
       | Just cap <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diCap = Just cap} hasPort rest
     go d hasPort ("--sesion" : s : rest) = go d {diSession = Just s} hasPort rest
+    go d hasPort ("--inicio" : t : rest)
+      | Just start <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diStart = Just start} hasPort rest
     go d hasPort ("--grabador" : r : rest) = go d {diRecorder = Just (T.unpack r)} hasPort rest
     go _ _ (word : _) = Left ("dispara: no entiendo «" <> word <> "»")
 
