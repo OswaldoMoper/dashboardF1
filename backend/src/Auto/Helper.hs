@@ -760,15 +760,16 @@ instance FromJSON UnitRow where
   parseJSON = withObject "unidad" $ \o ->
     UnitRow <$> o .: "unit" <*> o .: "active" <*> o .: "sub" <*> o .: "description"
 
--- | Un temporizador de @systemctl --user list-timers -o json@: @next@ en microsegundos.
+-- | Un temporizador de @systemctl --user list-timers -o json@: @next@ en microsegundos,
+-- 'Nothing' cuando ya disparó y su pieza sigue corriendo (systemd lo da a @null@).
 data TimerRow = TimerRow
   { trUnit :: Text
-  , trNext :: Integer
+  , trNext :: Maybe Integer
   }
   deriving (Eq, Show)
 
 instance FromJSON TimerRow where
-  parseJSON = withObject "temporizador" $ \o -> TimerRow <$> o .: "unit" <*> o .: "next"
+  parseJSON = withObject "temporizador" $ \o -> TimerRow <$> o .: "unit" <*> o .:? "next"
 
 -- | Qué dice systemd de cada pieza, por su descripción: pendiente (con su hora),
 -- corriendo o falló. Lo que ya acabó bien no aparece: systemd lo olvida.
@@ -781,7 +782,7 @@ unitStates units timers = mapMaybe state units
       | ".service" `T.isSuffixOf` urUnit u && urActive u == "active" = Just (urDescription u, "corriendo")
       | ".service" `T.isSuffixOf` urUnit u && urActive u == "failed" = Just (urDescription u, "falló")
       | otherwise = Nothing
-    nexts = [(trUnit t, trNext t) | t <- timers]
+    nexts = [(trUnit t, n) | t <- timers, Just n <- [trNext t]]
     at micros = clockPair "%H:%M" (posixSecondsToUTCTime (fromInteger micros / 1000000))
 
 -- | El verbo y el qué de una línea de 'eventLine'.

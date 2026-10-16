@@ -5411,7 +5411,16 @@ main = hspec $ do
     it "lo de systemd, por descripción (salida real de list-units): pendiente con su hora, corriendo, falló" $
       Auto.unitStates
           (fromMaybe [] (decodeStrictText systemdUnits))
-          [Auto.TimerRow "dashboardF1-auto-viernes-2026-10-23-grabacion-p1.timer" 1792773900000000]
+          [Auto.TimerRow "dashboardF1-auto-viernes-2026-10-23-grabacion-p1.timer" (Just 1792773900000000)]
+        `shouldBe` [ ("grabación P1, sin cuenta", "pendiente · 10:45 (16:45)")
+                   , ("vigía", "corriendo")
+                   , ("comprobaciones de arranque", "falló")
+                   ]
+
+    it "un temporizador que ya disparó y cuya pieza corre (next: null, salida real) no tumba la lectura" $
+      Auto.unitStates
+          (fromMaybe [] (decodeStrictText systemdUnits))
+          (fromMaybe [] (decodeStrictText systemdTimers))
         `shouldBe` [ ("grabación P1, sin cuenta", "pendiente · 10:45 (16:45)")
                    , ("vigía", "corriendo")
                    , ("comprobaciones de arranque", "falló")
@@ -7200,6 +7209,14 @@ systemdUnits =
   \{\"unit\":\"dashboardF1-auto-viernes-2026-10-23-vigia.service\",\"load\":\"loaded\",\"active\":\"active\",\"sub\":\"running\",\"description\":\"vigía\"},\
   \{\"unit\":\"dashboardF1-auto-viernes-2026-10-23-vigia.timer\",\"load\":\"loaded\",\"active\":\"active\",\"sub\":\"running\",\"description\":\"vigía\"},\
   \{\"unit\":\"dashboardF1-auto-viernes-2026-10-23-comprobaciones-inicio.service\",\"load\":\"loaded\",\"active\":\"failed\",\"sub\":\"failed\",\"description\":\"comprobaciones de arranque\"}]"
+
+-- | @systemctl --user list-timers 'dashboardF1-auto-*' --all -o json@ del mismo día: el
+-- de la grabación, pendiente; el del vigía, ya disparado y con su pieza corriendo, con
+-- @next@ y @left@ a @null@ (la forma de la salida real).
+systemdTimers :: T.Text
+systemdTimers =
+  "[{\"next\":1792773900000000,\"left\":1792773900000000,\"last\":null,\"passed\":null,\"unit\":\"dashboardF1-auto-viernes-2026-10-23-grabacion-p1.timer\",\"activates\":\"dashboardF1-auto-viernes-2026-10-23-grabacion-p1.service\"},\
+  \{\"next\":null,\"left\":null,\"last\":1792107727106094,\"passed\":24320014707,\"unit\":\"dashboardF1-auto-viernes-2026-10-23-vigia.timer\",\"activates\":\"dashboardF1-auto-viernes-2026-10-23-vigia.service\"}]"
 
 -- | @\/api\/live@ con esa sesión en ese estado, y sin filas.
 liveOf :: T.Text -> SessionState -> StateBasis -> LiveTable
