@@ -27,9 +27,10 @@ import           Auto.Helper                (CalendarAnswer, Dispatch (..),
                                              TimerRow, TokenFile (..), UnitRow,
                                              VigiaEnd (..), VigiaReading (..),
                                              VigiaWatch (..), askOrder,
-                                             checkLine, checksSummary,
-                                             instanceChange, jolpicaSlots,
-                                             liveTable, logVerdict, onCalendar,
+                                             checkLine, checksStopLine,
+                                             checksSummary, instanceChange,
+                                             jolpicaSlots, liveTable,
+                                             logVerdict, onCalendar,
                                              openf1Check, pageCheck,
                                              readCalendar, recordingFile,
                                              recordingIdleSeconds, recordingLog,
@@ -44,8 +45,10 @@ import           Common.Origin              (fetchedAtHeader, originHeader,
                                              sourceHeader)
 import           Config                     (loadConfig)
 import           Control.Concurrent         (threadDelay)
-import           Control.Exception          (AsyncException (..), SomeException,
-                                             handleJust, try)
+import           Control.Exception          (AsyncException (..),
+                                             SomeAsyncException (..),
+                                             SomeException, fromException,
+                                             handleJust, tryJust)
 import           Control.Monad              (forM_, when)
 import           Control.Retry              (limitRetries)
 import           Data.Aeson                 (FromJSON, eitherDecode)
@@ -98,7 +101,7 @@ askCalendar port = do
       HC.defaultManagerSettings {HC.managerResponseTimeout = HC.responseTimeoutMicro 5000000}
   request <- HC.parseRequest ("http://127.0.0.1:" <> show port <> "/api/calendar")
   answer <-
-    timeout 6000000 (try (HC.httpLbs request manager))
+    timeout 6000000 (trySync (HC.httpLbs request manager))
       :: IO (Maybe (Either SomeException (HC.Response BL.ByteString)))
   pure $ case answer of
     Just (Right response) ->
@@ -114,6 +117,14 @@ askCalendar port = do
 -- dos y a OpenF1 quepa en su minuto.
 askTimeout :: Int
 askTimeout = 15000000
+
+-- | Como 'try', pero __deja pasar lo asíncrono__: el SIGINT de @cancela@ ('UserInterrupt')
+-- tiene que llegar a la pieza aunque esté esperando una respuesta, y el aviso de 'timeout'
+-- a quien puso el plazo.
+trySync :: IO a -> IO (Either SomeException a)
+trySync = tryJust (\e -> case fromException e of
+  Just (SomeAsyncException _) -> Nothing
+  Nothing                     -> Just e)
 
 -- | Lo que contestó una instancia a un @GET@: el código, las cabeceras y el cuerpo.
 data Answer = Answer
@@ -135,7 +146,7 @@ askPath withBody port path = do
       HC.defaultManagerSettings {HC.managerResponseTimeout = HC.responseTimeoutMicro askTimeout}
   request <- HC.parseRequest ("http://127.0.0.1:" <> show port <> path)
   answer <-
-    timeout (askTimeout + 1000000) (try (HC.withResponse request manager readAnswer))
+    timeout (askTimeout + 1000000) (trySync (HC.withResponse request manager readAnswer))
       :: IO (Maybe (Either SomeException Answer))
   pure $ case answer of
     Just (Right a) -> Just a
@@ -166,7 +177,7 @@ askLive port = do
 openf1Status :: IO (Maybe Int)
 openf1Status = do
   answer <-
-    timeout (askTimeout + 1000000) (try (R.runReq config request))
+    timeout (askTimeout + 1000000) (trySync (R.runReq config request))
       :: IO (Maybe (Either SomeException Int))
   pure $ case answer of
     Just (Right code) -> Just code
@@ -253,7 +264,7 @@ runRecording folder label slot recorder d = do
     launchRecorder n = do
       withoutAccount <- filter ((/= "F1TV") . fst) <$> getEnvironment
       started <-
-        try
+        trySync
           ( do
               logHandle <- openFile (folder </> recordingLog session) AppendMode
               (_, _, _, ph) <-
@@ -301,22 +312,25 @@ firstAnswer ports = getCurrentTime >>= go ports
 -- | Una tanda de comprobaciones en la carpeta del día, con la hora hasta la que tiene que
 -- valer el token hoy (D202, D203): OpenF1, el token de F1TV, la página y el log de la
 -- instancia, cada una con su línea en @comprobaciones.txt@; en @resumen.txt@, «arranca»
--- al empezar y «acaba» con la cuenta. __Del token solo sale la caducidad__ ('tokenExpiry').
+-- al empezar y «acaba» con la cuenta, o, con SIGINT (lo que manda @cancela@), su línea de
+-- parada. __Del token solo sale la caducidad__ ('tokenExpiry').
 runChecks :: FilePath -> Text -> UTCTime -> Dispatch -> IO ()
 runChecks folder label tokenToday d = do
   start <- getCurrentTime
   appendLine summary (startLine start label)
   results <-
-    mapM check
-      [ ("OpenF1", openf1Check <$> openf1Status)
-      , ("token F1TV", (\now -> tokenCheck now tokenToday (diTokenGp d)) <$> getCurrentTime <*> readTokenFile)
-      , ("página", pageCheck asked <$> askPage asked)
-      , ("log", logVerdict <$> traverse (\f -> (,) f <$> readIfExists f) (diLog d))
-      ]
+    handleJust cancelled (const (pure Nothing)) . fmap Just $
+      mapM check
+        [ ("OpenF1", openf1Check <$> openf1Status)
+        , ("token F1TV", (\now -> tokenCheck now tokenToday (diTokenGp d)) <$> getCurrentTime <*> readTokenFile)
+        , ("página", pageCheck asked <$> askPage asked)
+        , ("log", logVerdict <$> traverse (\f -> (,) f <$> readIfExists f) (diLog d))
+        ]
   done <- getCurrentTime
-  appendLine summary (checksSummary done label results)
+  appendLine summary (maybe (checksStopLine done label) (checksSummary done label) results)
   where
     summary = folder </> "resumen.txt"
+    cancelled e = if e == UserInterrupt then Just () else Nothing
     asked = askOrder instancePorts (diPort d)
     check (what, judge) = do
       (verdict, detail) <- judge
@@ -335,7 +349,7 @@ readTokenFile = do
   if not exists
     then pure TokenMissing
     else either (const TokenUnreadable) tokenFile
-           <$> (try (BS.readFile file) :: IO (Either SomeException BS.ByteString))
+           <$> (trySync (BS.readFile file) :: IO (Either SomeException BS.ByteString))
 
 -- | La página en la primera instancia que contesta @/@, por ese orden: @/@, @/all.js@
 -- (sin leer el cuerpo) y @\/api\/live@. 'Nothing' si no contesta ninguna.
@@ -363,7 +377,7 @@ askPage (port : rest) = do
 jolpicaDay :: Day -> IO (Maybe [Slot])
 jolpicaDay day = do
   cfg <- loadConfig
-  body <- try (fetchSeasonSchedule cfg) :: IO (Either SomeException BL.ByteString)
+  body <- trySync (fetchSeasonSchedule cfg) :: IO (Either SomeException BL.ByteString)
   pure $ case slotsOn day <$> (either (Left . show) Right body >>= jolpicaSlots) of
     Right slots@(_ : _) -> Just slots
     _                   -> Nothing

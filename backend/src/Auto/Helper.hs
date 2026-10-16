@@ -44,6 +44,7 @@ module Auto.Helper
   , pageCheck
   , logVerdict
   , checksSummary
+  , checksStopLine
     -- * Las líneas de los ficheros
   , checkLine
   , eventLine
@@ -453,6 +454,11 @@ checksSummary t label results = eventLine t "acaba" (label <> ": " <> T.intercal
       ]
     listed Ok _    = ""
     listed _ names = " (" <> T.intercalate ", " names <> ")"
+
+-- | La línea de @resumen.txt@ de una tanda que cancelaron a mitad (D204): «para
+-- comprobaciones de arranque (canceladas)».
+checksStopLine :: UTCTime -> Text -> Text
+checksStopLine t label = eventLine t "para" (label <> " (canceladas)")
 
 -- | La hora de México y, entre paréntesis, la UTC.
 clockPair :: String -> UTCTime -> Text

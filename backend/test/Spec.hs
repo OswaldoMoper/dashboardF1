@@ -5447,6 +5447,10 @@ main = hspec $ do
                    , "10:45 (16:45) acaba    comprobaciones antes de la P1: 2 OK, 1 AVISO (log), 1 FALLA (página)"
                    )
 
+    it "una tanda cancelada a mitad dice que la cancelaron, como el vigía y la grabación (D204)" $
+      Auto.checksStopLine (atUtc 23 17 6) "comprobaciones de arranque"
+        `shouldBe` "11:06 (17:06) para     comprobaciones de arranque (canceladas)"
+
     it "la orden de una tanda lleva el log y hasta cuándo el token; las demás piezas no (ida y vuelta)" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
           need = Just (atUtc 23 22 0, Just (atUtc 25 22 0))
