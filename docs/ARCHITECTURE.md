@@ -64,7 +64,9 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   `Handler.Historical.Manager.fetchSeasonSchedule`. Se lanza desde el store (`nix run .#auto`), así que cada
   temporizador corre la copia del momento de lanzar aunque el árbol se recompile. El vigía pregunta cada minuto a
   `/api/live` y a OpenF1; la grabación lanza `dashboardF1-record` sin cuenta, el del store, cuya ruta pone `apps.auto`
-  (`DASHBOARDF1_RECORD`) y viaja en la orden de su temporizador, y lo para con SIGINT.
+  (`DASHBOARDF1_RECORD`) y viaja en la orden de su temporizador, y lo para con SIGINT. Las comprobaciones (al lanzar
+  y a T−45) miran OpenF1, la caducidad del token de F1TV sin escribirlo, la página (`/`, `all.js`, `/api/live`) y el
+  log que se da con `--log`.
 - **DTOs compartidos:** paquete `common` (`Common.Types`). Un tipo que la página no usa vive en el backend
   (`Handler.Live.Helper.CalendarEntry`): en `common` recompilaría el frontend sin consumidor.
 - **DB:** `Database.Esqueleto.Legacy` + `Database.Esqueleto.PostgreSQL`; `Persist` solo modelos.
