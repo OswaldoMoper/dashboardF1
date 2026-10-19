@@ -206,6 +206,25 @@
           }}/bin/dashboardF1-auto-store";
         };
 
+        # `dashboardF1-observa` — the observer's page reader; tsc type-checks it at build time.
+        packages.observa =
+          let
+            compiled = pkgs.runCommand "dashboardF1-observa-js" { nativeBuildInputs = [ pkgs.typescript ]; } ''
+              cp ${./backend/auto/observa.ts} observa.ts
+              cp ${./backend/auto/tsconfig.json} tsconfig.json
+              ln -s ${pkgs.playwright-test}/lib/node_modules node_modules
+              tsc -p . --outDir $out
+            '';
+          in
+          pkgs.writeShellApplication {
+            name = "dashboardF1-observa";
+            text = ''
+              export NODE_PATH=${pkgs.playwright-test}/lib/node_modules
+              export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+              exec ${pkgs.nodejs}/bin/node ${compiled}/observa.js "$@"
+            '';
+          };
+
         # ── Entorno de desarrollo completo: microservicio + backend ──
         packages.dev = pkgs.writeShellApplication {
           name = "dashboardF1-dev";
