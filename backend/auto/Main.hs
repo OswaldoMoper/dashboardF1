@@ -99,6 +99,8 @@ launch l = do
     exitSuccess
   recorder <-
     maybe (quit "no encuentro dashboardF1-record: lanza con dashboardF1-auto") pure =<< findRecorder
+  reader <-
+    maybe (quit "no encuentro dashboardF1-observa: lanza con dashboardF1-auto") pure =<< findReader
   say (dayHeader day gp)
   say ""
   mapM_ say (dayTable now other plan)
@@ -128,7 +130,7 @@ launch l = do
         at = if plStart p <= now then Nothing else Just (plStart p)
     done <-
       schedule exe workDir path (unitName folder piece) (pieceLabel piece)
-        (dispatchArgs (withChecks logFile need p (dispatchFor recorder port slots plan p))) at
+        (dispatchArgs (withChecks logFile need p (dispatchFor recorder reader port slots plan p))) at
     case done of
       Right () -> appendLine (path </> "resumen.txt") (programLine now p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
@@ -166,9 +168,11 @@ view folder = forever $ do
   units <- either (const []) id <$> autoUnits (prefix <> "*")
   timers <- either (const []) id <$> autoTimers (prefix <> "*")
   vigia <- readLines (path </> "vigia.txt")
+  observer <- readLines (path </> "observador.txt")
   let states = unitStates units timers
       lines' =
-        viewLines (viewHeader folder) events states (reconcile (expectedPending events) states) (lastOf vigia)
+        viewLines (viewHeader folder) events states (reconcile (expectedPending events) states)
+          (lastOf vigia) (lastOf observer)
   TIO.putStr ("\ESC[2J\ESC[H" <> T.unlines lines')
   hFlush stdout
   threadDelay 60000000
@@ -201,6 +205,11 @@ cancela = do
 findRecorder :: IO (Maybe FilePath)
 findRecorder = lookupEnv "DASHBOARDF1_RECORD" >>= maybe (findExecutable "dashboardF1-record") (pure . Just)
 
+-- | El lector del store que pone @nix run .#auto@ en @DASHBOARDF1_OBSERVA@; sin ella, el
+-- del @PATH@.
+findReader :: IO (Maybe FilePath)
+findReader = lookupEnv "DASHBOARDF1_OBSERVA" >>= maybe (findExecutable "dashboardF1-observa") (pure . Just)
+
 -- | Lo que corre un temporizador al disparar: la pieza de su etiqueta.
 dispara :: FilePath -> Text -> [Text] -> IO ()
 dispara path label rest
@@ -210,6 +219,8 @@ dispara path label rest
         (\r -> withSlot d (\slot -> runRecording path label slot r d)) (diRecorder d)
   | Right d <- parseDispara rest, label == pieceLabel (Checks (diSession d)) =
       maybe (quit "dispara: las comprobaciones necesitan --fin-hoy") (\t -> runChecks path label t d) (diTokenToday d)
+  | Right d <- parseDispara rest, label == pieceLabel (Observer (diPause d)) =
+      maybe (quit "dispara: el observador necesita --lector") (\r -> runObserver path label r d) (diReader d)
   | otherwise = either quit (const (quit ("dispara: no conozco la pieza «" <> label <> "»"))) (parseDispara rest)
   where
     withSlot d go = maybe (quit "dispara: falta --sesion o --inicio") go (watchedSlot d)

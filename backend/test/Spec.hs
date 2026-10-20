@@ -208,6 +208,7 @@ import           Data.Maybe                  (fromMaybe, isJust, listToMaybe)
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
+import qualified Data.Text.Encoding          as TE
 import           Data.Time.Calendar          (Day, fromGregorian)
 import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
                                               addUTCTime)
@@ -5077,10 +5078,11 @@ main = hspec $ do
         `shouldBe` [Auto.Slot "Practice 1" (atUtc 23 17 30), Auto.Slot "Tarde" (atUtc 24 2 0)]
 
   describe "Auto.dayPlan" $ do
-    it "el viernes lanzado a las 10:00: vigía y comprobaciones ya, cada grabación a T−45" $
+    it "el viernes lanzado a las 10:00: vigía, observador y comprobaciones ya, cada grabación a T−45" $
       Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)             (atUtc 23 16 0)  Nothing
                    , Auto.Planned Auto.Vigia                        (atUtc 23 16 0)  (Just (atUtc 24 3 0))
+                   , Auto.Planned (Auto.Observer (Just (atUtc 23 18 0))) (atUtc 23 16 0) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Recording "Practice 1")     (atUtc 23 16 45) (Just (atUtc 23 23 30))
                    , Auto.Planned (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
                    , Auto.Planned (Auto.Recording "Practice 2")     (atUtc 23 20 15) (Just (atUtc 24 3 0))
@@ -5088,9 +5090,10 @@ main = hspec $ do
                    ]
 
     it "lanzado tarde, lo que debía haber arrancado arranca ya y su tanda sobra" $
-      take 3 (Auto.dayPlan Auto.capAfterStart (atUtc 23 17 0) austinSlots)
+      take 4 (Auto.dayPlan Auto.capAfterStart (atUtc 23 17 0) austinSlots)
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)         (atUtc 23 17 0) Nothing
                    , Auto.Planned Auto.Vigia                    (atUtc 23 17 0) (Just (atUtc 24 3 0))
+                   , Auto.Planned (Auto.Observer (Just (atUtc 23 18 0))) (atUtc 23 17 0) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Recording "Practice 1") (atUtc 23 17 0) (Just (atUtc 23 23 30))
                    ]
 
@@ -5098,14 +5101,28 @@ main = hspec $ do
       ( map Auto.plPiece (Auto.dayPlan Auto.capAfterStart (atUtc 23 23 40) austinSlots)
       , Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) []
       )
-        `shouldBe` ([Auto.Checks Nothing, Auto.Vigia, Auto.Recording "Practice 2"], [])
+        `shouldBe` ( [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer (Just (atUtc 23 18 0))
+                     , Auto.Recording "Practice 2" ]
+                   , [] )
 
-    it "el tope es el que se le da: el ensayo lo acorta" $
+    it "el tope es el que se le da: el ensayo lo acorta; sin P1 el observador no tiene pausa" $
       Auto.dayPlan (15 * 60) (atUtc 23 16 0) [Auto.Slot "Ensayo" (atUtc 23 16 10)]
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)    (atUtc 23 16 0) Nothing
                    , Auto.Planned Auto.Vigia               (atUtc 23 16 0) (Just (atUtc 23 16 25))
+                   , Auto.Planned (Auto.Observer Nothing)  (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    , Auto.Planned (Auto.Recording "Ensayo") (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    ]
+
+    it "la pausa del observador es la foto del reloj: de +30 a +45 min de la P1 prevista (D213)" $
+      ( Auto.clockPhotoWindow austinSlots
+      , Auto.clockPhotoWindow [practice2Slot]
+      , map (\t -> Auto.inPause t (Auto.clockPhotoWindow austinSlots))
+          [atUtc 23 17 59, atUtc 23 18 0, atUtc 23 18 14, atUtc 23 18 15]
+      )
+        `shouldBe` ( Just (atUtc 23 18 0, atUtc 23 18 15)
+                   , Nothing
+                   , [False, True, True, False]
+                   )
 
   describe "Auto.sessionFinalised" $ do
     it "solo la sesión con ESE nombre y en Finalised, oído o deducido" $
@@ -5260,24 +5277,26 @@ main = hspec $ do
       Auto.dayFolder "viernes" austinFriday `shouldBe` "dashboardF1-auto-viernes-2026-10-23"
 
   describe "Auto: lo que recibe cada pieza al disparar" $ do
-    it "el vigía mira la última sesión del día; cada grabación, la suya y el grabador; todos, la instancia y su tope" $
+    it "el vigía mira la última sesión del día; el observador lleva el lector y su pausa; cada grabación, la suya y el grabador; todos, la instancia y su tope" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-       in map (Auto.dispatchArgs . Auto.dispatchFor storeRecorder 3001 austinSlots plan) (take 3 plan)
+       in map (Auto.dispatchArgs . Auto.dispatchFor storeRecorder storeReader 3001 austinSlots plan) (take 4 plan)
             `shouldBe` [ ["--puerto", "3001"]
                        , [ "--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--sesion", "Practice 2"
                          , "--inicio", "2026-10-23T21:00:00Z" ]
+                       , [ "--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--lector", T.pack storeReader
+                         , "--pausa", "2026-10-23T18:00:00Z" ]
                        , [ "--puerto", "3001", "--tope", "2026-10-23T23:30:00Z", "--sesion", "Practice 1"
                          , "--inicio", "2026-10-23T17:30:00Z", "--grabador", T.pack storeRecorder ]
                        ]
 
     it "lo que se programa se vuelve a leer igual al disparar (ida y vuelta)" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-          dispatches = map (Auto.dispatchFor storeRecorder 3000 austinSlots plan) plan
+          dispatches = map (Auto.dispatchFor storeRecorder storeReader 3000 austinSlots plan) plan
        in map (Auto.parseDispara . Auto.dispatchArgs) dispatches `shouldBe` map Right dispatches
 
     it "la sesión que mira, con su hora; sin la hora no hay sesión que mirar" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-          vigia = Auto.dispatchFor storeRecorder 3000 austinSlots plan (plan !! 1)
+          vigia = Auto.dispatchFor storeRecorder storeReader 3000 austinSlots plan (plan !! 1)
        in (Auto.watchedSlot vigia, Auto.watchedSlot vigia {Auto.diStart = Nothing})
             `shouldBe` (Just practice2Slot, Nothing)
 
@@ -5455,16 +5474,97 @@ main = hspec $ do
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
           need = Just (atUtc 23 22 0, Just (atUtc 25 22 0))
           orders =
-            map (\p -> Auto.withChecks (Just "/home/x/dev.txt") need p (Auto.dispatchFor storeRecorder 3000 austinSlots plan p)) plan
+            map (\p -> Auto.withChecks (Just "/home/x/dev.txt") need p (Auto.dispatchFor storeRecorder storeReader 3000 austinSlots plan p)) plan
        in ( map Auto.dispatchArgs (take 1 orders)
           , map Auto.diLog orders
           , map (Auto.parseDispara . Auto.dispatchArgs) orders == map Right orders
           )
             `shouldBe` ( [ [ "--puerto", "3000", "--log", "/home/x/dev.txt"
                            , "--fin-hoy", "2026-10-23T22:00:00Z", "--fin-gp", "2026-10-25T22:00:00Z" ] ]
-                       , [Just "/home/x/dev.txt", Nothing, Nothing, Just "/home/x/dev.txt", Nothing, Just "/home/x/dev.txt"]
+                       , [Just "/home/x/dev.txt", Nothing, Nothing, Nothing, Just "/home/x/dev.txt", Nothing, Just "/home/x/dev.txt"]
                        , True
                        )
+
+  describe "Auto: el observador" $ do
+    it "lee la respuesta real del lector: la orden salió, 22 filas, el Live y cuatro problemas" $
+      fmap
+        (\a -> (Auto.raOk a, Auto.prRows <$> Auto.raReading a, Auto.prLive <$> Auto.raReading a, length . Auto.prProblems <$> Auto.raReading a))
+        (Auto.readerAnswer (TE.encodeUtf8 readerCaida))
+        `shouldBe` Just (True, Just 22, Just True, Just 4)
+
+    it "una respuesta que no se entiende no se adivina; una orden fallida trae su error" $
+      ( Auto.readerAnswer "no es json"
+      , Auto.raError <$> Auto.readerAnswer (TE.encodeUtf8 "{\"orden\":\"lee\",\"ok\":false,\"ms\":0,\"error\":\"no hay página abierta\"}")
+      )
+        `shouldBe` (Nothing, Just (Just "no hay página abierta"))
+
+    it "la línea de un minuto, como D212: la banda partida, Live y la última frontera, y la captura" $
+      Auto.observerLine (atUtc 19 22 33) (Auto.PageRead vivoReading (Just "223300.png"))
+        `shouldBe` "observador 16:33 (22:33): banda «Singapore Grand Prix · Singapore · Race · En marcha · United States Grand Prix · en 9 d 23 h 33 min» · Live Timing 22 filas · Lap Comparison Live, más rápida, S3 −0.999 s · sin problemas · captura 223300.png"
+
+    it "con el aviso de Lap Comparison, el aviso en vez de la vuelta (D212)" $
+      Auto.observerLine (atUtc 19 22 34) (Auto.PageRead acabadaReading Nothing)
+        `shouldBe` "observador 16:34 (22:34): banda «Singapore Grand Prix · Singapore · Race · Finalizada · United States Grand Prix · en 9 d 23 h 32 min» · Live Timing 22 filas · Lap Comparison sin Live, aviso «Sesión acabada: lo último del directo» · sin problemas"
+
+    it "de los problemas, cuántos y el primero, sin el origen de la instancia (lectura real)" $
+      fmap (Auto.observerLine (atUtc 19 22 35) . (`Auto.PageRead` Nothing))
+        (Auto.raReading =<< Auto.readerAnswer (TE.encodeUtf8 readerCaida))
+        `shouldSatisfy` maybe False (" · 4 problemas («falló GET /api/live: net::ERR_EMPTY_RESPONSE», …)" `T.isSuffixOf`)
+
+    it "las demás líneas de observador.txt, como D212 y D213" $
+      [ Auto.observerLine (atUtc 23 18 0) (Auto.PageClosed (atUtc 23 18 15))
+      , Auto.observerLine (atUtc 19 23 12) (Auto.PausedWithoutPage (atUtc 19 23 25))
+      , Auto.observerLine (atUtc 23 18 15) (Auto.PageOpened 3000 627)
+      , Auto.observerLine (atUtc 23 18 32) (Auto.PageNotOpened 3000 "page.goto: Timeout 15000ms exceeded.\nCall log: …")
+      , Auto.observerLine (atUtc 23 17 2) Auto.NoInstance
+      , Auto.observerLine (atUtc 23 19 2) Auto.ReaderHung
+      ]
+        `shouldBe` [ "observador 12:00 (18:00): cierra la página (foto del reloj de la P1, hasta las 12:15)"
+                   , "observador 17:12 (23:12): en pausa (foto del reloj de la P1, hasta las 17:25)"
+                   , "observador 12:15 (18:15): abre la página en :3000 (0,6 s)"
+                   , "observador 12:32 (18:32): no carga la página (:3000 sin respuesta en 15 s)"
+                   , "observador 11:02 (17:02): no carga la página (no contesta ninguna instancia)"
+                   , "observador 13:02 (19:02): el lector no contestó en 30 s; se relanza"
+                   ]
+
+    it "sus líneas de resumen.txt, como D213" $
+      [ Auto.pauseLine (atUtc 23 18 0) (atUtc 23 18 15)
+      , Auto.reopenLine (atUtc 23 18 15) 3000
+      , Auto.readerRelaunchLine (atUtc 23 19 2)
+      , Auto.observerStopLine (atUtc 24 3 6) Auto.ObserverVigiaGone
+      , Auto.observerStopLine (atUtc 24 3 0) Auto.ObserverCapped
+      , Auto.observerStopLine (atUtc 23 17 6) Auto.ObserverCancelled
+      ]
+        `shouldBe` [ "12:00 (18:00) cierra   observador (foto del reloj de la P1, hasta 12:15 (18:15))"
+                   , "12:15 (18:15) abre     observador en master en :3000"
+                   , "13:02 (19:02) relanza  observador (el lector no contestó en 30 s)"
+                   , "21:06 (03:06) para     observador (paró el vigía)"
+                   , "21:00 (03:00) para     observador (tope)"
+                   , "11:06 (17:06) para     observador (cancelado)"
+                   ]
+
+    it "una captura cada cinco minutos, desde el primero" $
+      filter Auto.captureDue [0 .. 11] `shouldBe` [0, 5, 10]
+
+    it "para con el vigía desde su segundo minuto, y no si systemd no contestó" $
+      map (uncurry Auto.vigiaGone) [(0, Just False), (1, Just False), (1, Nothing), (3, Just True)]
+        `shouldBe` [False, True, False, False]
+
+    it "abre la página sin diferido" $
+      Auto.pageUrl 3001 `shouldBe` "http://127.0.0.1:3001/?retraso=0"
+
+    it "su fila en la tabla, con la pausa y el tope (D213)" $
+      any ("observador                        ahora            cuando para el vigía · pausa 12:00–12:15 (18:00–18:15) · tope 21:00 (03:00)" `T.isInfixOf`)
+        (Auto.dayTable (atUtc 23 16 0) Nothing (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots))
+        `shouldBe` True
+
+    it "en la vista, su última línea bajo la del vigía (D213)" $
+      ( drop 3 (Auto.viewLines "cabecera" [] [] [] Nothing (Just "observador 12:38 (18:38): banda «…»"))
+      , drop 3 (Auto.viewLines "cabecera" [] [] [] Nothing Nothing)
+      )
+        `shouldBe` ( ["vigía: todavía sin líneas", "observador 12:38 (18:38): banda «…»", "Ctrl+C sale; lo programado sigue"]
+                   , ["vigía: todavía sin líneas", "observador: todavía sin líneas", "Ctrl+C sale; lo programado sigue"]
+                   )
 
   describe "Auto: los nombres" $ do
     it "las sesiones del feed, cortas en unidades y ficheros y legibles en pantalla" $
@@ -5475,10 +5575,11 @@ main = hspec $ do
 
     it "cada pieza tiene su unidad: la carpeta y la pieza (D190)" $
       map (Auto.unitName "dashboardF1-auto-viernes-2026-10-23")
-          [Auto.Checks Nothing, Auto.Checks (Just "Practice 1"), Auto.Vigia, Auto.Recording "Race"]
+          [Auto.Checks Nothing, Auto.Checks (Just "Practice 1"), Auto.Vigia, Auto.Observer Nothing, Auto.Recording "Race"]
         `shouldBe` [ "dashboardF1-auto-viernes-2026-10-23-comprobaciones-inicio"
                    , "dashboardF1-auto-viernes-2026-10-23-comprobaciones-p1"
                    , "dashboardF1-auto-viernes-2026-10-23-vigia"
+                   , "dashboardF1-auto-viernes-2026-10-23-observador"
                    , "dashboardF1-auto-viernes-2026-10-23-grabacion-carrera"
                    ]
 
@@ -7436,6 +7537,82 @@ fakeToken = BC.pack (T.unpack (T.intercalate "." fakeTokenParts))
 -- | Una ruta de @dashboardF1-record@ del store, como la que pone @nix run .#auto@.
 storeRecorder :: FilePath
 storeRecorder = "/nix/store/l1n2f98y39fnd80fy8ig28x4hskbliql-dashboardF1-record/bin/dashboardF1-record"
+
+storeReader :: FilePath
+storeReader = "/nix/store/8pzdra310y8yw52xlwa5lnr3z1njd2r3-dashboardF1-observa/bin/dashboardF1-observa"
+
+-- | Lo que leyó el lector con `live-99.js` en «vivo» (prueba de la 99).
+vivoReading :: Auto.PageReading
+vivoReading =
+  Auto.PageReading
+    { Auto.prBand = "Singapore Grand Prix · Singapore · Race En marcha United States Grand Prix · en 9 d 23 h 33 min"
+    , Auto.prState = "En marcha"
+    , Auto.prNext = "United States Grand Prix · en 9 d 23 h 33 min"
+    , Auto.prRows = 22
+    , Auto.prTimingNotes = []
+    , Auto.prLive = True
+    , Auto.prLap = "más rápida"
+    , Auto.prLapNotes = []
+    , Auto.prFrontiers = ["Inicio 0.000 s", "S1 0.000 s", "S2 0.000 s", "S3 −0.999 s"]
+    , Auto.prProblems = []
+    }
+
+-- | Lo mismo en «acabada»: sin Live y con el aviso de la sesión acabada.
+acabadaReading :: Auto.PageReading
+acabadaReading =
+  vivoReading
+    { Auto.prBand = "Singapore Grand Prix · Singapore · Race Finalizada United States Grand Prix · en 9 d 23 h 32 min"
+    , Auto.prState = "Finalizada"
+    , Auto.prNext = "United States Grand Prix · en 9 d 23 h 32 min"
+    , Auto.prLive = False
+    , Auto.prLapNotes = ["Sesión acabada: lo último del directo"]
+    }
+
+-- | Una respuesta real del lector a «lee» (prueba de la 99, `live-99.js` con «caida»):
+-- `/api/live` cortado, la banda conserva «En marcha» y salen cuatro problemas.
+readerCaida :: T.Text
+readerCaida =
+  "{\"orden\":\"lee\",\"ok\":true,\"ms\":9,\"lectura\":{\"url\":\"http://127.0.0.1:3001/?retraso=0\",\"banda\":{\"te\
+  \xto\":\"Singapore Grand Prix · Singapore · Race En marcha United States Grand Prix · en 9 d 23 h 3\
+  \3 min\",\"estado\":\"En marcha\",\"siguiente\":\"United States Grand Prix · en 9 d 23 h 33 min\",\"aviso\":\
+  \\"\",\"banderas\":[]},\"liveTiming\":{\"texto\":\"Live Timing Columnas ▾ Live Pos Driver Team Gap Interva\
+  \l Last Lap Best Lap Estado 1 VER Red Bull Racing LEADER - 1:37.840 1:36.201 2 LEC Ferrari +7.335\
+  \ +7.335 1:37.660 1:35.202 3 ANT Mercedes +24.573 +17.238 1:37.846 1:35.589 4 NOR McLaren +40.506\
+  \ +15.933 1:42.030 1:36.282 5 PIA McLaren +49.644 +9.138 1:37.799 1:35.665 6 HAM Ferrari +53.188 \
+  \+3.544 1:40.601 1:36.922 7 LAW Racing Bulls +81.666 +28.478 1:37.853 1:37.193 8 HUL Audi +83.386\
+  \ +1.720 1:37.671 1:37.055 9 RUS Mercedes +84.677 +1.291 1:37.934 1:36.722 10 HAD Red Bull Racing\
+  \ +90.862 +6.185 1:40.757 1:35.917 11 GAS Alpine +1 LAP +12.066 1:38.967 1:37.390 12 BEA Haas F1 \
+  \Team +1 LAP +2.835 1:38.494 1:37.556 13 OCO Haas F1 Team +1 LAP +20.641 1:40.836 1:38.129 14 SAI\
+  \ Williams +1 LAP +32.492 1:39.526 1:38.326 15 LIN Racing Bulls +1 LAP +2.811 1:39.814 1:38.154 1\
+  \6 ALO Aston Martin +1 LAP +13.504 1:41.614 1:38.032 17 PER Cadillac +2 LAPS +47.680 1:39.135 1:3\
+  \8.574 18 ALB Williams +1 LAP +10.442 1:37.985 1:37.436 DNF 19 BOT Cadillac +3 LAPS +95.962 1:41.\
+  \596 1:40.171 20 STR Aston Martin +1 LAP +15.240 1:42.216 1:39.137 DNF 21 COL Alpine +78.203 +2.2\
+  \55 1:40.312 1:39.265 DNF 22 BOR Audi +40.541 +0.802 1:45.080 1:40.486 DNF\",\"cabecera\":\"Live Timi\
+  \ng Columnas ▾ Live\",\"columnas\":[\"Pos\",\"Driver\",\"Team\",\"Gap\",\"Interval\",\"Last Lap\",\"Best Lap\",\"Es\
+  \tado\"],\"filas\":[[\"1\",\"VER\",\"Red Bull Racing\",\"LEADER\",\"-\",\"1:37.840\",\"1:36.201\",\"\"],[\"2\",\"LEC\",\"\
+  \Ferrari\",\"+7.335\",\"+7.335\",\"1:37.660\",\"1:35.202\",\"\"],[\"3\",\"ANT\",\"Mercedes\",\"+24.573\",\"+17.238\",\"\
+  \1:37.846\",\"1:35.589\",\"\"],[\"4\",\"NOR\",\"McLaren\",\"+40.506\",\"+15.933\",\"1:42.030\",\"1:36.282\",\"\"],[\"5\"\
+  \,\"PIA\",\"McLaren\",\"+49.644\",\"+9.138\",\"1:37.799\",\"1:35.665\",\"\"],[\"6\",\"HAM\",\"Ferrari\",\"+53.188\",\"+3\
+  \.544\",\"1:40.601\",\"1:36.922\",\"\"],[\"7\",\"LAW\",\"Racing Bulls\",\"+81.666\",\"+28.478\",\"1:37.853\",\"1:37.1\
+  \93\",\"\"],[\"8\",\"HUL\",\"Audi\",\"+83.386\",\"+1.720\",\"1:37.671\",\"1:37.055\",\"\"],[\"9\",\"RUS\",\"Mercedes\",\"+8\
+  \4.677\",\"+1.291\",\"1:37.934\",\"1:36.722\",\"\"],[\"10\",\"HAD\",\"Red Bull Racing\",\"+90.862\",\"+6.185\",\"1:40\
+  \.757\",\"1:35.917\",\"\"],[\"11\",\"GAS\",\"Alpine\",\"+1 LAP\",\"+12.066\",\"1:38.967\",\"1:37.390\",\"\"],[\"12\",\"BE\
+  \A\",\"Haas F1 Team\",\"+1 LAP\",\"+2.835\",\"1:38.494\",\"1:37.556\",\"\"],[\"13\",\"OCO\",\"Haas F1 Team\",\"+1 LAP\
+  \\",\"+20.641\",\"1:40.836\",\"1:38.129\",\"\"],[\"14\",\"SAI\",\"Williams\",\"+1 LAP\",\"+32.492\",\"1:39.526\",\"1:38\
+  \.326\",\"\"],[\"15\",\"LIN\",\"Racing Bulls\",\"+1 LAP\",\"+2.811\",\"1:39.814\",\"1:38.154\",\"\"],[\"16\",\"ALO\",\"As\
+  \ton Martin\",\"+1 LAP\",\"+13.504\",\"1:41.614\",\"1:38.032\",\"\"],[\"17\",\"PER\",\"Cadillac\",\"+2 LAPS\",\"+47.6\
+  \80\",\"1:39.135\",\"1:38.574\",\"\"],[\"18\",\"ALB\",\"Williams\",\"+1 LAP\",\"+10.442\",\"1:37.985\",\"1:37.436\",\"D\
+  \NF\"],[\"19\",\"BOT\",\"Cadillac\",\"+3 LAPS\",\"+95.962\",\"1:41.596\",\"1:40.171\",\"\"],[\"20\",\"STR\",\"Aston Mar\
+  \tin\",\"+1 LAP\",\"+15.240\",\"1:42.216\",\"1:39.137\",\"DNF\"],[\"21\",\"COL\",\"Alpine\",\"+78.203\",\"+2.255\",\"1:\
+  \40.312\",\"1:39.265\",\"DNF\"],[\"22\",\"BOR\",\"Audi\",\"+40.541\",\"+0.802\",\"1:45.080\",\"1:40.486\",\"DNF\"]],\"a\
+  \visos\":[]},\"lapComparison\":{\"texto\":\"Lap Comparison Delta por sectores Vuelta más rápida última \
+  \Live Inicio 0.000 s S1 0.000 s S2 0.000 s S3 −0.999 s 0.000 s −0.200 s −0.400 s −0.600 s −0.800 \
+  \s −1.000 s Δ contra Referencia - - - VER (referencia) —— LEC: por encima, va por detrás\",\"cabece\
+  \ra\":\"Lap Comparison Delta por sectores Vuelta más rápida última Live\",\"live\":true,\"vuelta\":\"más \
+  \rápida\",\"avisos\":[],\"fronteras\":[\"Inicio 0.000 s\",\"S1 0.000 s\",\"S2 0.000 s\",\"S3 −0.999 s\"],\"punt\
+  \osCurva\":4},\"problemas\":[\"falló GET http://127.0.0.1:3001/api/live: net::ERR_EMPTY_RESPONSE\",\"co\
+  \nsola: Failed to load resource: net::ERR_EMPTY_RESPONSE\",\"falló GET http://127.0.0.1:3001/api/li\
+  \ve: net::ERR_EMPTY_RESPONSE\",\"consola: Failed to load resource: net::ERR_EMPTY_RESPONSE\"]}}"
 
 -- | Lo que contesta la instancia con la P1 empezada, oída en el feed.
 practice1Reply :: Auto.LiveReply

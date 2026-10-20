@@ -201,6 +201,7 @@
             name = "dashboardF1-auto-store";
             text = ''
               export DASHBOARDF1_RECORD=${self'.packages.record}/bin/dashboardF1-record
+              export DASHBOARDF1_OBSERVA=${self'.packages.observa}/bin/dashboardF1-observa
               exec ${self'.packages.backend}/bin/dashboardF1-auto "$@"
             '';
           }}/bin/dashboardF1-auto-store";

@@ -17,6 +17,8 @@ module Auto.Helper
   , recordingLead
   , capAfterStart
   , dayPlan
+  , clockPhotoWindow
+  , pauseFrom
     -- * Cuándo para cada pieza
   , pastCap
   , sessionFinalised
@@ -24,6 +26,9 @@ module Auto.Helper
   , openf1QuietMinutes
   , vigiaStep
   , vigiaDone
+  , inPause
+  , captureDue
+  , vigiaGone
     -- * Lo que se juzga
   , Verdict (..)
   , verdictWord
@@ -58,6 +63,20 @@ module Auto.Helper
   , startLine
   , VigiaEnd (..)
   , vigiaStopLine
+  , readerTimeoutSeconds
+  , pageUrl
+  , captureName
+  , PageReading (..)
+  , ReaderAnswer (..)
+  , readerAnswer
+  , ObserverEvent (..)
+  , observerLine
+  , bandWords
+  , pauseLine
+  , reopenLine
+  , readerRelaunchLine
+  , ObserverEnd (..)
+  , observerStopLine
   , recordingIdleSeconds
   , maxRelaunches
   , recordingFile
@@ -120,14 +139,15 @@ import           Common.Types               (LapProgress (..), LiveTable (..),
                                              StateReading (..),
                                              sessionStateLabel)
 import           Config                     (startupMark)
-import           Data.Aeson                 (FromJSON (..), Value, eitherDecode,
-                                             eitherDecodeStrict, withObject,
-                                             (.:), (.:?))
-import           Data.Aeson.Types           (parseEither)
+import           Data.Aeson                 (FromJSON (..), Object, Value,
+                                             eitherDecode, eitherDecodeStrict,
+                                             withObject, (.:), (.:?))
+import           Data.Aeson.Types           (Parser, parseEither)
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Base64.URL as B64U
 import qualified Data.ByteString.Char8      as BS8
 import qualified Data.ByteString.Lazy       as BL
+import           Data.Char                  (isDigit)
 import           Data.List                  (find, nub, sortOn, (\\))
 import           Data.Maybe                 (catMaybes, fromMaybe, isNothing,
                                              listToMaybe, mapMaybe)
@@ -200,6 +220,7 @@ slotsOn day = sortOn slotStart . filter ((== day) . mexicoDay . slotStart)
 data Piece
   = Checks (Maybe Text)  -- ^ Una tanda de comprobaciones: al lanzar, o antes de esa sesión.
   | Vigia
+  | Observer (Maybe UTCTime)  -- ^ El observador, con el inicio de su pausa ('clockPhotoWindow').
   | Recording Text    -- ^ La grabación sin cuenta de esa sesión.
   deriving (Eq, Show)
 
@@ -221,10 +242,10 @@ capAfterStart = 6 * 3600
 
 -- | Lo que se programa para esas sesiones, lanzado en ese instante, con ese tope.
 --
--- Comprobaciones y vigía al lanzar; por sesión, a T−45, la grabación y otra tanda de
--- comprobaciones. __Lo que ya debía haber arrancado arranca al lanzar__, y entonces
--- su tanda de T−45 sobra (la de lanzar la cubre). Una sesión cuyo tope ya pasó no
--- se programa. Sin sesiones, nada: ni el vigía.
+-- Comprobaciones, vigía y observador al lanzar; por sesión, a T−45, la grabación y otra
+-- tanda de comprobaciones. __Lo que ya debía haber arrancado arranca al lanzar__, y
+-- entonces su tanda de T−45 sobra (la de lanzar la cubre). Una sesión cuyo tope ya pasó
+-- no se programa. Sin sesiones, nada: ni el vigía.
 dayPlan :: NominalDiffTime -> UTCTime -> [Slot] -> [Planned]
 dayPlan cap now slots =
   case live of
@@ -233,6 +254,7 @@ dayPlan cap now slots =
       sortOn plStart $
         Planned (Checks Nothing) now Nothing
           : Planned Vigia now (Just (capOf (last live)))
+          : Planned (Observer (fst <$> clockPhotoWindow slots)) now (Just (capOf (last live)))
           : concatMap perSlot live
   where
     live = filter ((> now) . capOf) (sortOn slotStart slots)
@@ -241,6 +263,25 @@ dayPlan cap now slots =
       let lead = addUTCTime (negate recordingLead) (slotStart s)
        in Planned (Recording (slotName s)) (max now lead) (Just (capOf s))
             : [Planned (Checks (Just (slotName s))) lead Nothing | lead > now]
+
+-- | Cuánto después del inicio previsto de la P1 empieza la foto del reloj, y cuánto dura:
+-- de 11:30 a 12:00–12:15, la ventana en que la pestaña se cierra a mano (D213).
+clockPhotoAfter, clockPhotoLength :: NominalDiffTime
+clockPhotoAfter = 30 * 60
+clockPhotoLength = 15 * 60
+
+-- | La ventana en que el observador no mira: la foto del reloj de la P1 de esas
+-- sesiones, contada desde su hora prevista. Sin P1, ninguna.
+clockPhotoWindow :: [Slot] -> Maybe (UTCTime, UTCTime)
+clockPhotoWindow slots = pauseFrom . addUTCTime clockPhotoAfter . slotStart <$> find ((== "Practice 1") . slotName) slots
+
+-- | La ventana que empieza en ese instante.
+pauseFrom :: UTCTime -> (UTCTime, UTCTime)
+pauseFrom start = (start, addUTCTime clockPhotoLength start)
+
+-- | Si ese instante cae en la ventana: desde su inicio y antes de su fin.
+inPause :: UTCTime -> Maybe (UTCTime, UTCTime) -> Bool
+inPause now = maybe False (\(from, to) -> from <= now && now < to)
 
 pastCap :: UTCTime -> Planned -> Bool
 pastCap now = maybe False (now >=) . plCap
@@ -466,6 +507,10 @@ clockPair fmt t =
   T.pack (formatTime defaultTimeLocale fmt (utcToZonedTime mexicoZone t))
     <> " (" <> T.pack (formatTime defaultTimeLocale fmt t) <> ")"
 
+-- | La hora de México, sin la UTC.
+mexicoHour :: UTCTime -> Text
+mexicoHour = T.pack . formatTime defaultTimeLocale "%H:%M" . utcToZonedTime mexicoZone
+
 -- | Una línea de @comprobaciones.txt@: hora, palabra, qué y el detalle.
 checkLine :: UTCTime -> Verdict -> Text -> Text -> Text
 checkLine t v what detail =
@@ -603,6 +648,175 @@ vigiaStopLine t end = eventLine t "para" ("vigía (" <> why <> ")")
       VigiaCapped    -> "tope"
       VigiaCancelled -> "cancelado"
 
+-- | Cada cuántos minutos del observador va una captura (cada 5, decidido en la 99).
+captureEvery :: Int
+captureEvery = 5
+
+-- | Si en ese minuto del observador (el primero es el 0) toca captura.
+captureDue :: Int -> Bool
+captureDue n = n `mod` captureEvery == 0
+
+-- | Si el observador para porque el vigía ya no corre: desde su segundo minuto (en el
+-- primero los dos acaban de arrancar), y solo si systemd dijo que no ('Nothing' es que
+-- no se pudo preguntar).
+vigiaGone :: Int -> Maybe Bool -> Bool
+vigiaGone n alive = n >= 1 && alive == Just False
+
+-- | Lo que espera el observador a que el lector conteste una orden antes de darlo por
+-- colgado y relanzarlo.
+readerTimeoutSeconds :: Int
+readerTimeoutSeconds = 30
+
+-- | La página que abre el observador en esa instancia, sin diferido (decidido en la 99).
+pageUrl :: Int -> Text
+pageUrl port = "http://127.0.0.1:" <> T.pack (show port) <> "/?retraso=0"
+
+-- | La captura de ese minuto, con la hora UTC como los @.json@: @223300.png@.
+captureName :: UTCTime -> FilePath
+captureName = formatTime defaultTimeLocale "%H%M%S.png"
+
+-- | De lo que leyó el lector en un minuto, lo que usa la línea; el resto se queda en
+-- el @.json@.
+data PageReading = PageReading
+  { prBand        :: Text
+  , prState       :: Text
+  , prNext        :: Text
+  , prRows        :: Int
+  , prTimingNotes :: [Text]
+  , prLive        :: Bool
+  , prLap         :: Text
+  , prLapNotes    :: [Text]
+  , prFrontiers   :: [Text]
+  , prProblems    :: [Text]
+  }
+  deriving (Eq, Show)
+
+instance FromJSON PageReading where
+  parseJSON = withObject "lectura" $ \o -> do
+    band <- o .: "banda" :: Parser Object
+    timing <- o .: "liveTiming" :: Parser Object
+    lap <- o .: "lapComparison" :: Parser Object
+    PageReading
+      <$> band .: "texto" <*> band .: "estado" <*> band .: "siguiente"
+      <*> (length <$> (timing .: "filas" :: Parser [Value])) <*> timing .: "avisos"
+      <*> lap .: "live" <*> lap .: "vuelta" <*> lap .: "avisos" <*> lap .: "fronteras"
+      <*> o .: "problemas"
+
+-- | Una respuesta del lector (@backend\/auto\/observa.ts@): si la orden salió, lo que
+-- tardó, su error y, a @lee@, la lectura.
+data ReaderAnswer = ReaderAnswer
+  { raOk      :: Bool
+  , raMs      :: Int
+  , raError   :: Maybe Text
+  , raReading :: Maybe PageReading
+  }
+  deriving (Eq, Show)
+
+instance FromJSON ReaderAnswer where
+  parseJSON = withObject "respuesta" $ \o ->
+    ReaderAnswer <$> o .: "ok" <*> o .: "ms" <*> o .:? "error" <*> o .:? "lectura"
+
+-- | Una línea del lector; 'Nothing' si no se entiende.
+readerAnswer :: BS.ByteString -> Maybe ReaderAnswer
+readerAnswer = either (const Nothing) Just . eitherDecodeStrict
+
+-- | Lo que pasa en un minuto del observador, para su línea de @observador.txt@.
+data ObserverEvent
+  = PageOpened Int Int                    -- ^ La instancia y lo que tardó, en ms.
+  | PageNotOpened Int Text                -- ^ La instancia y el error del lector.
+  | NoInstance
+  | PageClosed UTCTime                    -- ^ Hasta cuándo: la foto del reloj.
+  | PausedWithoutPage UTCTime             -- ^ Entra en la pausa sin página abierta.
+  | ReaderHung
+  | PageNotRead Text
+  | PageRead PageReading (Maybe FilePath)  -- ^ Con la captura del minuto, si la hubo.
+  deriving (Eq, Show)
+
+-- | La línea de @observador.txt@ (D212, D213): las dos horas y lo que pasó. La banda va
+-- como «título · estado · derecha»; Lap Comparison, con su aviso si lo hay y si no con
+-- la vuelta y la última frontera; de los problemas, cuántos y el primero.
+observerLine :: UTCTime -> ObserverEvent -> Text
+observerLine t e = "observador " <> clockPair "%H:%M" t <> ": " <> case e of
+  PageOpened p ms -> "abre la página en :" <> showT p <> " (" <> seconds ms <> ")"
+  PageNotOpened p err
+    | "Timeout" `T.isInfixOf` err -> "no carga la página (:" <> showT p <> " sin respuesta en 15 s)"
+    | otherwise -> "no carga la página (:" <> showT p <> ": " <> firstLine err <> ")"
+  NoInstance -> "no carga la página (no contesta ninguna instancia)"
+  PageClosed reopen -> "cierra la página (foto del reloj de la P1, hasta las " <> mexicoHour reopen <> ")"
+  PausedWithoutPage reopen -> "en pausa (foto del reloj de la P1, hasta las " <> mexicoHour reopen <> ")"
+  ReaderHung -> "el lector no contestó en " <> showT readerTimeoutSeconds <> " s; se relanza"
+  PageNotRead err -> "no lee la página (" <> firstLine err <> ")"
+  PageRead r shot ->
+    T.intercalate " · " $
+      [ "banda «" <> bandWords r <> "»"
+      , "Live Timing " <> showT (prRows r) <> " filas" <> noteText (prTimingNotes r)
+      , lapWords r
+      , problemWords (prProblems r)
+      ]
+        <> maybe [] (\f -> ["captura " <> T.pack f]) shot
+  where
+    showT :: Show a => a -> Text
+    showT = T.pack . show
+    seconds ms = T.replace "." "," (T.pack (printf "%.1f" (fromIntegral ms / 1000 :: Double))) <> " s"
+    firstLine = T.strip . T.takeWhile (/= '\n')
+    noteText notes = case notes of
+      n : _ -> ", aviso «" <> n <> "»"
+      []    -> ""
+    lapWords r =
+      let live = if prLive r then "Lap Comparison Live" else "Lap Comparison sin Live"
+       in case prLapNotes r of
+            _ : _ -> live <> noteText (prLapNotes r)
+            [] -> T.intercalate ", " (live : filter (not . T.null) [prLap r, lastOr (prFrontiers r)])
+    lastOr xs = if null xs then "" else last xs
+    problemWords ps = case map localPath ps of
+      []    -> "sin problemas"
+      [p]   -> "1 problema («" <> p <> "»)"
+      p : _ -> showT (length ps) <> " problemas («" <> p <> "», …)"
+
+-- | La banda como «título · estado · derecha»: el lector la da de un tirón y el título
+-- es lo que queda al quitarle por detrás la derecha y el estado. Si no casa, tal cual.
+bandWords :: PageReading -> Text
+bandWords r = T.intercalate " · " (filter (not . T.null) [title, prState r, prNext r])
+  where
+    title = fromMaybe (prBand r) $ do
+      rest <- T.stripSuffix (prNext r) (prBand r)
+      T.strip <$> T.stripSuffix (prState r) (T.strip rest)
+
+-- | Sin el origen de la instancia: «falló GET \/api\/live…» en vez de
+-- «falló GET http:\/\/127.0.0.1:3001\/api\/live…».
+localPath :: Text -> Text
+localPath line = case T.breakOn origin line of
+  (before, rest)
+    | T.null rest -> line
+    | otherwise -> before <> localPath (T.dropWhile isDigit (T.drop (T.length origin) rest))
+  where
+    origin = "http://127.0.0.1:"
+
+-- | La línea de @resumen.txt@ al cerrar la página por la foto del reloj (D213).
+pauseLine :: UTCTime -> UTCTime -> Text
+pauseLine t reopen = eventLine t "cierra" ("observador (foto del reloj de la P1, hasta " <> clockPair "%H:%M" reopen <> ")")
+
+-- | La línea de @resumen.txt@ al volver a abrir la página tras la pausa (D213).
+reopenLine :: UTCTime -> Int -> Text
+reopenLine t port = eventLine t "abre" ("observador en " <> instanceAt port)
+
+-- | La línea de @resumen.txt@ cuando el lector se cuelga y se relanza (D213).
+readerRelaunchLine :: UTCTime -> Text
+readerRelaunchLine t =
+  eventLine t "relanza" ("observador (el lector no contestó en " <> T.pack (show readerTimeoutSeconds) <> " s)")
+
+-- | Por qué para el observador.
+data ObserverEnd = ObserverVigiaGone | ObserverCapped | ObserverCancelled
+  deriving (Eq, Show)
+
+observerStopLine :: UTCTime -> ObserverEnd -> Text
+observerStopLine t end = eventLine t "para" ("observador (" <> why <> ")")
+  where
+    why = case end of
+      ObserverVigiaGone -> "paró el vigía"
+      ObserverCapped    -> "tope"
+      ObserverCancelled -> "cancelado"
+
 -- | El tiempo de inactividad del feed que se le da a @dashboardF1-record@, como a mano:
 -- no es la duración, y con él no para solo en una bandera roja.
 recordingIdleSeconds :: Int
@@ -674,7 +888,7 @@ recordingName session = "grabación " <> sessionLabel session
 -- instancia del lanzamiento, su tope, la sesión que mira (la suya; el vigía, la
 -- última del día) con su hora prevista y, la grabación, la ruta de @dashboardF1-record@.
 -- Las comprobaciones, además, el log de la instancia y hasta cuándo tiene que valer el
--- token ('tokenNeed').
+-- token ('tokenNeed'); el observador, la ruta del lector y el inicio de su pausa.
 data Dispatch = Dispatch
   { diPort       :: Int
   , diCap        :: Maybe UTCTime
@@ -684,23 +898,32 @@ data Dispatch = Dispatch
   , diLog        :: Maybe FilePath
   , diTokenToday :: Maybe UTCTime
   , diTokenGp    :: Maybe UTCTime
+  , diReader     :: Maybe FilePath
+  , diPause      :: Maybe UTCTime
   }
   deriving (Eq, Show)
 
--- | Con la ruta del grabador, la instancia, las sesiones y el plan del día.
-dispatchFor :: FilePath -> Int -> [Slot] -> [Planned] -> Planned -> Dispatch
-dispatchFor recorder port slots plan p =
+-- | Con la ruta del grabador y la del lector, la instancia, las sesiones y el plan del día.
+dispatchFor :: FilePath -> FilePath -> Int -> [Slot] -> [Planned] -> Planned -> Dispatch
+dispatchFor recorder reader port slots plan p =
   (bareDispatch port)
     { diCap = plCap p
     , diSession = session
     , diStart = startOf =<< session
     , diRecorder = recorderFor (plPiece p)
+    , diReader = case plPiece p of
+        Observer _ -> Just reader
+        _          -> Nothing
+    , diPause = case plPiece p of
+        Observer pause -> pause
+        _              -> Nothing
     }
   where
     session = case plPiece p of
       Recording s -> Just s
       Checks s    -> s
       Vigia       -> listToMaybe (reverse [s | Recording s <- map plPiece plan])
+      Observer _  -> Nothing
     startOf s = lookup s [(slotName x, slotStart x) | x <- slots]
     recorderFor piece = case piece of
       Recording _ -> Just recorder
@@ -728,6 +951,8 @@ dispatchArgs d =
     <> maybe [] (\l -> ["--log", T.pack l]) (diLog d)
     <> maybe [] (\t -> ["--fin-hoy", isoText t]) (diTokenToday d)
     <> maybe [] (\t -> ["--fin-gp", isoText t]) (diTokenGp d)
+    <> maybe [] (\r -> ["--lector", T.pack r]) (diReader d)
+    <> maybe [] (\t -> ["--pausa", isoText t]) (diPause d)
   where
     isoText = T.pack . formatTime defaultTimeLocale isoUtc
 
@@ -742,6 +967,8 @@ bareDispatch port = Dispatch
   , diLog = Nothing
   , diTokenToday = Nothing
   , diTokenGp = Nothing
+  , diReader = Nothing
+  , diPause = Nothing
   }
 
 parseDispara :: [Text] -> Either Text Dispatch
@@ -762,6 +989,9 @@ parseDispara = go (bareDispatch 0) False
     go d hasPort ("--fin-gp" : t : rest)
       | Just end <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diTokenGp = Just end} hasPort rest
     go d hasPort ("--grabador" : r : rest) = go d {diRecorder = Just (T.unpack r)} hasPort rest
+    go d hasPort ("--lector" : r : rest) = go d {diReader = Just (T.unpack r)} hasPort rest
+    go d hasPort ("--pausa" : t : rest)
+      | Just start <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diPause = Just start} hasPort rest
     go _ _ (word : _) = Left ("dispara: no entiendo «" <> word <> "»")
 
 isoUtc :: String
@@ -818,6 +1048,7 @@ pieceLabel p = case p of
   Checks Nothing  -> "comprobaciones de arranque"
   Checks (Just s) -> "comprobaciones antes de la " <> sessionLabel s
   Vigia           -> "vigía"
+  Observer _      -> "observador"
   Recording s     -> "grabación " <> sessionLabel s <> ", sin cuenta"
 
 -- | La unidad de systemd de una pieza: la carpeta y la pieza (D190).
@@ -828,6 +1059,7 @@ unitName folder p = T.pack folder <> "-" <> slug
       Checks Nothing  -> "comprobaciones-inicio"
       Checks (Just s) -> "comprobaciones-" <> sessionShort s
       Vigia           -> "vigia"
+      Observer _      -> "observador"
       Recording s     -> "grabacion-" <> sessionShort s
 
 -- | La carpeta en que se lanza: la del día o, si ya existe, la primera libre de @-2@, @-3@…
@@ -1010,8 +1242,13 @@ dayTable now other plan =
     stops p = case plPiece p of
       Checks _    -> "—"
       Vigia       -> "OpenF1 en 200 cinco min seguidos tras la " <> lastLabel <> capText p
+      Observer w  -> "cuando para el vigía" <> maybe "" (pauseText . pauseFrom) w <> capText p
       Recording s -> "estado=Finalised de la " <> sessionLabel s <> capText p
     capText = maybe "" ((" · tope " <>) . clockPair "%H:%M") . plCap
+    pauseText (from, to) =
+      " · pausa " <> mexicoHour from <> "–" <> mexicoHour to
+        <> " (" <> utcClock from <> "–" <> utcClock to <> ")"
+    utcClock = T.pack . formatTime defaultTimeLocale "%H:%M"
     lastLabel = case reverse [s | Recording s <- map plPiece plan] of
       s : _ -> sessionLabel s
       []    -> "última sesión"
@@ -1125,14 +1362,18 @@ viewHeader folder = maybe "" dayPart (folderDay folder) <> "~/MOPER/" <> T.pack 
       let (_, _, dom) = toGregorian d
        in weekdayDisplay (dayOfWeek d) <> " " <> T.pack (show dom) <> " · "
 
--- | La vista (D191): la cabecera, los sucesos, lo que sigue en systemd, los avisos y
--- la última línea del vigía, en palabras ('vigiaWords').
-viewLines :: Text -> [Text] -> [(Text, Text)] -> [Text] -> Maybe Text -> [Text]
-viewLines header events states avisos vigia =
+-- | La vista (D191): la cabecera, los sucesos, lo que sigue en systemd, los avisos, la
+-- última línea del vigía, en palabras ('vigiaWords'), y la del observador, tal cual (D213).
+viewLines :: Text -> [Text] -> [(Text, Text)] -> [Text] -> Maybe Text -> Maybe Text -> [Text]
+viewLines header events states avisos vigia observer =
   [header, ""]
     <> events
     <> (if null states then [] else "" : "En systemd:" : map stateRow states)
     <> (if null avisos then [] else "" : avisos)
-    <> ["", maybe "vigía: todavía sin líneas" vigiaWords vigia, "Ctrl+C sale; lo programado sigue"]
+    <> [ ""
+       , maybe "vigía: todavía sin líneas" vigiaWords vigia
+       , fromMaybe "observador: todavía sin líneas" observer
+       , "Ctrl+C sale; lo programado sigue"
+       ]
   where
     stateRow (label, st) = "  " <> T.justifyLeft 34 ' ' label <> st

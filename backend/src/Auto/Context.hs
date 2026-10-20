@@ -6,6 +6,7 @@ module Auto.Context
   , askLive
   , openf1Status
   , runVigia
+  , runObserver
   , runRecording
   , runChecks
   , jolpicaDay
@@ -21,23 +22,32 @@ module Auto.Context
   ) where
 
 import           Auto.Helper                (CalendarAnswer, Dispatch (..),
-                                             LiveReply (..), PageReply (..),
+                                             LiveReply (..), ObserverEnd (..),
+                                             ObserverEvent (..), PageReply (..),
+                                             Piece (..), ReaderAnswer (..),
                                              RecordingEnd (..),
                                              RecordingStep (..), Slot (..),
-                                             TimerRow, TokenFile (..), UnitRow,
-                                             VigiaEnd (..), VigiaReading (..),
-                                             VigiaWatch (..), askOrder,
+                                             TimerRow, TokenFile (..),
+                                             UnitRow (..), VigiaEnd (..),
+                                             VigiaReading (..), VigiaWatch (..),
+                                             askOrder, captureDue, captureName,
                                              checkLine, checksStopLine,
-                                             checksSummary, instanceChange,
-                                             jolpicaSlots, liveTable,
-                                             logVerdict, onCalendar,
-                                             openf1Check, pageCheck,
-                                             readCalendar, recordingFile,
+                                             checksSummary, inPause,
+                                             instanceChange, jolpicaSlots,
+                                             liveTable, logVerdict,
+                                             observerLine, observerStopLine,
+                                             onCalendar, openf1Check, pageCheck,
+                                             pageUrl, pauseFrom, pauseLine,
+                                             readCalendar, readerAnswer,
+                                             readerRelaunchLine,
+                                             readerTimeoutSeconds,
+                                             recordingFile,
                                              recordingIdleSeconds, recordingLog,
                                              recordingName, recordingStep,
                                              recordingStopLine, relaunchLine,
-                                             slotsOn, startLine, tokenCheck,
-                                             tokenFile, vigiaDone,
+                                             reopenLine, slotsOn, startLine,
+                                             tokenCheck, tokenFile, unitName,
+                                             vigiaDone, vigiaGone,
                                              vigiaJsonName, vigiaLine,
                                              vigiaReading, vigiaStep,
                                              vigiaStopLine)
@@ -49,19 +59,21 @@ import           Control.Exception          (AsyncException (..),
                                              SomeAsyncException (..),
                                              SomeException, fromException,
                                              handleJust, tryJust)
-import           Control.Monad              (forM_, when)
+import           Control.Monad              (forM_, join, unless, when)
 import           Control.Retry              (limitRetries)
 import           Data.Aeson                 (FromJSON, eitherDecode)
 import qualified Data.ByteString            as BS
+import qualified Data.ByteString.Char8      as BS8
 import qualified Data.ByteString.Lazy       as BL
 import           Data.IORef                 (newIORef, readIORef, writeIORef)
 import           Data.List                  (isPrefixOf, sortOn)
-import           Data.Maybe                 (isNothing)
+import           Data.Maybe                 (fromMaybe, isJust, isNothing)
 import           Data.String                (fromString)
 import           Data.Text                  (Text)
 import qualified Data.Text                  as T
 import           Data.Text.Encoding         (decodeUtf8With, encodeUtf8)
 import           Data.Text.Encoding.Error   (lenientDecode)
+import qualified Data.Text.IO               as TIO
 import           Data.Time.Calendar         (Day)
 import           Data.Time.Clock            (NominalDiffTime, UTCTime,
                                              addUTCTime, diffUTCTime,
@@ -78,8 +90,11 @@ import           System.Directory           (createDirectoryIfMissing,
                                              getModificationTime, listDirectory)
 import           System.Environment         (getEnvironment)
 import           System.Exit                (ExitCode (..))
-import           System.FilePath            ((</>))
-import           System.IO                  (IOMode (..), openFile)
+import           System.FilePath            (takeFileName, (</>))
+import           System.IO                  (BufferMode (..), Handle,
+                                             IOMode (..), hClose, hFlush,
+                                             hSetBuffering, hSetEncoding,
+                                             openFile, utf8)
 import           System.Process             (CreateProcess (..), ProcessHandle,
                                              StdStream (..), createProcess,
                                              getProcessExitCode,
@@ -292,6 +307,158 @@ runRecording folder label slot recorder d = do
           writeIORef current =<< launchRecorder n
           watch start current n port
         StopRecording end -> pure (end, runs)
+
+-- | El lector vivo: su entrada, su salida y su proceso.
+data Reader = Reader Handle Handle ProcessHandle
+
+-- | El observador, en la carpeta del día (D205, D212, D213): lanza el lector (ese
+-- ejecutable) y cada 'vigiaPeriod' abre la página en la primera instancia que la sirve,
+-- o la lee y, cuando toca ('captureDue'), la captura. Escribe su línea en
+-- @observador.txt@ y cada lectura tal cual en @observador\/@. __En la pausa de la foto
+-- del reloj cierra la página y no pregunta nada a la instancia.__ Un lector que no
+-- contesta en 'readerTimeoutSeconds' se relanza. Para cuando el vigía ya no corre
+-- ('vigiaGone'), con su tope o con SIGINT (lo que manda @cancela@).
+runObserver :: FilePath -> Text -> FilePath -> Dispatch -> IO ()
+runObserver folder label readerExe d = do
+  start <- getCurrentTime
+  appendLine summary (startLine start label)
+  mapM_ (createDirectoryIfMissing True . (folder </>)) ["observador", "capturas"]
+  reader <- newIORef =<< startReader
+  end <- handleJust cancelled pure (watch start reader 0 Nothing (Just (diPort d)) False)
+  readIORef reader >>= stopReader
+  stopped <- getCurrentTime
+  appendLine summary (observerStopLine stopped end)
+  where
+    summary = folder </> "resumen.txt"
+    note t e = appendLine (folder </> "observador.txt") (observerLine t e)
+    cancelled e = if e == UserInterrupt then Just ObserverCancelled else Nothing
+    window = pauseFrom <$> diPause d
+    vigiaUnit = unitName (takeFileName folder) Vigia <> ".service"
+    vigiaAlive =
+      either (const Nothing) (Just . any ((`elem` ["active", "activating"]) . urActive)) <$> autoUnits vigiaUnit
+
+    startReader = do
+      logHandle <- openFile (folder </> "observador.log") AppendMode
+      (hin, hout, _, ph) <-
+        createProcess
+          (proc readerExe [])
+            { std_in = CreatePipe
+            , std_out = CreatePipe
+            , std_err = UseHandle logHandle
+            , create_group = True
+            }
+      case (hin, hout) of
+        (Just i, Just o) -> do
+          hSetEncoding i utf8
+          hSetBuffering i LineBuffering
+          pure (Reader i o ph)
+        _ -> ioError (userError "el lector arrancó sin entrada o sin salida")
+
+    -- Una orden y su línea de respuesta; 'Nothing' si el lector no contestó a tiempo, y
+    -- entonces queda relanzado y sin página.
+    ask reader order = do
+      Reader i o _ <- readIORef reader
+      answer <-
+        timeout (readerTimeoutSeconds * 1000000) (trySync (TIO.hPutStrLn i order >> hFlush i >> BS8.hGetLine o))
+          :: IO (Maybe (Either SomeException BS.ByteString))
+      case answer of
+        Just (Right line) -> pure (Just line)
+        _ -> do
+          now <- getCurrentTime
+          note now ReaderHung
+          appendLine summary (readerRelaunchLine now)
+          readIORef reader >>= stopReader
+          writeIORef reader =<< startReader
+          pure Nothing
+
+    watch start reader n page answering paused = do
+      now <- getCurrentTime
+      alive <- vigiaAlive
+      if maybe False (now >=) (diCap d)
+        then pure ObserverCapped
+        else
+          if vigiaGone n alive
+            then pure ObserverVigiaGone
+            else do
+              (page', answering', paused') <-
+                if inPause now window
+                  then pausing now reader page answering paused
+                  else looking now reader n page answering paused
+              waitNextMinute start
+              watch start reader (n + 1) page' answering' paused'
+
+    -- Al entrar en la pausa, una sola línea, haya página o no; después, nada.
+    pausing now reader page answering paused = do
+      unless paused $
+        forM_ (snd <$> window) $ \reopen ->
+          if isJust page
+            then do
+              _ <- ask reader "cierra"
+              note now (PageClosed reopen)
+              appendLine summary (pauseLine now reopen)
+            else note now (PausedWithoutPage reopen)
+      pure (Nothing, answering, True)
+
+    looking now reader n page answering paused = do
+      port <- firstServing (askOrder instancePorts (diPort d))
+      forM_ (instanceChange now "observador" answering port) (appendLine summary)
+      case port of
+        Nothing -> note now NoInstance >> pure (page, port, paused)
+        Just p
+          | page /= Just p -> do
+              reply <- ask reader ("abre " <> pageUrl p)
+              case readerAnswer <$> reply of
+                Nothing -> pure (Nothing, port, paused)
+                Just (Just a) | raOk a -> do
+                  note now (PageOpened p (raMs a))
+                  when paused (appendLine summary (reopenLine now p))
+                  pure (Just p, port, False)
+                Just a -> do
+                  note now (PageNotOpened p (failure a))
+                  pure (Nothing, port, paused)
+          | otherwise -> do
+              reply <- ask reader "lee"
+              case (reply, readerAnswer =<< reply) of
+                (Nothing, _) -> pure (Nothing, port, paused)
+                (Just raw, Just a) | raOk a, Just r <- raReading a -> do
+                  BS.writeFile (folder </> "observador" </> vigiaJsonName now) raw
+                  shot <- if captureDue n then capture now reader else pure (Just Nothing)
+                  note now (PageRead r (join shot))
+                  pure (if isNothing shot then Nothing else page, port, paused)
+                (Just _, a) -> do
+                  -- Una lectura que falla vuelve a abrir la página al minuto siguiente.
+                  note now (PageNotRead (failure a))
+                  pure (Nothing, port, paused)
+
+    failure = maybe "respuesta que no se entiende" (fromMaybe "sin error" . raError)
+
+    -- La captura del minuto: su nombre si salió; 'Nothing' dentro si no; 'Nothing' fuera
+    -- si el lector se colgó.
+    capture now reader = do
+      let name = captureName now
+      reply <- ask reader ("captura " <> T.pack (folder </> "capturas" </> name))
+      pure $ case reply of
+        Nothing -> Nothing
+        Just raw -> Just (if maybe False raOk (readerAnswer raw) then Just name else Nothing)
+
+-- | Cierra la entrada del lector, que entonces cierra el navegador y sale; si en 10 s
+-- no ha salido, SIGINT a su grupo (el navegador va dentro).
+stopReader :: Reader -> IO ()
+stopReader (Reader i _ ph) = do
+  _ <- trySync (hClose i)
+  gone <- timeout 10000000 (waitForProcess ph)
+  when (isNothing gone) $ do
+    interruptProcessGroupOf ph
+    _ <- timeout 10000000 (waitForProcess ph)
+    pure ()
+
+-- | La primera instancia que sirve la página (@GET \/@ en 200), por orden. No pregunta
+-- a @\/api\/live@.
+firstServing :: [Int] -> IO (Maybe Int)
+firstServing [] = pure Nothing
+firstServing (p : rest) = do
+  answer <- askPath False p "/"
+  if fmap anCode answer == Just 200 then pure (Just p) else firstServing rest
 
 -- | La primera instancia que contesta, por orden: su puerto, la respuesta, lo que tardó
 -- ella y cuándo llegó. Sin ninguna, lo que se esperó en total.
