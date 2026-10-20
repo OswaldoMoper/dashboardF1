@@ -66,7 +66,10 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   `/api/live` y a OpenF1; la grabación lanza `dashboardF1-record` sin cuenta, el del store, cuya ruta pone `apps.auto`
   (`DASHBOARDF1_RECORD`) y viaja en la orden de su temporizador, y lo para con SIGINT. Las comprobaciones (al lanzar
   y a T−45) miran OpenF1, la caducidad del token de F1TV sin escribirlo, la página (`/`, `all.js`, `/api/live`) y el
-  log que se da con `--log`.
+  log que se da con `--log`. El observador arranca con el vigía y para cuando su unidad deja de correr: lanza el lector
+  `dashboardF1-observa` (`backend/auto/observa.ts`, el Playwright de nixpkgs compilado con `tsc`; su ruta la pone
+  `apps.auto` en `DASHBOARDF1_OBSERVA`), que abre la página sin diferido en un Chromium sin ventana y obedece órdenes
+  por la entrada estándar; cuándo leer, capturar o cerrar (la foto del reloj de la P1) lo decide Haskell.
 - **DTOs compartidos:** paquete `common` (`Common.Types`). Un tipo que la página no usa vive en el backend
   (`Handler.Live.Helper.CalendarEntry`): en `common` recompilaría el frontend sin consumidor.
 - **DB:** `Database.Esqueleto.Legacy` + `Database.Esqueleto.PostgreSQL`; `Persist` solo modelos.
