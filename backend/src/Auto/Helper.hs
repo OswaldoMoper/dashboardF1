@@ -7,6 +7,7 @@ module Auto.Helper
   ( -- * Las horas
     mexicoZone
   , mexicoDay
+  , clockPair
   , resolveDay
   , Slot (..)
   , slotsFromCalendar
@@ -121,6 +122,7 @@ module Auto.Helper
   , horasFlag
   , onCalendar
   , programLine
+  , lateOkLines
   , cancelLine
     -- * Lo que dice systemd
   , UnitRow (..)
@@ -1231,16 +1233,13 @@ dayTable now other plan =
     cols a s b c =
       "  " <> T.justifyLeft 34 ' ' a <> maybe "" (const (T.justifyLeft 17 ' ' s)) typed
         <> T.justifyLeft 17 ' ' b <> c
-    row p = cols (pieceLabel (plPiece p)) (session p) (start p) (stops p)
+    row p = cols (pieceLabel (plPiece p)) (session p) (startText now p) (stops p)
     session p = case plPiece p of
       Recording s     -> typedAt s
       Checks (Just s) -> typedAt s
       _               -> "—"
     typedAt s =
       maybe "—" (clockPair "%H:%M" . slotStart) (find ((== s) . slotName) (fromMaybe [] typed))
-    start p
-      | plStart p <= now = "ahora"
-      | otherwise = clockPair "%H:%M" (plStart p)
     stops p = case plPiece p of
       Checks _    -> "—"
       Vigia       -> "OpenF1 en 200 cinco min seguidos tras la " <> lastLabel <> capText p
@@ -1277,9 +1276,32 @@ onCalendar = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S UTC"
 
 -- | La línea de @resumen.txt@ de una pieza programada en ese instante.
 programLine :: UTCTime -> Planned -> Text
-programLine now p = eventLine now "programa" (pieceLabel (plPiece p) <> " · " <> start)
+programLine now p = eventLine now "programa" (pieceLabel (plPiece p) <> " · " <> startText now p)
+
+-- | Cuándo arranca una pieza vista en ese instante: «ahora» o su hora.
+startText :: UTCTime -> Planned -> Text
+startText now p = if plStart p <= now then "ahora" else clockPair "%H:%M" (plStart p)
+
+-- | Las líneas de @resumen.txt@ de un OK que llega después de la tabla: la tabla hecha en
+-- un instante y lo que se programa en el del OK. Una cabecera y una línea por pieza que
+-- cambia de hora o deja de programarse; sin cambios, ninguna.
+lateOkLines :: UTCTime -> [Planned] -> UTCTime -> [Planned] -> [Text]
+lateOkLines shown seen okAt planned = case mapMaybe change seen of
+  []      -> []
+  changes -> map (eventLine okAt "cambia") (("el OK llegó tarde; la tabla era de las " <> mexicoHour shown) : changes)
   where
-    start = if plStart p <= now then "ahora" else clockPair "%H:%M" (plStart p)
+    change p = case find ((== plPiece p) . plPiece) planned of
+      Just q
+        | startText shown p == startText okAt q -> Nothing
+        | otherwise -> Just (was p <> " → " <> startText okAt q)
+      Nothing -> Just (was p <> " → no se programa (" <> whyGone p <> ")")
+    was p = pieceLabel (plPiece p) <> " · " <> startText shown p
+    whyGone p = case plPiece p of
+      Checks (Just s)
+        | any ((== Recording s) . plPiece) planned -> "la cubren las de arranque"
+        | otherwise -> capped (plCap =<< find ((== Recording s) . plPiece) seen)
+      _ -> capped (plCap p)
+    capped = maybe "pasó su tope" (("pasó su tope, " <>) . clockPair "%H:%M")
 
 cancelLine :: UTCTime -> Text
 cancelLine t = eventLine t "cancela" "todo lo pendiente"

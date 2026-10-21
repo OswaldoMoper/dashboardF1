@@ -119,20 +119,26 @@ launch l = do
       say "Para corregir una hora, vuelve a lanzar con:"
       say (relaunch (horasFlag j))
     exitSuccess
+  okAt <- getCurrentTime
+  let planned = dayPlan cap okAt slots
+  when (null planned) $ do
+    say ("El OK llegó a las " <> clockPair "%H:%M" okAt <> " y ya no queda nada por delante: no se programa nada.")
+    exitSuccess
   createDirectoryIfMissing True path
   forM_ ((,) <$> failure <*> other) $ \(why, (source, _)) ->
     appendLine (path </> "comprobaciones.txt")
       (checkLine now Falla "calendario" (why <> "; horas " <> (if source == "Jolpica" then "de Jolpica" else source)))
+  mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now plan okAt planned)
   exe <- getExecutablePath
   workDir <- getCurrentDirectory
-  forM_ plan $ \p -> do
+  forM_ planned $ \p -> do
     let piece = plPiece p
-        at = if plStart p <= now then Nothing else Just (plStart p)
+        at = if plStart p <= okAt then Nothing else Just (plStart p)
     done <-
       schedule exe workDir path (unitName folder piece) (pieceLabel piece)
-        (dispatchArgs (withChecks logFile need p (dispatchFor recorder reader port slots plan p))) at
+        (dispatchArgs (withChecks logFile need p (dispatchFor recorder reader port slots planned p))) at
     case done of
-      Right () -> appendLine (path </> "resumen.txt") (programLine now p)
+      Right () -> appendLine (path </> "resumen.txt") (programLine okAt p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
   view folder
 

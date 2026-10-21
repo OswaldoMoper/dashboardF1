@@ -5695,6 +5695,23 @@ main = hspec $ do
       )
         `shouldBe` ("p1=11:30,p2=15:00", Right austinSlots)
 
+    it "el OK tardío: lo que pasa a «ahora», la tanda que sobra y la sesión que pasó su tope; a tiempo, nada" $
+      let seen at cap = (at, Auto.dayPlan cap at austinSlots)
+          lines' (shown, plan) okAt cap = Auto.lateOkLines shown plan okAt (Auto.dayPlan cap okAt austinSlots)
+       in ( lines' (seen (atUtc 23 16 30) Auto.capAfterStart) (atUtc 23 16 52) Auto.capAfterStart
+          , lines' (seen (atUtc 23 16 30) Auto.capAfterStart) (atUtc 23 16 40) Auto.capAfterStart
+          , lines' (seen (atUtc 23 17 40) (15 * 60)) (atUtc 23 17 50) (15 * 60)
+          )
+            `shouldBe` ( [ "10:52 (16:52) cambia   el OK llegó tarde; la tabla era de las 10:30"
+                         , "10:52 (16:52) cambia   grabación P1, sin cuenta · 10:45 (16:45) → ahora"
+                         , "10:52 (16:52) cambia   comprobaciones antes de la P1 · 10:45 (16:45) → no se programa (la cubren las de arranque)"
+                         ]
+                       , []
+                       , [ "11:50 (17:50) cambia   el OK llegó tarde; la tabla era de las 11:40"
+                         , "11:50 (17:50) cambia   grabación P1, sin cuenta · ahora → no se programa (pasó su tope, 11:45 (17:45))"
+                         ]
+                       )
+
     it "lo que decía el calendario, en una línea" $
       Auto.slotsSummary austinSlots `shouldBe` "P1 11:30, P2 15:00"
 
