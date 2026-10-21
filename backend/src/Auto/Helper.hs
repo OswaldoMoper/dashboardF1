@@ -398,19 +398,21 @@ tokenFile = maybe TokenUnreadable TokenExpires . tokenExpiry
 
 -- | Hasta cuándo tiene que valer el token, con todo el calendario, ese día y sus sesiones:
 -- el fin de la última sesión de hoy y el de la última de su gran premio (el de hoy si no se
--- sabe cuál es). Sin calendario de ese día, el inicio de la última sesión y 'Nothing'.
--- 'Nothing' del todo si no hay sesiones.
+-- sabe cuál es): las del mismo nombre y del mismo año de México. Sin calendario de ese día,
+-- el inicio de la última sesión y 'Nothing'. 'Nothing' del todo si no hay sesiones.
 tokenNeed :: [CalendarEntry] -> Day -> [Slot] -> Maybe (UTCTime, Maybe UTCTime)
 tokenNeed entries day slots = case todays of
   [] -> (\s -> (maximum s, Nothing)) <$> nonEmpty (map slotStart slots)
   _ ->
     let todayEnd = maximum (map ceEnd todays)
         gp = find (not . T.null) (map ceGrandPrix todays)
-        gpEnd = maybe todayEnd (\g -> maximum (todayEnd : [ceEnd e | e <- entries, ceGrandPrix e == g])) gp
+        sameGp g e = ceGrandPrix e == g && yearOf (mexicoDay (ceStart e)) == yearOf day
+        gpEnd = maybe todayEnd (\g -> maximum (todayEnd : [ceEnd e | e <- entries, sameGp g e])) gp
      in Just (todayEnd, Just gpEnd)
   where
     todays = filter ((== day) . mexicoDay . ceStart) entries
     nonEmpty xs = if null xs then Nothing else Just xs
+    yearOf d = let (y, _, _) = toGregorian d in y
 
 -- | El juicio del token en ese instante, con lo que tiene que cubrir ('tokenNeed': hoy y,
 -- con calendario, el gran premio) y lo que hay en el fichero (D202, D203).

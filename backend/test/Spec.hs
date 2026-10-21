@@ -5419,6 +5419,17 @@ main = hspec $ do
                        , Nothing
                        )
 
+    it "el gran premio es el del mismo año: el de 2027, con el mismo nombre, no cuenta" $
+      let us name s e = CalendarEntry name "United States Grand Prix" s e
+          in2027 d h = UTCTime (fromGregorian 2027 10 d) (fromInteger (h * 3600))
+          calendar =
+            [ us "Practice 1" (atUtc 23 17 30) (atUtc 23 18 30)
+            , us "Race" (atUtc 25 20 0) (atUtc 25 22 0)
+            , us "Practice 1" (in2027 22 17) (in2027 22 18)
+            , us "Race" (in2027 24 20) (in2027 24 22)
+            ]
+       in Auto.tokenNeed calendar austinFriday austinSlots `shouldBe` Just (atUtc 23 18 30, Just (atUtc 25 22 0))
+
     it "la página: los tres códigos y la sesión; si contesta la otra, AVISO; si ninguna, FALLA (D202, D203)" $
       let page p = Auto.PageReply p 200 (Just "text/html; charset=utf-8") (Just 200) (Just (200, encode (liveOf "Race" SessionFinalised Derived)))
        in [ Auto.pageCheck [3000, 3001] (Just (page 3000))
