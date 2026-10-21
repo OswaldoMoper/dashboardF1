@@ -98,9 +98,10 @@ import           System.IO                  (BufferMode (..), Handle,
                                              IOMode (..), hClose, hFlush,
                                              hSetBuffering, hSetEncoding,
                                              openFile, utf8)
+import           System.Posix.Signals       (sigKILL, signalProcess)
 import           System.Process             (CreateProcess (..), ProcessHandle,
                                              StdStream (..), createProcess,
-                                             getProcessExitCode,
+                                             getPid, getProcessExitCode,
                                              interruptProcessGroupOf, proc,
                                              readProcessWithExitCode,
                                              terminateProcess, waitForProcess)
@@ -470,15 +471,19 @@ runObserver folder label readerExe d = do
         Just raw -> Just (if maybe False raOk (readerAnswer raw) then Just name else Nothing)
 
 -- | Cierra la entrada del lector, que entonces cierra el navegador y sale; si en 10 s
--- no ha salido, SIGINT a su grupo (el navegador va dentro).
+-- no ha salido, SIGINT a su grupo; si en otros 10 s sigue vivo, SIGKILL (el navegador
+-- cae con él) y otros 10 s para que salga.
 stopReader :: Reader -> IO ()
 stopReader (Reader i _ ph) = do
   _ <- trySync (hClose i)
   gone <- timeout 10000000 (waitForProcess ph)
   when (isNothing gone) $ do
     interruptProcessGroupOf ph
-    _ <- timeout 10000000 (waitForProcess ph)
-    pure ()
+    gone' <- timeout 10000000 (waitForProcess ph)
+    when (isNothing gone') $ do
+      getPid ph >>= mapM_ (signalProcess sigKILL)
+      _ <- timeout 10000000 (waitForProcess ph)
+      pure ()
 
 -- | La primera instancia que sirve la página (@GET \/@ en 200), por orden. No pregunta
 -- a @\/api\/live@.

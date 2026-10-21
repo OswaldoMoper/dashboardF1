@@ -87,6 +87,7 @@ library
       , stm
       , text
       , time
+      , unix
       , wai
       , wai-app-static
       , warp
