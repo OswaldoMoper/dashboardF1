@@ -71,7 +71,9 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   log que se da con `--log`. El observador arranca con el vigía y para cuando su unidad deja de correr: lanza el lector
   `dashboardF1-observa` (`backend/auto/observa.ts`, el Playwright de nixpkgs compilado con `tsc`; su ruta la pone
   `apps.auto` en `DASHBOARDF1_OBSERVA`), que abre la página sin diferido en un Chromium sin ventana y obedece órdenes
-  por la entrada estándar; cuándo leer, capturar o cerrar (la foto del reloj de la P1) lo decide Haskell.
+  por la entrada estándar; cuándo leer, capturar o cerrar (la foto del reloj de la P1) lo decide Haskell. Un lector que
+  no contesta en 30 s se para (se le cierra la entrada, SIGINT y, si a los 20 s sigue vivo, SIGKILL; su Chromium cae con
+  él) y se lanza otro.
 - **DTOs compartidos:** paquete `common` (`Common.Types`). Un tipo que la página no usa vive en el backend
   (`Handler.Live.Helper.CalendarEntry`): en `common` recompilaría el frontend sin consumidor.
 - **DB:** `Database.Esqueleto.Legacy` + `Database.Esqueleto.PostgreSQL`; `Persist` solo modelos.
