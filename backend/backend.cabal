@@ -114,6 +114,7 @@ executable dashboardF1-auto
       , filepath
       , text
       , time
+    ghc-options: -threaded
 
 test-suite backend-test
     import:           shared

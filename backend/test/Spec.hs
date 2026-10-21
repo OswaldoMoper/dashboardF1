@@ -5143,7 +5143,7 @@ main = hspec $ do
       let race = Auto.Slot "Race" (atUtc 25 20 0)
           previous = Just (liveOf "Race" SessionFinalised Derived)
        in ( map (\t -> Auto.sessionFinalised t race previous) [atUtc 25 19 15, atUtc 25 19 59, atUtc 25 20 0]
-          , Auto.recordingStep (atUtc 25 19 16) (Just (atUtc 26 2 0)) race previous True 1
+          , Auto.recordingStep (atUtc 25 19 16) (Just (atUtc 26 2 0)) race previous (writing True 1 (atUtc 25 19 16))
           )
             `shouldBe` ([False, False, True], Auto.KeepRecording)
 
@@ -5326,7 +5326,8 @@ main = hspec $ do
         `shouldBe` (["grabacion-p1.txt", "grabacion-p1-2.txt", "grabacion-p1-6.txt"], "grabacion-carrera.log")
 
     it "cada minuto: el Finalised de SU sesión manda, después el tope, y uno que salió solo se relanza" $
-      let step = Auto.recordingStep (atUtc 23 18 30) (Just (atUtc 23 23 30)) practice1Slot
+      let step table alive runs =
+            Auto.recordingStep (atUtc 23 18 30) (Just (atUtc 23 23 30)) practice1Slot table (writing alive runs (atUtc 23 18 30))
           p1 st = Just (liveOf "Practice 1" st Heard)
        in [ step (p1 SessionStarted) True 1
           , step (p1 SessionFinalised) True 1
@@ -5340,23 +5341,72 @@ main = hspec $ do
                        , Auto.StopRecording Auto.RecFinalised
                        , Auto.KeepRecording
                        , Auto.KeepRecording
-                       , Auto.Relaunch 2
+                       , Auto.Relaunch 2 Auto.Cut
                        ]
 
     it "el tope para aunque siga grabando; tras cinco relanzamientos, no relanza más" $
-      ( Auto.recordingStep (atUtc 23 23 30) (Just (atUtc 23 23 30)) practice1Slot Nothing True 1
-      , map (Auto.recordingStep (atUtc 23 18 30) Nothing practice1Slot Nothing False) [5, 6]
+      ( Auto.recordingStep (atUtc 23 23 30) (Just (atUtc 23 23 30)) practice1Slot Nothing (writing True 1 (atUtc 23 23 30))
+      , map (\runs -> Auto.recordingStep (atUtc 23 18 30) Nothing practice1Slot Nothing (writing False runs (atUtc 23 18 30))) [5, 6]
       )
-        `shouldBe` (Auto.StopRecording Auto.RecCapped, [Auto.Relaunch 6, Auto.StopRecording Auto.RecGaveUp])
+        `shouldBe` (Auto.StopRecording Auto.RecCapped, [Auto.Relaunch 6 Auto.Cut, Auto.StopRecording Auto.RecGaveUp])
+
+    it "un fichero que no crece 3 min desde la hora de su sesión: relanza; antes de esa hora, no" $
+      let step now = Auto.recordingStep now Nothing practice1Slot Nothing
+          snapshot = writing True 1 (atUtc 23 16 46)
+       in ( step (atUtc 23 17 55) (writing True 1 (atUtc 23 17 52))
+          , step (atUtc 23 17 54) (writing True 1 (atUtc 23 17 52))
+          , map (`step` snapshot) [atUtc 23 17 20, atUtc 23 17 32, atUtc 23 17 33]
+          )
+            `shouldBe` ( Auto.Relaunch 2 (Auto.Stalled (atUtc 23 17 52))
+                       , Auto.KeepRecording
+                       , [Auto.KeepRecording, Auto.KeepRecording, Auto.Relaunch 2 (Auto.Stalled (atUtc 23 16 46))]
+                       )
+
+    it "la vez que no conectó (fichero vacío o sin fichero) no cuenta y reusa su número; la que conecta tras intentos lo dice" $
+      let step now = Auto.recordingStep now Nothing practice1Slot Nothing
+          empty alive runs = (writing alive runs (atUtc 23 17 0)) {Auto.rrFile = Just (0, atUtc 23 17 0), Auto.rrLaunched = atUtc 23 17 0}
+       in ( step (atUtc 23 17 1) (empty False 1)
+          , step (atUtc 23 18 1) (empty False 6)
+          , step (atUtc 23 17 20) (empty True 3)
+          , step (atUtc 23 17 40) (empty True 3)
+          , step (atUtc 23 17 40) ((writing True 3 (atUtc 23 17 40)) {Auto.rrRetries = 8})
+          , step (atUtc 23 17 1) ((writing False 1 (atUtc 23 17 0)) {Auto.rrFile = Nothing})
+          )
+            `shouldBe` ( Auto.Relaunch 1 Auto.Unconnected
+                       , Auto.Relaunch 6 Auto.Unconnected
+                       , Auto.KeepRecording
+                       , Auto.Relaunch 3 Auto.Unconnected
+                       , Auto.Connected
+                       , Auto.Relaunch 1 Auto.Unconnected
+                       )
+
+    it "lo que escribe al relanzar porque no crece, al no conectar (solo la primera vez) y al conectar" $
+      let t = atUtc 23 17 55
+          line = Auto.recordingStepLine t "Practice 1"
+          retried n = (writing True 3 t) {Auto.rrRetries = n}
+       in [ line (writing True 1 (atUtc 23 17 52)) (Auto.Relaunch 2 (Auto.Stalled (atUtc 23 17 52)))
+          , line (retried 0) (Auto.Relaunch 3 Auto.Unconnected)
+          , line (retried 2) (Auto.Relaunch 3 Auto.Unconnected)
+          , line (retried 8) Auto.Connected
+          , line (retried 1) Auto.Connected
+          , line (retried 0) Auto.KeepRecording
+          ]
+            `shouldBe` [ Just "11:55 (17:55) relanza  grabación P1 en grabacion-p1-2.txt (no crece desde las 11:52)"
+                       , Just "11:55 (17:55) relanza  grabación P1 en grabacion-p1-3.txt (sin conectar; reintenta cada minuto sin contar)"
+                       , Nothing
+                       , Just "11:55 (17:55) conecta  grabación P1 en grabacion-p1-3.txt (tras 8 intentos)"
+                       , Just "11:55 (17:55) conecta  grabación P1 en grabacion-p1-3.txt (tras 1 intento)"
+                       , Nothing
+                       ]
 
     it "lo que escribe en resumen.txt (D197, D198, D200)" $
       let t = atUtc 23 17 40
-       in ( Auto.relaunchLine t "Practice 1" 2
+       in ( Auto.recordingStepLine t "Practice 1" (writing False 1 t) (Auto.Relaunch 2 Auto.Cut)
           , map (Auto.recordingStopLine t "Practice 1" 6)
               [Auto.RecFinalised, Auto.RecCapped, Auto.RecCancelled, Auto.RecGaveUp]
           , Auto.instanceChange t (Auto.recordingName "Practice 1") (Just 3000) Nothing
           )
-            `shouldBe` ( "11:40 (17:40) relanza  grabación P1 en grabacion-p1-2.txt (se cortó)"
+            `shouldBe` ( Just "11:40 (17:40) relanza  grabación P1 en grabacion-p1-2.txt (se cortó)"
                        , [ "11:40 (17:40) para     grabación P1 (Finalised)"
                          , "11:40 (17:40) para     grabación P1 (tope)"
                          , "11:40 (17:40) para     grabación P1 (cancelada)"
@@ -7506,6 +7556,18 @@ atUtc d h m = UTCTime (fromGregorian 2026 10 (fromInteger d)) (fromInteger (h * 
 -- | Las dos sesiones del viernes, a sus horas del calendario (11:30 y 15:00 de México).
 austinSlots :: [Auto.Slot]
 austinSlots = [practice1Slot, practice2Slot]
+
+-- | Una vez de la grabación, viva o no, con su número, lanzada a las 10:45 de México y
+-- con su fichero escrito por última vez en ese instante.
+writing :: Bool -> Int -> UTCTime -> Auto.RecordingRun
+writing alive runs at =
+  Auto.RecordingRun
+    { Auto.rrAlive = alive
+    , Auto.rrRuns = runs
+    , Auto.rrRetries = 0
+    , Auto.rrLaunched = atUtc 23 16 45
+    , Auto.rrFile = Just (101025, at)
+    }
 
 practice1Slot, practice2Slot :: Auto.Slot
 practice1Slot = Auto.Slot "Practice 1" (atUtc 23 17 30)

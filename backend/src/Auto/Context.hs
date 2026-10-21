@@ -26,7 +26,9 @@ import           Auto.Helper                (CalendarAnswer, Dispatch (..),
                                              ObserverEvent (..), PageReply (..),
                                              Piece (..), ReaderAnswer (..),
                                              RecordingEnd (..),
-                                             RecordingStep (..), Slot (..),
+                                             RecordingRun (..),
+                                             RecordingStep (..),
+                                             RelaunchWhy (..), Slot (..),
                                              TimerRow, TokenFile (..),
                                              UnitRow (..), VigiaEnd (..),
                                              VigiaReading (..), VigiaWatch (..),
@@ -44,7 +46,8 @@ import           Auto.Helper                (CalendarAnswer, Dispatch (..),
                                              recordingFile,
                                              recordingIdleSeconds, recordingLog,
                                              recordingName, recordingStep,
-                                             recordingStopLine, relaunchLine,
+                                             recordingStepLine,
+                                             recordingStopLine,
                                              reopenLine, slotsOn, startLine,
                                              tokenCheck, tokenFile, unitName,
                                              vigiaDone, vigiaGone,
@@ -86,7 +89,7 @@ import           Network.HTTP.Types.Header  (ResponseHeaders, hContentType)
 import           Network.HTTP.Types.Status  (statusCode)
 import           System.Directory           (createDirectoryIfMissing,
                                              doesDirectoryExist, doesFileExist,
-                                             getHomeDirectory,
+                                             getFileSize, getHomeDirectory,
                                              getModificationTime, listDirectory)
 import           System.Environment         (getEnvironment)
 import           System.Exit                (ExitCode (..))
@@ -100,7 +103,7 @@ import           System.Process             (CreateProcess (..), ProcessHandle,
                                              getProcessExitCode,
                                              interruptProcessGroupOf, proc,
                                              readProcessWithExitCode,
-                                             waitForProcess)
+                                             terminateProcess, waitForProcess)
 import           System.Timeout             (timeout)
 
 -- | Donde puede correr la instancia: @master@ y el clon del plan del GP.
@@ -255,8 +258,9 @@ waitNextMinute start = do
 
 -- | La grabación sin cuenta de esa sesión: lanza @dashboardF1-record@ (ese ejecutable)
 -- a @grabacion-\<s\>.txt@ con su salida en @grabacion-\<s\>.log@, y cada minuto mira
--- @\/api\/live@ como el vigía ('recordingStep'). Con el Finalised o el tope le manda
--- SIGINT, como Ctrl+C, y espera a que cierre; si salió solo, lo relanza a @-2@, @-3@…
+-- @\/api\/live@ como el vigía y su fichero ('recordingStep'). Con el Finalised o el tope le
+-- manda SIGINT, como Ctrl+C, y espera a que cierre; si salió solo o su fichero dejó de
+-- crecer, lo para y lo relanza a @-2@, @-3@… (la vez que no conectó, en el mismo número).
 -- Con SIGINT (lo que manda @cancela@ a toda la unidad) espera al grabador y dice que la
 -- cancelaron. Cada paso deja su línea en @resumen.txt@.
 runRecording :: FilePath -> Text -> Slot -> FilePath -> Dispatch -> IO ()
@@ -265,11 +269,11 @@ runRecording folder label slot recorder d = do
   appendLine summary (startLine start label)
   current <- newIORef =<< launchRecorder 1
   (end, runs) <-
-    handleJust cancelled (\e -> pure (e, 0)) (watch start current 1 (Just (diPort d)))
+    handleJust cancelled (\e -> pure (e, 0))
+      (watch start current (launched 1 0 start) (Just (diPort d)))
   readIORef current >>= mapM_ (\ph -> do
     alive <- isNothing <$> getProcessExitCode ph
-    when (alive && end /= RecCancelled) (interruptProcessGroupOf ph)
-    waitForProcess ph)
+    when alive (stopRecorder (end /= RecCancelled) ph))
   stopped <- getCurrentTime
   appendLine summary (recordingStopLine stopped session runs end)
   where
@@ -294,19 +298,43 @@ runRecording folder label slot recorder d = do
           )
           :: IO (Either SomeException ProcessHandle)
       pure (either (const Nothing) Just started)
-    watch start current runs answering = do
+    watch start current run answering = do
       waitNextMinute start
       (port, reply, _, at) <- firstAnswer (askOrder instancePorts (diPort d))
       forM_ (instanceChange at (recordingName session) answering port) (appendLine summary)
       alive <- maybe (pure False) (fmap isNothing . getProcessExitCode) =<< readIORef current
+      file <- fileState (folder </> recordingFile session (rrRuns run))
       now <- getCurrentTime
-      case recordingStep now (diCap d) slot (liveTable =<< reply) alive runs of
-        KeepRecording -> watch start current runs port
-        Relaunch n -> do
-          appendLine summary (relaunchLine now session n)
+      let seen = run {rrAlive = alive, rrFile = file}
+          step = recordingStep now (diCap d) slot (liveTable =<< reply) seen
+      forM_ (recordingStepLine now session seen step) (appendLine summary)
+      case step of
+        KeepRecording -> watch start current seen port
+        Connected -> watch start current seen {rrRetries = 0} port
+        Relaunch n why -> do
+          when alive (readIORef current >>= mapM_ (stopRecorder True))
           writeIORef current =<< launchRecorder n
-          watch start current n port
-        StopRecording end -> pure (end, runs)
+          relaunched <- getCurrentTime
+          let retries = if why == Unconnected then rrRetries seen + 1 else 0
+          watch start current (launched n retries relaunched) port
+        StopRecording end -> pure (end, rrRuns seen)
+    launched n retries at =
+      RecordingRun {rrAlive = True, rrRuns = n, rrRetries = retries, rrLaunched = at, rrFile = Nothing}
+
+-- | Para al grabador: SIGINT a su grupo, como Ctrl+C (sin él si ya se lo mandó
+-- @cancela@), y si en 30 s no ha salido, SIGTERM.
+stopRecorder :: Bool -> ProcessHandle -> IO ()
+stopRecorder interrupt ph = do
+  when interrupt (interruptProcessGroupOf ph)
+  gone <- timeout 30000000 (waitForProcess ph)
+  when (isNothing gone) $ do
+    terminateProcess ph
+    _ <- timeout 10000000 (waitForProcess ph)
+    pure ()
+
+-- | El tamaño y la última escritura de un fichero; 'Nothing' si no se puede leer.
+fileState :: FilePath -> IO (Maybe (Integer, UTCTime))
+fileState path = either (const Nothing) Just <$> trySync ((,) <$> getFileSize path <*> getModificationTime path)
 
 -- | El lector vivo: su entrada, su salida y su proceso.
 data Reader = Reader Handle Handle ProcessHandle

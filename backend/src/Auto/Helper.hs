@@ -79,14 +79,17 @@ module Auto.Helper
   , ObserverEnd (..)
   , observerStopLine
   , recordingIdleSeconds
+  , recordingStallAfter
   , maxRelaunches
   , recordingFile
   , recordingLog
   , RecordingEnd (..)
+  , RecordingRun (..)
+  , RelaunchWhy (..)
   , RecordingStep (..)
   , recordingStep
   , recordingStopLine
-  , relaunchLine
+  , recordingStepLine
   , recordingName
   , dayFolder
     -- * Lo que recibe cada pieza al disparar
@@ -159,7 +162,7 @@ import           Data.Time.Calendar         (Day, DayOfWeek (..), addDays,
                                              dayOfWeek, showGregorian,
                                              toGregorian)
 import           Data.Time.Clock            (NominalDiffTime, UTCTime,
-                                             addUTCTime)
+                                             addUTCTime, diffUTCTime)
 import           Data.Time.Clock.POSIX      (posixSecondsToUTCTime)
 import           Data.Time.Format           (defaultTimeLocale, formatTime,
                                              parseTimeM)
@@ -848,24 +851,55 @@ data RecordingEnd
   | RecGaveUp     -- ^ Se cortó la última vez que se podía relanzar.
   deriving (Eq, Show)
 
+-- | Cuánto puede llevar sin escribirse el fichero de una grabación, contado desde la hora
+-- prevista de su sesión, antes de darla por cortada: en sesión el feed late cada 15 s.
+recordingStallAfter :: NominalDiffTime
+recordingStallAfter = 3 * 60
+
+-- | La vez en curso de una grabación, vista en un minuto.
+data RecordingRun = RecordingRun
+  { rrAlive    :: Bool                      -- ^ Si @dashboardF1-record@ sigue vivo.
+  , rrRuns     :: Int                       -- ^ La vez en curso (desde 1), que es también las que cuentan.
+  , rrRetries  :: Int                       -- ^ Los intentos sin conectar que la precedieron.
+  , rrLaunched :: UTCTime
+  , rrFile     :: Maybe (Integer, UTCTime)  -- ^ El tamaño y la última escritura de su fichero.
+  }
+  deriving (Eq, Show)
+
+-- | Por qué se relanza.
+data RelaunchWhy
+  = Cut              -- ^ Salió solo.
+  | Stalled UTCTime  -- ^ Vive, y su fichero no crece desde ese instante.
+  | Unconnected      -- ^ Su fichero quedó vacío: no cuenta, y la vez siguiente reusa su número.
+  deriving (Eq, Show)
+
 -- | Lo que hace la grabación en un minuto.
 data RecordingStep
   = KeepRecording
-  | Relaunch Int            -- ^ Se cortó: relanza en la vez @n@.
+  | Connected                 -- ^ Tras intentos sin conectar, la vez en curso ya escribe.
+  | Relaunch Int RelaunchWhy  -- ^ Para la vez en curso si vive y lanza la vez @n@.
   | StopRecording RecordingEnd
   deriving (Eq, Show)
 
--- | Un minuto de la grabación de esa sesión, con su tope, lo que dice @\/api\/live@, si
--- @dashboardF1-record@ sigue vivo y cuántas veces lleva lanzado. El Finalised manda
--- sobre todo; después el tope; un grabador que salió solo se relanza hasta
--- 'maxRelaunches' veces.
-recordingStep :: UTCTime -> Maybe UTCTime -> Slot -> Maybe LiveTable -> Bool -> Int -> RecordingStep
-recordingStep now cap slot table alive runs
+-- | Un minuto de la grabación de esa sesión, con su tope, lo que dice @\/api\/live@ y la
+-- vez en curso. El Finalised manda sobre todo; después el tope. La vez acaba si salió
+-- sola o si su fichero lleva 'recordingStallAfter' sin escribirse (contado, como pronto,
+-- desde la hora prevista de la sesión). Una vez con el fichero vacío se repite en el mismo
+-- número sin límite; las demás se relanzan hasta 'maxRelaunches' veces.
+recordingStep :: UTCTime -> Maybe UTCTime -> Slot -> Maybe LiveTable -> RecordingRun -> RecordingStep
+recordingStep now cap slot table run
   | sessionFinalised now slot table = StopRecording RecFinalised
   | maybe False (now >=) cap = StopRecording RecCapped
-  | alive = KeepRecording
-  | runs <= maxRelaunches = Relaunch (runs + 1)
-  | otherwise = StopRecording RecGaveUp
+  | ended && empty = Relaunch (rrRuns run) Unconnected
+  | ended && rrRuns run > maxRelaunches = StopRecording RecGaveUp
+  | ended = Relaunch (rrRuns run + 1) (if rrAlive run then Stalled lastWrite else Cut)
+  | not empty && rrRetries run > 0 = Connected
+  | otherwise = KeepRecording
+  where
+    empty = maybe True ((== 0) . fst) (rrFile run)
+    lastWrite = maybe (rrLaunched run) (max (rrLaunched run) . snd) (rrFile run)
+    stalled = diffUTCTime now (max lastWrite (slotStart slot)) >= recordingStallAfter
+    ended = not (rrAlive run) || stalled
 
 -- | La línea de @resumen.txt@ de cómo acabó (D197, D200): «para grabación P1 (Finalised)»,
 -- «(tope)», «(cancelada)», o «deja grabación P1 (se cortó 6 veces; no relanza más)».
@@ -879,10 +913,24 @@ recordingStopLine t session runs end = case end of
   where
     what = recordingName session
 
--- | «relanza grabación P1 en grabacion-p1-2.txt (se cortó)» (D197).
-relaunchLine :: UTCTime -> Text -> Int -> Text
-relaunchLine t session n =
-  eventLine t "relanza" (recordingName session <> " en " <> T.pack (recordingFile session n) <> " (se cortó)")
+-- | La línea de @resumen.txt@ de un minuto de la grabación de esa sesión, si lleva:
+-- «relanza grabación P1 en grabacion-p1-2.txt (se cortó)» (D197), «(no crece desde las
+-- 11:52)», «(sin conectar; reintenta cada minuto sin contar)» solo en el primer intento,
+-- y «conecta grabación P1 en grabacion-p1-3.txt (tras 8 intentos)».
+recordingStepLine :: UTCTime -> Text -> RecordingRun -> RecordingStep -> Maybe Text
+recordingStepLine t session run step = case step of
+  Relaunch n Cut -> Just (relaunch n "se cortó")
+  Relaunch n (Stalled at) -> Just (relaunch n ("no crece desde las " <> mexicoHour at))
+  Relaunch n Unconnected
+    | rrRetries run == 0 -> Just (relaunch n "sin conectar; reintenta cada minuto sin contar")
+    | otherwise -> Nothing
+  Connected ->
+    Just (eventLine t "conecta" (recordingName session <> " en " <> file (rrRuns run) <> " (tras " <> attempts <> ")"))
+  _ -> Nothing
+  where
+    relaunch n why = eventLine t "relanza" (recordingName session <> " en " <> file n <> " (" <> why <> ")")
+    file = T.pack . recordingFile session
+    attempts = T.pack (show (rrRetries run)) <> (if rrRetries run == 1 then " intento" else " intentos")
 
 -- | Cómo se nombra la grabación en las líneas: «grabación P1».
 recordingName :: Text -> Text
