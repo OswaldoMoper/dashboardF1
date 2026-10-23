@@ -33,7 +33,7 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Collection, Dict, Iterator, Tuple
 
 AQUI = Path(__file__).resolve().parent
 FOTOS = AQUI / "fotos"
@@ -99,34 +99,42 @@ def formas(timing: Any) -> Counter:
     return c
 
 
-def sacar(grabacion: Path, nombre: str) -> None:
-    inicial: Dict[str, Any] = {}
-    estado: Dict[str, Any] = {}
-    plegada: Dict[str, Any] = {}
-    mejor = -1
-    vistos = 0
+def mensajes(grabacion: Path, temas: Collection[str]) -> Iterator[Tuple[str, Any, str]]:
+    """Los mensajes de una grabación de los ``temas`` dados, en orden, como ``(topic,
+    cuerpo, marca)`` con el cuerpo ya como objeto. La foto inicial lleva la marca vacía.
+    Las líneas que no son un mensaje se saltan."""
     with grabacion.open(encoding="utf-8") as f:
         for linea in f:
             try:
                 msg = ast.literal_eval(linea.strip())
             except (ValueError, SyntaxError):
                 continue
-            if not (isinstance(msg, list) and len(msg) >= 3 and msg[0] in _LIVE_TOPICS):
+            if not (isinstance(msg, list) and len(msg) >= 3 and msg[0] in temas):
                 continue
             topic, cuerpo, marca = msg[0], msg[1], msg[2]
             if isinstance(cuerpo, str):
                 cuerpo = json.loads(cuerpo)
-            if marca == "" and topic not in inicial:
-                inicial[topic] = cuerpo
-                estado[topic] = copy.deepcopy(cuerpo)
-                continue
-            estado[topic] = plegar(estado[topic], cuerpo) if topic in estado else cuerpo
-            if topic == "TimingData":
-                vistos += 1
-                if vistos % CADA == 0:
-                    rico = len(formas(estado["TimingData"]))
-                    if rico > mejor:
-                        mejor, plegada = rico, copy.deepcopy(estado)
+            yield topic, cuerpo, marca
+
+
+def sacar(grabacion: Path, nombre: str) -> None:
+    inicial: Dict[str, Any] = {}
+    estado: Dict[str, Any] = {}
+    plegada: Dict[str, Any] = {}
+    mejor = -1
+    vistos = 0
+    for topic, cuerpo, marca in mensajes(grabacion, _LIVE_TOPICS):
+        if marca == "" and topic not in inicial:
+            inicial[topic] = cuerpo
+            estado[topic] = copy.deepcopy(cuerpo)
+            continue
+        estado[topic] = plegar(estado[topic], cuerpo) if topic in estado else cuerpo
+        if topic == "TimingData":
+            vistos += 1
+            if vistos % CADA == 0:
+                rico = len(formas(estado["TimingData"]))
+                if rico > mejor:
+                    mejor, plegada = rico, copy.deepcopy(estado)
     FOTOS.mkdir(exist_ok=True)
     for sufijo, foto in (("inicial", inicial), ("plegada", plegada), ("final", estado)):
         destino = FOTOS / f"{nombre}-{sufijo}.json"
