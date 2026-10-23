@@ -200,6 +200,62 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
+def _feed_stints(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Los stints de cada coche en ``TimingAppData``, con las claves de
+    ``Common.Types.TyreStint`` más las del feed.
+
+    Coches en orden de número y, dentro de cada uno, **un stint por entrada de
+    ``Stints``** (lista, o diccionario por índice tras plegar), en su orden: no se
+    omite ninguno, tampoco el ``UNKNOWN`` ni el de 0 vueltas, y el mismo juego tras
+    parar sale aparte.
+
+    * ``tsLaps`` son las vueltas **completadas** (``TotalLaps − StartLaps``): la
+      empezada y no completada no cuenta.
+    * ``tsStartLap`` es 1 más las vueltas de los anteriores y ``tsEndLap`` el inicio
+      más las vueltas menos 1: un stint de 0 vueltas acaba antes de empezar.
+    * ``tsAge`` es ``StartLaps``; ``tsNew`` y ``tsSameSet`` dicen si ``New`` es
+      ``"true"`` y si ``TyresNotChanged`` es ``"1"``.
+    * Un contador que falta o no es número cuenta 0, y las vueltas negativas que
+      salgan de ahí **no se recortan**.
+    * El stint en curso no lleva marca: si la sesión sigue, lo dice quien llama.
+    """
+    drivers = snapshot.get("DriverList") or {}
+    timing_app = snapshot.get("TimingAppData") or {}
+    lines = timing_app.get("Lines") or {}
+
+    stints: List[Dict[str, Any]] = []
+    for number in sorted(lines, key=lambda n: (_num(n) or 0, n)):
+        line = lines[number]
+        if not isinstance(line, dict):
+            continue
+        entries = line.get("Stints") or []
+        if isinstance(entries, dict):
+            entries = [entries[k] for k in sorted(entries, key=lambda k: _num(k) or 0)]
+        info = drivers.get(number) if isinstance(drivers, dict) else None
+        info = info if isinstance(info, dict) else {}
+        driver = _text(info.get("Tla")) or str(number)
+        start = 1
+        for entry in entries:
+            entry = entry if isinstance(entry, dict) else {}
+            age = int(_num(entry.get("StartLaps")) or 0)
+            laps = int(_num(entry.get("TotalLaps")) or 0) - age
+            stints.append(
+                {
+                    "tsDriver": driver,
+                    "tsCar": str(number),
+                    "tsCompound": _text(entry.get("Compound")),
+                    "tsStartLap": start,
+                    "tsEndLap": start + laps - 1,
+                    "tsLaps": laps,
+                    "tsAge": age,
+                    "tsNew": _text(entry.get("New")) == "true",
+                    "tsSameSet": _text(entry.get("TyresNotChanged")) == "1",
+                }
+            )
+            start += laps
+    return stints
+
+
 def _feed_flags(snapshot: Dict[str, Any]) -> List[Dict[str, str]]:
     """Los avisos de bandera de control de carrera, tal como llegan.
 
