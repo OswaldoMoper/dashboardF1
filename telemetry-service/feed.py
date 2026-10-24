@@ -400,3 +400,12 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         session["siTrack"] = track
 
     return session
+
+
+def _feed_live(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """La respuesta de ``GET /fastf1/live``: ``{"session": …, "rows": [ … ]}``.
+
+    Las dos mitades salen de la **misma** foto, así que hablan del mismo instante:
+    pedirlas por separado daría dos que pueden discrepar.
+    """
+    return {"session": _feed_session(snapshot), "rows": _feed_rows(snapshot)}

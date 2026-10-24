@@ -77,7 +77,7 @@ import fastf1
 from fastapi import FastAPI, HTTPException
 
 from convert import _num, _text
-from feed import _LIVE_TOPICS, _feed_rows, _feed_session
+from feed import _LIVE_TOPICS, _feed_live
 
 CACHE_DIR = os.environ.get("FASTF1_CACHE", ".fastf1-cache")
 MAX_POINTS = max(1, int(os.environ.get("TELEMETRY_MAX_POINTS", "60")))
@@ -931,10 +931,7 @@ def live() -> Dict[str, Any]:
     que no hay sesión en directo**, por el mismo criterio que los otros cuatro
     endpoints: degradar es trabajo del backend, así que aquí una sesión sin
     datos no es un error. ``session`` puede ser ``null`` aunque haya filas, y al
-    revés.
-
-    Las dos mitades salen de la **misma** foto, así que hablan del mismo
-    instante: pedirlas por separado daría dos que pueden discrepar.
+    revés. Qué lleva cada mitad, ``feed._feed_live``.
 
     Solo se traduce a ``503`` el fallo del propio feed —conexión rechazada o
     estado que no llega—, que es lo que ``Handler.Live.Context`` necesita
@@ -944,4 +941,4 @@ def live() -> Dict[str, Any]:
         snapshot = _live_snapshot()
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"feed no disponible: {error}")
-    return {"session": _feed_session(snapshot), "rows": _feed_rows(snapshot)}
+    return _feed_live(snapshot)

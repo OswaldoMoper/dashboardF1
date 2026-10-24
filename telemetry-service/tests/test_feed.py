@@ -13,7 +13,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from feed import _feed_rows
+from feed import _feed_live, _feed_rows, _feed_session
 
 AQUI = Path(__file__).resolve().parent
 FOTOS = sorted((AQUI / "fotos").glob("*.json"))
@@ -169,3 +169,15 @@ def test_los_sectores_de_la_ultima_son_los_previousvalue_de_sus_tres_sectores(fo
             sectores = {str(i): s for i, s in enumerate(sectores)}
         esperado = [(sectores.get(str(i)) or {}).get("PreviousValue", "").strip() or "-" for i in range(3)]
         assert fila["ltLastSectors"] == esperado
+
+
+# ── La respuesta del directo ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("foto", FOTOS, ids=[p.stem for p in FOTOS])
+def test_la_respuesta_del_directo_es_la_sesion_y_las_filas_de_la_misma_foto(foto):
+    snapshot = json.loads(foto.read_text(encoding="utf-8"))
+    assert _feed_live(snapshot) == {
+        "session": _feed_session(snapshot),
+        "rows": _feed_rows(snapshot),
+    }
