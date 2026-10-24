@@ -15,17 +15,20 @@ module Handler.TyreStrategy.Helper
 
 import           Common.Origin         (Origin (..), Source (..))
 import           Common.Types          (TyreStint (..))
-import           Data.Aeson            (FromJSON (..), withObject, (.:), (.:?))
+import           Data.Aeson            (FromJSON (..), withObject, (.!=), (.:),
+                                        (.:?))
 import           Data.List             (find, sortOn)
 import           Data.Maybe            (mapMaybe)
 import           Data.Text             (Text)
+import qualified Data.Text             as T
 import           Data.Time.Clock       (UTCTime)
 import           Handler.OpenF1.Helper (Of1Driver (..))
 import           Provenance            (Provenanced (..))
 
 -- | @/stints@: periodo con un mismo compuesto para un piloto.
 --
--- __'osCompound' admite ausencia y los otros tres campos no__, y la asimetría es
+-- __'osCompound' admite ausencia y los otros tres campos no__ ('osAge' tampoco la
+-- exige: sin edad cuenta 0, la misma regla que el feed), y la asimetría es
 -- una observación y no una precaución: OpenF1 emite @compound: null@ en un stint
 -- que __acaba de empezar__ —la vuelta ya está registrada y el compuesto todavía
 -- no—, y con @o .: "compound"@ sobre 'Text' ese único objeto tumbaba el decode
@@ -45,6 +48,7 @@ data Of1Stint = Of1Stint
                                --   stint aún sin compuesto publicado.
   , osLapStart :: Int
   , osLapEnd   :: Int
+  , osAge      :: Int          -- ^ @tyre_age_at_start@; 0 si llega nulo o sin clave.
   }
   deriving (Eq, Show)
 
@@ -55,6 +59,7 @@ instance FromJSON Of1Stint where
       <*> o .:? "compound"
       <*> o .: "lap_start"
       <*> o .: "lap_end"
+      <*> (o .:? "tyre_age_at_start" .!= 0)
 
 -- | Ensambla los stints uniendo por @driver_number@ para resolver el acrónimo
 -- del piloto. El resultado se ordena por acrónimo y luego por vuelta de inicio.
@@ -79,9 +84,14 @@ assembleStints drivers stints =
       pure
         TyreStint
           { tsDriver   = odAcronym d
+          , tsCar      = T.pack (show (osNumber s))
           , tsCompound = compound
           , tsStartLap = osLapStart s
           , tsEndLap   = osLapEnd s
+          , tsLaps     = osLapEnd s - osLapStart s + 1
+          , tsAge      = osAge s
+          , tsNew      = Nothing
+          , tsSameSet  = Nothing
           }
 
 -- | El peldaño de la escalera y lo que queda guardado, a partir de lo que trajo

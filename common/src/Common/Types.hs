@@ -909,11 +909,21 @@ instance ToJSON DriverEntry
 instance FromJSON DriverEntry
 
 -- | Stint de neumáticos (periodo con un mismo compuesto).
+--
+-- Llega de dos fuentes que no cuentan igual: del feed, @tsLaps@ son las vueltas
+-- __completadas__ y un stint recién montado tiene 0, con el fin una antes del inicio;
+-- de OpenF1, de la vuelta de inicio a la de fin incluidas. Nuevo y mismo juego solo
+-- los publica el feed: 'Nothing' es «la fuente no lo dice», no «no».
 data TyreStint = TyreStint
   { tsDriver   :: Text
-  , tsCompound :: Text  -- ^ SOFT/MEDIUM/HARD/INTER/WET.
+  , tsCar      :: Text        -- ^ Número del coche (p. ej. @"1"@).
+  , tsCompound :: Text        -- ^ SOFT/MEDIUM/HARD/INTERMEDIATE/WET, o UNKNOWN en el feed.
   , tsStartLap :: Int
   , tsEndLap   :: Int
+  , tsLaps     :: Int         -- ^ Vueltas del stint, con la cuenta de su fuente.
+  , tsAge      :: Int         -- ^ Vueltas que el juego llevaba al montarlo.
+  , tsNew      :: Maybe Bool  -- ^ Juego nuevo.
+  , tsSameSet  :: Maybe Bool  -- ^ Vuelve a pista con el juego que ya llevaba.
   }
   deriving stock (Eq, Show, Generic)
 

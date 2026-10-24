@@ -642,10 +642,27 @@ main = hspec $ do
       -- primero en las dos respuestas.
       stintsOf openF1Grid stintArray
         `shouldBe`
-          [ TyreStint "LEC" "SOFT" 1 2
-          , TyreStint "LEC" "MEDIUM" 22 43
-          , TyreStint "NOR" "MEDIUM" 1 2
-          , TyreStint "NOR" "SOFT" 3 21
+          [ openF1Stint "LEC" "16" "SOFT" 1 2
+          , openF1Stint "LEC" "16" "MEDIUM" 22 43
+          , openF1Stint "NOR" "1" "MEDIUM" 1 2
+          , openF1Stint "NOR" "1" "SOFT" 3 21
+          ]
+
+    it "pone el número, las vueltas de OpenF1 y la edad, y deja sin decir nuevo y mismo juego" $
+      -- Las vueltas son las de OpenF1, de la de inicio a la de fin incluidas; la
+      -- edad, `tyre_age_at_start`. Nuevo y mismo juego no los publica OpenF1, y
+      -- `Nothing` es «no se sabe», no «no».
+      stintsOf openF1Grid stintAgedThree
+        `shouldBe`
+          [ (openF1Stint "NOR" "1" "SOFT" 3 21) { tsAge = 3 } ]
+
+    it "cuenta 0 la edad que llega nula o sin clave, sin omitir el stint" $
+      -- Como en el feed («Cuenta 0»): una edad que falta no tumba el arreglo ni
+      -- se lleva el tramo.
+      stintsOf openF1Grid stintWithoutAge
+        `shouldBe`
+          [ openF1Stint "NOR" "1" "MEDIUM" 1 2
+          , openF1Stint "NOR" "1" "SOFT" 3 21
           ]
 
     it "omite el stint sin compuesto y conserva los demás del mismo piloto" $
@@ -655,8 +672,8 @@ main = hspec $ do
       -- entera degradaba al dummy con la red viva.
       stintsOf openF1Grid stintWithNullCompound
         `shouldBe`
-          [ TyreStint "NOR" "MEDIUM" 1 2
-          , TyreStint "NOR" "HARD" 22 47
+          [ openF1Stint "NOR" "1" "MEDIUM" 1 2
+          , openF1Stint "NOR" "1" "HARD" 22 47
           ]
 
     it "trata la clave `compound` ausente igual que el nulo" $
@@ -669,7 +686,7 @@ main = hspec $ do
       -- Comportamiento vivo desde el 2026-08-11 y hasta ahora sin prueba. Es el otro
       -- descarte que comparte el `Maybe` del bloque `do`.
       stintsOf openF1Grid stintOfUnknownDriver
-        `shouldBe` [TyreStint "NOR" "MEDIUM" 1 2]
+        `shouldBe` [openF1Stint "NOR" "1" "MEDIUM" 1 2]
 
     it "devuelve [] cuando la parrilla llega vacía, aunque haya stints" $
       -- No es simétrico del anterior por casualidad: sin parrilla no hay acrónimo
@@ -679,6 +696,23 @@ main = hspec $ do
 
     it "devuelve [] sobre una sesión sin stints publicados" $
       stintsOf openF1Grid emptyArray `shouldBe` []
+
+  -- El contrato con @_feed_stints@ de @telemetry-service/feed.py@: sus nueve claves son
+  -- los campos del DTO, y nuevo y mismo juego llegan siempre dichos.
+  describe "TyreStint del feed" $
+    it "decodifica un stint con las claves de _feed_stints" $
+      eitherDecodeStrict feedStintBor
+        `shouldBe` Right TyreStint
+          { tsDriver   = "BOR"
+          , tsCar      = "5"
+          , tsCompound = "MEDIUM"
+          , tsStartLap = 4
+          , tsEndLap   = 6
+          , tsLaps     = 3
+          , tsAge      = 3
+          , tsNew      = Just False
+          , tsSameSet  = Just True
+          }
 
   -- La escalera de `/api/tyre-strategy` con su procedencia. Lo guardado lleva una
   -- tanda distinta de la traída en todos los casos, para que servir la equivocada no
@@ -6295,6 +6329,22 @@ driversOf = assembleDrivers . decodeDrivers
 stintsOf :: ByteString -> ByteString -> [TyreStint]
 stintsOf grid stints = assembleStints (decodeOf1Drivers grid) (decodeStints stints)
 
+-- | Un stint como lo deja 'assembleStints': piloto, número, compuesto, inicio y fin;
+-- las vueltas, de la de inicio a la de fin incluidas; edad 0; nuevo y mismo juego sin
+-- decir.
+openF1Stint :: T.Text -> T.Text -> T.Text -> Int -> Int -> TyreStint
+openF1Stint driver car compound start end = TyreStint
+  { tsDriver   = driver
+  , tsCar      = car
+  , tsCompound = compound
+  , tsStartLap = start
+  , tsEndLap   = end
+  , tsLaps     = end - start + 1
+  , tsAge      = 0
+  , tsNew      = Nothing
+  , tsSameSet  = Nothing
+  }
+
 decodeOf1Drivers :: ByteString -> [Of1Driver]
 decodeOf1Drivers raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
@@ -7029,6 +7079,32 @@ stintOfUnknownDriver =
     <> "," <> stint 99 1 1 30 "\"HARD\""
     <> "]"
 
+-- | El segundo stint de BOR en la P2 de Austin (2026-10-23) tal como lo saca
+-- @_feed_stints@: vuelve a pista con el mismo juego de medios, usado, con 3 vueltas.
+feedStintBor :: ByteString
+feedStintBor =
+  "{\"tsDriver\":\"BOR\",\"tsCar\":\"5\",\"tsCompound\":\"MEDIUM\",\"tsStartLap\":4,\
+  \\"tsEndLap\":6,\"tsLaps\":3,\"tsAge\":3,\"tsNew\":false,\"tsSameSet\":true}"
+
+-- | Un stint del coche 1 con @tyre_age_at_start@ 3: el juego usado que 'stint', con su
+-- edad 0, no deja escribir.
+stintAgedThree :: ByteString
+stintAgedThree =
+  "[{\"meeting_key\":1292,\"session_key\":11353,\"stint_number\":2,\
+  \\"driver_number\":1,\"lap_start\":3,\"lap_end\":21,\"compound\":\"SOFT\",\
+  \\"tyre_age_at_start\":3}]"
+
+-- | Dos stints del coche 1, el primero con la edad nula y el segundo sin la clave.
+-- Ninguna de las dos formas se ha visto en OpenF1; el nulo del compuesto vivía solo
+-- en la sesión en curso, y esto protege igual el decode.
+stintWithoutAge :: ByteString
+stintWithoutAge =
+  "[{\"meeting_key\":1292,\"session_key\":11353,\"stint_number\":1,\
+  \\"driver_number\":1,\"lap_start\":1,\"lap_end\":2,\"compound\":\"MEDIUM\",\
+  \\"tyre_age_at_start\":null},\
+  \{\"meeting_key\":1292,\"session_key\":11353,\"stint_number\":2,\
+  \\"driver_number\":1,\"lap_start\":3,\"lap_end\":21,\"compound\":\"SOFT\"}]"
+
 -- | Un objeto de @\/stints@ con las ocho claves de OpenF1. El compuesto entra
 -- __ya serializado__ (@\"\\\"SOFT\\\"\"@ o @\"null\"@) porque es el campo cuya
 -- forma se está probando: pasarlo como 'Text' impediría escribir el caso del nulo,
@@ -7437,12 +7513,12 @@ tyreNow = addUTCTime 60 fetchInstant
 
 -- | Lo que trae OpenF1 en las pruebas de 'tyreStep'.
 freshStints :: [TyreStint]
-freshStints = [TyreStint "NOR" "MEDIUM" 1 20, TyreStint "NOR" "HARD" 21 44]
+freshStints = [openF1Stint "NOR" "1" "MEDIUM" 1 20, openF1Stint "NOR" "1" "HARD" 21 44]
 
 -- | Lo guardado en las pruebas de 'tyreStep': otra tanda, para que servir la equivocada
 -- se note.
 keptStints :: [TyreStint]
-keptStints = [TyreStint "LEC" "SOFT" 1 12]
+keptStints = [openF1Stint "LEC" "16" "SOFT" 1 12]
 
 -- | Las tres cabeceras de una respuesta de @\/api\/live@, buscadas por su nombre
 -- __de tipo__, que es el que Servant usa al serializarlas.

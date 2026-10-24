@@ -49,8 +49,20 @@ fetchStrategy cfg = do
 -- | Stints dummy por driver (respaldo cuando aún no hay respuesta de OpenF1).
 dummy :: [TyreStint]
 dummy =
-  [ TyreStint "VER" "MEDIUM" 1 18
-  , TyreStint "VER" "HARD" 19 44
-  , TyreStint "LEC" "SOFT" 1 14
-  , TyreStint "LEC" "HARD" 15 44
+  [ sample "VER" "3" "MEDIUM" 1 18
+  , sample "VER" "3" "HARD" 19 44
+  , sample "LEC" "16" "SOFT" 1 14
+  , sample "LEC" "16" "HARD" 15 44
   ]
+  where
+    sample driver car compound start end = TyreStint
+      { tsDriver   = driver
+      , tsCar      = car
+      , tsCompound = compound
+      , tsStartLap = start
+      , tsEndLap   = end
+      , tsLaps     = end - start + 1
+      , tsAge      = 0
+      , tsNew      = Nothing
+      , tsSameSet  = Nothing
+      }
