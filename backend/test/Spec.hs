@@ -194,6 +194,9 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               statusLabel, tickClock, tickDown,
                                               upNextLabel, waitingSession,
                                               waitingTable)
+import           Common.TyreStrategy         (StintBar (..), StintRow (..),
+                                              compoundClass, stintRows,
+                                              stintScale, stintTitle)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (FromJSON (..), Value (..),
                                               decodeStrictText, eitherDecode,
@@ -705,6 +708,45 @@ main = hspec $ do
   describe "TyreStint del feed" $
     it "decodifica un stint con las claves de _feed_stints" $
       eitherDecodeStrict feedStintBor `shouldBe` Right borStint
+
+  -- Las barras del widget, con LEC de la P2 de Austin (H 1–8, S 9–11, S 12–30) y COL, que
+  -- llega a la 32: fuera de carrera la escala es la vuelta más alta.
+  describe "Common.TyreStrategy" $ do
+    it "una fila por fila de la tabla, por posición; los que no tienen fila, al final por número" $
+      map (\r -> (srPosition r, srCar r, length (srBars r))) (stintRows stintTable)
+        `shouldBe` [ (Just 1, "16", 3), (Just 2, "43", 1), (Just 3, "3", 0)
+                   , (Nothing, "9", 1), (Nothing, "10", 1) ]
+
+    it "fuera de carrera, la escala es la vuelta de fin más alta" $
+      stintScale (Just practiceSession) stintsP2 `shouldBe` 32
+
+    it "en carrera, el total; y nunca menos que la vuelta más alta" $ do
+      stintScale (Just raceSessionFixture) stintsP2 `shouldBe` 57
+      stintScale (Just raceSessionFixture {siLaps = Just (LapProgress 12 20)}) stintsP2 `shouldBe` 32
+
+    it "sin stints, la escala es 1" $
+      stintScale Nothing [] `shouldBe` 1
+
+    it "cada tramo empieza donde acaba el anterior, en fracción de la escala" $
+      map (\b -> (sbStart b, sbWidth b, sbClass b)) (concatMap srBars (take 1 (stintRows stintTable)))
+        `shouldBe` [(0, 8 / 32, "hard"), (8 / 32, 3 / 32, "soft"), (11 / 32, 19 / 32, "soft")]
+
+    it "un stint de 0 vueltas tiene ancho 0 en su sitio" $
+      map (\b -> (sbStart b, sbWidth b)) (srBars (stintRows stintTable !! 3))
+        `shouldBe` [(2 / 32, 0)]
+
+    it "el tooltip, en sus cuatro formas" $ do
+      stintTitle (lapsStint "MEDIUM" 14 21) {tsAge = 2, tsNew = Just False, tsSameSet = Just True}
+        `shouldBe` "MEDIUM · vueltas 14–21 (8) · usado, edad 2 · mismo juego"
+      stintTitle (lapsStint "SOFT" 1 7) {tsNew = Just True, tsSameSet = Just False}
+        `shouldBe` "SOFT · vueltas 1–7 (7) · nuevo, edad 0"
+      stintTitle (lapsStint "INTERMEDIATE" 3 2) {tsAge = 2, tsNew = Just False, tsSameSet = Just True}
+        `shouldBe` "INTERMEDIATE · desde la vuelta 3 (0) · usado, edad 2 · mismo juego"
+      stintTitle (lapsStint "MEDIUM" 1 12) `shouldBe` "MEDIUM · vueltas 1–12 (12) · edad 0"
+
+    it "el color, por compuesto; lo que no se reconoce, unknown" $
+      map compoundClass ["SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET", "UNKNOWN", "TEST_UNKNOWN"]
+        `shouldBe` ["soft", "medium", "hard", "intermediate", "wet", "unknown", "unknown"]
 
   -- La escalera de `/api/tyre-strategy` con su procedencia. Lo guardado lleva una
   -- tanda distinta de la traída en todos los casos, para que servir la equivocada no
@@ -7118,6 +7160,45 @@ borStint = TyreStint
   , tsNew      = Just False
   , tsSameSet  = Just True
   }
+
+-- | Un stint de la vuelta de inicio a la de fin con las vueltas del feed (fin − inicio
+-- + 1, 0 si el fin va antes), juego de edad 0 y sin nuevo ni mismo juego.
+lapsStint :: T.Text -> Int -> Int -> TyreStint
+lapsStint compound start end = TyreStint
+  { tsDriver   = ""
+  , tsCar      = ""
+  , tsCompound = compound
+  , tsStartLap = start
+  , tsEndLap   = end
+  , tsLaps     = max 0 (end - start + 1)
+  , tsAge      = 0
+  , tsNew      = Nothing
+  , tsSameSet  = Nothing
+  }
+
+carStint :: T.Text -> T.Text -> Int -> Int -> TyreStint
+carStint car compound start end = (lapsStint compound start end) {tsCar = car, tsDriver = "#" <> car}
+
+-- | LEC (#16) y COL (#43) como en la P2 de Austin, el #10 y el #9 (0 vueltas) sin fila
+-- en la tabla y en ese orden, para que el orden por número no salga de la lista.
+stintsP2 :: [TyreStint]
+stintsP2 =
+  [ carStint "10" "MEDIUM" 1 5
+  , carStint "16" "HARD" 1 8, carStint "16" "SOFT" 9 11, carStint "16" "SOFT" 12 30
+  , carStint "9" "INTERMEDIATE" 3 2
+  , carStint "43" "SOFT" 1 32
+  ]
+
+practiceSession :: SessionInfo
+practiceSession = (stateless "United States Grand Prix") {siType = "Practice", siName = "Practice 2"}
+
+-- | La tabla fuera de orden y con el #3, que tiene fila y aún no tiene stints.
+stintTable :: LiveTable
+stintTable = LiveTable (Just practiceSession) rows stintsP2 NextUnknown
+  where
+    rows = [ emptyLiveRow {ltPosition = 3, ltCar = "3", ltDriver = "VER"}
+           , emptyLiveRow {ltPosition = 1, ltCar = "16", ltDriver = "LEC"}
+           , emptyLiveRow {ltPosition = 2, ltCar = "43", ltDriver = "COL"} ]
 
 -- | Un stint del coche 1 con @tyre_age_at_start@ 3: el juego usado que 'stint', con su
 -- edad 0, no deja escribir.
