@@ -925,13 +925,13 @@ def _live_snapshot(timeout: float = 15.0) -> Dict[str, Any]:
 
 @app.get("/fastf1/live")
 def live() -> Dict[str, Any]:
-    """La sesión en marcha y su tabla de live timing, desde el feed oficial.
+    """La sesión en marcha, su tabla de live timing y sus stints, desde el feed oficial.
 
-    Devuelve ``{"session": …, "rows": [ … ]}``. **La tabla vacía es la señal de
-    que no hay sesión en directo**, por el mismo criterio que los otros cuatro
-    endpoints: degradar es trabajo del backend, así que aquí una sesión sin
-    datos no es un error. ``session`` puede ser ``null`` aunque haya filas, y al
-    revés. Qué lleva cada mitad, ``feed._feed_live``.
+    Devuelve ``{"session": …, "rows": [ … ], "stints": [ … ]}``. **La tabla vacía
+    es la señal de que no hay sesión en directo**, por el mismo criterio que los
+    otros cuatro endpoints: degradar es trabajo del backend, así que aquí una
+    sesión sin datos no es un error. ``session`` puede ser ``null`` aunque haya
+    filas, y al revés. Qué lleva cada parte, ``feed._feed_live``.
 
     Solo se traduce a ``503`` el fallo del propio feed —conexión rechazada o
     estado que no llega—, que es lo que ``Handler.Live.Context`` necesita

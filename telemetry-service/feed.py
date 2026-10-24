@@ -403,9 +403,14 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _feed_live(snapshot: Dict[str, Any]) -> Dict[str, Any]:
-    """La respuesta de ``GET /fastf1/live``: ``{"session": …, "rows": [ … ]}``.
+    """La respuesta de ``GET /fastf1/live``: ``{"session": …, "rows": [ … ],
+    "stints": [ … ]}``.
 
-    Las dos mitades salen de la **misma** foto, así que hablan del mismo instante:
-    pedirlas por separado daría dos que pueden discrepar.
+    Las tres partes salen de la **misma** foto, así que hablan del mismo instante:
+    pedirlas por separado daría partes que pueden discrepar.
     """
-    return {"session": _feed_session(snapshot), "rows": _feed_rows(snapshot)}
+    return {
+        "session": _feed_session(snapshot),
+        "rows": _feed_rows(snapshot),
+        "stints": _feed_stints(snapshot),
+    }
