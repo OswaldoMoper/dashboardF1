@@ -419,7 +419,7 @@ askOpenF1 env = do
       kept <- readTVarIO (envLiveCache env)
       let keptSession = (\(_, _, table) -> liveSession table) =<< kept
           heard = inheritFinalised keptSession <$> session
-      serveFresh env now OpenF1 (LiveTable heard rows NextUnknown)
+      serveFresh env now OpenF1 (LiveTable heard rows [] NextUnknown)
     Right _                      -> fromCache env
     Left e                       -> noteFailure "las filas" e >> fromCache env
 
@@ -448,7 +448,7 @@ fromCache env = do
     fromEntry (fetchedAt, source, table) =
       Provenanced Cached (Just source) (Just fetchedAt) (frozen table)
     frozen table = table { liveSession = freezeClock <$> liveSession table }
-    sample = Provenanced Sample Nothing Nothing (LiveTable Nothing dummy NextUnknown)
+    sample = Provenanced Sample Nothing Nothing (LiveTable Nothing dummy [] NextUnknown)
 
 -- | Fetch de los 5 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
 --

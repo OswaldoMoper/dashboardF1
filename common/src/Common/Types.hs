@@ -3,7 +3,8 @@
 module Common.Types where
 
 import           Common.Format (ClockForm (..), formatClock, formatCountdown)
-import           Data.Aeson    (FromJSON (..), ToJSON (..), withText)
+import           Data.Aeson    (FromJSON (..), ToJSON (..), withObject,
+                                withText, (.!=), (.:), (.:?))
 import           Data.Maybe    (catMaybes, fromMaybe, isJust, listToMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
@@ -763,11 +764,12 @@ waitingSession s =
     , siTrack = Nothing, siCountdown = Nothing, siStart = Nothing
     , siCutOffTime = Nothing }
 
--- | La tabla mientras la página espera: la sesión según 'waitingSession' y sin filas.
--- __Lo que viene después sí se dice__: solo cuenta cómo acabó la sesión si la página se
--- abre en los segundos del retraso justo después de que acabe.
+-- | La tabla mientras la página espera: la sesión según 'waitingSession', sin filas y sin
+-- stints. __Lo que viene después sí se dice__: solo cuenta cómo acabó la sesión si la
+-- página se abre en los segundos del retraso justo después de que acabe.
 waitingTable :: LiveTable -> LiveTable
-waitingTable t = t {liveSession = waitingSession <$> liveSession t, liveRows = []}
+waitingTable t =
+  t {liveSession = waitingSession <$> liveSession t, liveRows = [], liveStints = []}
 
 -- | Qué significa un asterisco.
 --
@@ -794,6 +796,9 @@ data LiveTable = LiveTable
     -- ninguna. __Es «no se sabe» y no «sesión en blanco»__, que son distintos: una
     -- sesión con todos los campos vacíos afirmaría que el emisor los mandó así.
   , liveRows    :: [LiveTimingRow]
+  , liveStints  :: [TyreStint]
+    -- ^ Los stints de la misma foto que 'liveRows'. Vacío con OpenF1 y el dato de
+    -- ejemplo, que no los traen.
   , liveNext    :: UpNext
     -- ^ Qué viene después de 'liveSession', __ya resuelto al instante de
     -- responder__.
@@ -801,7 +806,15 @@ data LiveTable = LiveTable
   deriving stock (Eq, Show, Generic)
 
 instance ToJSON LiveTable
-instance FromJSON LiveTable
+
+-- | Una respuesta sin @liveStints@ se lee con la lista vacía, no como un fallo.
+instance FromJSON LiveTable where
+  parseJSON = withObject "LiveTable" $ \o ->
+    LiveTable
+      <$> o .:? "liveSession"
+      <*> o .:  "liveRows"
+      <*> o .:? "liveStints" .!= []
+      <*> o .:  "liveNext"
 
 -- | Punto de telemetría a lo largo de una vuelta.
 --

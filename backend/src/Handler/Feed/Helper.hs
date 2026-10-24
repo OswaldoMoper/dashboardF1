@@ -21,8 +21,9 @@ module Handler.Feed.Helper
   , FeedTrack (..)
   ) where
 
-import           Data.Aeson (FromJSON (..), withObject, (.!=), (.:), (.:?))
-import           Data.Text  (Text)
+import           Common.Types (TyreStint)
+import           Data.Aeson   (FromJSON (..), withObject, (.!=), (.:), (.:?))
+import           Data.Text    (Text)
 
 -- | Lo que @GET \/fastf1\/live@ entrega: la tabla y de qué sesión es.
 --
@@ -40,6 +41,9 @@ import           Data.Text  (Text)
 data FeedLive = FeedLive
   { flSession :: Maybe FeedSession
   , flRows    :: [FeedRow]
+  , flStints  :: [TyreStint]
+    -- ^ Los de la misma foto, ya con la forma del DTO: sin la clave, ninguno; un
+    -- stint que no decodifique hace fallar la respuesta entera.
   }
   deriving (Eq, Show)
 
@@ -48,6 +52,7 @@ instance FromJSON FeedLive where
     FeedLive
       <$> o .:? "session"
       <*> o .:  "rows"
+      <*> o .:? "stints" .!= []
 
 -- | Una fila de la tabla que sirve el microservicio.
 --

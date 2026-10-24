@@ -1064,7 +1064,7 @@ feedVerdict :: UTCTime -> FeedLive -> FeedVerdict
 feedVerdict now live
   | null (flRows live) = FeedEmpty
   | keepsGoing         =
-      FeedServes (LiveTable session (feedRows (flRows live)) NextUnknown)
+      FeedServes (LiveTable session (feedRows (flRows live)) (flStints live) NextUnknown)
   | otherwise          = FeedFinalised (fromMaybe finalisedHeard (siState =<< session))
   where
     session   = feedSession now <$> flSession live

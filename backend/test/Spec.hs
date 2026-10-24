@@ -195,9 +195,12 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               upNextLabel, waitingSession,
                                               waitingTable)
 import           Config                      (openF1Log, telemetrySocket)
-import           Data.Aeson                  (Value (..), decodeStrictText,
-                                              eitherDecode, eitherDecodeStrict,
-                                              encode, toJSON)
+import           Data.Aeson                  (FromJSON (..), Value (..),
+                                              decodeStrictText, eitherDecode,
+                                              eitherDecodeStrict, encode,
+                                              toJSON)
+import qualified Data.Aeson.KeyMap           as KM
+import           Data.Aeson.Types            (parseEither)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import qualified Data.ByteString.Lazy        as LBS
@@ -701,18 +704,7 @@ main = hspec $ do
   -- los campos del DTO, y nuevo y mismo juego llegan siempre dichos.
   describe "TyreStint del feed" $
     it "decodifica un stint con las claves de _feed_stints" $
-      eitherDecodeStrict feedStintBor
-        `shouldBe` Right TyreStint
-          { tsDriver   = "BOR"
-          , tsCar      = "5"
-          , tsCompound = "MEDIUM"
-          , tsStartLap = 4
-          , tsEndLap   = 6
-          , tsLaps     = 3
-          , tsAge      = 3
-          , tsNew      = Just False
-          , tsSameSet  = Just True
-          }
+      eitherDecodeStrict feedStintBor `shouldBe` Right borStint
 
   -- La escalera de `/api/tyre-strategy` con su procedencia. Lo guardado lleva una
   -- tanda distinta de la traída en todos los casos, para que servir la equivocada no
@@ -1081,11 +1073,11 @@ main = hspec $ do
         `shouldBe` [[lapA, lapB, []]]
 
     it "otra sesión empieza de cero, y una foto sin sesión no la cambia" $ do
-      let seen = rememberSectors (FeedLive (Just sectorSession) [sectorRow "1:35.757" lapA "1:35.757" []]) emptySectorMemory
+      let seen = rememberSectors (FeedLive (Just sectorSession) [sectorRow "1:35.757" lapA "1:35.757" []] []) emptySectorMemory
           other = sectorSession { fsName = "Race" }
-          served memory = map ltBestSectors (liveRows (withLapSectors memory (LiveTable Nothing (feedRows [sectorRow "1:37.000" [] "1:35.757" []]) NextUnknown)))
-      served (rememberSectors (FeedLive Nothing []) seen) `shouldBe` [lapA]
-      served (rememberSectors (FeedLive (Just other) []) seen) `shouldBe` [[]]
+          served memory = map ltBestSectors (liveRows (withLapSectors memory (LiveTable Nothing (feedRows [sectorRow "1:37.000" [] "1:35.757" []]) [] NextUnknown)))
+      served (rememberSectors (FeedLive Nothing [] []) seen) `shouldBe` [lapA]
+      served (rememberSectors (FeedLive (Just other) [] []) seen) `shouldBe` [[]]
 
     prop "la mejor lleva los sectores de la última foto válida con su tiempo, o ninguno" $
       \laps -> not (null laps) ==>
@@ -1278,7 +1270,7 @@ main = hspec $ do
   describe "feedVerdict" $ do
     it "con filas y la sesión en marcha, sirve el feed" $
       fmap (feedVerdict raceServedAt) (tryLive feedLiveFull)
-        `shouldBe` Right (FeedServes (LiveTable (Just raceSessionFixture) feedRowsFixture NextUnknown))
+        `shouldBe` Right (FeedServes (LiveTable (Just raceSessionFixture) feedRowsFixture [] NextUnknown))
 
     it "con filas pero la sesión finalizada, NO sirve el feed" $
       -- El feed sigue devolviendo la clasificación final durante horas, y servirla
@@ -1294,7 +1286,25 @@ main = hspec $ do
 
     it "con filas y sin sesión, se sirve: la ausencia no es la señal contraria" $
       fmap (feedVerdict raceServedAt) (tryLive feedLiveWithoutSession)
-        `shouldBe` Right (FeedServes (LiveTable Nothing feedRowsFixture NextUnknown))
+        `shouldBe` Right (FeedServes (LiveTable Nothing feedRowsFixture [] NextUnknown))
+
+    it "sirve los stints de la misma foto que las filas" $
+      fmap (feedVerdict raceServedAt) (tryLive feedLiveWithStints)
+        `shouldBe` Right (FeedServes (LiveTable (Just raceSessionFixture) feedRowsFixture [borStint] NextUnknown))
+
+  -- La tabla que sirve @\/api\/live@ y lee la página. Una respuesta sin @liveStints@ (la
+  -- grabación del navegador, o un backend anterior a los stints) se lee sin stints, no
+  -- como un fallo que mande la tabla al respaldo.
+  describe "LiveTable en el cable" $ do
+    it "lo que se codifica se lee igual, stints incluidos" $
+      eitherDecode (encode liveTableFixture {liveStints = [borStint]})
+        `shouldBe` Right liveTableFixture {liveStints = [borStint]}
+
+    it "sin la clave liveStints se lee con la lista vacía" $
+      case toJSON liveTableFixture {liveStints = [borStint]} of
+        Object o -> parseEither parseJSON (Object (KM.delete "liveStints" o))
+                      `shouldBe` Right liveTableFixture
+        other    -> expectationFailure ("no es un objeto: " <> show other)
 
   -- Lo que el log dice cuando un fetch no sale. Hasta el 2026-09-17 no decía nada, y
   -- el rechazo por ritmo de OpenF1 hubo que deducirlo midiendo la API por fuera.
@@ -4720,7 +4730,10 @@ main = hspec $ do
 
     it "mientras espera, la tabla no tiene filas pero sí dice qué viene después" $
       waitingTable liveTableFixture {liveNext = NextStartsIn 60}
-        `shouldBe` LiveTable (Just (waitingSession raceSessionFixture)) [] (NextStartsIn 60)
+        `shouldBe` LiveTable (Just (waitingSession raceSessionFixture)) [] [] (NextStartsIn 60)
+
+    it "mientras espera, tampoco enseña stints: la parada no sale antes que en la TV" $
+      liveStints (waitingTable liveTableFixture {liveStints = [borStint]}) `shouldBe` []
 
   -- Una respuesta 200 que no nombra su sesión no es un fallo, así que 'pollStep' no
   -- la conserva: la tabla llega entera y lo que falta es un campo de dentro. Lo que
@@ -5530,7 +5543,7 @@ main = hspec $ do
        in map (Auto.pageCheck [3000, 3001] . Just)
             [ base {Auto.pgScript = Just 404}
             , base {Auto.pgLive = Just (200, "<html>")}
-            , base {Auto.pgLive = Just (200, encode (LiveTable Nothing [] NextUnknown))}
+            , base {Auto.pgLive = Just (200, encode (LiveTable Nothing [] [] NextUnknown))}
             , base {Auto.pgIndexType = Just "application/json"}
             , base {Auto.pgLive = Nothing}
             ]
@@ -6683,9 +6696,9 @@ sectorSession = either error id (trySession feedSessionMalaysiaQuali)
 -- última, con lo guardado de todas.
 servedAfter :: [[FeedRow]] -> [LiveTimingRow]
 servedAfter photos =
-  liveRows (withLapSectors memory (LiveTable Nothing (feedRows (last photos)) NextUnknown))
+  liveRows (withLapSectors memory (LiveTable Nothing (feedRows (last photos)) [] NextUnknown))
   where
-    memory = foldl' (\m rows -> rememberSectors (FeedLive (Just sectorSession) rows) m) emptySectorMemory photos
+    memory = foldl' (\m rows -> rememberSectors (FeedLive (Just sectorSession) rows []) m) emptySectorMemory photos
 
 bestSectorsAfter :: [[FeedRow]] -> [[T.Text]]
 bestSectorsAfter = map ltBestSectors . servedAfter
@@ -6720,6 +6733,12 @@ feedLiveFull =
 -- dos grabaciones; el cable tiene que poder decirlo igual.
 feedLiveWithoutSession :: ByteString
 feedLiveWithoutSession = "{\"session\":null,\"rows\":" <> feedTable <> "}"
+
+-- 'feedLiveFull' con los stints, que el microservicio manda en la misma foto.
+feedLiveWithStints :: ByteString
+feedLiveWithStints =
+  "{\"session\":" <> feedSessionRace <> ",\"rows\":" <> feedTable
+    <> ",\"stints\":[" <> feedStintBor <> "]}"
 
 feedLiveSessionAbsent :: ByteString
 feedLiveSessionAbsent = "{\"rows\":" <> feedTable <> "}"
@@ -7085,6 +7104,20 @@ feedStintBor :: ByteString
 feedStintBor =
   "{\"tsDriver\":\"BOR\",\"tsCar\":\"5\",\"tsCompound\":\"MEDIUM\",\"tsStartLap\":4,\
   \\"tsEndLap\":6,\"tsLaps\":3,\"tsAge\":3,\"tsNew\":false,\"tsSameSet\":true}"
+
+-- | 'feedStintBor' ya decodificado.
+borStint :: TyreStint
+borStint = TyreStint
+  { tsDriver   = "BOR"
+  , tsCar      = "5"
+  , tsCompound = "MEDIUM"
+  , tsStartLap = 4
+  , tsEndLap   = 6
+  , tsLaps     = 3
+  , tsAge      = 3
+  , tsNew      = Just False
+  , tsSameSet  = Just True
+  }
 
 -- | Un stint del coche 1 con @tyre_age_at_start@ 3: el juego usado que 'stint', con su
 -- edad 0, no deja escribir.
@@ -7477,7 +7510,7 @@ feedRowsMalaysiaQ2 =
 
 -- | Lo que sirve el peldaño del feed: las filas y la sesión que las nombra.
 liveTableFixture :: LiveTable
-liveTableFixture = LiveTable (Just raceSessionFixture) liveRowsFixture NextUnknown
+liveTableFixture = LiveTable (Just raceSessionFixture) liveRowsFixture [] NextUnknown
 
 -- | 'servedFromBox' sobre 'liveTableFixture', guardada en el instante dado y servida
 -- tantos segundos después. Lo que varía entre casos es la edad, y es lo único que
@@ -7495,7 +7528,7 @@ boxClock (origin, table) = (origin, siClock =<< liveSession table)
 -- dato de ejemplo. __Es «no se sabe» y no una sesión vacía__, que es la distinción
 -- que motiva el 'Maybe' de 'Common.Types.liveSession'.
 namelessTableFixture :: LiveTable
-namelessTableFixture = LiveTable Nothing liveRowsFixture NextUnknown
+namelessTableFixture = LiveTable Nothing liveRowsFixture [] NextUnknown
 
 -- | Las 14:03:22 UTC del 2026-09-11 __con fracción de segundo__, que es lo que da
 -- 'getCurrentTime': 'fetchedAtText' tiene que tirarla.
@@ -7685,6 +7718,7 @@ liveOf :: T.Text -> SessionState -> StateBasis -> LiveTable
 liveOf name st basis =
   LiveTable
     (Just ((stateless "United States Grand Prix") {siName = name, siState = Just (StateReading st basis)}))
+    []
     []
     NextUnknown
 
