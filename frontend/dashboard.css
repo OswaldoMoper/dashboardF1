@@ -19,6 +19,15 @@
   --c-sample:    #3b8eea;  /* dato de ejemplo: azul, porque nunca fue cierto */
   --c-fastest:   #b36bff;  /* la vuelta más rápida de la parte en curso: el morado de la F1 */
 
+  /* Compuestos de Pirelli, validados sobre --c-surface (2026-10-23 (b)); el de lluvia,
+     aclarado para que se lea sobre oscuro. */
+  --c-tyre-soft:         #e10600;
+  --c-tyre-medium:       #ffd12e;
+  --c-tyre-hard:         #f0f0ec;
+  --c-tyre-intermediate: #43b02a;
+  --c-tyre-wet:          #2b8fd6;
+  --c-tyre-unknown:      #9aa1b1;
+
   /* Escala tipográfica. */
   --fs-xs: 0.75rem;
   --fs-sm: 0.8125rem;
@@ -1639,6 +1648,83 @@ body {
   margin-left: var(--sp-4);
   color: #e10600;
 }
+
+/* ── Tyre Strategy ──────────────────────────────────────────────────────── */
+
+/* La leyenda mide lo que la cabecera de `.live-timing` y cada fila lo que una de las
+   suyas (misma letra, mismo relleno vertical y misma raya), para que en el layout
+   Strategy las dos tarjetas queden a la par. */
+.tyre-strategy__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  font-size: var(--fs-xs);
+  color: var(--c-muted);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.tyre-strategy__key::before {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: var(--sp-1);
+  vertical-align: -0.05em;
+  background: var(--tyre);
+}
+
+.tyre-strategy__scale {
+  margin-left: auto;
+}
+
+.tyre-strategy {
+  font-size: var(--fs-sm);
+}
+
+.tyre-strategy__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--c-surface-2);
+}
+
+.tyre-strategy__label {
+  flex: none;
+  width: 7ch;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tyre-strategy__track {
+  position: relative;
+  flex: 1;
+  height: 1.45em;
+}
+
+/* La separación entre stints es una raya del color de la tarjeta al final de cada uno,
+   igual para cualquier cambio de stint (también el mismo juego). */
+.tyre-strategy__bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--tyre);
+  box-shadow: inset -1px 0 0 var(--c-surface);
+}
+
+/* Un stint de 0 vueltas: una marca fina en su sitio. */
+.tyre-strategy__bar--thin {
+  min-width: 4px;
+}
+
+.tyre--soft         { --tyre: var(--c-tyre-soft); }
+.tyre--medium       { --tyre: var(--c-tyre-medium); }
+.tyre--hard         { --tyre: var(--c-tyre-hard); }
+.tyre--intermediate { --tyre: var(--c-tyre-intermediate); }
+.tyre--wet          { --tyre: var(--c-tyre-wet); }
+.tyre--unknown      { --tyre: var(--c-tyre-unknown); }
 
 /* ── Estados ────────────────────────────────────────────────────────────── */
 

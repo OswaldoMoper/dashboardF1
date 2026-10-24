@@ -25,6 +25,7 @@ executable frontend
         Widgets.Live
         Widgets.LiveTiming
         Widgets.Telemetry
+        Widgets.TyreStrategy
     build-depends:
         base        >= 4.14 && < 5
       , aeson

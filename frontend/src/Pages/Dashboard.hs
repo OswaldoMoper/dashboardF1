@@ -7,9 +7,9 @@
 -- La pantalla no monta widgets hardcodeados: se **deriva de un 'Layout'**
 -- ('Common.Types'). 'renderWidget' despacha por
 -- 'widgetType' a los widgets existentes ('liveTimingWidget' \/ 'telemetryWidget') y
--- da un placeholder para los tipos aún no implementados. Dos botones conmutan entre
--- dos 'Layout' fijos ('raceOverview' \/ 'qualy') sosteniendo un @Dynamic t Layout@;
--- los dos se montan una vez, cada uno en su capa, y el inactivo se oculta
+-- da un placeholder para los tipos aún no implementados. Tres botones conmutan entre
+-- tres 'Layout' fijos ('raceOverview' \/ 'qualy' \/ 'strategy') sosteniendo un
+-- @Dynamic t Layout@; todos se montan una vez, cada uno en su capa, y los inactivos se ocultan
 -- ('layer'). Único consumidor de
 -- 'Layout'\/'WidgetConfig'\/'WidgetType'\/'WidgetParams'\/'WidgetId'.
 --
@@ -97,6 +97,7 @@ import           Widgets.Live                  (LiveView (..), delayedLive,
                                                 livePoll, sessionOf)
 import           Widgets.LiveTiming            (liveTimingWidget)
 import           Widgets.Telemetry             (telemetryWidget)
+import           Widgets.TyreStrategy          (tyreStrategyWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
 -- __banda de sesión__ y el __lienzo__ con los dos layouts, cada widget en su
@@ -128,7 +129,7 @@ dashboardPage = divClass "page page--dashboard" $ mdo
   openDyn     <- toggle True toggleClick
   poll        <- livePoll
   initial     <- fromMaybe delayDefaultSeconds . delayFromUrl <$> getLocationUrl
-  restored    <- mapM (\l -> (,) l <$> liftJSM (readSaved l)) [raceOverview, qualy]
+  restored    <- mapM (\l -> (,) l <$> liftJSM (readSaved l)) [raceOverview, qualy, strategy]
   let unfit l = lookup l restored == Just Unfit
   (layoutDyn, live, edit) <- divClass "top-bar" $ do
     (active, delay, editing) <- dashboardHeader initial openDyn unfit shownAtFactory anyMoved
@@ -674,17 +675,19 @@ layoutSwitcher unfit atFactoryNow movedNow = divClass "layout-switcher" $ mdo
   let entering = () <$ ffilter id (updated editing)
   notedAtEntry <- holdDyn True (tag (current noted) entering)
   noted <- holdDyn True $ leftmost [False <$ entering, tag (current notedAtEntry) cancel]
-  open  <- holdDyn True (False <$ leftmost [overviewClose, qualyClose])
-  hover <- holdDyn False (leftmost [overviewHover, qualyHover])
+  open  <- holdDyn True (False <$ leftmost [overviewClose, qualyClose, strategyClose])
+  hover <- holdDyn False (leftmost [overviewHover, qualyHover, strategyHover])
   let shown = (&&) <$> noted <*> ((||) <$> open <*> hover)
-      names = [name | (l, name) <- [(raceOverview, "Race Overview"), (qualy, "Qualy")], unfit l]
-      holder = listToMaybe (filter unfit [raceOverview, qualy])
+      names = [name | (l, name) <- [(raceOverview, "Race Overview"), (qualy, "Qualy"), (strategy, "Strategy")], unfit l]
+      holder = listToMaybe (filter unfit [raceOverview, qualy, strategy])
       item l = layoutButton noted shown (unfit l) (holder == Just l) (unfitNote names)
   (overviewClick, overviewHover, overviewClose) <- item raceOverview "Race Overview"
   (qualyClick, qualyHover, qualyClose)          <- item qualy "Qualy"
+  (strategyClick, strategyHover, strategyClose) <- item strategy "Strategy"
   active <- holdDyn raceOverview $ leftmost
     [ raceOverview <$ overviewClick
     , qualy        <$ qualyClick
+    , strategy     <$ strategyClick
     ]
   (editing, finish) <- editToggle cancel
   magnet <- magnetToggle editing cancel
@@ -831,7 +834,7 @@ renderWidget live revealed control put wc = case widgetType wc of
   LiveTiming       -> never <$ liveTimingWidget live
   Telemetry        -> never <$ telemetryWidget
   LapComparison    -> comparisonWidget live revealed control put
-  TyreStrategy     -> never <$ placeholderWidget "Tyre Strategy"
+  TyreStrategy     -> never <$ tyreStrategyWidget live
   HistoricalStats  -> never <$ driverStatsWidget
   ConstructorStats -> never <$ constructorStatsWidget
   Custom           -> never <$ placeholderWidget "Custom"
@@ -914,4 +917,15 @@ qualy :: Layout
 qualy = Layout
   { layoutId = LayoutId "qualy"
   , widgets  = [cfg (WidgetId "qualy-live-timing") LiveTiming (0, 0, 120, 120)]
+  }
+
+-- | Layout "Strategy": live timing y Tyre Strategy, mitad y mitad y a todo el alto, para
+-- que las filas de las dos tarjetas queden a la par.
+strategy :: Layout
+strategy = Layout
+  { layoutId = LayoutId "strategy"
+  , widgets  =
+      [ cfg (WidgetId "strategy-live-timing") LiveTiming   ( 0, 0, 60, 120)
+      , cfg (WidgetId "tyre-strategy")        TyreStrategy (60, 0, 60, 120)
+      ]
   }

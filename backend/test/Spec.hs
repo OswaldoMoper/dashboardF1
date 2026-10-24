@@ -195,8 +195,10 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               upNextLabel, waitingSession,
                                               waitingTable)
 import           Common.TyreStrategy         (StintBar (..), StintRow (..),
-                                              compoundClass, stintRows,
-                                              stintScale, stintTitle)
+                                              barStyle, compoundClass,
+                                              compoundLegend, rowLabel,
+                                              scaleLabel, stintRows, stintScale,
+                                              stintTitle)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (FromJSON (..), Value (..),
                                               decodeStrictText, eitherDecode,
@@ -747,6 +749,20 @@ main = hspec $ do
     it "el color, por compuesto; lo que no se reconoce, unknown" $
       map compoundClass ["SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET", "UNKNOWN", "TEST_UNKNOWN"]
         `shouldBe` ["soft", "medium", "hard", "intermediate", "wet", "unknown", "unknown"]
+
+    it "la leyenda trae una letra por cada clase que puede salir" $
+      map fst compoundLegend `shouldBe` ["soft", "medium", "hard", "intermediate", "wet", "unknown"]
+
+    it "el style de la barra, en por ciento y sin notación científica" $
+      map barStyle (concatMap srBars (take 1 (stintRows stintTable)) ++ srBars (stintRows stintTable !! 3))
+        `shouldBe` [ "left: 0.000%; width: 25.000%", "left: 25.000%; width: 9.375%"
+                   , "left: 34.375%; width: 59.375%", "left: 6.250%; width: 0.000%" ]
+
+    it "la etiqueta: posición y piloto, o solo el piloto sin fila" $
+      map rowLabel (stintRows stintTable) `shouldBe` ["1 LEC", "2 COL", "3 VER", "#9", "#10"]
+
+    it "la escala: en plural, salvo una vuelta" $
+      map scaleLabel [1, 32] `shouldBe` ["1 vuelta", "32 vueltas"]
 
   -- La escalera de `/api/tyre-strategy` con su procedencia. Lo guardado lleva una
   -- tanda distinta de la traída en todos los casos, para que servir la equivocada no

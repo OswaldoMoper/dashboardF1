@@ -7,8 +7,12 @@ module Common.TyreStrategy
   , stintRows
   , stintScale
   , stintBar
+  , barStyle
   , stintTitle
+  , rowLabel
   , compoundClass
+  , compoundLegend
+  , scaleLabel
   , noStintsNotice
   ) where
 
@@ -20,6 +24,7 @@ import           Data.List     (nubBy, sortOn)
 import           Data.Maybe    (fromMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
+import           Numeric       (showFFloat)
 import           Text.Read     (readMaybe)
 
 -- | Una fila del widget: un coche y sus stints en orden.
@@ -71,6 +76,28 @@ stintBar scale s = StintBar
   , sbClass = compoundClass (tsCompound s)
   , sbTitle = stintTitle s
   }
+
+-- | El @style@ de la barra: @left: 25.000%; width: 9.375%@. Con ancho 0 la marca fina
+-- la pone la hoja de estilos.
+barStyle :: StintBar -> Text
+barStyle b = "left: " <> percent (sbStart b) <> "; width: " <> percent (sbWidth b)
+  where
+    percent x = T.pack (showFFloat (Just 3) (100 * x) "") <> "%"
+
+-- | Lo que va a la izquierda de la fila: @1 LEC@; sin fila en la tabla, solo el piloto.
+rowLabel :: StintRow -> Text
+rowLabel r = maybe "" (\p -> showT p <> " ") (srPosition r) <> srDriver r
+
+-- | La leyenda, en su orden: la clase de cada compuesto y su letra.
+compoundLegend :: [(Text, Text)]
+compoundLegend =
+  [ ("soft", "S"), ("medium", "M"), ("hard", "H"), ("intermediate", "I"), ("wet", "W")
+  , ("unknown", "?") ]
+
+-- | La escala al final de la leyenda: @32 vueltas@, o @1 vuelta@.
+scaleLabel :: Int -> Text
+scaleLabel 1 = "1 vuelta"
+scaleLabel n = showT n <> " vueltas"
 
 -- | El tooltip: @MEDIUM · vueltas 14–21 (8) · usado, edad 2 · mismo juego@. Con 0
 -- vueltas, @desde la vuelta 3 (0)@; sin nuevo/usado, solo la edad; sin mismo juego, nada.

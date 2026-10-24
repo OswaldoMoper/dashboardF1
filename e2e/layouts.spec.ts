@@ -4,7 +4,7 @@ import { openDashboard } from './serve';
 type Box = { x: number; y: number; width: number; height: number };
 
 // En el orden en que `Pages.Dashboard` monta sus capas: la capa n es la del layout n.
-const LAYOUTS = ['Race Overview', 'Qualy'] as const;
+const LAYOUTS = ['Race Overview', 'Qualy', 'Strategy'] as const;
 type Layout = (typeof LAYOUTS)[number];
 
 // Margen para el redondeo de los porcentajes a píxeles.
@@ -82,6 +82,16 @@ test.describe('los layouts', () => {
       expect(await slots(await show(page, layout))).toEqual(before);
     });
   }
+});
+
+// La grabación sirve `/api/live` de OpenF1 y sin `liveStints`: la tarjeta lo dice y no
+// pinta filas. Sin retraso, para no esperar los 41 s de fábrica.
+test('Tyre Strategy fuera del feed: el aviso y ninguna fila', async ({ page }) => {
+  await openDashboard(page);
+  await page.goto('/?retraso=0');
+  const card = (await show(page, 'Strategy')).locator('.widget--tyre-strategy');
+  await expect(card.locator('.tyre-strategy__notice')).toHaveText('Sin stints: salen del directo');
+  await expect(card.locator('.tyre-strategy__row')).toHaveCount(0);
 });
 
 test.describe('el modo edición', () => {
