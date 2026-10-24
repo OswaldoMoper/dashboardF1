@@ -97,6 +97,11 @@ Módulos (top-level, sin prefijo `Frontend.`; convención del 2026-07-16):
   cuando haya una segunda ruta, y XSRF y `location` en `Client` cuando haya mutaciones (POST/PUT) y navegación.
 - **`Pages/`:** un módulo por flujo (`Pages.<Flujo>`).
 - **`Widgets/`:** widgets compartidos por categoría.
+- **Tyre Strategy:** lo puro vive en `common` (`Common.TyreStrategy`: las filas, la escala, la geometría de cada
+  barra, el tooltip y la leyenda) y `Widgets.TyreStrategy` lo pinta. Una fila por cada fila de la tabla, por posición,
+  con los stints de la **misma** respuesta de `/api/live`; después, los coches con stints y sin fila. Fuera del feed, un
+  aviso y ninguna fila. Va en el layout **Strategy** (Live Timing y Tyre Strategy, mitad y mitad), el tercero del
+  conmutador junto a Race Overview y Qualy.
 - Rutas con un módulo `Route` compartido en `common` (mismas URLs en ambos extremos).
 
 ---
@@ -124,6 +129,12 @@ sectores de cada uno; la Δ la calcula `common`. Con `samples` (0, o de 60 a 250
 fronteras S1/S2 y la traza de la misma vuelta.
 Un acrónimo que la sesión reconoce se acepta y **se traduce a número a la entrada**, así que la respuesta
 lleva números también en ese caso (2026-09-23); lo que no reconoce pasa tal cual.
+
+Además, `GET /fastf1/live` sirve la foto del feed en directo (`feed._feed_live`): la sesión, las filas y los stints,
+los tres de la **misma** foto, para que no hablen de instantes distintos. Los stints (`feed._feed_stints`) salen de
+`TimingAppData`, uno por entrada y sin omitir el `UNKNOWN` ni el de 0 vueltas, con las vueltas **completadas**. El
+backend los lee en `Handler.Feed.Helper`. `telemetry-service/tests/compara_stints.py` compara los de una grabación con
+OpenF1 `/v1/stints`, fuera de sesión (con una en marcha, OpenF1 da 401).
 
 La comparación devuelve **también el número de coche** (`ceCar`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**.
 
@@ -175,6 +186,8 @@ El flujo de datos del sistema sigue una arquitectura en capas:
     - El backend consume el microservicio vía HTTP.
 4. Backend → Frontend (Reflex)
     - El frontend obtiene datos vía REST (fetch) y WebSockets (live timing).
+    - `/api/live` lleva, junto a las filas, los stints de la misma foto (`liveStints`); con OpenF1 y el dato de
+      ejemplo, la lista vacía.
     - Los widgets renderizan la información.
 5. Analysis Module → Backend → Widgets
     - KPIs avanzados derivados del repositorio Mathematical_Data_Analysis.
@@ -183,6 +196,7 @@ El flujo de datos del sistema sigue una arquitectura en capas:
 Resumen textual:
 
 - OpenF1 → Backend → Widgets (live timing, stints, laps)
+- Feed oficial → Microservicio (`/fastf1/live`) → Backend (`/api/live`) → Widgets (live timing, Tyre Strategy)
 - Jolpica → Backend → Widgets (histórico)
 - FastF1 → Microservicio → Backend → Widgets (telemetría)
 - Mathematical_Data_Analysis → Backend → Widgets (KPIs)
