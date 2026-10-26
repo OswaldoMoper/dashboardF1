@@ -349,7 +349,7 @@ openf1Verdict code = case code of
 data LogCount = LogCount
   { lcErrors      :: Int  -- ^ Las que cuentan como error.
   , lcRateLimited :: Int  -- ^ Los 429 de OpenF1, cuyo cuerpo dice @"error"@.
-  , lcFeedCuts    :: Int  -- ^ Los cortes del feed (@Broken pipe@, @SSLError@).
+  , lcFeedCuts    :: Int  -- ^ Los cortes del feed (@Broken pipe@, @SSLError@, @Socket closed@).
   }
   deriving (Eq, Show)
 
@@ -358,19 +358,21 @@ data LogCount = LogCount
 sinceLastStart :: [Text] -> [Text]
 sinceLastStart = reverse . takeWhile (not . (T.pack startupMark `T.isInfixOf`)) . reverse
 
--- | Sin distinguir mayúsculas. Un corte del feed ocupa tres líneas y cuenta tres.
+-- | Sin distinguir mayúsculas. Cada línea con «error» de un corte del feed cuenta una: tres
+-- en un @Broken pipe@, cuatro en un @Socket closed@.
 countLog :: [Text] -> LogCount
 countLog = foldr (tally . T.toLower) (LogCount 0 0 0)
   where
     tally l c
       | not ("error" `T.isInfixOf` l)                      = c
       | "[openf1]" `T.isInfixOf` l && " 429 " `T.isInfixOf` l = c {lcRateLimited = lcRateLimited c + 1}
-      | "broken pipe" `T.isInfixOf` l || "ssl" `T.isInfixOf` l = c {lcFeedCuts = lcFeedCuts c + 1}
+      | any (`T.isInfixOf` l) feedCuts                     = c {lcFeedCuts = lcFeedCuts c + 1}
       | otherwise                                          = c {lcErrors = lcErrors c + 1}
+    feedCuts = ["broken pipe", "ssl", "socket closed", "socketclosederror"]
 
 -- | El juicio del log y su detalle: un error es FALLA; solo 429 o cortes, AVISO.
 logCheck :: LogCount -> (Verdict, Text)
-logCheck c = (verdict, T.pack (printf "%d con «error», %d de OpenF1 429, %d de Broken pipe/SSL" (lcErrors c) (lcRateLimited c) (lcFeedCuts c)))
+logCheck c = (verdict, T.pack (printf "%d con «error», %d de OpenF1 429, %d de cortes del feed" (lcErrors c) (lcRateLimited c) (lcFeedCuts c)))
   where
     verdict
       | lcErrors c > 0                          = Falla

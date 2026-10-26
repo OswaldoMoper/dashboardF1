@@ -5284,6 +5284,9 @@ main = hspec $ do
     it "los 429 de OpenF1 y los cortes del feed no son errores (líneas de un log de GP)" $
       Auto.countLog gpLogLines `shouldBe` Auto.LogCount 0 1 6
 
+    it "«Socket closed» es un corte del feed: sus cuatro líneas con «error», ninguna error" $
+      Auto.countLog socketClosedLines `shouldBe` Auto.LogCount 0 0 4
+
     it "un error de verdad es FALLA aunque haya avisos; solo avisos, AVISO; nada, OK" $
       map (fst . Auto.logCheck . Auto.countLog)
           [ "src/Handler/Live.hs:12:3: error: [GHC-88464]" : gpLogLines
@@ -5308,7 +5311,7 @@ main = hspec $ do
 
     it "el detalle dice cuántas de cada clase" $
       snd (Auto.logCheck (Auto.LogCount 0 3 6))
-        `shouldBe` "0 con «error», 3 de OpenF1 429, 6 de Broken pipe/SSL"
+        `shouldBe` "0 con «error», 3 de OpenF1 429, 6 de cortes del feed"
 
   describe "Auto: las líneas de los ficheros" $ do
     it "comprobaciones.txt: hora de México y UTC, palabra, qué y detalle (D189)" $
@@ -5616,7 +5619,7 @@ main = hspec $ do
       map Auto.logVerdict [Nothing, Just ("/home/x/dev.txt", Nothing), Just ("/home/x/dev.txt", Just gpLogLines)]
         `shouldBe` [ (Auto.Aviso, "sin --log: no se mira")
                    , (Auto.Falla, "no existe /home/x/dev.txt")
-                   , (Auto.Aviso, "0 con «error», 1 de OpenF1 429, 6 de Broken pipe/SSL")
+                   , (Auto.Aviso, "0 con «error», 1 de OpenF1 429, 6 de cortes del feed")
                    ]
 
     it "lo que escribe una tanda: su línea en comprobaciones.txt y la cuenta en resumen.txt (D202, D203)" $
@@ -7940,4 +7943,27 @@ gpLogLines =
   , "fastf1  | 2026-10-02T05:50:26Z ssl.SSLError: [SSL] record layer failure (_ssl.c:2580)"
   , "fastf1  | 2026-10-02T05:50:26Z [SSL] record layer failure (_ssl.c:2580) <class 'ssl.SSLError'>"
   , "backend | 2026-10-10T08:08:47.986Z [openf1] sessions?date_end>=2026-10-10T08:08:47Z 200 0.757 s"
+  ]
+
+-- | Un corte «Socket closed» tal cual, del log del viernes de EE. UU.: cuatro líneas dicen
+-- «error» (también @raise SocketClosedError()@, que no dice «socket closed»).
+socketClosedLines :: [T.Text]
+socketClosedLines =
+  [ "fastf1  | 2026-10-23T17:31:48Z Receive error: Socket closed by the the server"
+  , "fastf1  | 2026-10-23T17:31:48Z Traceback (most recent call last):"
+  , "fastf1  | 2026-10-23T17:31:48Z   File \"/nix/store/ns6z1d4j0i5ilyfk8cy8kl2w583qwhk2-python3-3.12.11-env/lib/python3.12/site-packages/signalrcore/transport/sockets/base_socket_client.py\", line 165, in run"
+  , "fastf1  | 2026-10-23T17:31:48Z     message = self._recv_frame()"
+  , "fastf1  | 2026-10-23T17:31:48Z               ^^^^^^^^^^^^^^^^^^"
+  , "fastf1  | 2026-10-23T17:31:48Z   File \"/nix/store/ns6z1d4j0i5ilyfk8cy8kl2w583qwhk2-python3-3.12.11-env/lib/python3.12/site-packages/signalrcore/transport/websockets/websocket_client.py\", line 147, in _recv_frame"
+  , "fastf1  | 2026-10-23T17:31:48Z     fin, opcode, data = self._read_one_frame()"
+  , "fastf1  | 2026-10-23T17:31:48Z                         ^^^^^^^^^^^^^^^^^^^^^^"
+  , "fastf1  | 2026-10-23T17:31:48Z   File \"/nix/store/ns6z1d4j0i5ilyfk8cy8kl2w583qwhk2-python3-3.12.11-env/lib/python3.12/site-packages/signalrcore/transport/websockets/websocket_client.py\", line 142, in _read_one_frame"
+  , "fastf1  | 2026-10-23T17:31:48Z     data = self._recv_exactly(payload_len)"
+  , "fastf1  | 2026-10-23T17:31:48Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+  , "fastf1  | 2026-10-23T17:31:48Z   File \"/nix/store/ns6z1d4j0i5ilyfk8cy8kl2w583qwhk2-python3-3.12.11-env/lib/python3.12/site-packages/signalrcore/transport/websockets/websocket_client.py\", line 106, in _recv_exactly"
+  , "fastf1  | 2026-10-23T17:31:48Z     raise SocketClosedError()"
+  , "fastf1  | 2026-10-23T17:31:48Z signalrcore.transport.sockets.errors.SocketClosedError: Socket closed by the the server"
+  , "fastf1  | 2026-10-23T17:31:48Z "
+  , "fastf1  | 2026-10-23T17:31:48Z <signalrcore.transport.websockets.websocket_transport.WebsocketTransport object at 0x7c5ad447d7f0> Socket closed by the the server"
+  , "fastf1  | 2026-10-23T17:31:48Z Socket closed by the the server <class 'signalrcore.transport.sockets.errors.SocketClosedError'>"
   ]
