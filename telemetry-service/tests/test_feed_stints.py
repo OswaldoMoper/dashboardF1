@@ -64,6 +64,30 @@ def test_el_stint_sin_vueltas_completadas_sale_y_acaba_antes_de_empezar():
     assert {s["tsDriver"] for s in stints} == {"6"}
 
 
+def test_stroll_no_suma_mas_vueltas_de_las_que_lleva():
+    # El #18 en la carrera de Austin (2026-10-25, 20:29 UTC), en la vuelta 14: el feed abrió
+    # en la salida un stint «mismo juego» con 1 vuelta que no es una parada (las paradas,
+    # en las vueltas 15 y 41).
+    foto = {
+        "TimingAppData": {
+            "Lines": {
+                "18": {
+                    "Stints": [
+                        {"LapFlags": 0, "Compound": "MEDIUM", "New": "true", "TyresNotChanged": "0",
+                         "TotalLaps": 14, "StartLaps": 0},
+                        {"LapFlags": 0, "Compound": "MEDIUM", "New": "true", "TyresNotChanged": "1",
+                         "TotalLaps": 1, "StartLaps": 0},
+                    ]
+                }
+            }
+        },
+        "TimingData": {"Lines": {"18": {"NumberOfLaps": 14}}},
+    }
+    stints = feed._feed_stints(foto)
+    assert tramos(stints, "18") == [("MEDIUM", 1, 14), ("MEDIUM", 15, 14)]
+    assert [s["tsLaps"] for s in stints] == [14, 0]
+
+
 # ── Propiedades ───────────────────────────────────────────────────────────────
 
 compuestos = st.sampled_from(["SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET", "UNKNOWN"])
@@ -104,6 +128,34 @@ def por_coche(foto):
     return foto["TimingAppData"]["Lines"]
 
 
+def sin_tope(linea):
+    return [int(e["TotalLaps"]) - int(e["StartLaps"]) for e in linea["Stints"]]
+
+
+@st.composite
+def fotos_con_vueltas(draw):
+    """Una foto con ``NumberOfLaps`` para algunos coches; otros, con su línea de
+    ``TimingData`` sin él, y otros sin línea."""
+    foto = draw(fotos)
+    lineas = {}
+    for n in por_coche(foto):
+        forma = draw(st.sampled_from(["numero", "texto", "sin dato", "sin linea"]))
+        vueltas = draw(st.integers(0, 120))
+        if forma == "numero":
+            lineas[n] = {"NumberOfLaps": vueltas}
+        elif forma == "texto":
+            lineas[n] = {"NumberOfLaps": str(vueltas)}
+        elif forma == "sin dato":
+            lineas[n] = {}
+    foto["TimingData"] = {"Lines": lineas}
+    return foto
+
+
+def tope(foto, n):
+    linea = foto["TimingData"]["Lines"].get(n, {})
+    return int(linea["NumberOfLaps"]) if "NumberOfLaps" in linea else None
+
+
 @given(fotos)
 def test_un_stint_por_entrada_en_su_orden_y_los_coches_por_numero(foto):
     stints = feed._feed_stints(foto)
@@ -135,6 +187,37 @@ def test_las_vueltas_son_las_completadas_y_la_edad_la_del_juego(foto):
             assert s["tsAge"] == int(e["StartLaps"])
             assert s["tsNew"] == (e["New"] == "true")
             assert s["tsSameSet"] == (e["TyresNotChanged"] == "1")
+
+
+@given(fotos_con_vueltas())
+def test_ningun_coche_suma_mas_vueltas_de_las_que_lleva(foto):
+    stints = feed._feed_stints(foto)
+    for n, linea in por_coche(foto).items():
+        total = sum(s["tsLaps"] for s in stints if s["tsCar"] == n)
+        vueltas = tope(foto, n)
+        assert total == (sum(sin_tope(linea)) if vueltas is None else min(sum(sin_tope(linea)), vueltas))
+
+
+@given(fotos_con_vueltas())
+def test_lo_que_sobra_se_quita_del_ultimo_stint_hacia_atras(foto):
+    stints = feed._feed_stints(foto)
+    for n, linea in por_coche(foto).items():
+        vueltas = [s["tsLaps"] for s in stints if s["tsCar"] == n]
+        crudas = sin_tope(linea)
+        for k, (v, c) in enumerate(zip(vueltas, crudas)):
+            assert 0 <= v <= c
+            if v < c:
+                assert all(x == 0 for x in vueltas[k + 1:])
+
+
+@given(fotos_con_vueltas())
+def test_el_tope_no_toca_la_edad_ni_el_juego(foto):
+    sin = json.loads(json.dumps(foto))
+    del sin["TimingData"]
+    quitar = ("tsLaps", "tsStartLap", "tsEndLap")
+    assert [{k: v for k, v in s.items() if k not in quitar} for s in feed._feed_stints(foto)] == [
+        {k: v for k, v in s.items() if k not in quitar} for s in feed._feed_stints(sin)
+    ]
 
 
 @given(fotos)

@@ -211,6 +211,8 @@ def _feed_stints(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     * ``tsLaps`` son las vueltas **completadas** (``TotalLaps − StartLaps``): la
       empezada y no completada no cuenta.
+    * **Un coche no suma más vueltas que su ``NumberOfLaps``** de ``TimingData``: lo
+      que sobra se quita del último stint hacia atrás. Sin ese dato, sin tope.
     * ``tsStartLap`` es 1 más las vueltas de los anteriores y ``tsEndLap`` el inicio
       más las vueltas menos 1: un stint de 0 vueltas acaba antes de empezar.
     * ``tsAge`` es ``StartLaps``; ``tsNew`` y ``tsSameSet`` dicen si ``New`` es
@@ -222,6 +224,7 @@ def _feed_stints(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     drivers = snapshot.get("DriverList") or {}
     timing_app = snapshot.get("TimingAppData") or {}
     lines = timing_app.get("Lines") or {}
+    timing_lines = (snapshot.get("TimingData") or {}).get("Lines") or {}
 
     stints: List[Dict[str, Any]] = []
     for number in sorted(lines, key=lambda n: (_num(n) or 0, n)):
@@ -234,11 +237,17 @@ def _feed_stints(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
         info = drivers.get(number) if isinstance(drivers, dict) else None
         info = info if isinstance(info, dict) else {}
         driver = _text(info.get("Tla")) or str(number)
+        entries = [entry if isinstance(entry, dict) else {} for entry in entries]
+        ages = [int(_num(entry.get("StartLaps")) or 0) for entry in entries]
+        counted = [
+            int(_num(entry.get("TotalLaps")) or 0) - age for entry, age in zip(entries, ages)
+        ]
+        timing_line = timing_lines.get(number)
+        cap = _num(timing_line.get("NumberOfLaps")) if isinstance(timing_line, dict) else None
+        if cap is not None:
+            counted = _capped(counted, int(cap))
         start = 1
-        for entry in entries:
-            entry = entry if isinstance(entry, dict) else {}
-            age = int(_num(entry.get("StartLaps")) or 0)
-            laps = int(_num(entry.get("TotalLaps")) or 0) - age
+        for entry, age, laps in zip(entries, ages, counted):
             stints.append(
                 {
                     "tsDriver": driver,
@@ -254,6 +263,20 @@ def _feed_stints(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
             )
             start += laps
     return stints
+
+
+def _capped(laps: List[int], cap: int) -> List[int]:
+    """Las vueltas de cada stint sin pasar de ``cap`` en total: lo que sobra se quita del
+    último hacia atrás, sin dejar ninguno por debajo de 0 ni tocar los que ya lo están."""
+    out = list(laps)
+    excess = sum(out) - cap
+    for i in reversed(range(len(out))):
+        if excess <= 0:
+            break
+        cut = min(excess, max(0, out[i]))
+        out[i] -= cut
+        excess -= cut
+    return out
 
 
 def _feed_flags(snapshot: Dict[str, Any]) -> List[Dict[str, str]]:

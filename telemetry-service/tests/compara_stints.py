@@ -29,7 +29,7 @@ from feed import _feed_stints
 from fotos import mensajes, plegar
 
 OPENF1 = "https://api.openf1.org/v1"
-TEMAS = ("DriverList", "TimingAppData", "SessionStatus")
+TEMAS = ("DriverList", "TimingAppData", "TimingData", "SessionStatus")
 
 IGUAL = "igual"
 FALTA_OPENF1 = "falta en OpenF1"
