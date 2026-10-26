@@ -98,7 +98,9 @@ Módulos (top-level, sin prefijo `Frontend.`; convención del 2026-07-16):
 - **`Pages/`:** un módulo por flujo (`Pages.<Flujo>`).
 - **`Widgets/`:** widgets compartidos por categoría.
 - **Tyre Strategy:** lo puro vive en `common` (`Common.TyreStrategy`: las filas, la escala, la geometría de cada
-  barra, el tooltip y la leyenda) y `Widgets.TyreStrategy` lo pinta. Una fila por cada fila de la tabla, por posición,
+  barra, el tooltip y la leyenda) y `Widgets.TyreStrategy` lo pinta. Las barras salen por stint (`stintRows`, lo que se
+  pinta) o por juego (`setRows`: los stints «mismo juego» unidos, con su total y una muesca por parada); las dos formas
+  comparten las filas (`carRows`). Una fila por cada fila de la tabla, por posición,
   con los stints de la **misma** respuesta de `/api/live`; después, los coches con stints y sin fila. Fuera del feed, un
   aviso y ninguna fila. Va en el layout **Strategy** (Live Timing y Tyre Strategy, mitad y mitad), el tercero del
   conmutador junto a Race Overview y Qualy.
@@ -132,8 +134,10 @@ lleva números también en ese caso (2026-09-23); lo que no reconoce pasa tal cu
 
 Además, `GET /fastf1/live` sirve la foto del feed en directo (`feed._feed_live`): la sesión, las filas y los stints,
 los tres de la **misma** foto, para que no hablen de instantes distintos. Los stints (`feed._feed_stints`) salen de
-`TimingAppData`, uno por entrada y sin omitir el `UNKNOWN` ni el de 0 vueltas, con las vueltas **completadas**. El
-backend los lee en `Handler.Feed.Helper`. `telemetry-service/tests/compara_stints.py` compara los de una grabación con
+`TimingAppData`, uno por entrada y sin omitir el `UNKNOWN` ni el de 0 vueltas, con las vueltas **completadas** y sin
+pasar de las que lleva el coche (`TimingData.NumberOfLaps`): lo que sobra se quita del último stint. El backend los lee
+en `Handler.Feed.Helper`. Cada foto abre su conexión al feed y contesta **sin esperar a que se cierre** (el cierre va
+en un hilo aparte). `telemetry-service/tests/compara_stints.py` compara los de una grabación con
 OpenF1 `/v1/stints`, fuera de sesión (con una en marcha, OpenF1 da 401).
 
 La comparación devuelve **también el número de coche** (`ceCar`) junto al acrónimo: sin él, un consumidor que solo habla acrónimos puede leer la respuesta pero no puede pedir **otra**.
