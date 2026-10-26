@@ -1,31 +1,40 @@
 -- | Lo que Tyre Strategy calcula con la tabla en vivo, sin pintar nada: qué filas, en qué
--- orden, la escala de vueltas y, por stint, dónde empieza su barra, cuánto mide, de qué
--- color es y qué dice al pasar por encima.
+-- orden, la escala de vueltas y, por stint o por juego, dónde empieza su barra, cuánto
+-- mide, de qué color es y qué dice al pasar por encima.
 module Common.TyreStrategy
   ( StintRow (..)
   , StintBar (..)
+  , SetRow (..)
+  , SetBar (..)
   , stintRows
+  , setRows
+  , tyreSets
   , stintScale
   , stintBar
+  , setBar
   , barStyle
   , stintTitle
   , rowLabel
   , compoundClass
   , compoundLegend
   , scaleLabel
+  , lapTicks
   , noStintsNotice
+  , notOutYet
   ) where
 
-import           Common.Types  (LapProgress (..), LiveTable (..),
-                                LiveTimingRow (..), SessionInfo (..),
-                                TyreStint (..))
-import           Data.Function (on)
-import           Data.List     (nubBy, sortOn)
-import           Data.Maybe    (fromMaybe)
-import           Data.Text     (Text)
-import qualified Data.Text     as T
-import           Numeric       (showFFloat)
-import           Text.Read     (readMaybe)
+import           Common.Types       (LapProgress (..), LiveTable (..),
+                                     LiveTimingRow (..), SessionInfo (..),
+                                     TyreStint (..))
+import           Data.Function      (on)
+import           Data.List          (nubBy, sortOn)
+import           Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NE
+import           Data.Maybe         (fromMaybe)
+import           Data.Text          (Text)
+import qualified Data.Text          as T
+import           Numeric            (showFFloat)
+import           Text.Read          (readMaybe)
 
 -- | Una fila del widget: un coche y sus stints en orden.
 data StintRow = StintRow
@@ -45,20 +54,62 @@ data StintBar = StintBar
   }
   deriving stock (Eq, Show)
 
+-- | Una fila del widget por juegos: un coche y sus juegos en orden.
+data SetRow = SetRow
+  { setPosition :: Maybe Int  -- ^ 'Nothing' si el coche tiene stints y no fila en la tabla.
+  , setCar      :: Text
+  , setDriver   :: Text
+  , setBars     :: [SetBar]  -- ^ Vacía si el coche aún no tiene stints: 'notOutYet'.
+  }
+  deriving stock (Eq, Show)
+
+-- | La barra de un juego ('tyreSets'), en fracciones de la escala (de 0 a 1).
+data SetBar = SetBar
+  { setStart   :: Double
+  , setWidth   :: Double    -- ^ Las vueltas de todas sus salidas.
+  , setClass   :: Text      -- ^ 'compoundClass' de la primera salida.
+  , setTotal   :: Int       -- ^ La edad al montarlo más sus vueltas.
+  , setUsed    :: Bool      -- ^ Ya venía usado al montarlo.
+  , setNotches :: [Double]  -- ^ Dónde empieza cada salida tras la primera: un paso por boxes.
+  , setTitle   :: Text
+  }
+  deriving stock (Eq, Show)
+
 -- | Una fila por cada fila de la tabla, por posición; después, los coches con stints y
 -- sin fila, por número. Mientras se espera ('Common.Types.waitingTable') no hay ninguna.
 stintRows :: LiveTable -> [StintRow]
-stintRows t = map tableRow (sortOn ltPosition (liveRows t)) ++ map orphanRow orphans
+stintRows t =
+  [ StintRow p c d (map (stintBar scale) ss) | (p, c, d, ss) <- carRows t ]
+  where
+    scale = stintScale (liveSession t) (liveStints t)
+
+-- | Las mismas filas que 'stintRows', con una barra por juego.
+setRows :: LiveTable -> [SetRow]
+setRows t =
+  [ SetRow p c d (map (setBar scale) (tyreSets ss)) | (p, c, d, ss) <- carRows t ]
+  where
+    scale = stintScale (liveSession t) (liveStints t)
+
+-- | Cada coche con su posición, su número, su piloto y sus stints, en el orden de las filas.
+carRows :: LiveTable -> [(Maybe Int, Text, Text, [TyreStint])]
+carRows t = map tableRow (sortOn ltPosition (liveRows t)) ++ map orphanRow orphans
   where
     stints   = liveStints t
-    scale    = stintScale (liveSession t) stints
-    barsOf c = map (stintBar scale) (filter ((== c) . tsCar) stints)
-    tableRow r = StintRow (Just (ltPosition r)) (ltCar r) (ltDriver r) (barsOf (ltCar r))
-    orphanRow (c, d) = StintRow Nothing c d (barsOf c)
+    stintsOf c = filter ((== c) . tsCar) stints
+    tableRow r = (Just (ltPosition r), ltCar r, ltDriver r, stintsOf (ltCar r))
+    orphanRow (c, d) = (Nothing, c, d, stintsOf c)
     inTable  = map ltCar (liveRows t)
     orphans  = sortOn (carOrder . fst) (nubBy ((==) `on` fst)
                  [ (tsCar s, tsDriver s) | s <- stints, tsCar s `notElem` inTable ])
     carOrder c = (fromMaybe maxBound (readMaybe (T.unpack c)) :: Int, c)
+
+-- | Los stints de un coche, en su orden, partidos en juegos: un stint «mismo juego» va
+-- con el anterior; cualquier otro abre juego, también el primero aunque diga «mismo juego».
+tyreSets :: [TyreStint] -> [NonEmpty TyreStint]
+tyreSets = foldr step []
+  where
+    step s ((next :| rest) : sets) | tsSameSet next == Just True = (s :| (next : rest)) : sets
+    step s sets                                                   = (s :| []) : sets
 
 -- | Las vueltas que mide el eje: en carrera, el total; fuera, la vuelta de fin más alta.
 -- Nunca menos que esa vuelta (ninguna barra se sale) ni menos de 1.
@@ -76,6 +127,21 @@ stintBar scale s = StintBar
   , sbClass = compoundClass (tsCompound s)
   , sbTitle = stintTitle s
   }
+
+-- | La barra de un juego contra una escala de vueltas. El total no cuenta vueltas negativas.
+setBar :: Int -> NonEmpty TyreStint -> SetBar
+setBar scale pieces@(first :| rest) = SetBar
+  { setStart   = fraction (tsStartLap first - 1)
+  , setWidth   = fraction laps
+  , setClass   = compoundClass (tsCompound first)
+  , setTotal   = tsAge first + laps
+  , setUsed    = tsNew first == Just False
+  , setNotches = map (fraction . subtract 1 . tsStartLap) rest
+  , setTitle   = setTitleOf pieces
+  }
+  where
+    laps       = sum (map (max 0 . tsLaps) (NE.toList pieces))
+    fraction n = fromIntegral n / fromIntegral scale
 
 -- | El @style@ de la barra: @left: 25.000%; width: 9.375%@. Con ancho 0 la marca fina
 -- la pone la hoja de estilos.
@@ -102,18 +168,44 @@ scaleLabel n = showT n <> " vueltas"
 -- | El tooltip: @MEDIUM · vueltas 14–21 (8) · usado, edad 2 · mismo juego@. Con 0
 -- vueltas, @desde la vuelta 3 (0)@; sin nuevo/usado, solo la edad; sin mismo juego, nada.
 stintTitle :: TyreStint -> Text
-stintTitle s = T.intercalate " · " ([tsCompound s, laps, wear] ++ sameSet)
+stintTitle s =
+  T.intercalate " · "
+    ([tsCompound s, lapsText (tsStartLap s) (tsEndLap s) (tsLaps s), wearText s] ++ sameSet)
   where
     sameSet = [ "mismo juego" | tsSameSet s == Just True ]
-    laps
-      | tsLaps s <= 0 = "desde la vuelta " <> showT (tsStartLap s) <> " (0)"
-      | otherwise     = "vueltas " <> showT (tsStartLap s) <> "–" <> showT (tsEndLap s)
-                        <> " (" <> showT (tsLaps s) <> ")"
-    age  = "edad " <> showT (tsAge s)
-    wear = case tsNew s of
-      Just True  -> "nuevo, " <> age
-      Just False -> "usado, " <> age
-      Nothing    -> age
+
+-- | El tooltip de un juego: @MEDIUM · vueltas 1–10 (10) · nuevo, edad 0 · 3 salidas: 1–3,
+-- 4–7, 8–10@, con la edad y nuevo/usado de la primera salida; una salida de 0 vueltas, @15
+-- (0)@. Un juego de una sola salida, 'stintTitle'.
+setTitleOf :: NonEmpty TyreStint -> Text
+setTitleOf (s :| []) = stintTitle s
+setTitleOf pieces@(first :| _) =
+  T.intercalate " · "
+    [tsCompound first, lapsText start (start + laps - 1) laps, wearText first, outings]
+  where
+    start   = tsStartLap first
+    laps    = sum (map (max 0 . tsLaps) (NE.toList pieces))
+    outings = showT (length pieces) <> " salidas: "
+              <> T.intercalate ", " (map outing (NE.toList pieces))
+    outing p
+      | tsLaps p <= 0 = showT (tsStartLap p) <> " (0)"
+      | otherwise     = showT (tsStartLap p) <> "–" <> showT (tsEndLap p)
+
+-- | @vueltas 14–21 (8)@ con la vuelta de inicio, la de fin y las vueltas; con 0 vueltas,
+-- @desde la vuelta 3 (0)@.
+lapsText :: Int -> Int -> Int -> Text
+lapsText start end laps
+  | laps <= 0 = "desde la vuelta " <> showT start <> " (0)"
+  | otherwise = "vueltas " <> showT start <> "–" <> showT end <> " (" <> showT laps <> ")"
+
+-- | @nuevo, edad 0@, @usado, edad 2@, o solo @edad 0@ sin nuevo/usado.
+wearText :: TyreStint -> Text
+wearText s = case tsNew s of
+  Just True  -> "nuevo, " <> age
+  Just False -> "usado, " <> age
+  Nothing    -> age
+  where
+    age = "edad " <> showT (tsAge s)
 
 -- | La clase CSS del color: @soft@, @medium@, @hard@, @intermediate@ o @wet@; cualquier
 -- otro compuesto (@UNKNOWN@ incluido), @unknown@.
@@ -124,9 +216,20 @@ compoundClass c
   where
     lower = T.toLower c
 
+-- | Las marcas del eje, con su vuelta y su fracción de la escala: desde 0, cada 5 vueltas, o
+-- cada 10 si la escala pasa de 30.
+lapTicks :: Int -> [(Int, Double)]
+lapTicks scale = [ (lap, fromIntegral lap / fromIntegral scale) | lap <- [0, step .. scale] ]
+  where
+    step = if scale > 30 then 10 else 5
+
 -- | El aviso cuando la tabla no sale del feed, que es lo único que trae stints.
 noStintsNotice :: Text
 noStintsNotice = "Sin stints: salen del directo"
+
+-- | Lo que dice la fila de un coche que aún no tiene stints.
+notOutYet :: Text
+notOutYet = "aún sin salir a pista"
 
 showT :: Int -> Text
 showT = T.pack . show

@@ -194,11 +194,13 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               statusLabel, tickClock, tickDown,
                                               upNextLabel, waitingSession,
                                               waitingTable)
-import           Common.TyreStrategy         (StintBar (..), StintRow (..),
-                                              barStyle, compoundClass,
-                                              compoundLegend, rowLabel,
-                                              scaleLabel, stintRows, stintScale,
-                                              stintTitle)
+import           Common.TyreStrategy         (SetBar (..), SetRow (..),
+                                              StintBar (..), StintRow (..),
+                                              lapTicks, barStyle,
+                                              compoundClass, compoundLegend,
+                                              notOutYet, rowLabel, scaleLabel,
+                                              setRows, stintRows, stintScale,
+                                              stintTitle, tyreSets)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (FromJSON (..), Value (..),
                                               decodeStrictText, eitherDecode,
@@ -211,6 +213,7 @@ import qualified Data.ByteString.Char8       as BC
 import qualified Data.ByteString.Lazy        as LBS
 import           Data.Either                 (isLeft)
 import           Data.List                   (find, nub)
+import qualified Data.List.NonEmpty          as NE
 import qualified Data.Map.Strict             as Map
 import           Data.Maybe                  (fromMaybe, isJust, listToMaybe)
 import           Data.Proxy                  (Proxy (..))
@@ -763,6 +766,46 @@ main = hspec $ do
 
     it "la escala: en plural, salvo una vuelta" $
       map scaleLabel [1, 32] `shouldBe` ["1 vuelta", "32 vueltas"]
+
+    it "por juegos: una fila por fila de la tabla, con una barra por juego" $
+      map (\r -> (setPosition r, setCar r, length (setBars r))) (setRows setTable)
+        `shouldBe` [(Just 1, "16", 2), (Just 2, "18", 1), (Just 3, "3", 0)]
+
+    it "un juego une sus salidas: su sitio, su ancho, su total y una muesca por parada" $
+      map (\b -> (setStart b, setWidth b, setClass b, setTotal b, setUsed b, setNotches b))
+          (concatMap setBars (take 1 (setRows setTable)))
+        `shouldBe` [ (0, 10 / 20, "medium", 10, False, [3 / 20, 7 / 20])
+                   , (10 / 20, 10 / 20, "soft", 10, False, [13 / 20]) ]
+
+    it "el total suma la edad al montarlo, y un juego que ya venía usado va rayado" $
+      let usedHard = (carStint "16" "HARD" 1 5) {tsAge = 3, tsNew = Just False}
+      in map (\b -> (setTotal b, setUsed b))
+             (concatMap setBars (take 1 (setRows setTable {liveStints = [usedHard]})))
+           `shouldBe` [(8, True)]
+
+    it "el tooltip: el juego y sus salidas; un juego de una salida, como el stint" $ do
+      map setTitle (concatMap setBars (take 2 (setRows setTable)))
+        `shouldBe` [ "MEDIUM · vueltas 1–10 (10) · nuevo, edad 0 · 3 salidas: 1–3, 4–7, 8–10"
+                   , "SOFT · vueltas 11–20 (10) · nuevo, edad 0 · 2 salidas: 11–13, 14–20"
+                   , "MEDIUM · vueltas 1–14 (14) · nuevo, edad 0 · 2 salidas: 1–14, 15 (0)" ]
+      map setTitle (concatMap setBars (take 1 (setRows setTable {liveStints = [carStint "16" "SOFT" 1 7]})))
+        `shouldBe` [stintTitle (carStint "16" "SOFT" 1 7)]
+
+    prop "los juegos parten los stints: en orden, y solo un «mismo juego» sigue a otro" $ \flags ->
+      let stints = [ (carStint "1" "SOFT" k k) {tsSameSet = f} | (k, f) <- zip [1 ..] flags ]
+          sets   = tyreSets stints
+      in concatMap NE.toList sets == stints
+           && all (all ((== Just True) . tsSameSet) . NE.tail) sets
+           && all ((/= Just True) . tsSameSet . NE.head) (drop 1 sets)
+
+    it "el eje: cada 5 vueltas, o cada 10 si la escala pasa de 30" $ do
+      map fst (lapTicks 25) `shouldBe` [0, 5, 10, 15, 20, 25]
+      map fst (lapTicks 30) `shouldBe` [0, 5, 10, 15, 20, 25, 30]
+      map fst (lapTicks 56) `shouldBe` [0, 10, 20, 30, 40, 50]
+      map snd (lapTicks 25) `shouldBe` [0, 0.2, 0.4, 0.6, 0.8, 1]
+
+    it "la fila sin stints dice que el coche aún no salió" $
+      notOutYet `shouldBe` "aún sin salir a pista"
 
   -- La escalera de `/api/tyre-strategy` con su procedencia. Lo guardado lleva una
   -- tanda distinta de la traída en todos los casos, para que servir la equivocada no
@@ -7218,6 +7261,23 @@ stintTable = LiveTable (Just practiceSession) rows stintsP2 NextUnknown
     rows = [ emptyLiveRow {ltPosition = 3, ltCar = "3", ltDriver = "VER"}
            , emptyLiveRow {ltPosition = 1, ltCar = "16", ltDriver = "LEC"}
            , emptyLiveRow {ltPosition = 2, ltCar = "43", ltDriver = "COL"} ]
+
+-- | LEC (#16) como al final de la P3 de Austin: dos juegos nuevos, de 3 y 2 salidas. STR
+-- (#18) como en la carrera de Austin en la vuelta 14, con el stint falso de la salida ya
+-- en 0 vueltas por el tope. El #3, con fila y sin stints.
+setTable :: LiveTable
+setTable = LiveTable (Just practiceSession) rows stints NextUnknown
+  where
+    rows = [ emptyLiveRow {ltPosition = 1, ltCar = "16", ltDriver = "LEC"}
+           , emptyLiveRow {ltPosition = 2, ltCar = "18", ltDriver = "STR"}
+           , emptyLiveRow {ltPosition = 3, ltCar = "3", ltDriver = "VER"} ]
+    piece car compound start end age new sameSet =
+      (carStint car compound start end) {tsAge = age, tsNew = Just new, tsSameSet = Just sameSet}
+    stints =
+      [ piece "16" "MEDIUM" 1 3 0 True False, piece "16" "MEDIUM" 4 7 3 False True
+      , piece "16" "MEDIUM" 8 10 7 False True
+      , piece "16" "SOFT" 11 13 0 True False, piece "16" "SOFT" 14 20 3 False True
+      , piece "18" "MEDIUM" 1 14 0 True False, piece "18" "MEDIUM" 15 14 0 True True ]
 
 -- | Un stint del coche 1 con @tyre_age_at_start@ 3: el juego usado que 'stint', con su
 -- edad 0, no deja escribir.
