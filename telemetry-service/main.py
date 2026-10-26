@@ -860,6 +860,10 @@ def _live_snapshot(timeout: float = 15.0) -> Dict[str, Any]:
     ``Subscribe`` es un ``CompletionMessage`` cuyo ``result`` trae **cada topic
     completo**. Se captura ése y se corta la conexión.
 
+    **No espera a que la conexión cierre**, ni con el estado ni con el error: el cierre
+    va en un hilo aparte, que sin sesión en directo tarda unos 15 s, así que puede
+    haber varios vivos a la vez.
+
     La contrapartida, y hay que tenerla presente antes de confiar en esto: cada
     llamada abre y cierra una conexión, así que refrescar cada diez segundos son
     seis conexiones por minuto. Sostener una conexión viva y acumular los deltas
@@ -918,7 +922,7 @@ def _live_snapshot(timeout: float = 15.0) -> Dict[str, Any]:
         if not arrived.wait(timeout):
             raise TimeoutError("el feed aceptó la conexión pero no mandó el estado")
     finally:
-        connection.stop()
+        threading.Thread(target=connection.stop, daemon=True).start()
 
     return captured
 
