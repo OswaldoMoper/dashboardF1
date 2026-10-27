@@ -4082,7 +4082,7 @@ main = hspec $ do
           [ LiveTiming, Telemetry, LapComparison, HistoricalStats
           , ConstructorStats, TyreStrategy, Custom ]
         `shouldBe` [ (30, 20), (35, 30), (25, 50), (25, 20)
-                   , (20, 20), (30, 20), (25, 20) ]
+                   , (20, 20), (20, 20), (25, 20) ]
 
     it "caen todos en celda del imán" $
       filter ((/= 0) . (`mod` 5))

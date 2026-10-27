@@ -140,8 +140,9 @@ snapTo divisions v
 -- (2026-09-29): el ancho más estrecho sin barra horizontal, redondeado __hacia
 -- arriba__ a múltiplo de 5 para caer en celda del imán. Las celdas de las tablas no
 -- parten nunca; lo que cede es la fila de botones de 'Telemetry', que baja de
--- línea, y 'LapComparison', que se apila. 'TyreStrategy' y 'Custom' no tienen
--- widget y conservan el número a ojo.
+-- línea, y 'LapComparison', que se apila. 'TyreStrategy' nunca saca barra (sus
+-- barras encogen): su número es el más estrecho con la leyenda en una línea, medido
+-- igual el 2026-10-27. 'Custom' no tiene widget y conserva el número a ojo.
 --
 -- Si un widget cambia de contenido, su número se vuelve a medir.
 minWidthFor :: WidgetType -> Int
@@ -150,13 +151,13 @@ minWidthFor Telemetry        = 35
 minWidthFor LapComparison    = 25
 minWidthFor HistoricalStats  = 25
 minWidthFor ConstructorStats = 20
-minWidthFor TyreStrategy     = 30
+minWidthFor TyreStrategy     = 20
 minWidthFor Custom           = 25
 
 -- | Alto mínimo de un tipo de widget, en unidades de 'canvasSpan': el título, su
 -- control y una fila de datos; en 'LapComparison', la tabla de mando entera y la
--- leyenda. Medido y redondeado como 'minWidthFor'; 'TyreStrategy' y 'Custom'
--- llevan el menor de los medidos.
+-- leyenda; en 'TyreStrategy', el título, la leyenda, una fila y el eje. Medido y
+-- redondeado como 'minWidthFor'; 'Custom' lleva el menor de los medidos.
 --
 -- __No depende de la forma de la tarjeta:__ 'LapComparison' apilada pide 65, y
 -- con este mínimo su leyenda queda bajo el scroll. En el lienzo medido no llega a
