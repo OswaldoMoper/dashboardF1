@@ -27,6 +27,10 @@ import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
 import           Common.Types  (LiveTable (..), SessionInfo (..),
                                 SessionState (..), StateReading (..),
                                 sessionInProgress, waitingTable)
+import qualified GHCJS.DOM          as DOM (currentDocumentUnchecked)
+import qualified GHCJS.DOM.Document as DOM (getHidden, visibilitychange)
+import qualified GHCJS.DOM.EventM   as DOM (on)
+import qualified GHCJS.DOM.Types    as DOM (Document (..), liftJSM)
 import           Reflex.Dom
 
 -- | De qué sesión son las filas que se están enseñando, si se sabe.
@@ -63,7 +67,8 @@ indicatorOf p = indicatorFrom (sessionInProgress state) (state == Just SessionFi
 --
 -- __Se refresca solo cada 'liveRefreshSeconds'__ (2026-09-11 (c)), con un reloj que
 -- __salta el tic__ si la petición anterior no ha vuelto: nunca hay dos en vuelo, y
--- una respuesta vieja no puede pisar a una nueva. Cuándo pedir y qué conservar si
+-- una respuesta vieja no puede pisar a una nueva. __Al volver a verse la pestaña__
+-- se pide en el momento, con la misma regla: si hay una en vuelo, no. Cuándo pedir y qué conservar si
 -- falla es 'Common.Shown', pura y con suite; aquí solo se cablea al reloj y a la
 -- petición. La URL es relativa ('Common.Route.livePath'), o sea misma-origen: el
 -- backend sirve el bundle y la API en el mismo puerto.
@@ -76,10 +81,19 @@ livePoll :: MonadWidget t m => m (Dynamic t (Poll (Sourced LiveTable)))
 livePoll = mdo
   pb   <- getPostBuild
   tick <- tickLossyFromPostBuildTime (fromIntegral liveRefreshSeconds)
-  let sent = leftmost [pb, () <$ gate (canRequest <$> current poll) tick]
+  back <- tabShown
+  let sent = leftmost [pb, gate (canRequest <$> current poll) (leftmost [() <$ tick, back])]
   resp <- fetchJsonSourced (livePath <$ sent)
   poll <- foldDyn pollStep pollIdle (leftmost [Sent <$ sent, Arrived <$> resp])
   pure poll
+
+-- | Cada vez que la pestaña vuelve a verse (@visibilitychange@ con el documento ya no
+-- oculto): al cambiar de pestaña, al restaurar la ventana minimizada.
+tabShown :: MonadWidget t m => m (Event t ())
+tabShown = do
+  doc    <- DOM.liftJSM DOM.currentDocumentUnchecked
+  hidden <- wrapDomEvent doc (`DOM.on` DOM.visibilitychange) (DOM.getHidden doc)
+  pure (() <$ ffilter not hidden)
 
 -- | El directo tal como se enseña: el refresco visto con el retraso pedido, el
 -- retraso, y cuántos segundos faltan para tener algo tan viejo ('Nothing' si ya lo
