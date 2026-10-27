@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Widget de Tyre Strategy: una fila por coche con sus stints como barras de color por
+-- | Widget de Tyre Strategy: una fila por coche con sus juegos como barras de color por
 -- compuesto, sobre el mismo directo que Live Timing ('Widgets.Live').
 --
 -- __Lo que pinta lo calcula 'Common.TyreStrategy'__; aquí solo se elige qué estado
@@ -16,11 +16,14 @@ module Widgets.TyreStrategy
 import           Common.Origin       (Source (..), Sourced (..))
 import           Common.Shown        (Poll (..), delayWaitLabel)
 import           Common.Types        (LiveTable (..))
-import           Common.TyreStrategy (StintBar (..), StintRow (..), barStyle,
-                                      compoundLegend, noStintsNotice, rowLabel,
-                                      scaleLabel, stintRows, stintScale)
+import           Common.TyreStrategy (SetBar (..), SetRow (..), barNotches,
+                                      compoundLegend, gridLines, lapTicks,
+                                      leftStyle,
+                                      noStintsNotice, notOutYet, rowLabel,
+                                      scaleLabel, setRows, setStyle, stintScale)
 import           Control.Monad       (forM_)
 import           Data.Text           (Text)
+import qualified Data.Text           as T
 import           Reflex.Dom
 import           Widgets.Live        (LiveView (..), indicatorOf, liveBadge)
 
@@ -32,7 +35,7 @@ data TyreState
     -- ^ Con retraso, mientras nada es tan viejo: el aviso de la espera.
   | NoStints
     -- ^ La tabla no sale del feed.
-  | Loaded Int [StintRow]
+  | Loaded Int [SetRow]
     -- ^ La escala ('Common.TyreStrategy.stintScale') y las filas.
   deriving (Eq)
 
@@ -48,7 +51,7 @@ tyreStateOf p =
       | pollLastFailed p -> Failed
       | otherwise        -> Loading
   where
-    loaded t = Loaded (stintScale (liveSession t) (liveStints t)) (stintRows t)
+    loaded t = Loaded (stintScale (liveSession t) (liveStints t)) (setRows t)
 
 -- | La tarjeta, alimentada por el directo que le pasa quien la monta.
 tyreStrategyWidget :: MonadWidget t m => LiveView t -> m ()
@@ -76,17 +79,40 @@ tyreStrategyWidget live = divClass "widget widget--tyre-strategy" $ do
         forM_ compoundLegend $ \(cls, letter) ->
           elClass "span" ("tyre-strategy__key tyre--" <> cls) $ text letter
         elClass "span" "tyre-strategy__scale" $ text (scaleLabel scale)
-      divClass "tyre-strategy" $ mapM_ row rows
+      divClass "tyre-strategy" $ do
+        mapM_ (row scale) rows
+        axis scale
 
-    row :: DomBuilder t m => StintRow -> m ()
-    row r = divClass "tyre-strategy__row" $ do
+    row :: DomBuilder t m => Int -> SetRow -> m ()
+    row scale r = divClass "tyre-strategy__row" $ do
       elClass "span" "tyre-strategy__label" $ text (rowLabel r)
-      divClass "tyre-strategy__track" $ mapM_ bar (srBars r)
+      divClass "tyre-strategy__track" $ do
+        mapM_ (mark "tyre-strategy__grid") (gridLines scale)
+        case setBars r of
+          [] -> elClass "span" "tyre-strategy__empty" $ text notOutYet
+          bs -> mapM_ bar bs
 
-    bar :: DomBuilder t m => StintBar -> m ()
-    bar b = elAttr "span" attrs blank
+    -- Las muescas y el número van dentro de la barra, el número el último para quedar
+    -- encima; la hoja lo esconde donde la barra no le deja sitio.
+    bar :: DomBuilder t m => SetBar -> m ()
+    bar b = elAttr "span" attrs $ do
+              mapM_ (mark "tyre-strategy__notch") (barNotches b)
+              elClass "span" "tyre-strategy__total" $ text (T.pack (show (setTotal b)))
       where
-        attrs = "class" =: barClass <> "style" =: barStyle b <> "title" =: sbTitle b
-        barClass
-          | sbWidth b <= 0 = "tyre-strategy__bar tyre-strategy__bar--thin tyre--" <> sbClass b
-          | otherwise      = "tyre-strategy__bar tyre--" <> sbClass b
+        attrs = "class" =: T.unwords (barClasses b) <> "style" =: setStyle b <> "title" =: setTitle b
+
+    barClasses b =
+      ["tyre-strategy__bar", "tyre--" <> setClass b]
+        ++ ["tyre-strategy__bar--thin" | setWidth b <= 0]
+        ++ ["tyre-strategy__bar--used" | setUsed b]
+
+    mark :: DomBuilder t m => Text -> Double -> m ()
+    mark cls x = elAttr "span" ("class" =: cls <> "style" =: leftStyle x) blank
+
+    axis :: DomBuilder t m => Int -> m ()
+    axis scale = divClass "tyre-strategy__axis" $ do
+      elClass "span" "tyre-strategy__label" blank
+      divClass "tyre-strategy__track" $
+        forM_ (lapTicks scale) $ \(lap, x) ->
+          elAttr "span" ("class" =: "tyre-strategy__tick" <> "style" =: leftStyle x) $
+            text (T.pack (show lap))

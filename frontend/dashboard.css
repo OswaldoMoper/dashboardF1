@@ -1683,12 +1683,47 @@ body {
   font-size: var(--fs-sm);
 }
 
-.tyre-strategy__row {
+.tyre-strategy__row,
+.tyre-strategy__axis {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) 0;
   border-bottom: 1px solid var(--c-surface-2);
+}
+
+/* El eje va al pie de la tarjeta y no se va con el scroll de las filas. Baja hasta el
+   borde y tapa el relleno inferior de `.widget`, para que las filas no asomen por debajo. */
+.tyre-strategy__axis {
+  position: sticky;
+  bottom: calc(-1 * var(--sp-4));
+  padding-bottom: var(--sp-4);
+  z-index: 1;
+  background: var(--c-surface);
+  border-bottom: none;
+}
+
+.tyre-strategy__axis .tyre-strategy__track {
+  height: 1.2em;
+}
+
+.tyre-strategy__tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tyre-strategy__tick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -6px;
+  height: 5px;
+  width: 1px;
+  background: var(--c-muted);
 }
 
 .tyre-strategy__label {
@@ -1704,19 +1739,80 @@ body {
   height: 1.45em;
 }
 
-/* La separación entre stints es una raya del color de la tarjeta al final de cada uno,
-   igual para cualquier cambio de stint (también el mismo juego). */
+/* La separación entre juegos es una raya del color de la tarjeta al final de cada uno.
+   La barra es un contenedor para que su número se esconda donde no cabe. */
 .tyre-strategy__bar {
   position: absolute;
   top: 0;
   bottom: 0;
   background: var(--tyre);
   box-shadow: inset -1px 0 0 var(--c-surface);
+  container-type: inline-size;
 }
 
-/* Un stint de 0 vueltas: una marca fina en su sitio. */
+/* Un juego de 0 vueltas: una marca fina en su sitio. */
 .tyre-strategy__bar--thin {
   min-width: 4px;
+}
+
+/* Un juego que ya venía usado al montarlo. */
+.tyre-strategy__bar--used {
+  background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgba(0, 0, 0, 0.45) 4px 7px);
+}
+
+/* El total del juego: la edad al montarlo más sus vueltas. */
+.tyre-strategy__total {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-bg);
+  font-variant-numeric: tabular-nums;
+}
+
+.tyre--soft .tyre-strategy__total {
+  color: #fff;
+}
+
+@container (width < 16px) {
+  .tyre-strategy__total {
+    display: none;
+  }
+}
+
+/* Un paso por boxes dentro del mismo juego. */
+.tyre-strategy__notch {
+  position: absolute;
+  top: 0;
+  height: 40%;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--c-surface);
+}
+
+/* La rejilla, en las vueltas del eje; cruza el relleno de la fila para que se lea
+   como una línea. */
+.tyre-strategy__grid {
+  position: absolute;
+  top: calc(-1 * var(--sp-2));
+  bottom: calc(-1 * var(--sp-2));
+  width: 1px;
+  background: rgba(160, 166, 180, 0.45);
+  pointer-events: none;
+}
+
+/* La fila de un coche que aún no tiene stints. */
+.tyre-strategy__empty {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  align-items: center;
+  font-size: var(--fs-xs);
+  font-style: italic;
+  color: var(--c-muted);
 }
 
 .tyre--soft         { --tyre: var(--c-tyre-soft); }

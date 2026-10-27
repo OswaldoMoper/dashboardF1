@@ -196,10 +196,11 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               waitingTable)
 import           Common.TyreStrategy         (SetBar (..), SetRow (..),
                                               StintBar (..), StintRow (..),
-                                              lapTicks, barStyle,
+                                              barNotches, lapTicks, barStyle,
                                               compoundClass, compoundLegend,
-                                              notOutYet, rowLabel, scaleLabel,
-                                              setRows, stintRows, stintScale,
+                                              gridLines, leftStyle, notOutYet,
+                                              rowLabel, scaleLabel, setRows,
+                                              setStyle, stintRows, stintScale,
                                               stintTitle, tyreSets)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (FromJSON (..), Value (..),
@@ -762,7 +763,7 @@ main = hspec $ do
                    , "left: 34.375%; width: 59.375%", "left: 6.250%; width: 0.000%" ]
 
     it "la etiqueta: posición y piloto, o solo el piloto sin fila" $
-      map rowLabel (stintRows stintTable) `shouldBe` ["1 LEC", "2 COL", "3 VER", "#9", "#10"]
+      map rowLabel (setRows stintTable) `shouldBe` ["1 LEC", "2 COL", "3 VER", "#9", "#10"]
 
     it "la escala: en plural, salvo una vuelta" $
       map scaleLabel [1, 32] `shouldBe` ["1 vuelta", "32 vueltas"]
@@ -803,6 +804,25 @@ main = hspec $ do
       map fst (lapTicks 30) `shouldBe` [0, 5, 10, 15, 20, 25, 30]
       map fst (lapTicks 56) `shouldBe` [0, 10, 20, 30, 40, 50]
       map snd (lapTicks 25) `shouldBe` [0, 0.2, 0.4, 0.6, 0.8, 1]
+
+    it "la rejilla: las marcas del eje sin los bordes de la pista" $ do
+      gridLines 20 `shouldBe` [0.25, 0.5, 0.75]
+      map (round . (* 30)) (gridLines 30) `shouldBe` [5, 10, 15, 20, 25 :: Int]
+      map (round . (* 56)) (gridLines 56) `shouldBe` [10, 20, 30, 40, 50 :: Int]
+
+    it "el style de un juego y de sus muescas, estas en por ciento de su barra" $ do
+      let lec = concatMap setBars (take 1 (setRows setTable))
+      map setStyle lec `shouldBe` ["left: 0.000%; width: 50.000%", "left: 50.000%; width: 50.000%"]
+      map (map leftStyle . barNotches) lec
+        `shouldBe` [["left: 30.000%", "left: 70.000%"], ["left: 30.000%"]]
+
+    it "en una barra de ancho 0, las muescas van al principio" $
+      let thin = SetBar { setStart = 0.5, setWidth = 0, setClass = "soft", setTotal = 0
+                        , setUsed = False, setNotches = [0.5, 0.5], setTitle = "" }
+      in barNotches thin `shouldBe` [0, 0]
+
+    it "la muesca de una salida de 0 vueltas al final del juego cae en el borde final" $
+      map barNotches (concatMap setBars (take 1 (drop 1 (setRows setTable)))) `shouldBe` [[1]]
 
     it "la fila sin stints dice que el coche aún no salió" $
       notOutYet `shouldBe` "aún sin salir a pista"

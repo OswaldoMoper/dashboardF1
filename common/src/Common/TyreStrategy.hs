@@ -12,13 +12,17 @@ module Common.TyreStrategy
   , stintScale
   , stintBar
   , setBar
+  , barNotches
   , barStyle
+  , setStyle
+  , leftStyle
   , stintTitle
   , rowLabel
   , compoundClass
   , compoundLegend
   , scaleLabel
   , lapTicks
+  , gridLines
   , noStintsNotice
   , notOutYet
   ) where
@@ -143,16 +147,33 @@ setBar scale pieces@(first :| rest) = SetBar
     laps       = sum (map (max 0 . tsLaps) (NE.toList pieces))
     fraction n = fromIntegral n / fromIntegral scale
 
+-- | Dónde va cada muesca dentro de su barra, en fracción de la barra (de 0 a 1). En una
+-- barra de ancho 0, todas en 0.
+barNotches :: SetBar -> [Double]
+barNotches b
+  | setWidth b <= 0 = map (const 0) (setNotches b)
+  | otherwise       = [ (n - setStart b) / setWidth b | n <- setNotches b ]
+
 -- | El @style@ de la barra: @left: 25.000%; width: 9.375%@. Con ancho 0 la marca fina
 -- la pone la hoja de estilos.
 barStyle :: StintBar -> Text
 barStyle b = "left: " <> percent (sbStart b) <> "; width: " <> percent (sbWidth b)
-  where
-    percent x = T.pack (showFFloat (Just 3) (100 * x) "") <> "%"
+
+-- | El @style@ de la barra de un juego, como 'barStyle'.
+setStyle :: SetBar -> Text
+setStyle b = "left: " <> percent (setStart b) <> "; width: " <> percent (setWidth b)
+
+-- | El @style@ de lo que se pinta en un punto de la pista (una muesca, una raya de la
+-- rejilla, una marca del eje): @left: 15.000%@.
+leftStyle :: Double -> Text
+leftStyle x = "left: " <> percent x
+
+percent :: Double -> Text
+percent x = T.pack (showFFloat (Just 3) (100 * x) "") <> "%"
 
 -- | Lo que va a la izquierda de la fila: @1 LEC@; sin fila en la tabla, solo el piloto.
-rowLabel :: StintRow -> Text
-rowLabel r = maybe "" (\p -> showT p <> " ") (srPosition r) <> srDriver r
+rowLabel :: SetRow -> Text
+rowLabel r = maybe "" (\p -> showT p <> " ") (setPosition r) <> setDriver r
 
 -- | La leyenda, en su orden: la clase de cada compuesto y su letra.
 compoundLegend :: [(Text, Text)]
@@ -222,6 +243,11 @@ lapTicks :: Int -> [(Int, Double)]
 lapTicks scale = [ (lap, fromIntegral lap / fromIntegral scale) | lap <- [0, step .. scale] ]
   where
     step = if scale > 30 then 10 else 5
+
+-- | Las rayas de la rejilla: las marcas de 'lapTicks' sin la primera ni la del final de la
+-- escala, que son los bordes de la pista.
+gridLines :: Int -> [Double]
+gridLines scale = [ x | (lap, x) <- lapTicks scale, lap > 0, lap < scale ]
 
 -- | El aviso cuando la tabla no sale del feed, que es lo único que trae stints.
 noStintsNotice :: Text
