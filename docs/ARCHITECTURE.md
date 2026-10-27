@@ -97,13 +97,15 @@ Módulos (top-level, sin prefijo `Frontend.`; convención del 2026-07-16):
   cuando haya una segunda ruta, y XSRF y `location` en `Client` cuando haya mutaciones (POST/PUT) y navegación.
 - **`Pages/`:** un módulo por flujo (`Pages.<Flujo>`).
 - **`Widgets/`:** widgets compartidos por categoría.
+- **El directo:** `Widgets.Live.livePoll` pide `/api/live` una vez por página y reparte la respuesta a las tarjetas;
+  pide cada 10 s y al volver a verse la pestaña (`visibilitychange`), nunca con otra petición en vuelo.
 - **Tyre Strategy:** lo puro vive en `common` (`Common.TyreStrategy`: las filas, la escala, la geometría de cada
-  barra, el tooltip y la leyenda) y `Widgets.TyreStrategy` lo pinta. Las barras salen por stint (`stintRows`, lo que se
-  pinta) o por juego (`setRows`: los stints «mismo juego» unidos, con su total y una muesca por parada); las dos formas
-  comparten las filas (`carRows`). Una fila por cada fila de la tabla, por posición,
-  con los stints de la **misma** respuesta de `/api/live`; después, los coches con stints y sin fila. Fuera del feed, un
-  aviso y ninguna fila. Va en el layout **Strategy** (Live Timing y Tyre Strategy, mitad y mitad), el tercero del
-  conmutador junto a Race Overview y Qualy.
+  barra, el tooltip, la leyenda y el eje) y `Widgets.TyreStrategy` lo pinta. Una barra por juego (`setRows`: los stints
+  «mismo juego» unidos), con su total dentro, rayada si el juego ya venía usado y una muesca por parada; debajo, la
+  rejilla, y al pie, el eje de vueltas. Una fila por cada fila de la tabla, por posición, con los stints de la
+  **misma** respuesta de `/api/live`; después, los coches con stints y sin fila; un coche sin stints, «aún sin salir a
+  pista». Fuera del feed, un aviso y ninguna fila. Va en el layout **Strategy** (Live Timing y Tyre Strategy, mitad y
+  mitad), el tercero del conmutador junto a Race Overview y Qualy.
 - Rutas con un módulo `Route` compartido en `common` (mismas URLs en ambos extremos).
 
 ---
