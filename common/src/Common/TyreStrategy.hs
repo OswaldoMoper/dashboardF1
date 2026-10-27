@@ -1,19 +1,14 @@
 -- | Lo que Tyre Strategy calcula con la tabla en vivo, sin pintar nada: qué filas, en qué
--- orden, la escala de vueltas y, por stint o por juego, dónde empieza su barra, cuánto
--- mide, de qué color es y qué dice al pasar por encima.
+-- orden, la escala de vueltas y, por juego, dónde empieza su barra, cuánto mide, de qué
+-- color es y qué dice al pasar por encima.
 module Common.TyreStrategy
-  ( StintRow (..)
-  , StintBar (..)
-  , SetRow (..)
+  ( SetRow (..)
   , SetBar (..)
-  , stintRows
   , setRows
   , tyreSets
   , stintScale
-  , stintBar
   , setBar
   , barNotches
-  , barStyle
   , setStyle
   , leftStyle
   , stintTitle
@@ -40,25 +35,7 @@ import qualified Data.Text          as T
 import           Numeric            (showFFloat)
 import           Text.Read          (readMaybe)
 
--- | Una fila del widget: un coche y sus stints en orden.
-data StintRow = StintRow
-  { srPosition :: Maybe Int  -- ^ 'Nothing' si el coche tiene stints y no fila en la tabla.
-  , srCar      :: Text
-  , srDriver   :: Text
-  , srBars     :: [StintBar]  -- ^ Vacía si el coche aún no tiene stints.
-  }
-  deriving stock (Eq, Show)
-
--- | La barra de un stint, en fracciones de la escala (de 0 a 1).
-data StintBar = StintBar
-  { sbStart :: Double
-  , sbWidth :: Double  -- ^ 0 en un stint de 0 vueltas: el widget pinta una marca fina.
-  , sbClass :: Text    -- ^ 'compoundClass'.
-  , sbTitle :: Text    -- ^ 'stintTitle'.
-  }
-  deriving stock (Eq, Show)
-
--- | Una fila del widget por juegos: un coche y sus juegos en orden.
+-- | Una fila del widget: un coche y sus juegos en orden.
 data SetRow = SetRow
   { setPosition :: Maybe Int  -- ^ 'Nothing' si el coche tiene stints y no fila en la tabla.
   , setCar      :: Text
@@ -70,7 +47,8 @@ data SetRow = SetRow
 -- | La barra de un juego ('tyreSets'), en fracciones de la escala (de 0 a 1).
 data SetBar = SetBar
   { setStart   :: Double
-  , setWidth   :: Double    -- ^ Las vueltas de todas sus salidas.
+  , setWidth   :: Double    -- ^ Las vueltas de todas sus salidas; 0 si no suman ninguna:
+                            --   el widget pinta una marca fina.
   , setClass   :: Text      -- ^ 'compoundClass' de la primera salida.
   , setTotal   :: Int       -- ^ La edad al montarlo más sus vueltas.
   , setUsed    :: Bool      -- ^ Ya venía usado al montarlo.
@@ -81,13 +59,7 @@ data SetBar = SetBar
 
 -- | Una fila por cada fila de la tabla, por posición; después, los coches con stints y
 -- sin fila, por número. Mientras se espera ('Common.Types.waitingTable') no hay ninguna.
-stintRows :: LiveTable -> [StintRow]
-stintRows t =
-  [ StintRow p c d (map (stintBar scale) ss) | (p, c, d, ss) <- carRows t ]
-  where
-    scale = stintScale (liveSession t) (liveStints t)
-
--- | Las mismas filas que 'stintRows', con una barra por juego.
+-- Una barra por juego.
 setRows :: LiveTable -> [SetRow]
 setRows t =
   [ SetRow p c d (map (setBar scale) (tyreSets ss)) | (p, c, d, ss) <- carRows t ]
@@ -123,15 +95,6 @@ stintScale session stints = maximum (1 : highest : total)
     highest = maximum (0 : map tsEndLap stints)
     total   = maybe [] (pure . lpTotal) (siLaps =<< session)
 
--- | La barra de un stint contra una escala de vueltas.
-stintBar :: Int -> TyreStint -> StintBar
-stintBar scale s = StintBar
-  { sbStart = fromIntegral (tsStartLap s - 1) / fromIntegral scale
-  , sbWidth = fromIntegral (max 0 (tsLaps s)) / fromIntegral scale
-  , sbClass = compoundClass (tsCompound s)
-  , sbTitle = stintTitle s
-  }
-
 -- | La barra de un juego contra una escala de vueltas. El total no cuenta vueltas negativas.
 setBar :: Int -> NonEmpty TyreStint -> SetBar
 setBar scale pieces@(first :| rest) = SetBar
@@ -156,10 +119,6 @@ barNotches b
 
 -- | El @style@ de la barra: @left: 25.000%; width: 9.375%@. Con ancho 0 la marca fina
 -- la pone la hoja de estilos.
-barStyle :: StintBar -> Text
-barStyle b = "left: " <> percent (sbStart b) <> "; width: " <> percent (sbWidth b)
-
--- | El @style@ de la barra de un juego, como 'barStyle'.
 setStyle :: SetBar -> Text
 setStyle b = "left: " <> percent (setStart b) <> "; width: " <> percent (setWidth b)
 

@@ -195,12 +195,11 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               upNextLabel, waitingSession,
                                               waitingTable)
 import           Common.TyreStrategy         (SetBar (..), SetRow (..),
-                                              StintBar (..), StintRow (..),
-                                              barNotches, lapTicks, barStyle,
-                                              compoundClass, compoundLegend,
-                                              gridLines, leftStyle, notOutYet,
+                                              barNotches, compoundClass,
+                                              compoundLegend, gridLines,
+                                              lapTicks, leftStyle, notOutYet,
                                               rowLabel, scaleLabel, setRows,
-                                              setStyle, stintRows, stintScale,
+                                              setStyle, stintScale,
                                               stintTitle, tyreSets)
 import           Config                      (openF1Log, telemetrySocket)
 import           Data.Aeson                  (FromJSON (..), Value (..),
@@ -719,7 +718,7 @@ main = hspec $ do
   -- llega a la 32: fuera de carrera la escala es la vuelta más alta.
   describe "Common.TyreStrategy" $ do
     it "una fila por fila de la tabla, por posición; los que no tienen fila, al final por número" $
-      map (\r -> (srPosition r, srCar r, length (srBars r))) (stintRows stintTable)
+      map (\r -> (setPosition r, setCar r, length (setBars r))) (setRows stintTable)
         `shouldBe` [ (Just 1, "16", 3), (Just 2, "43", 1), (Just 3, "3", 0)
                    , (Nothing, "9", 1), (Nothing, "10", 1) ]
 
@@ -734,11 +733,11 @@ main = hspec $ do
       stintScale Nothing [] `shouldBe` 1
 
     it "cada tramo empieza donde acaba el anterior, en fracción de la escala" $
-      map (\b -> (sbStart b, sbWidth b, sbClass b)) (concatMap srBars (take 1 (stintRows stintTable)))
+      map (\b -> (setStart b, setWidth b, setClass b)) (concatMap setBars (take 1 (setRows stintTable)))
         `shouldBe` [(0, 8 / 32, "hard"), (8 / 32, 3 / 32, "soft"), (11 / 32, 19 / 32, "soft")]
 
     it "un stint de 0 vueltas tiene ancho 0 en su sitio" $
-      map (\b -> (sbStart b, sbWidth b)) (srBars (stintRows stintTable !! 3))
+      map (\b -> (setStart b, setWidth b)) (setBars (setRows stintTable !! 3))
         `shouldBe` [(2 / 32, 0)]
 
     it "el tooltip, en sus cuatro formas" $ do
@@ -758,7 +757,7 @@ main = hspec $ do
       map fst compoundLegend `shouldBe` ["soft", "medium", "hard", "intermediate", "wet", "unknown"]
 
     it "el style de la barra, en por ciento y sin notación científica" $
-      map barStyle (concatMap srBars (take 1 (stintRows stintTable)) ++ srBars (stintRows stintTable !! 3))
+      map setStyle (concatMap setBars (take 1 (setRows stintTable)) ++ setBars (setRows stintTable !! 3))
         `shouldBe` [ "left: 0.000%; width: 25.000%", "left: 25.000%; width: 9.375%"
                    , "left: 34.375%; width: 59.375%", "left: 6.250%; width: 0.000%" ]
 
