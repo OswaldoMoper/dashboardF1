@@ -3,7 +3,8 @@ la misma sesión.
 
 Pliega la grabación entera con ``fotos.plegar``, pide a OpenF1 ``/v1/stints`` y
 ``/v1/laps``, empareja por coche e índice y le pone tipo a cada pareja
-(``clasificar``). Imprime el total por tipo y cada diferencia.
+(``clasificar``). Imprime el total por tipo y cada diferencia. Un coche que no corre la
+sesión (``fuera_de_la_sesion``) no se compara: se nombra aparte.
 
 Uso, desde la raíz del repositorio y **fuera de sesión** (con una en marcha, OpenF1 da
 401)::
@@ -97,18 +98,32 @@ def clasificar(
     return tipos
 
 
-def leer(grabacion: Path) -> Tuple[Dict[str, Any], bool]:
-    """El estado final de la grabación y si quedó cortada: sin ``Finished`` en las
-    actualizaciones de ``SessionStatus`` (la foto inicial trae el de la sesión anterior)."""
+def leer(grabacion: Path) -> Tuple[Dict[str, Any], bool, Set[str]]:
+    """El estado final de la grabación, si quedó cortada —sin ``Finished`` en las
+    actualizaciones de ``SessionStatus`` (la foto inicial trae el de la sesión anterior)— y
+    los coches que recibieron el reinicio ``Stints: []`` en una actualización de
+    ``TimingAppData`` (el de la foto inicial no cuenta)."""
     estado: Dict[str, Any] = {}
     cortada = True
+    reiniciados: Set[str] = set()
     for topic, cuerpo, marca in mensajes(grabacion, TEMAS):
         if topic == "SessionStatus":
             if marca and isinstance(cuerpo, dict) and cuerpo.get("Status") == "Finished":
                 cortada = False
             continue
+        if topic == "TimingAppData" and marca and isinstance(cuerpo, dict):
+            for coche, linea in (cuerpo.get("Lines") or {}).items():
+                if isinstance(linea, dict) and linea.get("Stints") == []:
+                    reiniciados.add(coche)
         estado[topic] = plegar(estado[topic], cuerpo) if topic in estado else cuerpo
-    return estado, cortada
+    return estado, cortada, reiniciados
+
+
+def fuera_de_la_sesion(coches: Set[str], reiniciados: Set[str]) -> Set[str]:
+    """Los ``coches`` que no recibieron el reinicio de la sesión: el plegado los arrastra de
+    la anterior y la foto del servidor no. Sin ningún reinicio (la grabación empezó con la
+    sesión en marcha), ninguno."""
+    return coches - reiniciados if reiniciados else set()
 
 
 def pedir(ruta: str, session_key: str) -> List[Dict[str, Any]]:
@@ -121,10 +136,13 @@ def tramo(compuesto: Any, inicio: Any, fin: Any) -> str:
 
 
 def comparar(grabacion: Path, session_key: str) -> None:
-    estado, cortada = leer(grabacion)
+    estado, cortada, reiniciados = leer(grabacion)
     del_feed: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for stint in _feed_stints(estado):
         del_feed[stint["tsCar"]].append(stint)
+    fuera = fuera_de_la_sesion(set(del_feed), reiniciados)
+    for coche in fuera:
+        del del_feed[coche]
 
     stints = pedir("stints", session_key)
     time.sleep(1)
@@ -150,6 +168,8 @@ def comparar(grabacion: Path, session_key: str) -> None:
             lado_openf1 = tramo(o["compound"], o["lap_start"], o["lap_end"]) if o else "—"
             print(f"#{coche} stint {i + 1}: feed {lado_feed} | OpenF1 {lado_openf1} → {tipo}")
 
+    for coche in sorted(fuera, key=int):
+        print(f"fuera de la sesión: #{coche} (sin el reinicio de Stints)")
     print(f"{grabacion.name} ({session_key}): {'cortada' if cortada else 'con Finished'}")
     print(f"iguales {total[IGUAL]}, distintos {sum(total.values()) - total[IGUAL]}")
     for tipo in TIPOS[1:]:

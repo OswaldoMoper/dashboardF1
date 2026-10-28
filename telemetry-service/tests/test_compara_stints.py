@@ -1,6 +1,8 @@
 """``compara_stints.clasificar``: el tipo de cada pareja de stints de un coche, con los
 casos medidos en Singapur y uno inventado por cada tipo que no salió allí."""
 
+import json
+
 import compara_stints
 
 
@@ -67,6 +69,29 @@ def test_otro_compuesto_va_antes_que_la_grabacion_cortada():
         cortada=True,
     )
     assert tipos == ["igual", "otro compuesto"]
+
+
+def test_fuera_de_la_sesion_el_coche_sin_reinicio_de_la_p1_de_austin():
+    # P1 de Austin (11389): HER (#25) sustituye a PER (#11), que no recibe el reinicio.
+    assert compara_stints.fuera_de_la_sesion({"1", "11", "25"}, {"1", "25"}) == {"11"}
+    # Una grabación que empieza con la sesión en marcha no ve el reinicio: no se aparta nadie.
+    assert compara_stints.fuera_de_la_sesion({"1", "11"}, set()) == set()
+
+
+def test_leer_cuenta_los_reiniciados_sin_la_foto_inicial(tmp_path):
+    # El `Stints: []` del #11 en la foto inicial no es un reinicio: es su estado al conectarse.
+    foto = json.dumps({"Lines": {"1": {"Stints": [{"Compound": "SOFT"}]}, "11": {"Stints": []}}})
+    grabacion = tmp_path / "grabacion.txt"
+    grabacion.write_text(
+        "\n".join(repr(m) for m in [
+            ["TimingAppData", foto, ""],
+            ["TimingAppData", {"Lines": {"1": {"Stints": []}}}, "2026-10-23T17:30:04.1Z"],
+            ["TimingAppData", {"Lines": {"1": {"Stints": [{"Compound": "MEDIUM"}]}}}, "2026-10-23T17:31:00.0Z"],
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    _, _, reiniciados = compara_stints.leer(grabacion)
+    assert reiniciados == {"1"}
 
 
 def test_lo_que_no_se_explica():
