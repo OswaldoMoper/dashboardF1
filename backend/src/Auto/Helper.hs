@@ -856,7 +856,7 @@ data RecordingEnd
 -- | Cuánto puede llevar sin escribirse el fichero de una grabación, contado desde la hora
 -- prevista de su sesión, antes de darla por cortada: en sesión el feed late cada 15 s.
 recordingStallAfter :: NominalDiffTime
-recordingStallAfter = 3 * 60
+recordingStallAfter = 60
 
 -- | La vez en curso de una grabación, vista en un minuto.
 data RecordingRun = RecordingRun

@@ -5523,12 +5523,12 @@ main = hspec $ do
       )
         `shouldBe` (Auto.StopRecording Auto.RecCapped, [Auto.Relaunch 6 Auto.Cut, Auto.StopRecording Auto.RecGaveUp])
 
-    it "un fichero que no crece 3 min desde la hora de su sesión: relanza; antes de esa hora, no" $
+    it "un fichero que no crece 1 min desde la hora de su sesión: relanza; antes de esa hora, no" $
       let step now = Auto.recordingStep now Nothing practice1Slot Nothing
           snapshot = writing True 1 (atUtc 23 16 46)
-       in ( step (atUtc 23 17 55) (writing True 1 (atUtc 23 17 52))
-          , step (atUtc 23 17 54) (writing True 1 (atUtc 23 17 52))
-          , map (`step` snapshot) [atUtc 23 17 20, atUtc 23 17 32, atUtc 23 17 33]
+       in ( step (atUtc 23 17 53) (writing True 1 (atUtc 23 17 52))
+          , step (addUTCTime 59 (atUtc 23 17 52)) (writing True 1 (atUtc 23 17 52))
+          , map (`step` snapshot) [atUtc 23 17 20, addUTCTime 59 (atUtc 23 17 30), atUtc 23 17 31]
           )
             `shouldBe` ( Auto.Relaunch 2 (Auto.Stalled (atUtc 23 17 52))
                        , Auto.KeepRecording
