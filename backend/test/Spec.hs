@@ -5349,6 +5349,9 @@ main = hspec $ do
     it "«Socket closed» es un corte del feed: sus cuatro líneas con «error», ninguna error" $
       Auto.countLog socketClosedLines `shouldBe` Auto.LogCount 0 0 4
 
+    it "la conexión al feed que no abre es un corte: sus dos líneas de «urlopen error», ninguna error" $
+      Auto.countLog feedRefusedLines `shouldBe` Auto.LogCount 0 0 2
+
     it "un error de verdad es FALLA aunque haya avisos; solo avisos, AVISO; nada, OK" $
       map (fst . Auto.logCheck . Auto.countLog)
           [ "src/Handler/Live.hs:12:3: error: [GHC-88464]" : gpLogLines
@@ -8045,4 +8048,16 @@ socketClosedLines =
   , "fastf1  | 2026-10-23T17:31:48Z "
   , "fastf1  | 2026-10-23T17:31:48Z <signalrcore.transport.websockets.websocket_transport.WebsocketTransport object at 0x7c5ad447d7f0> Socket closed by the the server"
   , "fastf1  | 2026-10-23T17:31:48Z Socket closed by the the server <class 'signalrcore.transport.sockets.errors.SocketClosedError'>"
+  ]
+
+-- | Tres conexiones al feed que no abren, tal cual, de los logs de EE. UU.: dos dicen
+-- «error» (las de @urlopen@) y la tercera no.
+feedRefusedLines :: [T.Text]
+feedRefusedLines =
+  [ "fastf1  | 2026-10-25T20:19:42Z AuthHubConnection"
+  , "fastf1  | 2026-10-25T20:19:42Z [Errno 104] Connection reset by peer"
+  , "fastf1  | 2026-10-25T21:33:56Z AuthHubConnection"
+  , "fastf1  | 2026-10-25T21:33:56Z <urlopen error [Errno 104] Connection reset by peer>"
+  , "fastf1  | 2026-10-23T17:33:25Z AuthHubConnection"
+  , "fastf1  | 2026-10-23T17:33:25Z <urlopen error [SSL: UNEXPECTED_MESSAGE] unexpected message (_ssl.c:1010)>"
   ]

@@ -349,7 +349,7 @@ openf1Verdict code = case code of
 data LogCount = LogCount
   { lcErrors      :: Int  -- ^ Las que cuentan como error.
   , lcRateLimited :: Int  -- ^ Los 429 de OpenF1, cuyo cuerpo dice @"error"@.
-  , lcFeedCuts    :: Int  -- ^ Los cortes del feed (@Broken pipe@, @SSLError@, @Socket closed@).
+  , lcFeedCuts    :: Int  -- ^ Los cortes del feed (@Broken pipe@, @SSLError@, @Socket closed@) y la conexión que no abre (@urlopen error@).
   }
   deriving (Eq, Show)
 
@@ -368,7 +368,7 @@ countLog = foldr (tally . T.toLower) (LogCount 0 0 0)
       | "[openf1]" `T.isInfixOf` l && " 429 " `T.isInfixOf` l = c {lcRateLimited = lcRateLimited c + 1}
       | any (`T.isInfixOf` l) feedCuts                     = c {lcFeedCuts = lcFeedCuts c + 1}
       | otherwise                                          = c {lcErrors = lcErrors c + 1}
-    feedCuts = ["broken pipe", "ssl", "socket closed", "socketclosederror"]
+    feedCuts = ["broken pipe", "ssl", "socket closed", "socketclosederror", "urlopen error"]
 
 -- | El juicio del log y su detalle: un error es FALLA; solo 429 o cortes, AVISO.
 logCheck :: LogCount -> (Verdict, Text)
