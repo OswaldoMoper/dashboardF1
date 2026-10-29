@@ -21,7 +21,21 @@
 
       perSystem = { pkgs, self', system, ... }:
       let
-        reflexPkgs = import inputs.nixpkgs-reflex { inherit system; };
+        # Node 22 for the GHCJS toolchain and the microservice comes from the main nixpkgs.
+        reflexPkgs = import inputs.nixpkgs-reflex {
+          inherit system;
+          overlays = [
+            (_: prev:
+              let
+                node22 = p: p.overrideAttrs (_: { inherit (pkgs.nodejs-slim_22) version src patches; });
+              in {
+                nodejs = node22 prev.nodejs;
+                nodejs-slim = node22 prev.nodejs-slim;
+                nodejs_22 = node22 prev.nodejs_22;
+                nodejs-slim_22 = node22 prev.nodejs-slim_22;
+              })
+          ];
+        };
         jsPkgs = reflexPkgs.pkgsCross.ghcjs.haskell.packages.ghc910.extend (hf: _hp: {
           common = hf.callCabal2nix "common" ./common { };
           frontend = hf.callCabal2nix "frontend" ./frontend { };
