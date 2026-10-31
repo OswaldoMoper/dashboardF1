@@ -1,5 +1,8 @@
 # F1 Functional Dashboard
 
+> Proyecto personal y no oficial, sin relación con las empresas de Fórmula 1.
+> F1, FORMULA 1 y las marcas relacionadas son de Formula One Licensing B.V.
+
 Plataforma modular de dashboard de Fórmula 1 construida en Haskell (backend funcional + frontend reactivo), con un microservicio Python para telemetría y un módulo de analítica matemática.
 
 Con live timing, telemetría, comparación de vueltas, estrategias de neumáticos, estadísticas históricas y widgets personalizables.
@@ -11,8 +14,19 @@ Con live timing, telemetría, comparación de vueltas, estrategias de neumático
 | `backend/`          | Backend Haskell (Servant + Warp + Lucid): API REST y WebSockets. |
 | `frontend/`         | Frontend Haskell (Reflex-DOM, GHC JS-backend): widgets/layouts.  |
 | `telemetry-service/`| Microservicio Python (FastF1): telemetría avanzada.              |
-| `analysis/`         | Analítica Haskell reutilizando `Mathematical_Data_Analysis`.     |
+| `analysis/`         | Analítica Haskell (módulo por integrar).                         |
 | `docs/`             | Documentación viva del proyecto.                                 |
+
+## Datos
+
+Los datos se leen en el momento de OpenF1, Jolpica, FastF1 y el feed en directo.
+El archivo de sesiones acabadas de F1 pide credenciales, así que FastF1 no carga
+las sesiones recientes y, fuera de sesión, Lap Comparison y Telemetry enseñan un
+ejemplo.
+
+Las grabaciones del feed que usan `telemetry-service/tests/` y `e2e/` no se
+distribuyen: sin ellas, `dashboardF1-pytest` y `dashboardF1-e2e` no pasan.
+`dashboardF1-hspec` sí.
 
 ## Documentación
 

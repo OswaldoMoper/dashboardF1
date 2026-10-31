@@ -11,7 +11,7 @@
   - `/backend`
   - `/frontend`
   - `/telemetry-service`
-  - `/analysis` (código importado de `Mathematical_Data_Analysis`)
+  - `/analysis` (módulo de analítica)
   - `/docs` (arquitectura, decisiones, roadmap, glosario y notas de análisis)
 
 **Entregables:**
@@ -787,11 +787,11 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
   quién agrega. El rediseño pendiente de Telemetry es la advertencia escrita de lo que pasa sin él — un KPI
   pedido como widget que resulta ser un cambio de contrato del DTO.
 
-## Fase 7 – Analítica con `Mathematical_Data_Analysis`
+## Fase 7 – Analítica
 
-**Objetivo:** reutilizar tu código de análisis:
+**Objetivo:** añadir análisis matemático:
 
-- Importar módulos relevantes a `/analysis`.
+- Escribir los módulos en `/analysis`.
 - Exponer funciones como:
   - normalización de datos.
   - detección de outliers.
@@ -802,5 +802,5 @@ marcha» a «finalizada» directamente. Son dos señales distintas con el mismo 
 
 **Entregables:**
 
-- Al menos un widget que use directamente funciones del repositorio de análisis.
-- Documentación en `/docs/ANALYSIS.md` explicando qué se reutiliza.
+- Al menos un widget que use directamente funciones del módulo de analítica.
+- Documentación en `/docs/ANALYSIS.md` explicando qué hace cada función.

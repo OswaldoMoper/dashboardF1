@@ -9,7 +9,7 @@ El F1 Functional Dashboard es una plataforma modular construida en Haskell que i
 - **HTML base** generado con Lucid.
 - **Microservicio Python** encapsulado para FastF1.
 - **Fuentes de datos externas**: OpenF1, Jolpica, FastF1.
-- **Módulo de analítica** reutilizando Mathematical_Data_Analysis.
+- **Módulo de analítica**, por integrar.
 
 El sistema está diseñado como un conjunto de **widgets configurables**, organizados en **layouts**, similares a F1TV Premium o F1Cosmos, con:
 
@@ -165,7 +165,6 @@ puerto del backend, en un directorio `700`), y el backend le habla por ahí con 
 
 Responsabilidades:
 
-- Reutilizar el repositorio Mathematical_Data_Analysis.
 - Proveer KPIs avanzados.
 - Normalización, outliers, degradación, consistencia.
 
@@ -196,7 +195,7 @@ El flujo de datos del sistema sigue una arquitectura en capas:
       ejemplo, la lista vacía.
     - Los widgets renderizan la información.
 5. Analysis Module → Backend → Widgets
-    - KPIs avanzados derivados del repositorio Mathematical_Data_Analysis.
+    - KPIs avanzados derivados del módulo de analítica.
     - Se integran en widgets especializados.
 
 Resumen textual:
@@ -205,7 +204,7 @@ Resumen textual:
 - Feed oficial → Microservicio (`/fastf1/live`) → Backend (`/api/live`) → Widgets (live timing, Tyre Strategy)
 - Jolpica → Backend → Widgets (histórico)
 - FastF1 → Microservicio → Backend → Widgets (telemetría)
-- Mathematical_Data_Analysis → Backend → Widgets (KPIs)
+- Módulo de analítica → Backend → Widgets (KPIs)
 
 ## 4. Invariantes Arquitectónicas
 
@@ -243,7 +242,7 @@ Esquema:
 - OpenF1 → Backend Servant → Frontend Reflex → Widgets
 - Jolpica → Backend Servant → Frontend Reflex → Widgets
 - FastF1 → Microservicio Python → Backend Servant → Frontend Reflex → Widgets
-- Mathematical_Data_Analysis → Backend Servant → Frontend Reflex → Widgets (KPIs)
+- Módulo de analítica → Backend Servant → Frontend Reflex → Widgets (KPIs)
 
 ## 8. Relación con las fases del roadmap
 

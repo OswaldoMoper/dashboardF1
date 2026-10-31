@@ -1,14 +1,12 @@
 # ANALYSIS – F1 Functional Dashboard
 
-Este documento explica cómo se integra el repositorio:
-
-`Mathematical_Data_Analysis/Data Analyst Project`
+Este documento explica cómo se integra el módulo de analítica, todavía por integrar.
 
 Se ajustará al llegar a la fase que le compete.
 
 ## 1. Objetivo
 
-Reutilizar ese código de análisis matemático para:
+Añadir análisis matemático para:
 
 - KPIs avanzados.
 - Normalización de datos.
@@ -17,9 +15,9 @@ Reutilizar ese código de análisis matemático para:
 - Consistencia de vueltas.
 - Comparación estadística entre pilotos.
 
-## 2. Módulos Importados
+## 2. Módulos
 
-Desde ese repositorio se importarán:
+El módulo tendrá:
 
 - `Normalization.hs`
 - `Outliers.hs`
@@ -69,4 +67,4 @@ Este módulo depende de:
 
 - OpenF1 (datos base)
 - FastF1 (telemetría avanzada)
-- Mathematical_Data_Analysis (funciones matemáticas)
+- Las funciones matemáticas de `/analysis`
