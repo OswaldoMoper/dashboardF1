@@ -8,19 +8,18 @@ Se conecta a ``wss://livetiming.formula1.com/signalrcore`` reusando el
 ``SignalRClient`` de FastF1 — su formato de salida es el que
 ``fastf1.livetiming.data.LiveTimingData`` sabe releer después. Pide los topics de ese
 cliente y, además, ``ChampionshipPrediction`` (la predicción del campeonato; en el
-archivo de F1 sale en carreras y Sprints, no en clasificación).
+archivo de F1 sale en carreras y Sprints, no en clasificación, y solo llega con cuenta).
 
 **Por defecto la conexión es anónima**, y así el feed no manda la telemetría del coche
 (``CarData.z``, ``Position.z``). **Con ``--f1tv``, o con la variable ``F1TV`` no vacía, se
-conecta con una cuenta de F1TV:** la primera vez ``fastf1.internals.f1auth`` imprime una
-dirección para iniciar sesión en el navegador, y guarda el token para las siguientes.
+conecta con la cuenta de F1TV** del token que guarda FastF1 (``dashboardF1-f1tv`` inicia
+sesión). Sin un token que valga, con terminal FastF1 pide el correo y la contraseña; sin
+terminal, el grabador no graba: sale con código 3 antes de crear el fichero.
 
-Para la conexión anónima está el único apaño del fichero: FastF1 ofrece
-``no_auth=True`` para eso, pero pasa ``None`` como ``access_token_factory`` y el
-``signalrcore`` 1.0.2 del pin lo rechaza con ``TypeError: access_token_factory is not
-function``. En vez de reimplementar ``_run`` entero se sustituye ``get_auth_token`` por
-una función que devuelve la cadena vacía: sigue siendo una función, así que la
-validación pasa, y el token vacío es lo que el modo anónimo quiere mandar. Medido el
+El modo anónimo no usa el ``no_auth=True`` de FastF1: pasa ``None`` como
+``access_token_factory`` y el ``signalrcore`` 1.0.2 del pin lo rechaza con ``TypeError:
+access_token_factory is not function``. ``_Recorder`` da en su lugar una función que
+devuelve la cadena vacía, el token que el modo anónimo quiere mandar. Medido el
 2026-09-06 contra el GP de Italia: el feed acepta la conexión sin token y sirve los doce
 topics completos.
 
@@ -36,36 +35,50 @@ Uso::
 
 import os
 import sys
+from typing import Callable, List, Optional
 
-import fastf1.internals.f1auth as f1auth
+from fastf1.exceptions import F1AuthError
+from fastf1.internals.f1account import get_token
+from fastf1.livetiming.client import SignalRClient
 
-_ARGS = [arg for arg in sys.argv[1:] if arg != "--f1tv"]
-_WITH_ACCOUNT = len(_ARGS) < len(sys.argv) - 1 or bool(os.environ.get("F1TV"))
-
-# El apaño del Haddock de arriba: una función que devuelve el token vacío, puesta antes
-# de importar el cliente porque `livetiming.client` la captura por valor al importarse.
-if not _WITH_ACCOUNT:
-    f1auth.get_auth_token = lambda: ""
-
-from fastf1.livetiming.client import SignalRClient  # noqa: E402
+NO_ACCOUNT = 3
 
 
-def main() -> int:
-    if not _ARGS:
+class _Recorder(SignalRClient):
+    """El cliente de FastF1 con un modo anónimo que ``signalrcore`` 1.0.2 acepta."""
+
+    def __init__(self, *args, with_account: bool, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._with_account = with_account
+
+    def _access_token_factory(self) -> Optional[Callable[[], str]]:
+        if not self._with_account:
+            return lambda: ""
+        return super()._access_token_factory()
+
+
+def main(argv: List[str]) -> int:
+    args = [arg for arg in argv if arg != "--f1tv"]
+    with_account = len(args) < len(argv) or bool(os.environ.get("F1TV"))
+    if not args:
         print(__doc__)
         return 2
 
-    filename = _ARGS[0]
-    timeout = int(_ARGS[1]) if len(_ARGS) > 1 else 300
+    filename = args[0]
+    timeout = int(args[1]) if len(args) > 1 else 300
 
-    client = SignalRClient(filename=filename, filemode="w", timeout=timeout)
+    if with_account:
+        try:
+            get_token()
+        except F1AuthError as exc:
+            print(f"sin cuenta de F1TV, no se graba: {exc}", file=sys.stderr)
+            return NO_ACCOUNT
+
+    client = _Recorder(filename=filename, filemode="w", timeout=timeout, with_account=with_account)
     client.topics.append("ChampionshipPrediction")
-    # `no_auth` se queda en False a propósito: es lo que hace que el cliente use la
-    # `get_auth_token` de arriba —la sustituida o la de la cuenta— en vez del `None`
-    # que rompe signalrcore.
     client.start()
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

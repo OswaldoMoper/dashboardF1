@@ -82,10 +82,18 @@
           extra.pythonRelaxDeps = [ "msgpack" ];
         };
 
+        # fastf1 3.9.0 asks for requests-cache >= 1.3.0; nixpkgs-reflex ships 1.2.1.
+        requestsCache = pypiWheel {
+          pname = "requests_cache";
+          version = "1.3.2";
+          hash = "sha256-xSZmx2sI2qlNBamTJ90kr8RvQFq8BE6MIme1QPkGc9A=";
+          deps = with python.pkgs; [ attrs cattrs platformdirs requests url-normalize urllib3 ];
+        };
+
         fastf1 = pypiWheel {
           pname = "fastf1";
-          version = "3.8.3";
-          hash = "sha256-4ycPbWCDhmLdPhXPYjZRkiin/PzACfXtsZV5h2nIRa0=";
+          version = "3.9.0";
+          hash = "sha256-di3NAwiVpGKLWw0klQa28tgs1TbcpxAWNq21x6Vg1II=";
 
           deps = (with python.pkgs; [
             cryptography
@@ -98,10 +106,9 @@
             python-dateutil
             rapidfuzz
             requests
-            requests-cache
             scipy
             websockets
-          ]) ++ [ signalrcore timple ];
+          ]) ++ [ requestsCache signalrcore timple ];
         };
 
         pythonDeps = ps: [
