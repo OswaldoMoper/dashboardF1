@@ -160,10 +160,10 @@ withInstant at base = maybe base (\t -> base <> " (" <> t <> ")") (nonBlank =<< 
 
 -- | De qué fuente salió el dato.
 --
--- Las dos son __complementarias y no redundantes__ (2026-09-12 (h)): el feed publica
--- mientras la sesión rueda y calla después; OpenF1 cierra con @401@ mientras rueda y
--- abre después. Por eso ninguna sustituye a la otra y la respuesta tiene que decir
--- cuál contestó.
+-- El feed y OpenF1 son __complementarios y no redundantes__ (2026-09-12 (h)): el feed
+-- publica mientras la sesión rueda y calla después; OpenF1 cierra con @401@ mientras
+-- rueda y abre después. Por eso ninguna sustituye a la otra y la respuesta tiene que
+-- decir cuál contestó. FastF1 da las vueltas y la telemetría de las sesiones acabadas.
 --
 -- No hay constructor para el respaldo estático: no salió de ninguna fuente, y por eso
 -- la cabecera __falta__ en ese caso en vez de llevar un valor inventado.
@@ -172,6 +172,8 @@ data Source
     Feed
   | -- | La API pública de OpenF1.
     OpenF1
+  | -- | El archivo de F1 leído con FastF1, a través del microservicio.
+    FastF1
   deriving stock (Eq, Show, Enum, Bounded)
 
 -- | Cabecera que transporta la fuente.
@@ -186,6 +188,7 @@ sourceHeader = "X-Data-Source"
 sourceLabel :: Source -> Text
 sourceLabel Feed   = "feed"
 sourceLabel OpenF1 = "openf1"
+sourceLabel FastF1 = "fastf1"
 
 -- | La fuente a partir del valor de la cabecera, con el criterio de 'originFrom':
 -- recorta, normaliza a minúsculas y __no adivina__.
@@ -194,6 +197,7 @@ sourceFrom raw =
   case T.toLower (T.strip raw) of
     "feed"   -> Just Feed
     "openf1" -> Just OpenF1
+    "fastf1" -> Just FastF1
     _        -> Nothing
 
 -- | El nombre de la fuente para leerlo, que es lo que enseña el tooltip.
@@ -203,6 +207,7 @@ sourceFrom raw =
 sourceName :: Source -> Text
 sourceName Feed   = "Feed oficial"
 sourceName OpenF1 = "OpenF1"
+sourceName FastF1 = "FastF1"
 
 -- | El texto si dice algo, 'Nothing' si está en blanco. Una cabecera presente pero
 -- vacía es lo mismo que ausente, y sin esto el aviso acabaría en @\"… ()\"@.

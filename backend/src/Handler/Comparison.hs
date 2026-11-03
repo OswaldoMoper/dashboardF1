@@ -12,7 +12,11 @@ import           Control.Monad.IO.Class     (liftIO)
 import           Data.Text                  (Text)
 import qualified Handler.Comparison.Context as Context
 import           Outcome                    (serve)
+import           Provenance                 (WithProvenance, withProvenance)
 import           Servant                    (Handler)
+
+-- | La respuesta de @\/api\/comparison@: la comparación, más las tres cabeceras.
+type ComparisonResponse = WithProvenance LapComparison
 
 -- | Los tres 'Maybe' vienen de los @QueryParam@ opcionales de 'Server.Api' y bajan
 -- sin interpretar: quien decide qué significa su ausencia es
@@ -20,16 +24,13 @@ import           Servant                    (Handler)
 -- 'Handler.Telemetry.telemetryHandler', que es el otro endpoint parametrizado del
 -- repo.
 --
--- __El tipo público no cambia__ y 'Server.Api' tampoco: el @Outcome@ que ahora
--- devuelve el @Context@ muere aquí, en 'Outcome.serve'. Es el primer handler del
--- repo que puede no responder @200@ —y el primer @throwError@—, pero la forma del
--- endpoint es la misma, así que las otras cinco áreas siguen cableadas igual
--- mientras les llega el turno.
+-- El @Outcome@ que devuelve el @Context@ muere aquí, en 'Outcome.serve', y lo servido
+-- sale con sus cabeceras ('Provenance'); el cuerpo JSON es el de siempre.
 --
 -- Traducir es __todo__ lo que hace: no decide nada sobre el fallo, porque quien
 -- conoce el contrato del microservicio es el @Context@ que lo llamó. Mismo reparto
 -- que ya existía con @resolveParams@.
 comparisonHandler
-  :: Env -> Maybe Text -> Maybe Text -> Maybe Int -> Handler LapComparison
+  :: Env -> Maybe Text -> Maybe Text -> Maybe Int -> Handler ComparisonResponse
 comparisonHandler env session drivers samples =
-  liftIO (Context.getComparison env session drivers samples) >>= serve
+  withProvenance <$> (liftIO (Context.getComparison env session drivers samples) >>= serve)

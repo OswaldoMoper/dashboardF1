@@ -238,7 +238,6 @@ import           Handler.Feed.Helper         (FeedFlag (..), FeedLive (..),
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
 import           Handler.Historical.Helper   (Root, assembleConstructorStats,
                                               assembleStats, parseNum)
-import           Handler.Live                (LiveResponse)
 import           Handler.Live.Helper         (Announced (..),
                                               CalendarEntry (..),
                                               ClockVerdict (..),
@@ -284,8 +283,9 @@ import           Outcome                     (Rejection (..), rejectionFor)
 import           Provenance                  (FetchedAtHeaderName,
                                               OriginHeaderName,
                                               Provenanced (..),
-                                              SourceHeaderName, fetchedAtText,
-                                              isoInstant, withProvenance)
+                                              SourceHeaderName, WithProvenance,
+                                              fetchedAtText, isoInstant,
+                                              withProvenance)
 import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
 import           Test.Hspec
@@ -851,6 +851,29 @@ main = hspec $ do
 
     it "sin nada guardado un fallo no tiene qué servir, y quien llama pone el ejemplo" $
       tyreStep tyreNow Nothing Nothing `shouldBe` (Nothing, Nothing)
+
+  -- La escalera de `/api/comparison` y `/api/telemetry`, por clave. Lo guardado en la
+  -- clave pedida es otra tanda que lo traído, y hay otra clave guardada, para que servir
+  -- la equivocada no pueda pasar la prueba.
+  describe "fastf1Step" $ do
+    let valid = not . null
+        cache = Map.fromList [("2026-19-Q" :: T.Text, (fetchInstant, [2 :: Int])), ("2026-19-R", (fetchInstant, [3]))]
+    it "lo traído que vale se sirve fresco de FastF1 y se guarda en su clave con la hora de ahora" $
+      FastF1.fastf1Step valid tyreNow "2026-19-Q" (Just [1]) cache
+        `shouldBe`
+          ( Just (Provenanced Fresh (Just FastF1) Nothing [1])
+          , Map.insert "2026-19-Q" (tyreNow, [1]) cache )
+
+    it "lo traído que no vale cae a lo guardado de esa clave, con su hora, y no lo pisa" $
+      FastF1.fastf1Step valid tyreNow "2026-19-Q" (Just []) cache
+        `shouldBe` (Just (Provenanced Cached (Just FastF1) (Just fetchInstant) [2]), cache)
+
+    it "un fallo sirve lo guardado igual que lo que no vale" $
+      FastF1.fastf1Step valid tyreNow "2026-19-Q" Nothing cache
+        `shouldBe` (Just (Provenanced Cached (Just FastF1) (Just fetchInstant) [2]), cache)
+
+    it "nunca sirve lo de otra clave: sin nada en la suya, quien llama pone el ejemplo" $
+      FastF1.fastf1Step valid tyreNow "2026-18-R" Nothing cache `shouldBe` (Nothing, cache)
 
   -- Segunda de las tres áreas que quedaban sin suite (queda
   -- 'Handler.OpenF1.Helper'), y la que más cruza del repo: __cinco__
@@ -4610,22 +4633,22 @@ main = hspec $ do
   -- que ningún valor de un eje implica uno del otro.
   describe "Common.Origin — la fuente" $ do
     it "cada fuente tiene su valor de cabecera, y son distintos entre sí" $
-      map sourceLabel [minBound .. maxBound] `shouldBe` ["feed", "openf1"]
+      map sourceLabel [minBound .. maxBound] `shouldBe` ["feed", "openf1", "fastf1"]
 
     it "lee el valor tal cual lo emite el backend" $
-      map sourceFrom ["feed", "openf1"] `shouldBe` [Just Feed, Just OpenF1]
+      map sourceFrom ["feed", "openf1", "fastf1"] `shouldBe` [Just Feed, Just OpenF1, Just FastF1]
 
     it "tolera espacios y mayúsculas, como la procedencia" $
       map sourceFrom ["  FEED ", "OpenF1"] `shouldBe` [Just Feed, Just OpenF1]
 
     it "no adivina: lo que no reconoce es Nothing" $
-      map sourceFrom ["", "   ", "open f1", "fastf1", "sample"]
+      map sourceFrom ["", "   ", "open f1", "fast f1", "sample"]
         `shouldBe` [Nothing, Nothing, Nothing, Nothing, Nothing]
 
     -- Uno lo lee una máquina y el otro una persona; si coincidieran, el texto de la
     -- pantalla quedaría atado al valor del protocolo.
     it "el nombre que se lee no es el valor que viaja" $
-      map sourceName [minBound .. maxBound] `shouldBe` ["Feed oficial", "OpenF1"]
+      map sourceName [minBound .. maxBound] `shouldBe` ["Feed oficial", "OpenF1", "FastF1"]
 
     -- Los tres nombres los leen los dos extremos, así que clavarlos aquí es lo que
     -- impide renombrar uno de un lado y dejar al otro buscando el viejo.
@@ -4633,7 +4656,7 @@ main = hspec $ do
       [originHeader, fetchedAtHeader, sourceHeader]
         `shouldBe` ["X-Data-Origin", "X-Data-Fetched-At", "X-Data-Source"]
 
-    prop "sourceFrom es inversa de sourceLabel para las dos" sourceRoundTrips
+    prop "sourceFrom es inversa de sourceLabel para todas" sourceRoundTrips
 
   -- El nombre de cada cabecera vive dos veces —'Text' en 'Common.Origin', 'Symbol'
   -- en el tipo de Servant— y si divergen el widget no reconoce la cabecera y calla
@@ -4663,6 +4686,13 @@ main = hspec $ do
       headersOf
         (withProvenance (Provenanced Cached (Just OpenF1) (Just fetchInstant) liveTableFixture))
         `shouldBe` (Header "cached", Header "2026-09-11T14:03:22Z", Header "openf1")
+
+    it "lo que sale de FastF1 dice que es de FastF1; el ejemplo no lleva fuente" $
+      ( headersOf (withProvenance (Provenanced Fresh (Just FastF1) Nothing Comparison.dummy))
+      , headersOf (withProvenance (Provenanced Sample Nothing Nothing Comparison.dummy))
+      )
+        `shouldBe` ( (Header "fresh", MissingHeader, Header "fastf1")
+                   , (Header "sample", MissingHeader, MissingHeader) )
 
     it "el reciente viaja como lo guardado, pero con su propio sello" $
       -- Lo que el cuarto sello cambia en el cable es solo la primera cabecera: el
@@ -7747,10 +7777,10 @@ freshStints = [openF1Stint "NOR" "1" "MEDIUM" 1 20, openF1Stint "NOR" "1" "HARD"
 keptStints :: [TyreStint]
 keptStints = [openF1Stint "LEC" "16" "SOFT" 1 12]
 
--- | Las tres cabeceras de una respuesta de @\/api\/live@, buscadas por su nombre
+-- | Las tres cabeceras de una respuesta con procedencia, buscadas por su nombre
 -- __de tipo__, que es el que Servant usa al serializarlas.
 headersOf
-  :: LiveResponse
+  :: WithProvenance a
   -> ( ResponseHeader OriginHeaderName T.Text
      , ResponseHeader FetchedAtHeaderName T.Text
      , ResponseHeader SourceHeaderName T.Text

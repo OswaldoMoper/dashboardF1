@@ -14,34 +14,38 @@
 module Handler.Telemetry.Context where
 
 import           App                       (Env (..))
+import           Common.Origin             (Origin (..))
 import           Common.Types              (TelemetryPoint (..))
 import           Config                    (Config)
-import           Control.Concurrent.STM    (atomically, modifyTVar', readTVarIO)
+import           Control.Concurrent.STM    (atomically, readTVar, writeTVar)
 import           Control.Exception         (SomeException, try)
-import           Data.Map.Strict           (Map)
-import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (fromMaybe)
 import           Data.Text                 (Text)
+import           Data.Time.Clock           (getCurrentTime)
+import           Handler.FastF1.Helper     (fastf1Step)
 import           Handler.Telemetry.Helper  (assemblePoints, resolveParams)
 import qualified Handler.Telemetry.Manager as Manager
 import           Outcome                   (Outcome (..), classify)
+import           Provenance                (Provenanced (..))
 
--- | La telemetría de la vuelta rápida de cada piloto, por tres ramas y en este
--- orden:
+-- | La telemetría de la vuelta rápida de cada piloto, con su procedencia, por tres
+-- ramas y en este orden:
 --
--- * el fetch trae puntos → se guardan en la cache y se sirven;
+-- * el fetch trae puntos → se guardan en la cache con la hora y se sirven ('Fresh');
 -- * la excepción es culpa del cliente ('Outcome.classify') → se rechaza sin tocar
 --   la cache (2026-08-14);
 -- * cualquier otra cosa —servicio apagado, techo vencido, @5xx@, JSON con otra
 --   forma, o la lista vacía de una sesión que no publicó telemetría— → la última
---   respuesta buena __de esa misma clave__ y, sin ninguna, el dummy.
+--   respuesta buena __de esa misma clave__ ('Cached', con su hora) y, sin ninguna,
+--   el dummy ('Sample').
 --
 -- La cache va por clave resuelta: sin ella, quien pide un piloto recibiría la
 -- telemetría de otro (2026-08-01).
 --
 -- Un parámetro escrito pero vacío se rechaza antes de salir a la red y sin tocar
 -- la cache.
-getTelemetry :: Env -> Maybe Text -> Maybe Text -> IO (Outcome [TelemetryPoint])
+getTelemetry
+  :: Env -> Maybe Text -> Maybe Text -> IO (Outcome (Provenanced [TelemetryPoint]))
 getTelemetry env session driver = case resolveParams session driver of
   Left rejection -> pure (Refused rejection)
   Right key@(sessionKey, driverKey) -> do
@@ -49,18 +53,15 @@ getTelemetry env session driver = case resolveParams session driver of
       try (fetchPoints (envConfig env) sessionKey driverKey)
         :: IO (Either SomeException [TelemetryPoint])
     case result of
-      Right points | not (null points) -> do
-        atomically (modifyTVar' (envTelemetryCache env) (Map.insert key points))
-        pure (Served points)
       Left e | Just rejection <- classify e -> pure (Refused rejection)
       _ -> do
-        cached <- readTVarIO (envTelemetryCache env)
-        pure (Served (lookupCached key cached))
-
--- | Respaldo para una clave: la última respuesta buena de __esa__ combinación, o
--- el dummy. Nunca la de otra clave.
-lookupCached :: (Text, Text) -> Map (Text, Text) [TelemetryPoint] -> [TelemetryPoint]
-lookupCached key = fromMaybe dummy . Map.lookup key
+        now <- getCurrentTime
+        served <- atomically $ do
+          cached <- readTVar (envTelemetryCache env)
+          let (shown, kept) = fastf1Step (not . null) now key (either (const Nothing) Just result) cached
+          writeTVar (envTelemetryCache env) kept
+          pure shown
+        pure (Served (fromMaybe (Provenanced Sample Nothing Nothing dummy) served))
 
 -- | El GET al microservicio y el mapeo puro, encadenados. Vive fuera del @try@
 -- del llamador solo por legibilidad: cualquier excepción que lance —servicio

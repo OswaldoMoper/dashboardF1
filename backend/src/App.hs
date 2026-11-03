@@ -113,9 +113,10 @@ data Env = Env
     -- con la hora en que llegó: la que sale en @X-Data-Fetched-At@ al servirla.
   , envHistoricalCache :: TVar (Maybe [HistoricalStat])
     -- ^ Última respuesta buena de @/api/historical@ (respaldo si Jolpica falla).
-  , envTelemetryCache  :: TVar (Map (Text, Text) [TelemetryPoint])
+  , envTelemetryCache  :: TVar (Map (Text, Text) (UTCTime, [TelemetryPoint]))
     -- ^ Última respuesta buena de @/api/telemetry@ __por clave__ @(sesión,
-    -- piloto)@ ya resuelta (respaldo si el microservicio FastF1 no responde).
+    -- piloto)@ ya resuelta (respaldo si el microservicio FastF1 no responde), con la
+    -- hora en que llegó: la que sale en @X-Data-Fetched-At@ al servirla.
     --
     -- Es la única de las cuatro cajas que no es un @Maybe@, y la diferencia no
     -- es de rendimiento sino de __correctitud__: desde que el endpoint acepta
@@ -123,10 +124,10 @@ data Env = Env
     -- última respuesta buena de @all@ a quien pidió un piloto concreto — datos
     -- de otros coches presentados como suyos. Con clave, una combinación nunca
     -- pedida degrada al dummy, que es honesto.
-  , envComparisonCache :: TVar (Map (Text, Text, Int) LapComparison)
+  , envComparisonCache :: TVar (Map (Text, Text, Int) (UTCTime, LapComparison))
     -- ^ Última respuesta buena de @/api/comparison@ __por clave__ @(sesión,
     -- coches, muestras)@ ya resuelta (respaldo si el microservicio FastF1 no
-    -- responde).
+    -- responde), con la hora en que llegó.
     --
     -- Nace con clave, sin pasar por la caja única de las tres primeras: el
     -- endpoint acepta parámetros desde el primer día, así que la decisión del

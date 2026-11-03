@@ -74,8 +74,7 @@ getDrivers env session = case resolveParams session of
         pure (Served (lookupCached key cached))
 
 -- | Respaldo para una clave: la última parrilla buena de __esa__ sesión, o el
--- dummy. Nunca la de otra sesión (espejo de
--- 'Handler.Comparison.Context.lookupCached').
+-- dummy. Nunca la de otra sesión (como 'Handler.FastF1.Helper.fastf1Step').
 lookupCached :: Text -> Map Text [DriverEntry] -> [DriverEntry]
 lookupCached key = fromMaybe dummy . Map.lookup key
 

@@ -12,31 +12,32 @@
 module Handler.Comparison.Context where
 
 import           App                        (Env (..))
+import           Common.Origin              (Origin (..))
 import           Common.Types               (ComparisonEntry (..),
                                              LapComparison (..))
 import           Config                     (Config)
-import           Control.Concurrent.STM     (atomically, modifyTVar',
-                                             readTVarIO)
+import           Control.Concurrent.STM     (atomically, readTVar, writeTVar)
 import           Control.Exception          (SomeException, try)
-import           Data.Map.Strict            (Map)
-import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (fromMaybe)
 import           Data.Text                  (Text)
+import           Data.Time.Clock            (getCurrentTime)
 import           Handler.Comparison.Helper  (assembleComparison, comparable,
                                              resolveParams, withNotice)
 import qualified Handler.Comparison.Manager as Manager
+import           Handler.FastF1.Helper      (fastf1Step)
 import           Outcome                    (Outcome (..), classify)
+import           Provenance                 (Provenanced (..))
 
--- | La comparación de la vuelta rápida de 1 a 5 coches, por tres ramas y en este
--- orden:
+-- | La comparación de la vuelta rápida de 1 a 5 coches, con su procedencia, por tres
+-- ramas y en este orden:
 --
--- * el fetch trae algún coche con vuelta ('comparable') → se guarda en la cache y
---   se sirve;
+-- * el fetch trae algún coche con vuelta ('comparable') → se guarda en la cache con
+--   la hora y se sirve ('Fresh');
 -- * la excepción es culpa del cliente ('Outcome.classify') → se rechaza sin tocar
 --   la cache (2026-08-14);
 -- * cualquier otra cosa —servicio apagado, techo vencido, @5xx@, JSON con otra
 --   forma, o ningún coche con vuelta— → la última respuesta buena __de esa misma
---   clave__ y, sin ninguna, el dummy.
+--   clave__ ('Cached', con su hora) y, sin ninguna, el dummy ('Sample').
 --
 -- Las tres ramas que sirven llevan el aviso de lo que se ajustó de @samples@. La
 -- cache va sin él y por clave resuelta: sin clave, quien pide unos coches
@@ -45,7 +46,7 @@ import           Outcome                    (Outcome (..), classify)
 -- Un parámetro escrito pero vacío se rechaza antes de salir a la red y sin tocar
 -- la cache.
 getComparison
-  :: Env -> Maybe Text -> Maybe Text -> Maybe Int -> IO (Outcome LapComparison)
+  :: Env -> Maybe Text -> Maybe Text -> Maybe Int -> IO (Outcome (Provenanced LapComparison))
 getComparison env session drivers samples =
   case resolveParams session drivers samples of
     Left rejection -> pure (Refused rejection)
@@ -54,20 +55,16 @@ getComparison env session drivers samples =
         try (fetchLapComparison (envConfig env) sessionKey driversKey n)
           :: IO (Either SomeException LapComparison)
       case result of
-        Right comparison | comparable comparison -> do
-          atomically (modifyTVar' (envComparisonCache env) (Map.insert key comparison))
-          pure (Served (withNotice notice comparison))
         Left e | Just rejection <- classify e -> pure (Refused rejection)
         _ -> do
-          cached <- readTVarIO (envComparisonCache env)
-          pure (Served (withNotice notice (lookupCached key cached)))
-
--- | Respaldo para una clave: la última respuesta buena de __esa__ combinación, o
--- el dummy. Nunca la de otra clave (espejo de
--- 'Handler.Telemetry.Context.lookupCached').
-lookupCached
-  :: (Text, Text, Int) -> Map (Text, Text, Int) LapComparison -> LapComparison
-lookupCached key = fromMaybe dummy . Map.lookup key
+          now <- getCurrentTime
+          served <- atomically $ do
+            cached <- readTVar (envComparisonCache env)
+            let (shown, kept) = fastf1Step comparable now key (either (const Nothing) Just result) cached
+            writeTVar (envComparisonCache env) kept
+            pure shown
+          let shownWith p = p {pvBody = withNotice notice (pvBody p)}
+          pure (Served (shownWith (fromMaybe (Provenanced Sample Nothing Nothing dummy) served)))
 
 -- | El GET al microservicio y el mapeo puro, encadenados. Vive fuera del @try@
 -- del llamador solo por legibilidad: cualquier excepción que lance —servicio

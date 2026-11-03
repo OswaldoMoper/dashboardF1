@@ -1,24 +1,30 @@
 -- | Lo puro que comparten los consumidores del microservicio FastF1
 -- ('Handler.Telemetry', 'Handler.Comparison' y 'Handler.Drivers'): la lectura
--- de los @QueryParam@ que viajan como segmentos de su URL. Y, para quien juzga la
+-- de los @QueryParam@ que viajan como segmentos de su URL, y la escalera con procedencia
+-- de las áreas que guardan lo traído por clave ('fastf1Step'). Y, para quien juzga la
 -- cuenta de F1TV con la que FastF1 abre el archivo, lo que dice el fichero del token.
 module Handler.FastF1.Helper
   ( queryParam
   , sessionParam
+  , fastf1Step
   , TokenFile (..)
   , tokenExpiry
   , tokenFile
   ) where
 
+import           Common.Origin         (Origin (..), Source (..))
 import           Control.Monad         (guard)
 import           Data.Aeson            (eitherDecodeStrict, withObject, (.:))
 import           Data.Aeson.Types      (parseEither)
 import qualified Data.ByteString       as BS
+import           Data.Map.Strict       (Map)
+import qualified Data.Map.Strict       as Map
 import           Data.Text             (Text)
 import qualified Data.Text             as T
 import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime)
 import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import           Outcome               (Rejection (..))
+import           Provenance            (Provenanced (..))
 
 -- | Un @QueryParam@ opcional, resuelto: ausente → el valor por defecto; escrito
 -- pero vacío (@?name=@) → 'BadRequest', porque viajaría como segmento vacío de
@@ -37,6 +43,25 @@ queryParam name hint _ (Just value)
 -- | El @?session=@ de las tres áreas, con su motivo de rechazo.
 sessionParam :: Text -> Maybe Text -> Either Rejection Text
 sessionParam = queryParam "session" "usar la sesión por defecto"
+
+-- | El peldaño de la escalera de un consumidor de FastF1 y la cache que queda, para una
+-- clave: lo traído ('Nothing' si el fetch falló) que pasa @valid@ se sirve fresco y se
+-- guarda con la hora de ahora; si no, lo guardado de __esa misma clave__, con su hora, y
+-- la cache no cambia. 'Nothing' en el primer componente es que no hay nada que servir, y
+-- quien llama pone el ejemplo.
+fastf1Step
+  :: Ord k
+  => (a -> Bool)
+  -> UTCTime
+  -> k
+  -> Maybe a
+  -> Map k (UTCTime, a)
+  -> (Maybe (Provenanced a), Map k (UTCTime, a))
+fastf1Step valid now key (Just x) cache
+  | valid x = (Just (Provenanced Fresh (Just FastF1) Nothing x), Map.insert key (now, x) cache)
+fastf1Step _ _ key _ cache = (fromEntry <$> Map.lookup key cache, cache)
+  where
+    fromEntry (fetchedAt, x) = Provenanced Cached (Just FastF1) (Just fetchedAt) x
 
 -- | Lo que hay en @f1auth_token.json@, el fichero en que FastF1 guarda el token de F1TV.
 data TokenFile
