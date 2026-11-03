@@ -198,9 +198,27 @@
         packages.telemetry = pkgs.writeShellApplication {
           name = "telemetry-service";
           runtimeInputs = [ pythonEnv ];
+          # Stdin closed: with an expired token FastF1 would prompt for the F1 password.
           text = ''
-            exec uvicorn --app-dir ${telemetrySrc} main:app "$@"
+            exec uvicorn --app-dir ${telemetrySrc} main:app "$@" </dev/null
           '';
+        };
+
+        # `dashboardF1-f1tv` — signs in to F1TV (FastF1 stores the token); other flags go to FastF1.
+        packages.f1tv = pkgs.writeShellApplication {
+          name = "dashboardF1-f1tv";
+          runtimeInputs = [ pythonEnv ];
+          text = ''
+            if [ "$#" -eq 0 ]; then
+              set -- --authenticate
+            fi
+            exec python -m fastf1 auth f1tv "$@"
+          '';
+        };
+
+        apps.f1tv = {
+          type = "app";
+          program = "${self'.packages.f1tv}/bin/dashboardF1-f1tv";
         };
 
         apps.telemetry = {
@@ -408,7 +426,7 @@
             if [ "$files" -lt 1 ]; then
               echo "uso: dashboardF1-record [--f1tv] <fichero> [timeout_segundos]" >&2
               echo "     (o nix run .#record -- [--f1tv] <fichero> [timeout_segundos])" >&2
-              echo "     --f1tv, o F1TV=1: con la cuenta de F1TV (la primera vez, inicio de sesión)" >&2
+              echo "     --f1tv, o F1TV=1: con la cuenta de F1TV (el token de dashboardF1-f1tv)" >&2
               exit 2
             fi
             exec python telemetry-service/record_live.py "$@"
@@ -597,6 +615,7 @@
             self'.packages.api
             self'.packages.live
             self'.packages.record
+            self'.packages.f1tv
           ];
           buildInputs = with pkgs; [
             zlib
@@ -614,6 +633,7 @@
             echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
             echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"
             echo "  grabar  : dashboardF1-record [--f1tv] <fichero> [segundos]"
+            echo "  cuenta  : dashboardF1-f1tv [--status | --clear]  # inicia sesión en F1TV; el token lo guarda FastF1"
             echo "  auto    : dashboardF1-auto [día] [--horas p1=HH:MM,…] [--ensayo] | estado | cancela"
           '';
         };
