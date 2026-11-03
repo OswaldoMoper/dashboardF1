@@ -398,8 +398,8 @@ tokenNeed entries day slots = case todays of
 -- con calendario, el gran premio) y lo que hay en el fichero (D202, D203).
 tokenCheck :: UTCTime -> UTCTime -> Maybe UTCTime -> TokenFile -> (Verdict, Text)
 tokenCheck now today gp file = case file of
-  TokenMissing    -> (Falla, "no hay token (no existe ~/.local/share/fastf1/f1auth.json)")
-  TokenUnreadable -> (Falla, "no hay token (no se entiende f1auth.json)")
+  TokenMissing    -> (Falla, "no hay token (no existe ~/.local/share/fastf1/f1auth_token.json)")
+  TokenUnreadable -> (Falla, "no hay token (no se entiende f1auth_token.json)")
   TokenExpires e
     | e <= now -> (Falla, "caducó el " <> dated e)
     | e < today -> withoutCalendar (Falla, "caduca a las " <> clockPair "%H:%M" e <> ", antes del fin de hoy")

@@ -91,10 +91,10 @@ fastf1Options :: Config -> Option 'Http
 fastf1Options cfg =
   fastf1Port (cfgTelemetryPort cfg) <> fastf1Timeout (cfgTelemetryTimeout cfg)
 
--- | Lo que hay en @~\/.local\/share\/fastf1\/f1auth.json@, donde FastF1 guarda el token.
+-- | Lo que hay en @~\/.local\/share\/fastf1\/f1auth_token.json@, donde FastF1 guarda el token.
 readTokenFile :: IO TokenFile
 readTokenFile = do
-  file <- (</> ".local/share/fastf1/f1auth.json") <$> getHomeDirectory
+  file <- (</> ".local/share/fastf1/f1auth_token.json") <$> getHomeDirectory
   exists <- doesFileExist file
   if not exists
     then pure TokenMissing

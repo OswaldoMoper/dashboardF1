@@ -5598,6 +5598,17 @@ main = hspec $ do
       map FastF1.tokenExpiry [fakeToken, fakeToken <> "\n", "", "no-es-un-token"]
         `shouldBe` [Just (atUtc 25 18 40), Just (atUtc 25 18 40), Nothing, Nothing]
 
+    it "la caducidad es la de expires_at menos el margen de FastF1, también con fracción" $
+      map FastF1.tokenExpiry [tokenJson 1 "1792953900.0", tokenJson 1 "1792953900.5", tokenJson 1 "1792953900"]
+        `shouldBe` [ Just (atUtc 25 18 40)
+                   , Just (addUTCTime 0.5 (atUtc 25 18 40))
+                   , Just (atUtc 25 18 40)
+                   ]
+
+    it "otra versión del fichero, el JWT crudo de antes o un JSON sin expires_at, nada" $
+      map FastF1.tokenExpiry [tokenJson 2 "1792953900.0", fakeJwt, "{\"version\": 1, \"value\": \"x\"}"]
+        `shouldBe` [Nothing, Nothing, Nothing]
+
     it "los dos umbrales del token y lo que dice cada uno (D202, D203)" $
       let check = Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 22 0) (Just (atUtc 25 22 0)) . FastF1.TokenExpires
        in map check [atUtc 26 16 40, atUtc 25 18 40, atUtc 23 19 10, atUtc 13 15 40]
@@ -5613,8 +5624,8 @@ main = hspec $ do
           , check FastF1.TokenUnreadable
           , Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 21 0) Nothing (FastF1.TokenExpires (atUtc 26 16 40))
           )
-            `shouldBe` ( (Auto.Falla, "no hay token (no existe ~/.local/share/fastf1/f1auth.json)")
-                       , (Auto.Falla, "no hay token (no se entiende f1auth.json)")
+            `shouldBe` ( (Auto.Falla, "no hay token (no existe ~/.local/share/fastf1/f1auth_token.json)")
+                       , (Auto.Falla, "no hay token (no se entiende f1auth_token.json)")
                        , (Auto.Ok, "vale hasta lun 26 10:40 (16:40); sin calendario: comparado con el inicio de la última sesión de hoy")
                        )
 
@@ -7914,8 +7925,19 @@ fakeTokenParts =
   , "firma"
   ]
 
+-- | El JWT crudo, como lo guardaba el @f1auth.json@ de FastF1 3.8.
+fakeJwt :: ByteString
+fakeJwt = BC.pack (T.unpack (T.intercalate "." fakeTokenParts))
+
+-- | Un @f1auth_token.json@ con esa versión y ese @expires_at@, escrito tal cual.
+tokenJson :: Int -> String -> ByteString
+tokenJson version expires =
+  BC.pack ("{\"version\": " <> show version <> ", \"value\": \"" <> BC.unpack fakeJwt <> "\", \"expires_at\": " <> expires <> "}")
+
+-- | El fichero del token como lo escribe FastF1 3.9, con el JWT inventado en @value@ y
+-- @expires_at@ a las 18:45 UTC: con el margen de FastF1 deja de servir a las 18:40.
 fakeToken :: ByteString
-fakeToken = BC.pack (T.unpack (T.intercalate "." fakeTokenParts))
+fakeToken = tokenJson 1 "1792953900.0"
 
 -- | Una ruta de @dashboardF1-record@ del store, como la que pone @nix run .#auto@.
 storeRecorder :: FilePath
