@@ -45,12 +45,14 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
 - **Contrato de fallo de un `Context`:** devuelve `IO (Outcome a)` y no `IO a`, para poder
   distinguir una petición mala del cliente (`400`/`404`, se propagan) de un servicio caído
   (se degrada a cache o dummy). El criterio vive en el `Context`; el handler solo traduce
-  con `Outcome.serve` (2026-08-14). **Aplicado hoy solo a `Comparison`**;
-  las otras áreas siguen con `IO a` hasta que se cierre la Fase 4.
-- **Procedencia del dato:** `/api/live` y `/api/tyre-strategy` emiten `X-Data-Origin`
-  (`fresh`/`recent`/`cached`/`sample`; neumáticos no tiene `recent`), `X-Data-Source` (`feed`/`openf1`; falta
-  con el dato de ejemplo) y, con los que salen de lo guardado —`recent` y `cached`—, `X-Data-Fetched-At` en
-  ISO 8601 UTC; el cuerpo JSON no cambia. Cabeceras en `Provenance`; tipo y valores en `Common.Origin`.
+  con `Outcome.serve` (2026-08-14). Lo usan las tres áreas que leen el microservicio con
+  parámetros: `Telemetry`, `Comparison` y `Drivers`; las demás no rechazan nada y devuelven `IO a`.
+- **Procedencia del dato:** `/api/live`, `/api/tyre-strategy`, `/api/telemetry` y `/api/comparison` emiten
+  `X-Data-Origin` (`fresh`/`recent`/`cached`/`sample`; solo `/api/live` tiene `recent`), `X-Data-Source`
+  (`feed`/`openf1`/`fastf1`; falta con el dato de ejemplo) y, con los que salen de lo guardado —`recent` y
+  `cached`—, `X-Data-Fetched-At` en ISO 8601 UTC; el cuerpo JSON no cambia. Cabeceras en `Provenance`; tipo y
+  valores en `Common.Origin`. Telemetría y comparación guardan por clave y comparten la escalera
+  (`Handler.FastF1.Helper.fastf1Step`): nunca sirven lo guardado de otra clave.
 - **Presupuesto de OpenF1:** acepta 30 peticiones por minuto y 3 por segundo, y lo dice en su propio rechazo.
   Toda petición pasa por un freno único (3 salidas por ventana de 1,2 s) en
   `Handler.OpenF1.Manager.fetchListWith`, y con `OPENF1_LOG` deja una línea por petición. El backend no
@@ -149,6 +151,14 @@ dependencias de Python pineadas por él y sin venv que reconstruir (2026-08-12).
 cache de FastF1 va donde diga `FASTF1_CACHE`, que por defecto es **relativa al directorio de ejecución**
 (`.fastf1-cache`), así que suelto se arranca desde `telemetry-service/`. `nix run .#dev` le pasa una ruta
 absoluta: `telemetry-service/.fastf1-cache` bajo el directorio desde el que se lanza.
+
+**El archivo de F1 pide la cuenta de F1TV.** FastF1 (3.9) manda el token solo a `livetiming.formula1.com`; el
+token lo guarda FastF1 en `~/.local/share/fastf1/f1auth_token.json` al iniciar sesión con `dashboardF1-f1tv`
+(`nix run .#f1tv`), y dura unos cuatro días sin renovarse solo. Sin un token que valga, la sesión carga **vacía y
+sin error**: el backend sirve lo guardado de esa clave o el ejemplo, y la cabecera lo dice (`cached` o `sample`).
+El microservicio arranca con la entrada cerrada, para que FastF1 no se quede esperando la contraseña. La misma
+lectura del fichero (`Handler.FastF1.Manager.readTokenFile`) da la caducidad a `Auto`, 300 s antes de
+`expires_at`, como FastF1.
 
 **Suelto escucha en TCP** (`:8000` por defecto), **o en un socket Unix si se le pasa `--uds`**. `nix run .#dev` lo
 lanza por socket, sin puerto propio, en `$XDG_RUNTIME_DIR/dashboardF1/fastf1-<PORT>.sock` (un socket por
