@@ -231,6 +231,7 @@ import qualified Handler.Comparison.Helper   as Comparison
 import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import qualified Handler.Drivers.Helper      as Drivers
+import qualified Handler.FastF1.Helper       as FastF1
 import           Handler.Feed.Helper         (FeedFlag (..), FeedLive (..),
                                               FeedNotice (..), FeedRow (..),
                                               FeedSession (..), FeedTrack (..))
@@ -5594,11 +5595,11 @@ main = hspec $ do
         `shouldBe` [(Auto.Ok, "200"), (Auto.Aviso, "401"), (Auto.Falla, "sin respuesta")]
 
     it "del token solo se lee la caducidad; un fichero vacío o que no es un token, nada" $
-      map Auto.tokenExpiry [fakeToken, fakeToken <> "\n", "", "no-es-un-token"]
+      map FastF1.tokenExpiry [fakeToken, fakeToken <> "\n", "", "no-es-un-token"]
         `shouldBe` [Just (atUtc 25 18 40), Just (atUtc 25 18 40), Nothing, Nothing]
 
     it "los dos umbrales del token y lo que dice cada uno (D202, D203)" $
-      let check = Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 22 0) (Just (atUtc 25 22 0)) . Auto.TokenExpires
+      let check = Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 22 0) (Just (atUtc 25 22 0)) . FastF1.TokenExpires
        in map check [atUtc 26 16 40, atUtc 25 18 40, atUtc 23 19 10, atUtc 13 15 40]
             `shouldBe` [ (Auto.Ok, "vale hasta lun 26 10:40 (16:40)")
                        , (Auto.Aviso, "vale hoy; caduca el dom 25 12:40 (18:40), antes del fin del GP")
@@ -5608,9 +5609,9 @@ main = hspec $ do
 
     it "sin token, FALLA; sin calendario, lo dice" $
       let check = Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 22 0) (Just (atUtc 25 22 0))
-       in ( check Auto.TokenMissing
-          , check Auto.TokenUnreadable
-          , Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 21 0) Nothing (Auto.TokenExpires (atUtc 26 16 40))
+       in ( check FastF1.TokenMissing
+          , check FastF1.TokenUnreadable
+          , Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 21 0) Nothing (FastF1.TokenExpires (atUtc 26 16 40))
           )
             `shouldBe` ( (Auto.Falla, "no hay token (no existe ~/.local/share/fastf1/f1auth.json)")
                        , (Auto.Falla, "no hay token (no se entiende f1auth.json)")
@@ -5619,7 +5620,7 @@ main = hspec $ do
 
     it "la línea del token no lleva nada del token" $
       let now = atUtc 23 16 0
-          (verdict, detail) = Auto.tokenCheck now (atUtc 23 22 0) (Just (atUtc 25 22 0)) (Auto.tokenFile fakeToken)
+          (verdict, detail) = Auto.tokenCheck now (atUtc 23 22 0) (Just (atUtc 25 22 0)) (FastF1.tokenFile fakeToken)
           line = Auto.checkLine now verdict "token F1TV" detail
        in filter (`T.isInfixOf` line) (fakeTokenParts <> ["Nadie"]) `shouldBe` []
 

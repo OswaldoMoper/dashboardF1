@@ -5,19 +5,26 @@
 -- (2026-08-04).
 --
 -- No comparte la base de URL, la forma de la respuesta ni dónde viajan los coches:
--- son de cada cliente.
+-- son de cada cliente. Lee también, del disco, el fichero en que FastF1 guarda el token
+-- de F1TV ('readTokenFile').
 module Handler.FastF1.Manager
   ( runFastF1
   , fastf1Port
   , fastf1Timeout
   , fastf1Options
+  , readTokenFile
   ) where
 
-import           Config              (Config (..))
-import           Control.Exception   (bracketOnError)
-import qualified Network.HTTP.Client as HC
+import           Config                (Config (..))
+import           Control.Exception     (SomeException, bracketOnError)
+import qualified Data.ByteString       as BS
+import           Handler.FastF1.Helper (TokenFile (..), tokenFile)
+import qualified Network.HTTP.Client   as HC
 import           Network.HTTP.Req
-import qualified Network.Socket      as NS
+import qualified Network.Socket        as NS
+import           Sync                  (trySync)
+import           System.Directory      (doesFileExist, getHomeDirectory)
+import           System.FilePath       ((</>))
 
 -- | 'HttpConfig' de los clientes del microservicio: 'defaultHttpConfig'
 -- __sin reintentos__ (2026-08-04). Un intento dura como mucho 'fastf1Timeout';
@@ -83,3 +90,13 @@ fastf1Timeout seconds = responseTimeout (seconds * 1000000)
 fastf1Options :: Config -> Option 'Http
 fastf1Options cfg =
   fastf1Port (cfgTelemetryPort cfg) <> fastf1Timeout (cfgTelemetryTimeout cfg)
+
+-- | Lo que hay en @~\/.local\/share\/fastf1\/f1auth.json@, donde FastF1 guarda el token.
+readTokenFile :: IO TokenFile
+readTokenFile = do
+  file <- (</> ".local/share/fastf1/f1auth.json") <$> getHomeDirectory
+  exists <- doesFileExist file
+  if not exists
+    then pure TokenMissing
+    else either (const TokenUnreadable) tokenFile
+           <$> (trySync (BS.readFile file) :: IO (Either SomeException BS.ByteString))

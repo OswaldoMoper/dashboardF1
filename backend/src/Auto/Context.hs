@@ -29,28 +29,26 @@ import           Auto.Helper                (CalendarAnswer, Dispatch (..),
                                              RecordingRun (..),
                                              RecordingStep (..),
                                              RelaunchWhy (..), Slot (..),
-                                             TimerRow, TokenFile (..),
-                                             UnitRow (..), VigiaEnd (..),
-                                             VigiaReading (..), VigiaWatch (..),
-                                             askOrder, captureDue, captureName,
-                                             checkLine, checksStopLine,
-                                             checksSummary, inPause,
-                                             instanceChange, jolpicaSlots,
-                                             liveTable, logVerdict,
-                                             observerLine, observerStopLine,
-                                             onCalendar, openf1Check, pageCheck,
-                                             pageUrl, pauseFrom, pauseLine,
-                                             readCalendar, readerAnswer,
-                                             readerRelaunchLine,
+                                             TimerRow, UnitRow (..),
+                                             VigiaEnd (..), VigiaReading (..),
+                                             VigiaWatch (..), askOrder,
+                                             captureDue, captureName, checkLine,
+                                             checksStopLine, checksSummary,
+                                             inPause, instanceChange,
+                                             jolpicaSlots, liveTable,
+                                             logVerdict, observerLine,
+                                             observerStopLine, onCalendar,
+                                             openf1Check, pageCheck, pageUrl,
+                                             pauseFrom, pauseLine, readCalendar,
+                                             readerAnswer, readerRelaunchLine,
                                              readerTimeoutSeconds,
                                              recordingFile,
                                              recordingIdleSeconds, recordingLog,
                                              recordingName, recordingStep,
                                              recordingStepLine,
-                                             recordingStopLine,
-                                             reopenLine, slotsOn, startLine,
-                                             tokenCheck, tokenFile, unitName,
-                                             vigiaDone, vigiaGone,
+                                             recordingStopLine, reopenLine,
+                                             slotsOn, startLine, tokenCheck,
+                                             unitName, vigiaDone, vigiaGone,
                                              vigiaJsonName, vigiaLine,
                                              vigiaReading, vigiaStep,
                                              vigiaStopLine)
@@ -58,10 +56,8 @@ import           Common.Origin              (fetchedAtHeader, originHeader,
                                              sourceHeader)
 import           Config                     (loadConfig)
 import           Control.Concurrent         (threadDelay)
-import           Control.Exception          (AsyncException (..),
-                                             SomeAsyncException (..),
-                                             SomeException, fromException,
-                                             handleJust, tryJust)
+import           Control.Exception          (AsyncException (..), SomeException,
+                                             handleJust)
 import           Control.Monad              (forM_, join, unless, when)
 import           Control.Retry              (limitRetries)
 import           Data.Aeson                 (FromJSON, eitherDecode)
@@ -81,12 +77,14 @@ import           Data.Time.Calendar         (Day)
 import           Data.Time.Clock            (NominalDiffTime, UTCTime,
                                              addUTCTime, diffUTCTime,
                                              getCurrentTime)
+import           Handler.FastF1.Manager     (readTokenFile)
 import           Handler.Historical.Manager (fetchSeasonSchedule)
 import           Handler.OpenF1.Manager     (latestSession, openf1Base)
 import qualified Network.HTTP.Client        as HC
 import qualified Network.HTTP.Req           as R
 import           Network.HTTP.Types.Header  (ResponseHeaders, hContentType)
 import           Network.HTTP.Types.Status  (statusCode)
+import           Sync                       (trySync)
 import           System.Directory           (createDirectoryIfMissing,
                                              doesDirectoryExist, doesFileExist,
                                              getFileSize, getHomeDirectory,
@@ -136,14 +134,6 @@ askCalendar port = do
 -- dos y a OpenF1 quepa en su minuto.
 askTimeout :: Int
 askTimeout = 15000000
-
--- | Como 'try', pero __deja pasar lo asíncrono__: el SIGINT de @cancela@ ('UserInterrupt')
--- tiene que llegar a la pieza aunque esté esperando una respuesta, y el aviso de 'timeout'
--- a quien puso el plazo.
-trySync :: IO a -> IO (Either SomeException a)
-trySync = tryJust (\e -> case fromException e of
-  Just (SomeAsyncException _) -> Nothing
-  Nothing                     -> Just e)
 
 -- | Lo que contestó una instancia a un @GET@: el código, las cabeceras y el cuerpo.
 data Answer = Answer
@@ -540,16 +530,6 @@ runChecks folder label tokenToday d = do
     readIfExists f = do
       exists <- doesFileExist f
       if exists then Just <$> readLines f else pure Nothing
-
--- | Lo que hay en @~\/.local\/share\/fastf1\/f1auth.json@, donde FastF1 guarda el token.
-readTokenFile :: IO TokenFile
-readTokenFile = do
-  file <- (</> ".local/share/fastf1/f1auth.json") <$> getHomeDirectory
-  exists <- doesFileExist file
-  if not exists
-    then pure TokenMissing
-    else either (const TokenUnreadable) tokenFile
-           <$> (trySync (BS.readFile file) :: IO (Either SomeException BS.ByteString))
 
 -- | La página en la primera instancia que contesta @/@, por ese orden: @/@, @/all.js@
 -- (sin leer el cuerpo) y @\/api\/live@. 'Nothing' si no contesta ninguna.

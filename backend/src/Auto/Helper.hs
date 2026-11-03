@@ -40,9 +40,6 @@ module Auto.Helper
   , logCheck
     -- * Las comprobaciones de una tanda
   , openf1Check
-  , TokenFile (..)
-  , tokenExpiry
-  , tokenFile
   , tokenNeed
   , tokenCheck
   , isHtml
@@ -138,39 +135,35 @@ module Auto.Helper
   , viewLines
   ) where
 
-import           Common.Types               (LapProgress (..), LiveTable (..),
-                                             SessionInfo (..),
-                                             SessionState (..),
-                                             StateReading (..),
-                                             sessionStateLabel)
-import           Config                     (startupMark)
-import           Data.Aeson                 (FromJSON (..), Object, Value,
-                                             eitherDecode, eitherDecodeStrict,
-                                             withObject, (.:), (.:?))
-import           Data.Aeson.Types           (Parser, parseEither)
-import qualified Data.ByteString            as BS
-import qualified Data.ByteString.Base64.URL as B64U
-import qualified Data.ByteString.Char8      as BS8
-import qualified Data.ByteString.Lazy       as BL
-import           Data.Char                  (isDigit)
-import           Data.List                  (find, nub, sortOn, (\\))
-import           Data.Maybe                 (catMaybes, fromMaybe, isNothing,
-                                             listToMaybe, mapMaybe)
-import           Data.Text                  (Text)
-import qualified Data.Text                  as T
-import           Data.Time.Calendar         (Day, DayOfWeek (..), addDays,
-                                             dayOfWeek, showGregorian,
-                                             toGregorian)
-import           Data.Time.Clock            (NominalDiffTime, UTCTime,
-                                             addUTCTime, diffUTCTime)
-import           Data.Time.Clock.POSIX      (posixSecondsToUTCTime)
-import           Data.Time.Format           (defaultTimeLocale, formatTime,
-                                             parseTimeM)
-import           Data.Time.LocalTime        (LocalTime (..), TimeZone, localDay,
-                                             localTimeToUTC, minutesToTimeZone,
-                                             utcToLocalTime, utcToZonedTime)
-import           Handler.Live.Helper        (CalendarEntry (..))
-import           Text.Printf                (printf)
+import           Common.Types          (LapProgress (..), LiveTable (..),
+                                        SessionInfo (..), SessionState (..),
+                                        StateReading (..), sessionStateLabel)
+import           Config                (startupMark)
+import           Data.Aeson            (FromJSON (..), Object, Value,
+                                        eitherDecode, eitherDecodeStrict,
+                                        withObject, (.:), (.:?))
+import           Data.Aeson.Types      (Parser, parseEither)
+import qualified Data.ByteString       as BS
+import qualified Data.ByteString.Lazy  as BL
+import           Data.Char             (isDigit)
+import           Data.List             (find, nub, sortOn, (\\))
+import           Data.Maybe            (catMaybes, fromMaybe, isNothing,
+                                        listToMaybe, mapMaybe)
+import           Data.Text             (Text)
+import qualified Data.Text             as T
+import           Data.Time.Calendar    (Day, DayOfWeek (..), addDays, dayOfWeek,
+                                        showGregorian, toGregorian)
+import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime,
+                                        diffUTCTime)
+import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import           Data.Time.Format      (defaultTimeLocale, formatTime,
+                                        parseTimeM)
+import           Data.Time.LocalTime   (LocalTime (..), TimeZone, localDay,
+                                        localTimeToUTC, minutesToTimeZone,
+                                        utcToLocalTime, utcToZonedTime)
+import           Handler.FastF1.Helper (TokenFile (..))
+import           Handler.Live.Helper   (CalendarEntry (..))
+import           Text.Printf           (printf)
 
 -- | La hora de México, fija en UTC−6: sin horario de verano desde 2022, y sin
 -- depender de la zona del proceso, que bajo systemd es la del sistema (UTC).
@@ -382,26 +375,6 @@ logCheck c = (verdict, T.pack (printf "%d con «error», %d de OpenF1 429, %d de
 -- | OpenF1 con su código, o «sin respuesta» (D202).
 openf1Check :: Maybe Int -> (Verdict, Text)
 openf1Check code = (openf1Verdict code, maybe "sin respuesta" (T.pack . show) code)
-
--- | Lo que hay en @f1auth.json@, el fichero en que FastF1 guarda el token de F1TV.
-data TokenFile
-  = TokenMissing
-  | TokenUnreadable          -- ^ Vacío (FastF1 lo crea así) o algo que no es un token.
-  | TokenExpires UTCTime
-  deriving (Eq, Show)
-
--- | La caducidad (@exp@) del token, un JWT en texto. __Solo devuelve la hora__: el resto
--- del token lleva datos del suscriptor y no sale de aquí.
-tokenExpiry :: BS.ByteString -> Maybe UTCTime
-tokenExpiry raw = case BS8.split '.' (BS8.strip raw) of
-  [_, payload, _] -> do
-    claims <- either (const Nothing) Just (B64U.decodeUnpadded payload)
-    secs <- either (const Nothing) Just (eitherDecodeStrict claims >>= parseEither (withObject "token" (.: "exp")))
-    pure (posixSecondsToUTCTime (fromInteger secs))
-  _ -> Nothing
-
-tokenFile :: BS.ByteString -> TokenFile
-tokenFile = maybe TokenUnreadable TokenExpires . tokenExpiry
 
 -- | Hasta cuándo tiene que valer el token, con todo el calendario, ese día y sus sesiones:
 -- el fin de la última sesión de hoy y el de la última de su gran premio (el de hoy si no se

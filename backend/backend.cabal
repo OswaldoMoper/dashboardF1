@@ -33,6 +33,7 @@ library
         Html
         Outcome
         Provenance
+        Sync
         Handler.FastF1.Helper
         Handler.FastF1.Manager
         Handler.PublicApi.Manager
