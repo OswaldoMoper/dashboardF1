@@ -10,9 +10,11 @@ module Handler.FastF1.Helper
   , TokenFile (..)
   , tokenExpiry
   , tokenFile
+  , accountFrom
   ) where
 
 import           Common.Origin         (Origin (..), Source (..))
+import           Common.Types          (F1TVAccount (..))
 import           Control.Monad         (guard)
 import           Data.Aeson            (eitherDecodeStrict, withObject, (.:))
 import           Data.Aeson.Types      (parseEither)
@@ -24,7 +26,7 @@ import qualified Data.Text             as T
 import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime)
 import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import           Outcome               (Rejection (..))
-import           Provenance            (Provenanced (..))
+import           Provenance            (Provenanced (..), isoInstant)
 
 -- | Un @QueryParam@ opcional, resuelto: ausente → el valor por defecto; escrito
 -- pero vacío (@?name=@) → 'BadRequest', porque viajaría como segmento vacío de
@@ -89,3 +91,12 @@ tokenExpiry raw = do
 
 tokenFile :: BS.ByteString -> TokenFile
 tokenFile = maybe TokenUnreadable TokenExpires . tokenExpiry
+
+-- | Lo que la página sabe de la cuenta en ese instante. Caducada desde la hora de
+-- 'tokenExpiry' inclusive, el mismo corte que la comprobación del automatismo.
+accountFrom :: UTCTime -> TokenFile -> F1TVAccount
+accountFrom _ TokenMissing    = F1TVMissing
+accountFrom _ TokenUnreadable = F1TVUnreadable
+accountFrom now (TokenExpires e)
+  | e <= now  = F1TVExpired (isoInstant e)
+  | otherwise = F1TVValid (isoInstant e)

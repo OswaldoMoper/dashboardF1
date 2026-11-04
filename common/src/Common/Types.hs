@@ -3,8 +3,8 @@
 module Common.Types where
 
 import           Common.Format (ClockForm (..), formatClock, formatCountdown)
-import           Data.Aeson    (FromJSON (..), ToJSON (..), withObject,
-                                withText, (.!=), (.:), (.:?))
+import           Data.Aeson    (FromJSON (..), ToJSON (..), object, withObject,
+                                withText, (.!=), (.:), (.:?), (.=))
 import           Data.Maybe    (catMaybes, fromMaybe, isJust, listToMaybe)
 import           Data.Text     (Text)
 import qualified Data.Text     as T
@@ -920,6 +920,36 @@ data DriverEntry = MkDriverEntry
 
 instance ToJSON DriverEntry
 instance FromJSON DriverEntry
+
+-- | El estado de la cuenta de F1TV con la que FastF1 abre el archivo de sesiones
+-- acabadas, tal como lo juzga el backend al leer el fichero del token. La hora es
+-- desde cuándo FastF1 deja de usarlo, en ISO 8601 y UTC.
+data F1TVAccount
+  = F1TVValid Text
+  | F1TVExpired Text
+  | F1TVMissing
+  | F1TVUnreadable
+  deriving stock (Eq, Show)
+
+-- | Viaja como @{"state": …, "until": …}@, con @state@ en @valid@, @expired@,
+-- @missing@ o @unreadable@; @until@ solo con los dos primeros. Un estado que no se
+-- conoce no decodifica.
+instance ToJSON F1TVAccount where
+  toJSON = \case
+    F1TVValid t    -> object ["state" .= ("valid" :: Text), "until" .= t]
+    F1TVExpired t  -> object ["state" .= ("expired" :: Text), "until" .= t]
+    F1TVMissing    -> object ["state" .= ("missing" :: Text)]
+    F1TVUnreadable -> object ["state" .= ("unreadable" :: Text)]
+
+instance FromJSON F1TVAccount where
+  parseJSON = withObject "F1TVAccount" $ \o -> do
+    state <- o .: "state"
+    case (state :: Text) of
+      "valid"      -> F1TVValid <$> o .: "until"
+      "expired"    -> F1TVExpired <$> o .: "until"
+      "missing"    -> pure F1TVMissing
+      "unreadable" -> pure F1TVUnreadable
+      _            -> fail ("estado de la cuenta desconocido: " <> T.unpack state)
 
 -- | Stint de neumáticos (periodo con un mismo compuesto).
 --

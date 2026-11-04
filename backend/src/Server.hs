@@ -9,13 +9,15 @@
 module Server where
 
 import           App                            (Env (..))
-import           Common.Types                   (DriverEntry, HistoricalStat)
+import           Common.Types                   (DriverEntry, F1TVAccount,
+                                                 HistoricalStat)
 import           Config                         (cfgStaticDir)
 import           Data.Aeson                     (ToJSON)
 import           Data.Text                      (Text)
 import           GHC.Generics                   (Generic)
 import qualified Handler.Comparison             as Comparison
 import qualified Handler.Drivers                as Drivers
+import qualified Handler.F1TV                   as F1TV
 import qualified Handler.Historical             as Historical
 import qualified Handler.Live                   as Live
 import           Handler.Live.Helper            (CalendarEntry)
@@ -79,6 +81,7 @@ type Api =
          :> QueryParam "session" Text
          :> Get '[JSON] [DriverEntry]
   :<|> "api" :> "tyre-strategy" :> Get '[JSON] TyreStrategy.TyreResponse
+  :<|> "api" :> "f1tv" :> Get '[JSON] F1TVAccount
   :<|> Raw
 
 api :: Proxy Api
@@ -99,6 +102,7 @@ server env =
     :<|> Comparison.comparisonHandler env
     :<|> Drivers.driversHandler env
     :<|> TyreStrategy.tyreStrategyHandler env
+    :<|> F1TV.f1tvHandler
     :<|> Tagged (spaApp env)
   where
     homeH :: Handler Home

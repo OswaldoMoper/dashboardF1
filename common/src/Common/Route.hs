@@ -15,6 +15,7 @@ module Common.Route
   , driversPath
   , driversPathFor
   , historicalPath
+  , f1tvPath
   ) where
 
 import           Data.Char  (isDigit)
@@ -30,6 +31,7 @@ data ApiRoute
   | ComparisonApi
   | DriversApi
   | TyreStrategyApi
+  | F1TVApi
   deriving stock (Eq, Show)
 
 -- | Path (relativo, misma-origen) de cada endpoint.
@@ -41,6 +43,7 @@ apiPath = \case
   ComparisonApi   -> "/api/comparison"
   DriversApi      -> "/api/drivers"
   TyreStrategyApi -> "/api/tyre-strategy"
+  F1TVApi         -> "/api/f1tv"
 
 -- | Atajo para el endpoint de live timing (primer consumidor).
 livePath :: Text
@@ -176,3 +179,7 @@ pathWith path params =
 -- | Atajo para el endpoint de estadísticas históricas.
 historicalPath :: Text
 historicalPath = apiPath HistoricalApi
+
+-- | Atajo para el endpoint del estado de la cuenta de F1TV.
+f1tvPath :: Text
+f1tvPath = apiPath F1TVApi

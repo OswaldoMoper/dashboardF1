@@ -158,7 +158,8 @@ token lo guarda FastF1 en `~/.local/share/fastf1/f1auth_token.json` al iniciar s
 sin error**: el backend sirve lo guardado de esa clave o el ejemplo, y la cabecera lo dice (`cached` o `sample`).
 El microservicio arranca con la entrada cerrada, para que FastF1 no se quede esperando la contraseña. La misma
 lectura del fichero (`Handler.FastF1.Manager.readTokenFile`) da la caducidad a `Auto`, 300 s antes de
-`expires_at`, como FastF1.
+`expires_at`, como FastF1, y a la página por `GET /api/f1tv` (`Handler.F1TV`): `{"state", "until"}`, con
+`valid`, `expired`, `missing` o `unreadable` (`Common.Types.F1TVAccount`), leído en cada petición.
 
 **Suelto escucha en TCP** (`:8000` por defecto), **o en un socket Unix si se le pasa `--uds`**. `nix run .#dev` lo
 lanza por socket, sin puerto propio, en `$XDG_RUNTIME_DIR/dashboardF1/fastf1-<PORT>.sock` (un socket por

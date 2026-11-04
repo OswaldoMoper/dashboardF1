@@ -128,7 +128,7 @@ import           Common.Origin               (Origin (..), Source (..),
                                               sourcedFrom, sourcedHeaders)
 import           Common.Push                 (Drag (..), applyDrag)
 import           Common.Route                (comparisonPathFor, driversParam,
-                                              driversPathFor)
+                                              driversPathFor, f1tvPath)
 import           Common.Saved                (Restored (..), atFactory,
                                               factoryControls, restoreLayout,
                                               sameShown, saveLayout, savedKey,
@@ -162,6 +162,7 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               ComparisonEntry (..),
                                               Countdown (..), DriverEntry (..),
                                               DriverStatus (..),
+                                              F1TVAccount (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
                                               LapProgress (..), LayoutId (..),
@@ -5618,6 +5619,48 @@ main = hspec $ do
                          ]
                        , Just "11:40 (17:40) pierde   grabación P1: no contesta ninguna instancia"
                        )
+
+  describe "Handler.FastF1: el estado de la cuenta para la página" $ do
+    it "vale, caducó (también justo ahora, como en Auto), no hay o no se entiende" $
+      let now = atUtc 23 16 0
+       in map (FastF1.accountFrom now)
+            [ FastF1.TokenExpires (atUtc 25 18 40)
+            , FastF1.TokenExpires now
+            , FastF1.TokenExpires (atUtc 13 15 40)
+            , FastF1.TokenMissing
+            , FastF1.TokenUnreadable
+            ]
+            `shouldBe` [ F1TVValid "2026-10-25T18:40:00Z"
+                       , F1TVExpired "2026-10-23T16:00:00Z"
+                       , F1TVExpired "2026-10-13T15:40:00Z"
+                       , F1TVMissing
+                       , F1TVUnreadable
+                       ]
+
+    it "del fichero solo sale la hora: nada de value llega a la página" $
+      let shown = LBS.toStrict (encode (FastF1.accountFrom (atUtc 23 16 0) (FastF1.tokenFile fakeToken)))
+       in filter (\p -> BC.pack (T.unpack p) `BC.isInfixOf` shown) (fakeTokenParts <> ["Nadie"])
+            `shouldBe` []
+
+    it "viaja como estado y hora; sin hora, la hora no va" $
+      map encode [F1TVValid "2026-11-07T23:06:58Z", F1TVExpired "2026-11-07T23:06:58Z", F1TVMissing, F1TVUnreadable]
+        `shouldBe` [ "{\"state\":\"valid\",\"until\":\"2026-11-07T23:06:58Z\"}"
+                   , "{\"state\":\"expired\",\"until\":\"2026-11-07T23:06:58Z\"}"
+                   , "{\"state\":\"missing\"}"
+                   , "{\"state\":\"unreadable\"}"
+                   ]
+
+    it "lo que la página decodifica es lo que el backend codificó" $
+      let states = [F1TVValid "2026-11-07T23:06:58Z", F1TVExpired "2026-11-07T23:06:58Z", F1TVMissing, F1TVUnreadable]
+       in map (eitherDecode . encode) states `shouldBe` map Right states
+
+    it "un estado que no se conoce, o valid sin hora, no decodifica" $
+      map (\s -> isLeft (eitherDecode s :: Either String F1TVAccount))
+        ["{\"state\":\"renewing\"}", "{\"state\":\"valid\"}"]
+        `shouldBe` [True, True]
+
+    it "la ruta es /api/f1tv" $
+      f1tvPath `shouldBe` "/api/f1tv"
 
   describe "Auto: las comprobaciones" $ do
     it "OpenF1 con su código, o «sin respuesta» (D202)" $
