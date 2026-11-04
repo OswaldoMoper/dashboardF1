@@ -13,6 +13,7 @@ module Auto.Helper
   , slotsFromCalendar
   , slotsOn
     -- * Lo que se programa
+  , Account (..)
   , Piece (..)
   , Planned (..)
   , recordingLead
@@ -215,11 +216,15 @@ slotsFromCalendar = map (\e -> Slot (ceName e) (ceStart e))
 slotsOn :: Day -> [Slot] -> [Slot]
 slotsOn day = sortOn slotStart . filter ((== day) . mexicoDay . slotStart)
 
+-- | Con qué cuenta graba una grabación.
+data Account = WithoutAccount
+  deriving (Eq, Show, Enum, Bounded)
+
 data Piece
   = Checks (Maybe Text)  -- ^ Una tanda de comprobaciones: al lanzar, o antes de esa sesión.
   | Vigia
   | Observer (Maybe UTCTime)  -- ^ El observador, con el inicio de su pausa ('clockPhotoWindow').
-  | Recording Text    -- ^ La grabación sin cuenta de esa sesión.
+  | Recording Account Text    -- ^ La grabación de esa sesión, con esa cuenta.
   deriving (Eq, Show)
 
 -- | Una pieza con su hora de arranque y su tope.
@@ -259,7 +264,7 @@ dayPlan cap now slots =
     capOf s = addUTCTime cap (slotStart s)
     perSlot s =
       let lead = addUTCTime (negate recordingLead) (slotStart s)
-       in Planned (Recording (slotName s)) (max now lead) (Just (capOf s))
+       in Planned (Recording WithoutAccount (slotName s)) (max now lead) (Just (capOf s))
             : [Planned (Checks (Just (slotName s))) lead Nothing | lead > now]
 
 -- | Cuánto después del inicio previsto de la P1 empieza la foto del reloj, y cuánto dura:
@@ -808,15 +813,18 @@ recordingIdleSeconds = 7200
 maxRelaunches :: Int
 maxRelaunches = 5
 
--- | El fichero de la vez @n@ (desde 1) de la grabación de esa sesión:
+-- | El fichero de la vez @n@ (desde 1) de la grabación de esa sesión con esa cuenta:
 -- @grabacion-p1.txt@, y al relanzar @grabacion-p1-2.txt@, @-3@…
-recordingFile :: Text -> Int -> FilePath
-recordingFile session n =
-  "grabacion-" <> T.unpack (sessionShort session) <> (if n <= 1 then "" else "-" <> show n) <> ".txt"
+recordingFile :: Account -> Text -> Int -> FilePath
+recordingFile account session n =
+  recordingStem account session <> (if n <= 1 then "" else "-" <> show n) <> ".txt"
 
--- | Donde va lo que imprime @dashboardF1-record@: uno por sesión, para todas las veces.
-recordingLog :: Text -> FilePath
-recordingLog session = "grabacion-" <> T.unpack (sessionShort session) <> ".log"
+-- | Donde va lo que imprime @dashboardF1-record@: uno por grabación, para todas las veces.
+recordingLog :: Account -> Text -> FilePath
+recordingLog account session = recordingStem account session <> ".log"
+
+recordingStem :: Account -> Text -> FilePath
+recordingStem WithoutAccount session = "grabacion-" <> T.unpack (sessionShort session)
 
 -- | Cómo acaba la grabación de una sesión.
 data RecordingEnd
@@ -878,38 +886,38 @@ recordingStep now cap slot table run
 
 -- | La línea de @resumen.txt@ de cómo acabó (D197, D200): «para grabación P1 (Finalised)»,
 -- «(tope)», «(cancelada)», o «deja grabación P1 (se cortó 6 veces; no relanza más)».
-recordingStopLine :: UTCTime -> Text -> Int -> RecordingEnd -> Text
-recordingStopLine t session runs end = case end of
+recordingStopLine :: UTCTime -> Account -> Text -> Int -> RecordingEnd -> Text
+recordingStopLine t account session runs end = case end of
   RecFinalised -> eventLine t "para" (what <> " (Finalised)")
   RecCapped    -> eventLine t "para" (what <> " (tope)")
   RecCancelled -> eventLine t "para" (what <> " (cancelada)")
   RecGaveUp    ->
     eventLine t "deja" (what <> " (se cortó " <> T.pack (show runs) <> " veces; no relanza más)")
   where
-    what = recordingName session
+    what = recordingName account session
 
 -- | La línea de @resumen.txt@ de un minuto de la grabación de esa sesión, si lleva:
 -- «relanza grabación P1 en grabacion-p1-2.txt (se cortó)» (D197), «(no crece desde las
 -- 11:52)», «(sin conectar; reintenta cada minuto sin contar)» solo en el primer intento,
 -- y «conecta grabación P1 en grabacion-p1-3.txt (tras 8 intentos)».
-recordingStepLine :: UTCTime -> Text -> RecordingRun -> RecordingStep -> Maybe Text
-recordingStepLine t session run step = case step of
+recordingStepLine :: UTCTime -> Account -> Text -> RecordingRun -> RecordingStep -> Maybe Text
+recordingStepLine t account session run step = case step of
   Relaunch n Cut -> Just (relaunch n "se cortó")
   Relaunch n (Stalled at) -> Just (relaunch n ("no crece desde las " <> mexicoHour at))
   Relaunch n Unconnected
     | rrRetries run == 0 -> Just (relaunch n "sin conectar; reintenta cada minuto sin contar")
     | otherwise -> Nothing
   Connected ->
-    Just (eventLine t "conecta" (recordingName session <> " en " <> file (rrRuns run) <> " (tras " <> attempts <> ")"))
+    Just (eventLine t "conecta" (recordingName account session <> " en " <> file (rrRuns run) <> " (tras " <> attempts <> ")"))
   _ -> Nothing
   where
-    relaunch n why = eventLine t "relanza" (recordingName session <> " en " <> file n <> " (" <> why <> ")")
-    file = T.pack . recordingFile session
+    relaunch n why = eventLine t "relanza" (recordingName account session <> " en " <> file n <> " (" <> why <> ")")
+    file = T.pack . recordingFile account session
     attempts = T.pack (show (rrRetries run)) <> (if rrRetries run == 1 then " intento" else " intentos")
 
 -- | Cómo se nombra la grabación en las líneas: «grabación P1».
-recordingName :: Text -> Text
-recordingName session = "grabación " <> sessionLabel session
+recordingName :: Account -> Text -> Text
+recordingName WithoutAccount session = "grabación " <> sessionLabel session
 
 -- | Lo que una pieza necesita al disparar, además de la carpeta y su etiqueta: la
 -- instancia del lanzamiento, su tope, la sesión que mira (la suya; el vigía, la
@@ -947,14 +955,14 @@ dispatchFor recorder reader port slots plan p =
     }
   where
     session = case plPiece p of
-      Recording s -> Just s
-      Checks s    -> s
-      Vigia       -> listToMaybe (reverse [s | Recording s <- map plPiece plan])
-      Observer _  -> Nothing
+      Recording _ s -> Just s
+      Checks s      -> s
+      Vigia         -> listToMaybe (reverse [s | Recording _ s <- map plPiece plan])
+      Observer _    -> Nothing
     startOf s = lookup s [(slotName x, slotStart x) | x <- slots]
     recorderFor piece = case piece of
-      Recording _ -> Just recorder
-      _           -> Nothing
+      Recording _ _ -> Just recorder
+      _             -> Nothing
 
 -- | A la orden de una tanda de comprobaciones, el log que se dio con @--log@ y lo que
 -- tiene que cubrir el token ('tokenNeed'); las demás piezas, igual.
@@ -1076,7 +1084,7 @@ pieceLabel p = case p of
   Checks (Just s) -> "comprobaciones antes de la " <> sessionLabel s
   Vigia           -> "vigía"
   Observer _      -> "observador"
-  Recording s     -> "grabación " <> sessionLabel s <> ", sin cuenta"
+  Recording a s   -> "grabación " <> sessionLabel s <> accountLabel a
 
 -- | La unidad de systemd de una pieza: la carpeta y la pieza (D190).
 unitName :: FilePath -> Piece -> Text
@@ -1087,7 +1095,11 @@ unitName folder p = T.pack folder <> "-" <> slug
       Checks (Just s) -> "comprobaciones-" <> sessionShort s
       Vigia           -> "vigia"
       Observer _      -> "observador"
-      Recording s     -> "grabacion-" <> sessionShort s
+      Recording a s   -> T.pack (recordingStem a s)
+
+-- | Cómo termina el nombre de una grabación en pantalla: «, sin cuenta».
+accountLabel :: Account -> Text
+accountLabel WithoutAccount = ", sin cuenta"
 
 -- | La carpeta en que se lanza: la del día o, si ya existe, la primera libre de @-2@, @-3@…
 nextFolder :: FilePath -> [FilePath] -> FilePath
@@ -1258,22 +1270,22 @@ dayTable now other plan =
         <> T.justifyLeft 17 ' ' b <> c
     row p = cols (pieceLabel (plPiece p)) (session p) (startText now p) (stops p)
     session p = case plPiece p of
-      Recording s     -> typedAt s
+      Recording _ s   -> typedAt s
       Checks (Just s) -> typedAt s
       _               -> "—"
     typedAt s =
       maybe "—" (clockPair "%H:%M" . slotStart) (find ((== s) . slotName) (fromMaybe [] typed))
     stops p = case plPiece p of
-      Checks _    -> "—"
-      Vigia       -> "OpenF1 en 200 cinco min seguidos tras la " <> lastLabel <> capText p
-      Observer w  -> "cuando para el vigía" <> maybe "" (pauseText . pauseFrom) w <> capText p
-      Recording s -> "estado=Finalised de la " <> sessionLabel s <> capText p
+      Checks _      -> "—"
+      Vigia         -> "OpenF1 en 200 cinco min seguidos tras la " <> lastLabel <> capText p
+      Observer w    -> "cuando para el vigía" <> maybe "" (pauseText . pauseFrom) w <> capText p
+      Recording _ s -> "estado=Finalised de la " <> sessionLabel s <> capText p
     capText = maybe "" ((" · tope " <>) . clockPair "%H:%M") . plCap
     pauseText (from, to) =
       " · pausa " <> mexicoHour from <> "–" <> mexicoHour to
         <> " (" <> utcClock from <> "–" <> utcClock to <> ")"
     utcClock = T.pack . formatTime defaultTimeLocale "%H:%M"
-    lastLabel = case reverse [s | Recording s <- map plPiece plan] of
+    lastLabel = case reverse [s | Recording _ s <- map plPiece plan] of
       s : _ -> sessionLabel s
       []    -> "última sesión"
 
@@ -1321,8 +1333,8 @@ lateOkLines shown seen okAt planned = case mapMaybe change seen of
     was p = pieceLabel (plPiece p) <> " · " <> startText shown p
     whyGone p = case plPiece p of
       Checks (Just s)
-        | any ((== Recording s) . plPiece) planned -> "la cubren las de arranque"
-        | otherwise -> capped (plCap =<< find ((== Recording s) . plPiece) seen)
+        | any ((== Recording WithoutAccount s) . plPiece) planned -> "la cubren las de arranque"
+        | otherwise -> capped (plCap =<< find ((== Recording WithoutAccount s) . plPiece) seen)
       _ -> capped (plCap p)
     capped = maybe "pasó su tope" (("pasó su tope, " <>) . clockPair "%H:%M")
 

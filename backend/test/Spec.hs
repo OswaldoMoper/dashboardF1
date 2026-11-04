@@ -5285,9 +5285,9 @@ main = hspec $ do
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)             (atUtc 23 16 0)  Nothing
                    , Auto.Planned Auto.Vigia                        (atUtc 23 16 0)  (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Observer (Just (atUtc 23 18 0))) (atUtc 23 16 0) (Just (atUtc 24 3 0))
-                   , Auto.Planned (Auto.Recording "Practice 1")     (atUtc 23 16 45) (Just (atUtc 23 23 30))
+                   , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 1")     (atUtc 23 16 45) (Just (atUtc 23 23 30))
                    , Auto.Planned (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
-                   , Auto.Planned (Auto.Recording "Practice 2")     (atUtc 23 20 15) (Just (atUtc 24 3 0))
+                   , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 2")     (atUtc 23 20 15) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Checks (Just "Practice 2")) (atUtc 23 20 15) Nothing
                    ]
 
@@ -5296,7 +5296,7 @@ main = hspec $ do
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)         (atUtc 23 17 0) Nothing
                    , Auto.Planned Auto.Vigia                    (atUtc 23 17 0) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Observer (Just (atUtc 23 18 0))) (atUtc 23 17 0) (Just (atUtc 24 3 0))
-                   , Auto.Planned (Auto.Recording "Practice 1") (atUtc 23 17 0) (Just (atUtc 23 23 30))
+                   , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 1") (atUtc 23 17 0) (Just (atUtc 23 23 30))
                    ]
 
     it "una sesión con el tope pasado no se programa, y sin sesiones no hay nada" $
@@ -5304,7 +5304,7 @@ main = hspec $ do
       , Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) []
       )
         `shouldBe` ( [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer (Just (atUtc 23 18 0))
-                     , Auto.Recording "Practice 2" ]
+                     , Auto.Recording Auto.WithoutAccount "Practice 2" ]
                    , [] )
 
     it "el tope es el que se le da: el ensayo lo acorta; sin P1 el observador no tiene pausa" $
@@ -5312,7 +5312,7 @@ main = hspec $ do
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)    (atUtc 23 16 0) Nothing
                    , Auto.Planned Auto.Vigia               (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    , Auto.Planned (Auto.Observer Nothing)  (atUtc 23 16 0) (Just (atUtc 23 16 25))
-                   , Auto.Planned (Auto.Recording "Ensayo") (atUtc 23 16 0) (Just (atUtc 23 16 25))
+                   , Auto.Planned (Auto.Recording Auto.WithoutAccount "Ensayo") (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    ]
 
     it "la pausa del observador es la foto del reloj: de +30 a +45 min de la P1 prevista (D213)" $
@@ -5528,8 +5528,8 @@ main = hspec $ do
 
   describe "Auto: la grabación" $ do
     it "un fichero por vez, -2, -3… al relanzar, y un solo .log por sesión" $
-      ( map (Auto.recordingFile "Practice 1") [1, 2, 6]
-      , Auto.recordingLog "Race"
+      ( map (Auto.recordingFile Auto.WithoutAccount "Practice 1") [1, 2, 6]
+      , Auto.recordingLog Auto.WithoutAccount "Race"
       )
         `shouldBe` (["grabacion-p1.txt", "grabacion-p1-2.txt", "grabacion-p1-6.txt"], "grabacion-carrera.log")
 
@@ -5590,7 +5590,7 @@ main = hspec $ do
 
     it "lo que escribe al relanzar porque no crece, al no conectar (solo la primera vez) y al conectar" $
       let t = atUtc 23 17 55
-          line = Auto.recordingStepLine t "Practice 1"
+          line = Auto.recordingStepLine t Auto.WithoutAccount "Practice 1"
           retried n = (writing True 3 t) {Auto.rrRetries = n}
        in [ line (writing True 1 (atUtc 23 17 52)) (Auto.Relaunch 2 (Auto.Stalled (atUtc 23 17 52)))
           , line (retried 0) (Auto.Relaunch 3 Auto.Unconnected)
@@ -5609,10 +5609,10 @@ main = hspec $ do
 
     it "lo que escribe en resumen.txt (D197, D198, D200)" $
       let t = atUtc 23 17 40
-       in ( Auto.recordingStepLine t "Practice 1" (writing False 1 t) (Auto.Relaunch 2 Auto.Cut)
-          , map (Auto.recordingStopLine t "Practice 1" 6)
+       in ( Auto.recordingStepLine t Auto.WithoutAccount "Practice 1" (writing False 1 t) (Auto.Relaunch 2 Auto.Cut)
+          , map (Auto.recordingStopLine t Auto.WithoutAccount "Practice 1" 6)
               [Auto.RecFinalised, Auto.RecCapped, Auto.RecCancelled, Auto.RecGaveUp]
-          , Auto.instanceChange t (Auto.recordingName "Practice 1") (Just 3000) Nothing
+          , Auto.instanceChange t (Auto.recordingName Auto.WithoutAccount "Practice 1") (Just 3000) Nothing
           )
             `shouldBe` ( Just "11:40 (17:40) relanza  grabación P1 en grabacion-p1-2.txt (se cortó)"
                        , [ "11:40 (17:40) para     grabación P1 (Finalised)"
@@ -5984,7 +5984,7 @@ main = hspec $ do
 
     it "cada pieza tiene su unidad: la carpeta y la pieza (D190)" $
       map (Auto.unitName "dashboardF1-auto-viernes-2026-10-23")
-          [Auto.Checks Nothing, Auto.Checks (Just "Practice 1"), Auto.Vigia, Auto.Observer Nothing, Auto.Recording "Race"]
+          [Auto.Checks Nothing, Auto.Checks (Just "Practice 1"), Auto.Vigia, Auto.Observer Nothing, Auto.Recording Auto.WithoutAccount "Race"]
         `shouldBe` [ "dashboardF1-auto-viernes-2026-10-23-comprobaciones-inicio"
                    , "dashboardF1-auto-viernes-2026-10-23-comprobaciones-p1"
                    , "dashboardF1-auto-viernes-2026-10-23-vigia"
@@ -6148,7 +6148,7 @@ main = hspec $ do
           launched = atUtc 23 16 0
           programmed = map (Auto.programLine launched)
             [ p (Auto.Checks Nothing) launched Nothing
-            , p (Auto.Recording "Practice 1") (atUtc 23 16 45) Nothing
+            , p (Auto.Recording Auto.WithoutAccount "Practice 1") (atUtc 23 16 45) Nothing
             , p (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
             ]
           fired =

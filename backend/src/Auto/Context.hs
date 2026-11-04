@@ -21,8 +21,9 @@ module Auto.Context
   , readLines
   ) where
 
-import           Auto.Helper                (CalendarAnswer, Dispatch (..),
-                                             LiveReply (..), ObserverEnd (..),
+import           Auto.Helper                (Account, CalendarAnswer,
+                                             Dispatch (..), LiveReply (..),
+                                             ObserverEnd (..),
                                              ObserverEvent (..), PageReply (..),
                                              Piece (..), ReaderAnswer (..),
                                              RecordingEnd (..),
@@ -254,8 +255,8 @@ waitNextMinute start = do
 -- crecer, lo para y lo relanza a @-2@, @-3@… (la vez que no conectó, en el mismo número).
 -- Con SIGINT (lo que manda @cancela@ a toda la unidad) espera al grabador y dice que la
 -- cancelaron. Cada paso deja su línea en @resumen.txt@.
-runRecording :: FilePath -> Text -> Slot -> FilePath -> Dispatch -> IO ()
-runRecording folder label slot recorder d = do
+runRecording :: FilePath -> Text -> Account -> Slot -> FilePath -> Dispatch -> IO ()
+runRecording folder label account slot recorder d = do
   start <- getCurrentTime
   appendLine summary (startLine start label)
   current <- newIORef =<< launchRecorder 1
@@ -266,7 +267,7 @@ runRecording folder label slot recorder d = do
     alive <- isNothing <$> getProcessExitCode ph
     when alive (stopRecorder (end /= RecCancelled) ph))
   stopped <- getCurrentTime
-  appendLine summary (recordingStopLine stopped session runs end)
+  appendLine summary (recordingStopLine stopped account session runs end)
   where
     session = slotName slot
     summary = folder </> "resumen.txt"
@@ -276,10 +277,10 @@ runRecording folder label slot recorder d = do
       started <-
         trySync
           ( do
-              logHandle <- openFile (folder </> recordingLog session) AppendMode
+              logHandle <- openFile (folder </> recordingLog account session) AppendMode
               (_, _, _, ph) <-
                 createProcess
-                  (proc recorder [folder </> recordingFile session n, show recordingIdleSeconds])
+                  (proc recorder [folder </> recordingFile account session n, show recordingIdleSeconds])
                     { std_out = UseHandle logHandle
                     , std_err = UseHandle logHandle
                     , create_group = True
@@ -292,13 +293,13 @@ runRecording folder label slot recorder d = do
     watch start current run answering = do
       waitNextMinute start
       (port, reply, _, at) <- firstAnswer (askOrder instancePorts (diPort d))
-      forM_ (instanceChange at (recordingName session) answering port) (appendLine summary)
+      forM_ (instanceChange at (recordingName account session) answering port) (appendLine summary)
       alive <- maybe (pure False) (fmap isNothing . getProcessExitCode) =<< readIORef current
-      file <- fileState (folder </> recordingFile session (rrRuns run))
+      file <- fileState (folder </> recordingFile account session (rrRuns run))
       now <- getCurrentTime
       let seen = run {rrAlive = alive, rrFile = file}
           step = recordingStep now (diCap d) slot (liveTable =<< reply) seen
-      forM_ (recordingStepLine now session seen step) (appendLine summary)
+      forM_ (recordingStepLine now account session seen step) (appendLine summary)
       case step of
         KeepRecording -> watch start current seen port
         Connected -> watch start current seen {rrRetries = 0} port

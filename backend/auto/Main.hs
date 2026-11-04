@@ -220,9 +220,11 @@ findReader = lookupEnv "DASHBOARDF1_OBSERVA" >>= maybe (findExecutable "dashboar
 dispara :: FilePath -> Text -> [Text] -> IO ()
 dispara path label rest
   | label == pieceLabel Vigia = either quit (\d -> withSlot d (\s -> runVigia path label s d)) (parseDispara rest)
-  | Right d <- parseDispara rest, Just s <- diSession d, label == pieceLabel (Recording s) =
+  | Right d <- parseDispara rest
+  , Just s <- diSession d
+  , account : _ <- [a | a <- [minBound .. maxBound], label == pieceLabel (Recording a s)] =
       maybe (quit "dispara: la grabación necesita --grabador")
-        (\r -> withSlot d (\slot -> runRecording path label slot r d)) (diRecorder d)
+        (\r -> withSlot d (\slot -> runRecording path label account slot r d)) (diRecorder d)
   | Right d <- parseDispara rest, label == pieceLabel (Checks (diSession d)) =
       maybe (quit "dispara: las comprobaciones necesitan --fin-hoy") (\t -> runChecks path label t d) (diTokenToday d)
   | Right d <- parseDispara rest, label == pieceLabel (Observer (diPause d)) =
