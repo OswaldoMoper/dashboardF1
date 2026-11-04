@@ -1211,6 +1211,51 @@ body {
   z-index: 1;
 }
 
+/* El aviso de la cuenta o de la procedencia va arriba y a lo ancho del lienzo, encima
+   de la curva: no le quita alto a la tarjeta, que es lo que cambiaría su modo. */
+.comparison__canvas > .status.comparison__notice {
+  display: block;
+  top: var(--sp-2);
+  left: var(--sp-2);
+  right: var(--sp-2);
+  transform: none;
+  white-space: normal;
+  line-height: 1.5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  z-index: 2;
+}
+
+.comparison__notice code {
+  font-family: var(--font-mono);
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-sm);
+  background: var(--c-surface-3);
+  color: var(--c-text);
+}
+
+.comparison__copy {
+  font-size: var(--fs-sm);
+  padding: 0 var(--sp-2);
+}
+
+/* La línea de la cuenta, en la esquina de abajo: tampoco quita alto. */
+.comparison__card {
+  position: relative;
+}
+
+.comparison__account {
+  position: absolute;
+  right: var(--sp-3);
+  bottom: var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-muted);
+}
+
+.comparison__account--warn {
+  color: var(--c-warn);
+}
+
 .comparison__axis {
   position: relative;
   flex: none;

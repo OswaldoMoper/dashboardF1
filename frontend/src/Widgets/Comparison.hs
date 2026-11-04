@@ -50,7 +50,10 @@
 -- @backend-test@ (2026-08-06).
 module Widgets.Comparison where
 
-import           Client                        (fetchJson)
+import           Client                        (fetchJson, fetchJsonSourced)
+import           Common.Account                (Foot (..), Notice (..),
+                                                accountFoot, accountNotice,
+                                                loginCommand, restartCommand)
 import           Common.Chart                  (SectorPace (..),
                                                 SectorSpan (..), axisPolyline,
                                                 axisTicks, axisZeroY,
@@ -96,7 +99,7 @@ import           Common.ComparisonCard         (CardControl (..),
 import           Common.Format                 (formatFixed)
 import           Common.Origin                 (Source, Sourced (..))
 import           Common.Route                  (comparisonPathFor, driversParam,
-                                                driversPathFor)
+                                                driversPathFor, f1tvPath)
 import           Common.Shown                  (Poll (..))
 import           Common.Traces                 (Channel, TraceLayout (..),
                                                 TracePiece (..), TraceRows (..),
@@ -181,6 +184,10 @@ data CState
 -- cada uno, el «Live» y, al acabar la sesión, lo último con su aviso. Los demás tipos
 -- siguen con FastF1.
 --
+-- La cuenta de F1TV se pide a @\/api\/f1tv@ con cada comparación y cada minuto; con la
+-- procedencia de la comparación da la línea del pie y el aviso de encima de la gráfica
+-- ('Common.Account').
+--
 -- El lado de la tabla de mando, la banda y el modo elegido arrancan en @start@, y
 -- @put@ los pone como trae ('Common.ComparisonCard.CardControl'). Devuelve cada
 -- cambio de cualquiera de los tres, también el de @put@.
@@ -212,12 +219,13 @@ comparisonWidget live revealed start put = mdo
           pure (r', p)
         clicks <- divClass "comparison__plot" $
           switchHold never =<< dyn
-            ( plotView (dyn_ (overlayFor <$> liveCard <*> liveEntries <*> refresh <*> st))
+            ( plotView (dyn_ (overlayFor <$> liveCard <*> liveEntries <*> refresh <*> st) >> dyn_ (noticeView <$> notice))
                 <$> ((\c s -> RowMode c s band) <$> chosen <*> shown) <*> layout
                 <*> (otherSide <$> side) <*> v <*> liveEntries <*> st )
         pure (r, clicks)
       band    <- foldDyn ($) (ccBand start) (leftmost [const . ccBand <$> put, not <$ rowClicks])
       b       <- legendRow ty axis st
+      dyn_ (footView <$> foot)
       wanted  <- holdUniqDyn ((\t n -> if chartTypeTraces t then n else 0) <$> ty <*> samples)
       drivers <- holdDyn Nothing (Just <$> leftmost [picked, livePicked])
       let v       = View <$> ty <*> b <*> axis <*> frontiers
@@ -239,9 +247,18 @@ comparisonWidget live revealed start put = mdo
                        , attachWith clearChanged (current cars) (updated cars)
                        , attachWith setPick (current marked) pickE
                        ]
-      resp    <- fetchJson request
-      refresh <- holdDyn InFlight (leftmost [InFlight <$ request, refreshOf <$> resp])
-      stFast  <- foldDyn step Loading resp
+      resp    <- fetchJsonSourced request
+      let fast = fmap srcValue <$> resp
+      refresh <- holdDyn InFlight (leftmost [InFlight <$ request, refreshOf <$> fast])
+      stFast  <- foldDyn step Loading fast
+      shownAt <- holdDyn (Nothing, Nothing) ((\s -> (srcOrigin s, srcFetchedAt s)) <$> fmapMaybe id resp)
+      minute  <- tickLossyFromPostBuildTime 60
+      asked   <- fetchJson (f1tvPath <$ leftmost [() <$ request, () <$ minute])
+      account <- holdDyn Nothing asked
+      zone    <- browserZone
+      let onLive = isJust <$> liveData
+          foot   = accountFoot zone <$> onLive <*> account
+          notice = (\l a (o, at) -> accountNotice zone l a o at) <$> onLive <*> account <*> shownAt
       pure (chosenE, st, v, side, band, rule)
   liveIn   <- holdUniqDyn (liveInput <$> lvWait live <*> lvPoll live)
   first    <- sample (current liveIn)
@@ -339,6 +356,42 @@ shownState Nothing s   = s
 noLapNote :: Maybe [LiveEntry] -> CState -> Text -> Maybe Text
 noLapNote (Just es) _ car = liveNoLapFor car es
 noLapNote Nothing s car   = noLapFor car =<< shownComparison s
+
+-- | La zona del navegador en los minutos de @getTimezoneOffset@, leída una vez al
+-- montar: el @time@ del backend JavaScript de GHC no la sabe leer.
+browserZone :: MonadWidget t m => m Int
+browserZone = round <$> DOM.liftJSM (JS.eval ("new Date().getTimezoneOffset()" :: Text) >>= JS.valToNumber)
+
+-- | El aviso de la cuenta o de la procedencia, arriba del lienzo ('Common.Account.accountNotice').
+noticeView :: MonadWidget t m => Maybe Notice -> m ()
+noticeView Nothing = blank
+noticeView (Just n) =
+  elClass "div" "status status--stale comparison__notice" $ do
+    el "div" $ text (noticeText n)
+    when (noticeLogin n) $ el "div" $ do
+      text "Inicia sesión en una terminal con "
+      el "code" $ text loginCommand
+      text " "
+      (b, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "comparison__copy") $ text "Copiar"
+      performEvent_ (DOM.liftJSM (() <$ JS.eval (copyScript loginCommand)) <$ domEvent Click b)
+      text " y reinicia "
+      el "code" $ text restartCommand
+      text "."
+
+-- | Copia un texto sin comillas ni barras al portapapeles. Fuera de un contexto seguro
+-- (la página abierta por la IP de la red y no por @localhost@) el navegador no da
+-- @navigator.clipboard@, y se copia seleccionando un @textarea@ oculto.
+copyScript :: Text -> Text
+copyScript t =
+  "(function(t){if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t);}"
+    <> "else{var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';"
+    <> "document.body.appendChild(a);a.select();document.execCommand('copy');a.remove();}})('" <> t <> "')"
+
+-- | La línea de la cuenta, en la esquina de abajo ('Common.Account.accountFoot').
+footView :: DomBuilder t m => Maybe Foot -> m ()
+footView Nothing              = blank
+footView (Just (FootQuiet t)) = elClass "p" "comparison__account" $ text t
+footView (Just (FootWarn t))  = elClass "p" "comparison__account comparison__account--warn" $ text t
 
 -- | Lo que va encima de la gráfica: en directo, el aviso de la sesión acabada; con
 -- FastF1, el de la petición ('banner').

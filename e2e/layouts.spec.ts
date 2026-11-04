@@ -539,3 +539,59 @@ test.describe('el arrastre', () => {
     });
   });
 });
+
+test.describe('Lap Comparison y la cuenta de F1TV', () => {
+  // La hora del aviso es la del navegador: fijarla hace que la prueba diga también si la
+  // zona se lee.
+  test.use({ timezoneId: 'America/Mexico_City' });
+
+  const until = '2026-11-07T23:06:58Z';
+  const entry = (car: string, driver: string, lap: string, sectors: number[]) => ({
+    ceCar: car, ceDriver: driver, ceLap: lap, cePart: null, ceSectors: sectors, ceFrontiers: null, ceTrace: [],
+  });
+  const comparison = {
+    lcEntries: [entry('16', 'LEC', '1:35.202', [30.1, 35.0, 30.102]), entry('1', 'NOR', '1:36.282', [30.426, 35.6, 30.256])],
+    lcSamples: 0,
+    lcNotice: '',
+  };
+
+  // La tarjeta con la cuenta y la procedencia de la comparación que se le dan.
+  async function card(page: Page, account: object, origin: Record<string, string>): Promise<Locator> {
+    await openDashboard(page);
+    await page.route('**/api/f1tv', (route) => route.fulfill({ json: account }));
+    await page.route(
+      (url) => url.pathname === '/api/comparison',
+      (route) => route.fulfill({ contentType: 'application/json;charset=utf-8', headers: origin, body: JSON.stringify(comparison) }),
+    );
+    await page.goto('/?retraso=0');
+    const c = page.locator('.canvas__layer:not(.canvas__layer--hidden) .widget--comparison');
+    await expect(c.locator('.comparison__lap').first()).toBeVisible();
+    return c;
+  }
+
+  test('caducada y con el ejemplo: el aviso encima de la gráfica, con el comando y sin la línea del pie', async ({ page }) => {
+    const c = await card(page, { state: 'expired', until }, { 'X-Data-Origin': 'sample' });
+    const notice = c.locator('.comparison__canvas .comparison__notice');
+    await expect(notice).toContainText(
+      'La cuenta de F1TV caducó el sáb 7 a las 17:06: las sesiones acabadas salen de ejemplo.');
+    await expect(notice.locator('code')).toHaveText(['dashboardF1-f1tv', 'dashboardF1-dev']);
+    await expect(notice.getByRole('button', { name: 'Copiar' })).toBeVisible();
+    await expect(c.locator('.comparison__account')).toHaveCount(0);
+  });
+
+  test('válida y con lo fresco: solo la línea del pie', async ({ page }) => {
+    const c = await card(page, { state: 'valid', until }, { 'X-Data-Origin': 'fresh', 'X-Data-Source': 'fastf1' });
+    await expect(c.locator('.comparison__account')).toHaveText('F1TV: vale hasta sáb 7, 17:06');
+    await expect(c.locator('.comparison__account')).not.toHaveClass(/comparison__account--warn/);
+    await expect(c.locator('.comparison__notice')).toHaveCount(0);
+  });
+
+  test('válida y con lo guardado: el aviso de guardado, sin comando', async ({ page }) => {
+    const c = await card(page, { state: 'valid', until },
+      { 'X-Data-Origin': 'cached', 'X-Data-Source': 'fastf1', 'X-Data-Fetched-At': '2026-11-07T20:15:00Z' });
+    const notice = c.locator('.comparison__canvas .comparison__notice');
+    await expect(notice).toHaveText('Dato guardado: la fuente no responde ahora mismo (14:15)');
+    await expect(notice.locator('code')).toHaveCount(0);
+    await expect(c.locator('.comparison__account')).toHaveText('F1TV: vale hasta sáb 7, 17:06');
+  });
+});
