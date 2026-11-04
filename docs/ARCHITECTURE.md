@@ -65,9 +65,10 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   si falla (lista vacía, 404 o la página de una instancia sin la ruta), la temporada de Jolpica por
   `Handler.Historical.Manager.fetchSeasonSchedule`. Se lanza desde el store (`nix run .#auto`), así que cada
   temporizador corre la copia del momento de lanzar aunque el árbol se recompile. El vigía pregunta cada minuto a
-  `/api/live` y a OpenF1; la grabación lanza `dashboardF1-record` sin cuenta, el del store, cuya ruta pone `apps.auto`
+  `/api/live` y a OpenF1; cada sesión tiene dos grabaciones, sin cuenta y con cuenta (`--f1tv`, el token de
+  `dashboardF1-f1tv`), y cada una lanza `dashboardF1-record`, el del store, cuya ruta pone `apps.auto`
   (`DASHBOARDF1_RECORD`) y viaja en la orden de su temporizador, y lo para con SIGINT (con SIGTERM si a los 30 s sigue
-  vivo). Lo relanza si sale solo o si su fichero lleva 1 min sin crecer desde la hora prevista de la sesión; la vez que
+  vivo). Sin un token que valga, la de cuenta no crea su fichero y se reintenta cada minuto. Lo relanza si sale solo o si su fichero lleva 1 min sin crecer desde la hora prevista de la sesión; la vez que
   no llega a conectar reusa su número y no cuenta. Las comprobaciones (al lanzar
   y a T−45) miran OpenF1, la caducidad del token de F1TV sin escribirlo, la página (`/`, `all.js`, `/api/live`) y el
   log que se da con `--log`. El observador arranca con el vigía y para cuando su unidad deja de correr: lanza el lector

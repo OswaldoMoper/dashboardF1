@@ -5280,14 +5280,16 @@ main = hspec $ do
         `shouldBe` [Auto.Slot "Practice 1" (atUtc 23 17 30), Auto.Slot "Tarde" (atUtc 24 2 0)]
 
   describe "Auto.dayPlan" $ do
-    it "el viernes lanzado a las 10:00: vigía, observador y comprobaciones ya, cada grabación a T−45" $
+    it "el viernes lanzado a las 10:00: vigía, observador y comprobaciones ya, cada grabación a T−45, sin y con cuenta" $
       Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)             (atUtc 23 16 0)  Nothing
                    , Auto.Planned Auto.Vigia                        (atUtc 23 16 0)  (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Observer (Just (atUtc 23 18 0))) (atUtc 23 16 0) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 1")     (atUtc 23 16 45) (Just (atUtc 23 23 30))
+                   , Auto.Planned (Auto.Recording Auto.WithAccount "Practice 1")        (atUtc 23 16 45) (Just (atUtc 23 23 30))
                    , Auto.Planned (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
                    , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 2")     (atUtc 23 20 15) (Just (atUtc 24 3 0))
+                   , Auto.Planned (Auto.Recording Auto.WithAccount "Practice 2")        (atUtc 23 20 15) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Checks (Just "Practice 2")) (atUtc 23 20 15) Nothing
                    ]
 
@@ -5304,7 +5306,7 @@ main = hspec $ do
       , Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) []
       )
         `shouldBe` ( [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer (Just (atUtc 23 18 0))
-                     , Auto.Recording Auto.WithoutAccount "Practice 2" ]
+                     , Auto.Recording Auto.WithoutAccount "Practice 2", Auto.Recording Auto.WithAccount "Practice 2" ]
                    , [] )
 
     it "el tope es el que se le da: el ensayo lo acorta; sin P1 el observador no tiene pausa" $
@@ -5313,6 +5315,7 @@ main = hspec $ do
                    , Auto.Planned Auto.Vigia               (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    , Auto.Planned (Auto.Observer Nothing)  (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    , Auto.Planned (Auto.Recording Auto.WithoutAccount "Ensayo") (atUtc 23 16 0) (Just (atUtc 23 16 25))
+                   , Auto.Planned (Auto.Recording Auto.WithAccount "Ensayo")    (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    ]
 
     it "la pausa del observador es la foto del reloj: de +30 a +45 min de la P1 prevista (D213)" $
@@ -5532,6 +5535,24 @@ main = hspec $ do
       , Auto.recordingLog Auto.WithoutAccount "Race"
       )
         `shouldBe` (["grabacion-p1.txt", "grabacion-p1-2.txt", "grabacion-p1-6.txt"], "grabacion-carrera.log")
+
+    it "la grabación con cuenta: su fichero, su .log, su unidad y su nombre llevan «cuenta»" $
+      ( map (Auto.recordingFile Auto.WithAccount "Practice 1") [1, 2]
+      , Auto.recordingLog Auto.WithAccount "Race"
+      , Auto.unitName "dashboardF1-auto-viernes-2026-10-23" (Auto.Recording Auto.WithAccount "Race")
+      , map (\a -> Auto.pieceLabel (Auto.Recording a "Practice 1")) [Auto.WithoutAccount, Auto.WithAccount]
+      , Auto.recordingStepLine (atUtc 23 18 30) Auto.WithAccount "Practice 1" (writing False 1 (atUtc 23 18 30)) (Auto.Relaunch 2 Auto.Cut)
+      )
+        `shouldBe` ( ["grabacion-p1-cuenta.txt", "grabacion-p1-cuenta-2.txt"]
+                   , "grabacion-carrera-cuenta.log"
+                   , "dashboardF1-auto-viernes-2026-10-23-grabacion-carrera-cuenta"
+                   , ["grabación P1, sin cuenta", "grabación P1, con cuenta"]
+                   , Just "12:30 (18:30) relanza  grabación P1 con cuenta en grabacion-p1-cuenta-2.txt (se cortó)"
+                   )
+
+    it "el grabador: --f1tv solo en la grabación con cuenta, y el tiempo sin mensajes en las dos" $
+      map (\a -> Auto.recorderArgs a "/c/g.txt") [Auto.WithoutAccount, Auto.WithAccount]
+        `shouldBe` [["/c/g.txt", "7200"], ["--f1tv", "/c/g.txt", "7200"]]
 
     it "cada minuto: el Finalised de SU sesión manda, después el tope, y uno que salió solo se relanza" $
       let step table alive runs =
@@ -5890,7 +5911,8 @@ main = hspec $ do
           )
             `shouldBe` ( [ [ "--puerto", "3000", "--log", "/home/x/dev.txt"
                            , "--fin-hoy", "2026-10-23T22:00:00Z", "--fin-gp", "2026-10-25T22:00:00Z" ] ]
-                       , [Just "/home/x/dev.txt", Nothing, Nothing, Nothing, Just "/home/x/dev.txt", Nothing, Just "/home/x/dev.txt"]
+                       , [ Just "/home/x/dev.txt", Nothing, Nothing, Nothing, Nothing, Just "/home/x/dev.txt", Nothing, Nothing
+                         , Just "/home/x/dev.txt" ]
                        , True
                        )
 
@@ -6059,9 +6081,10 @@ main = hspec $ do
             [ "comprobaciones de arranque        ahora"
             , "OpenF1 en 200 cinco min seguidos tras la P2 · tope 21:00 (03:00)"
             , "grabación P1, sin cuenta          10:45 (16:45)    estado=Finalised de la P1 · tope 17:30 (23:30)"
+            , "grabación P1, con cuenta          10:45 (16:45)    estado=Finalised de la P1 · tope 17:30 (23:30)"
             , "comprobaciones antes de la P2     14:15 (20:15)    —"
             ]
-            `shouldBe` [True, True, True, True]
+            `shouldBe` [True, True, True, True, True]
 
     it "con horas a mano, una columna con la hora tecleada de la sesión de cada fila" $
       let rows = Auto.dayTable (atUtc 23 16 0) (Just ("a mano", austinSlots)) (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots)
@@ -6102,11 +6125,13 @@ main = hspec $ do
           )
             `shouldBe` ( [ "10:52 (16:52) cambia   el OK llegó tarde; la tabla era de las 10:30"
                          , "10:52 (16:52) cambia   grabación P1, sin cuenta · 10:45 (16:45) → ahora"
+                         , "10:52 (16:52) cambia   grabación P1, con cuenta · 10:45 (16:45) → ahora"
                          , "10:52 (16:52) cambia   comprobaciones antes de la P1 · 10:45 (16:45) → no se programa (la cubren las de arranque)"
                          ]
                        , []
                        , [ "11:50 (17:50) cambia   el OK llegó tarde; la tabla era de las 11:40"
                          , "11:50 (17:50) cambia   grabación P1, sin cuenta · ahora → no se programa (pasó su tope, 11:45 (17:45))"
+                         , "11:50 (17:50) cambia   grabación P1, con cuenta · ahora → no se programa (pasó su tope, 11:45 (17:45))"
                          ]
                        )
 

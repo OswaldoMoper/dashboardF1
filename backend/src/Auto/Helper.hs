@@ -81,6 +81,7 @@ module Auto.Helper
   , maxRelaunches
   , recordingFile
   , recordingLog
+  , recorderArgs
   , RecordingEnd (..)
   , RecordingRun (..)
   , RelaunchWhy (..)
@@ -217,7 +218,7 @@ slotsOn :: Day -> [Slot] -> [Slot]
 slotsOn day = sortOn slotStart . filter ((== day) . mexicoDay . slotStart)
 
 -- | Con qué cuenta graba una grabación.
-data Account = WithoutAccount
+data Account = WithoutAccount | WithAccount
   deriving (Eq, Show, Enum, Bounded)
 
 data Piece
@@ -245,10 +246,10 @@ capAfterStart = 6 * 3600
 
 -- | Lo que se programa para esas sesiones, lanzado en ese instante, con ese tope.
 --
--- Comprobaciones, vigía y observador al lanzar; por sesión, a T−45, la grabación y otra
--- tanda de comprobaciones. __Lo que ya debía haber arrancado arranca al lanzar__, y
--- entonces su tanda de T−45 sobra (la de lanzar la cubre). Una sesión cuyo tope ya pasó
--- no se programa. Sin sesiones, nada: ni el vigía.
+-- Comprobaciones, vigía y observador al lanzar; por sesión, a T−45, las dos grabaciones
+-- (sin y con cuenta) y otra tanda de comprobaciones. __Lo que ya debía haber arrancado
+-- arranca al lanzar__, y entonces su tanda de T−45 sobra (la de lanzar la cubre). Una
+-- sesión cuyo tope ya pasó no se programa. Sin sesiones, nada: ni el vigía.
 dayPlan :: NominalDiffTime -> UTCTime -> [Slot] -> [Planned]
 dayPlan cap now slots =
   case live of
@@ -264,8 +265,8 @@ dayPlan cap now slots =
     capOf s = addUTCTime cap (slotStart s)
     perSlot s =
       let lead = addUTCTime (negate recordingLead) (slotStart s)
-       in Planned (Recording WithoutAccount (slotName s)) (max now lead) (Just (capOf s))
-            : [Planned (Checks (Just (slotName s))) lead Nothing | lead > now]
+       in [Planned (Recording a (slotName s)) (max now lead) (Just (capOf s)) | a <- [minBound .. maxBound]]
+            <> [Planned (Checks (Just (slotName s))) lead Nothing | lead > now]
 
 -- | Cuánto después del inicio previsto de la P1 empieza la foto del reloj, y cuánto dura:
 -- de 11:30 a 12:00–12:15, la ventana en que la pestaña se cierra a mano (D213).
@@ -814,7 +815,8 @@ maxRelaunches :: Int
 maxRelaunches = 5
 
 -- | El fichero de la vez @n@ (desde 1) de la grabación de esa sesión con esa cuenta:
--- @grabacion-p1.txt@, y al relanzar @grabacion-p1-2.txt@, @-3@…
+-- @grabacion-p1.txt@, y al relanzar @grabacion-p1-2.txt@, @-3@…; con cuenta,
+-- @grabacion-p1-cuenta.txt@, @grabacion-p1-cuenta-2.txt@…
 recordingFile :: Account -> Text -> Int -> FilePath
 recordingFile account session n =
   recordingStem account session <> (if n <= 1 then "" else "-" <> show n) <> ".txt"
@@ -824,7 +826,15 @@ recordingLog :: Account -> Text -> FilePath
 recordingLog account session = recordingStem account session <> ".log"
 
 recordingStem :: Account -> Text -> FilePath
-recordingStem WithoutAccount session = "grabacion-" <> T.unpack (sessionShort session)
+recordingStem account session = "grabacion-" <> T.unpack (sessionShort session) <> suffix
+  where
+    suffix = case account of
+      WithoutAccount -> ""
+      WithAccount    -> "-cuenta"
+
+-- | Los argumentos de @dashboardF1-record@ para esa grabación y ese fichero.
+recorderArgs :: Account -> FilePath -> [String]
+recorderArgs account file = ["--f1tv" | account == WithAccount] <> [file, show recordingIdleSeconds]
 
 -- | Cómo acaba la grabación de una sesión.
 data RecordingEnd
@@ -915,9 +925,13 @@ recordingStepLine t account session run step = case step of
     file = T.pack . recordingFile account session
     attempts = T.pack (show (rrRetries run)) <> (if rrRetries run == 1 then " intento" else " intentos")
 
--- | Cómo se nombra la grabación en las líneas: «grabación P1».
+-- | Cómo se nombra la grabación en las líneas: «grabación P1», «grabación P1 con cuenta».
 recordingName :: Account -> Text -> Text
-recordingName WithoutAccount session = "grabación " <> sessionLabel session
+recordingName account session = "grabación " <> sessionLabel session <> suffix
+  where
+    suffix = case account of
+      WithoutAccount -> ""
+      WithAccount    -> " con cuenta"
 
 -- | Lo que una pieza necesita al disparar, además de la carpeta y su etiqueta: la
 -- instancia del lanzamiento, su tope, la sesión que mira (la suya; el vigía, la
@@ -1097,9 +1111,10 @@ unitName folder p = T.pack folder <> "-" <> slug
       Observer _      -> "observador"
       Recording a s   -> T.pack (recordingStem a s)
 
--- | Cómo termina el nombre de una grabación en pantalla: «, sin cuenta».
+-- | Cómo termina el nombre de una grabación en pantalla: «, sin cuenta» o «, con cuenta».
 accountLabel :: Account -> Text
 accountLabel WithoutAccount = ", sin cuenta"
+accountLabel WithAccount    = ", con cuenta"
 
 -- | La carpeta en que se lanza: la del día o, si ya existe, la primera libre de @-2@, @-3@…
 nextFolder :: FilePath -> [FilePath] -> FilePath

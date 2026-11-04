@@ -42,9 +42,8 @@ import           Auto.Helper                (Account, CalendarAnswer,
                                              openf1Check, pageCheck, pageUrl,
                                              pauseFrom, pauseLine, readCalendar,
                                              readerAnswer, readerRelaunchLine,
-                                             readerTimeoutSeconds,
-                                             recordingFile,
-                                             recordingIdleSeconds, recordingLog,
+                                             readerTimeoutSeconds, recorderArgs,
+                                             recordingFile, recordingLog,
                                              recordingName, recordingStep,
                                              recordingStepLine,
                                              recordingStopLine, reopenLine,
@@ -248,8 +247,9 @@ waitNextMinute start = do
       next = addUTCTime (fromInteger ticks * vigiaPeriod) start
   threadDelay (ceiling (realToFrac (diffUTCTime next now) * 1000000 :: Double))
 
--- | La grabación sin cuenta de esa sesión: lanza @dashboardF1-record@ (ese ejecutable)
--- a @grabacion-\<s\>.txt@ con su salida en @grabacion-\<s\>.log@, y cada minuto mira
+-- | La grabación de esa sesión con esa cuenta: lanza @dashboardF1-record@ (ese ejecutable,
+-- sin la variable @F1TV@ y con @--f1tv@ solo con cuenta; 'recorderArgs') a su fichero
+-- ('recordingFile') con su salida en su @.log@, y cada minuto mira
 -- @\/api\/live@ como el vigía y su fichero ('recordingStep'). Con el Finalised o el tope le
 -- manda SIGINT, como Ctrl+C, y espera a que cierre; si salió solo o su fichero dejó de
 -- crecer, lo para y lo relanza a @-2@, @-3@… (la vez que no conectó, en el mismo número).
@@ -280,7 +280,7 @@ runRecording folder label account slot recorder d = do
               logHandle <- openFile (folder </> recordingLog account session) AppendMode
               (_, _, _, ph) <-
                 createProcess
-                  (proc recorder [folder </> recordingFile account session n, show recordingIdleSeconds])
+                  (proc recorder (recorderArgs account (folder </> recordingFile account session n)))
                     { std_out = UseHandle logHandle
                     , std_err = UseHandle logHandle
                     , create_group = True
