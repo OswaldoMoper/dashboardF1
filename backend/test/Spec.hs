@@ -50,6 +50,9 @@ module Main (main) where
 import           App                         (ScheduledSession (..),
                                               emptySectorMemory)
 import qualified Auto.Helper                 as Auto
+import           Common.Account              (Foot (..), Notice (..),
+                                              Stamp (..), accountFoot,
+                                              accountNotice, localStamp)
 import           Common.Carry                (Board (..), Carry (..), Grip (..),
                                               Hand (..), Held (..), Scene (..),
                                               boardOf, heldStyle,
@@ -5619,6 +5622,93 @@ main = hspec $ do
                          ]
                        , Just "11:40 (17:40) pierde   grabación P1: no contesta ninguna instancia"
                        )
+
+  describe "Common.Account: la hora local del aviso" $ do
+    it "con la zona del navegador (minutos detrás de UTC), también al cambiar de día, de mes, de año o en un 29 de febrero" $
+      [ localStamp 360 "2026-11-07T23:06:58Z"
+      , localStamp 360 "2026-11-01T03:00:00Z"
+      , localStamp (-60) "2026-12-31T23:30:00Z"
+      , localStamp 360 "2028-03-01T02:00:00Z"
+      , localStamp 0 " 2026-11-04T09:05:00Z "
+      ]
+        `shouldBe` [ Just (Stamp "sáb" 7 "17:06")
+                   , Just (Stamp "sáb" 31 "21:00")
+                   , Just (Stamp "vie" 1 "00:30")
+                   , Just (Stamp "mar" 29 "20:00")
+                   , Just (Stamp "mié" 4 "09:05")
+                   ]
+
+    it "lo que no tiene la forma que emite el backend, nada" $
+      map (localStamp 360) ["", "2026-11-07", "2026-11-07T23:06:58", "2026-13-07T23:06:58Z", "2026-11-07T25:06:58Z", "2026-11-07 23:06:58Z"]
+        `shouldBe` replicate 6 Nothing
+
+  describe "Common.Account: la línea del pie" $ do
+    let valid   = F1TVValid "2026-11-07T23:06:58Z"
+        expired = F1TVExpired "2026-11-07T23:06:58Z"
+    it "si vale, siempre, en directo o no" $
+      [accountFoot 360 False (Just valid), accountFoot 360 True (Just valid)]
+        `shouldBe` replicate 2 (Just (FootQuiet "F1TV: vale hasta sáb 7, 17:06"))
+
+    it "si no vale, en ámbar solo en el directo: fuera de él lo dice el aviso" $
+      [ accountFoot 360 True (Just expired)
+      , accountFoot 360 True (Just F1TVMissing)
+      , accountFoot 360 True (Just F1TVUnreadable)
+      , accountFoot 360 False (Just expired)
+      , accountFoot 360 False (Just F1TVMissing)
+      ]
+        `shouldBe` [ Just (FootWarn "F1TV: caducó sáb 7, 17:06")
+                   , Just (FootWarn "F1TV: no hay cuenta")
+                   , Just (FootWarn "F1TV: no se entiende el fichero de la cuenta")
+                   , Nothing
+                   , Nothing
+                   ]
+
+    it "sin saber de la cuenta, nada; con una hora rara, sin hora" $
+      [ accountFoot 360 False Nothing
+      , accountFoot 360 True Nothing
+      , accountFoot 360 False (Just (F1TVValid "ayer"))
+      , accountFoot 360 True (Just (F1TVExpired "ayer"))
+      ]
+        `shouldBe` [Nothing, Nothing, Just (FootQuiet "F1TV: vale hasta"), Just (FootWarn "F1TV: caducó")]
+
+  describe "Common.Account: el aviso encima de la gráfica" $ do
+    let valid   = F1TVValid "2026-11-07T23:06:58Z"
+        expired = F1TVExpired "2026-11-07T23:06:58Z"
+        at      = Just "2026-11-07T20:15:00Z"
+    it "si la cuenta no vale, su estado y lo que se enseña, con el comando" $
+      [ accountNotice 360 False (Just expired) (Just Sample) Nothing
+      , accountNotice 360 False (Just F1TVMissing) (Just Cached) at
+      , accountNotice 360 False (Just F1TVMissing) (Just Cached) Nothing
+      , accountNotice 360 False (Just F1TVUnreadable) (Just Fresh) Nothing
+      , accountNotice 360 False (Just expired) Nothing Nothing
+      ]
+        `shouldBe` [ Just (Notice "La cuenta de F1TV caducó el sáb 7 a las 17:06: las sesiones acabadas salen de ejemplo." True)
+                   , Just (Notice "No hay cuenta de F1TV: es lo guardado de las 14:15." True)
+                   , Just (Notice "No hay cuenta de F1TV: es lo guardado." True)
+                   , Just (Notice "No se entiende el fichero de la cuenta de F1TV." True)
+                   , Just (Notice "La cuenta de F1TV caducó el sáb 7 a las 17:06." True)
+                   ]
+
+    it "si vale o no se sabe, el aviso de la procedencia, sin comando; con lo fresco, nada" $
+      [ accountNotice 360 False (Just valid) (Just Sample) Nothing
+      , accountNotice 360 False (Just valid) (Just Cached) at
+      , accountNotice 360 False Nothing (Just Sample) Nothing
+      , accountNotice 360 False (Just valid) (Just Fresh) Nothing
+      , accountNotice 360 False Nothing Nothing Nothing
+      ]
+        `shouldBe` [ Just (Notice "Datos de ejemplo: la fuente nunca ha respondido" False)
+                   , Just (Notice "Dato guardado: la fuente no responde ahora mismo (14:15)" False)
+                   , Just (Notice "Datos de ejemplo: la fuente nunca ha respondido" False)
+                   , Nothing
+                   , Nothing
+                   ]
+
+    it "en el directo, ninguno: la gráfica es del feed" $
+      [ accountNotice 360 True (Just expired) (Just Sample) Nothing
+      , accountNotice 360 True (Just valid) (Just Cached) at
+      , accountNotice 360 True Nothing (Just Sample) Nothing
+      ]
+        `shouldBe` replicate 3 Nothing
 
   describe "Handler.FastF1: el estado de la cuenta para la página" $ do
     it "vale, caducó (también justo ahora, como en Auto), no hay o no se entiende" $

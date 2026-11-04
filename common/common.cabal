@@ -20,6 +20,7 @@ library
         OverloadedStrings
     hs-source-dirs:   src
     exposed-modules:
+        Common.Account
         Common.Carry
         Common.Chart
         Common.Columns
