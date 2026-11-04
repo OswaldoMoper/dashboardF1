@@ -20,9 +20,10 @@ Con live timing, telemetría, comparación de vueltas, estrategias de neumático
 ## Datos
 
 Los datos se leen en el momento de OpenF1, Jolpica, FastF1 y el feed en directo.
-El archivo de sesiones acabadas de F1 pide credenciales, así que FastF1 no carga
-las sesiones recientes y, fuera de sesión, Lap Comparison y Telemetry enseñan un
-ejemplo.
+El archivo de sesiones acabadas de F1 pide una cuenta de F1TV. La sesión se inicia
+en la terminal con `dashboardF1-f1tv` y dura unos cuatro días; sin ella, FastF1 no
+carga las sesiones acabadas y Lap Comparison y Telemetry enseñan un ejemplo. Lap
+Comparison dice si la cuenta vale y cuándo lo que enseña es el ejemplo.
 
 Las grabaciones del feed que usan `telemetry-service/tests/` y `e2e/` no se
 distribuyen: sin ellas, `dashboardF1-pytest` y `dashboardF1-e2e` no pasan.
