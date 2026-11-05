@@ -232,6 +232,7 @@ import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison,
                                               comparable)
 import qualified Handler.Comparison.Helper   as Comparison
+import qualified Handler.Drivers             as Drivers
 import qualified Handler.Drivers.Context     as Drivers
 import           Handler.Drivers.Helper      (RawDriver, assembleDrivers)
 import qualified Handler.Drivers.Helper      as Drivers
@@ -856,7 +857,7 @@ main = hspec $ do
     it "sin nada guardado un fallo no tiene qué servir, y quien llama pone el ejemplo" $
       tyreStep tyreNow Nothing Nothing `shouldBe` (Nothing, Nothing)
 
-  -- La escalera de `/api/comparison` y `/api/telemetry`, por clave. Lo guardado en la
+  -- La escalera de `/api/comparison`, `/api/telemetry` y `/api/drivers`, por clave. Lo guardado en la
   -- clave pedida es otra tanda que lo traído, y hay otra clave guardada, para que servir
   -- la equivocada no pueda pasar la prueba.
   describe "fastf1Step" $ do
@@ -4694,6 +4695,13 @@ main = hspec $ do
     it "lo que sale de FastF1 dice que es de FastF1; el ejemplo no lleva fuente" $
       ( headersOf (withProvenance (Provenanced Fresh (Just FastF1) Nothing Comparison.dummy))
       , headersOf (withProvenance (Provenanced Sample Nothing Nothing Comparison.dummy))
+      )
+        `shouldBe` ( (Header "fresh", MissingHeader, Header "fastf1")
+                   , (Header "sample", MissingHeader, MissingHeader) )
+
+    it "la parrilla también: la de FastF1 dice que es de FastF1, y el ejemplo no lleva fuente" $
+      ( headersOf (withProvenance (Provenanced Fresh (Just FastF1) Nothing Drivers.dummy) :: Drivers.DriversResponse)
+      , headersOf (withProvenance (Provenanced Sample Nothing Nothing Drivers.dummy) :: Drivers.DriversResponse)
       )
         `shouldBe` ( (Header "fresh", MissingHeader, Header "fastf1")
                    , (Header "sample", MissingHeader, MissingHeader) )

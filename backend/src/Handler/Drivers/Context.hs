@@ -21,34 +21,29 @@
 module Handler.Drivers.Context where
 
 import           App                     (Env (..))
+import           Common.Origin           (Origin (..))
 import           Common.Types            (DriverEntry (..))
 import           Config                  (Config)
-import           Control.Concurrent.STM  (atomically, modifyTVar', readTVarIO)
+import           Control.Concurrent.STM  (atomically, readTVar, writeTVar)
 import           Control.Exception       (SomeException, try)
-import           Data.Map.Strict         (Map)
-import qualified Data.Map.Strict         as Map
 import           Data.Maybe              (fromMaybe)
 import           Data.Text               (Text)
+import           Data.Time.Clock         (getCurrentTime)
 import           Handler.Drivers.Helper  (assembleDrivers, resolveParams)
 import qualified Handler.Drivers.Manager as Manager
+import           Handler.FastF1.Helper   (fastf1Step)
 import           Outcome                 (Outcome (..), classify)
+import           Provenance              (Provenanced (..))
 
--- | Devuelve la parrilla de una sesión: intenta el fetch real; si funciona __y
--- trae coches__, refresca la cache y devuelve; ante fallo o lista vacía sirve la
--- última respuesta buena __de esa misma sesión__; sin ninguna, el dummy.
+-- | La parrilla de una sesión, con su procedencia, por tres ramas y en este orden:
 --
--- __Segunda área con la escalera de tres ramas__, replicando el molde que
--- 'Handler.Comparison.Context.getComparison' estrenó
--- (2026-08-14). La rama del medio es la única nueva: si la excepción se reconoce
--- como culpa del cliente ('Outcome.classify'), la petición se rechaza y __no se
--- toca la cache__ —una petición mala no invalida ni refresca nada—. Las otras dos
--- son las de siempre y el degradado sale byte a byte como salía.
---
--- El orden importa: el @Right@ bueno va primero, así que una parrilla válida nunca
--- pasa por el clasificador; y el @_@ final sigue absorbiendo lo que
--- 'Outcome.classify' no reconoce —servicio apagado, timeout, @5xx@, JSON con otra
--- forma— más el @Right@ con la lista vacía, que es el criterio de fallo de esta
--- área: una sesión sin parrilla publicada no es un rechazo, se degrada.
+-- * la excepción es culpa del cliente ('Outcome.classify') → se rechaza sin tocar
+--   la cache;
+-- * el fetch trae coches → se guardan en la cache con la hora y se sirven ('Fresh');
+-- * cualquier otra cosa —servicio apagado, timeout, @5xx@, JSON con otra forma, o
+--   la lista vacía de una sesión sin parrilla publicada— → la última parrilla buena
+--   __de esa misma sesión__ ('Cached', con su hora) y, sin ninguna, el dummy
+--   ('Sample').
 --
 -- Los dos rechazos de aquí están medidos y son distintos entre sí: @?session=nope@
 -- da @400@ (la @session_key@ tiene otra forma) y @?session=2026-99-R@ da @404@ (se
@@ -57,7 +52,7 @@ import           Outcome                 (Outcome (..), classify)
 --
 -- Un parámetro escrito pero vacío se rechaza antes de salir a la red y sin tocar
 -- la cache.
-getDrivers :: Env -> Maybe Text -> IO (Outcome [DriverEntry])
+getDrivers :: Env -> Maybe Text -> IO (Outcome (Provenanced [DriverEntry]))
 getDrivers env session = case resolveParams session of
   Left rejection -> pure (Refused rejection)
   Right key -> do
@@ -65,18 +60,15 @@ getDrivers env session = case resolveParams session of
       try (fetchDriverGrid (envConfig env) key)
         :: IO (Either SomeException [DriverEntry])
     case result of
-      Right grid | not (null grid) -> do
-        atomically (modifyTVar' (envDriversCache env) (Map.insert key grid))
-        pure (Served grid)
       Left e | Just rejection <- classify e -> pure (Refused rejection)
       _ -> do
-        cached <- readTVarIO (envDriversCache env)
-        pure (Served (lookupCached key cached))
-
--- | Respaldo para una clave: la última parrilla buena de __esa__ sesión, o el
--- dummy. Nunca la de otra sesión (como 'Handler.FastF1.Helper.fastf1Step').
-lookupCached :: Text -> Map Text [DriverEntry] -> [DriverEntry]
-lookupCached key = fromMaybe dummy . Map.lookup key
+        now <- getCurrentTime
+        served <- atomically $ do
+          cached <- readTVar (envDriversCache env)
+          let (shown, kept) = fastf1Step (not . null) now key (either (const Nothing) Just result) cached
+          writeTVar (envDriversCache env) kept
+          pure shown
+        pure (Served (fromMaybe (Provenanced Sample Nothing Nothing dummy) served))
 
 -- | El GET al microservicio y el mapeo puro, encadenados. Vive fuera del @try@
 -- del llamador solo por legibilidad: cualquier excepción que lance —servicio

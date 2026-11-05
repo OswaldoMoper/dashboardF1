@@ -9,8 +9,7 @@
 module Server where
 
 import           App                            (Env (..))
-import           Common.Types                   (DriverEntry, F1TVAccount,
-                                                 HistoricalStat)
+import           Common.Types                   (F1TVAccount, HistoricalStat)
 import           Config                         (cfgStaticDir)
 import           Data.Aeson                     (ToJSON)
 import           Data.Text                      (Text)
@@ -59,8 +58,8 @@ instance ToJSON Home
 -- es un 'Int': lo que no es número lo rechaza Servant con 400, y lo que está
 -- fuera de rango lo ajusta 'Handler.Comparison.Helper.adjustSamples'.
 --
--- @/api/live@, @/api/tyre-strategy@, @/api/telemetry@ y @/api/comparison@ responden
--- con cabeceras propias: la
+-- @/api/live@, @/api/tyre-strategy@, @/api/telemetry@, @/api/comparison@ y
+-- @/api/drivers@ responden con cabeceras propias: la
 -- procedencia del dato ('Provenance'). Cada tipo vive en su 'Handler' y no aquí
 -- porque este módulo importa aquéllos; el cuerpo JSON es el mismo de siempre.
 type Api =
@@ -79,7 +78,7 @@ type Api =
          :> Get '[JSON] Comparison.ComparisonResponse
   :<|> "api" :> "drivers"
          :> QueryParam "session" Text
-         :> Get '[JSON] [DriverEntry]
+         :> Get '[JSON] Drivers.DriversResponse
   :<|> "api" :> "tyre-strategy" :> Get '[JSON] TyreStrategy.TyreResponse
   :<|> "api" :> "f1tv" :> Get '[JSON] F1TVAccount
   :<|> Raw

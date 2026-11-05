@@ -47,11 +47,11 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   (se degrada a cache o dummy). El criterio vive en el `Context`; el handler solo traduce
   con `Outcome.serve` (2026-08-14). Lo usan las tres áreas que leen el microservicio con
   parámetros: `Telemetry`, `Comparison` y `Drivers`; las demás no rechazan nada y devuelven `IO a`.
-- **Procedencia del dato:** `/api/live`, `/api/tyre-strategy`, `/api/telemetry` y `/api/comparison` emiten
+- **Procedencia del dato:** `/api/live`, `/api/tyre-strategy`, `/api/telemetry`, `/api/comparison` y `/api/drivers` emiten
   `X-Data-Origin` (`fresh`/`recent`/`cached`/`sample`; solo `/api/live` tiene `recent`), `X-Data-Source`
   (`feed`/`openf1`/`fastf1`; falta con el dato de ejemplo) y, con los que salen de lo guardado —`recent` y
   `cached`—, `X-Data-Fetched-At` en ISO 8601 UTC; el cuerpo JSON no cambia. Cabeceras en `Provenance`; tipo y
-  valores en `Common.Origin`. Telemetría y comparación guardan por clave y comparten la escalera
+  valores en `Common.Origin`. Telemetría, comparación y parrilla guardan por clave y comparten la escalera
   (`Handler.FastF1.Helper.fastf1Step`): nunca sirven lo guardado de otra clave.
 - **Presupuesto de OpenF1:** acepta 30 peticiones por minuto y 3 por segundo, y lo dice en su propio rechazo.
   Toda petición pasa por un freno único (3 salidas por ventana de 1,2 s) en

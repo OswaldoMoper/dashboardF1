@@ -196,9 +196,9 @@ data Env = Env
     --
     -- __Solo cubre el camino en frío.__ Con la caja llena nadie baja desde el
     -- endpoint, así que no hay nada que serializar.
-  , envDriversCache    :: TVar (Map Text [DriverEntry])
+  , envDriversCache    :: TVar (Map Text (UTCTime, [DriverEntry]))
     -- ^ Última parrilla buena de @/api/drivers@ __por sesión__ (respaldo si el
-    -- microservicio FastF1 no responde).
+    -- microservicio FastF1 no responde), con la hora en que llegó.
     --
     -- Sexta caja, y la primera cuya clave tiene una sola componente: el endpoint
     -- no filtra por coche, así que @session_key@ la determina entera. Que la
