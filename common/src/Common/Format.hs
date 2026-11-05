@@ -64,7 +64,7 @@ noData = "—"
 -- __No-finito da 'noData'.__ 'Numeric.showFFloat' emitiría @\"NaN\"@ o
 -- @\"Infinity\"@, o sea una palabra inglesa en una celda de cifras, y es el
 -- quinto no-dato que llega por esta clase de puerta —el @NaN@ de 2026-07-31 venía
--- justo de FastF1, que es la fuente de 'Common.Types.TelemetryPoint'—. La raya dice
+-- justo de FastF1—. La raya dice
 -- «no hay cifra», que es exactamente lo que un @NaN@ significa aquí.
 formatFixed :: Int -> Double -> Text
 formatFixed decimals x

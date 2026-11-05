@@ -7,8 +7,6 @@ module Common.Route
   ( ApiRoute (..)
   , apiPath
   , livePath
-  , telemetryPath
-  , telemetryPathFor
   , comparisonPath
   , comparisonPathFor
   , driversParam
@@ -27,7 +25,6 @@ import qualified Data.Text  as T
 data ApiRoute
   = LiveApi
   | HistoricalApi
-  | TelemetryApi
   | ComparisonApi
   | DriversApi
   | TyreStrategyApi
@@ -39,7 +36,6 @@ apiPath :: ApiRoute -> Text
 apiPath = \case
   LiveApi         -> "/api/live"
   HistoricalApi   -> "/api/historical"
-  TelemetryApi    -> "/api/telemetry"
   ComparisonApi   -> "/api/comparison"
   DriversApi      -> "/api/drivers"
   TyreStrategyApi -> "/api/tyre-strategy"
@@ -48,37 +44,6 @@ apiPath = \case
 -- | Atajo para el endpoint de live timing (primer consumidor).
 livePath :: Text
 livePath = apiPath LiveApi
-
--- | Atajo para el endpoint de telemetría.
-telemetryPath :: Text
-telemetryPath = apiPath TelemetryApi
-
--- | Path de telemetría con sesión y\/o piloto en el query string, omitiendo los
--- ausentes: sin ninguno devuelve 'telemetryPath' tal cual, que es exactamente el
--- comportamiento de hoy. Espejo del @QueryParam \"session\" :> QueryParam
--- \"driver\"@ de @Server.Api@ — ambos opcionales en los dos extremos.
---
--- Convive con 'telemetryPath' en vez de sustituirlo: 'Widgets.Telemetry' filtra
--- __en cliente__ y sigue pidiendo la lista completa una sola vez
--- (2026-08-01), así que esto es capacidad de la API —para
--- @curl@ y para el futuro widget de comparación—, no el mecanismo del widget.
---
--- Dos supuestos que conviene dejar escritos, porque son supuestos y no descuidos:
---
--- * __Sin escapado de query.__ Los valores admitidos hoy son alfanuméricos,
---   guiones y comas (@latest@, @2026-13-R@, @all@, @1,4@), así que concatenar es
---   correcto. El día que un parámetro admita espacios o @&@ hará falta
---   @renderQuery@ de @http-types@ (dependencia nueva en @common@, que se mantiene
---   ligero a propósito para compilar bajo GHCJS).
---
--- * __@driver@ son números de coche, no acrónimos.__ El valor viaja tal cual al
---   segmento @{driver}@ del microservicio FastF1, que acepta @all@ o @1,4,16@; un
---   acrónimo que la sesión reconoce lo traduce a su número, y cualquier otra
---   cosa la pasa tal cual. El acrónimo es el vocabulario del __widget__
---   (@tpDriver@), no el de la API.
-telemetryPathFor :: Maybe Text -> Maybe Text -> Text
-telemetryPathFor session driver =
-  pathWith telemetryPath [("session", session), ("driver", driver)]
 
 -- | Atajo para el endpoint de comparación de vueltas.
 comparisonPath :: Text
@@ -89,11 +54,17 @@ comparisonPath = apiPath ComparisonApi
 -- 'comparisonPath' tal cual. Espejo de los tres @QueryParam@ de @Server.Api@,
 -- opcionales en los dos extremos.
 --
--- Hereda los dos supuestos de 'telemetryPathFor' (sin escapado de query; los
--- valores son números de coche, no acrónimos) y añade uno propio: __@drivers@ son
--- de 1 a 5__, separados por coma y con la referencia primero (@\"16,1\"@). El
--- microservicio responde 400 a cualquier otra cantidad, así que no hay análogo del
--- @all@ de telemetría.
+-- Tres supuestos que conviene dejar escritos, porque son supuestos y no descuidos:
+--
+-- * __Sin escapado de query__, el de 'pathWith'.
+--
+-- * __@drivers@ son números de coche, no acrónimos.__ El valor viaja tal cual al
+--   microservicio FastF1: un acrónimo que la sesión reconoce lo traduce a su
+--   número, y cualquier otra cosa la pasa tal cual. Lo que el usuario teclea lo
+--   filtra 'driversParam'.
+--
+-- * __@drivers@ son de 1 a 5__, separados por coma y con la referencia primero
+--   (@\"16,1\"@). El microservicio responde 400 a cualquier otra cantidad.
 comparisonPathFor :: Maybe Text -> Maybe Text -> Int -> Text
 comparisonPathFor session drivers samples =
   pathWith comparisonPath
@@ -153,23 +124,22 @@ driversPath = apiPath DriversApi
 
 -- | Path de la parrilla con la sesión en el query string, u omitida.
 --
--- Un solo parámetro, a diferencia de los otros dos @…PathFor@, y esa es
--- exactamente la forma del endpoint: la parrilla no admite filtro por coche
--- —pedir la lista de un coche que ya conoces no tiene sentido—, así que
--- @?session=@ es todo lo que hay. Hereda de 'telemetryPathFor' el supuesto de no
--- escapar el query.
+-- Un solo parámetro, a diferencia de 'comparisonPathFor', y esa es exactamente la
+-- forma del endpoint: la parrilla no admite filtro por coche —pedir la lista de un
+-- coche que ya conoces no tiene sentido—, así que @?session=@ es todo lo que hay.
+-- No escapa el query ('pathWith').
 driversPathFor :: Maybe Text -> Text
 driversPathFor session = pathWith driversPath [("session", session)]
 
 -- | Un path con los parámetros presentes en el query string, en el orden dado, y
 -- sin @?@ cuando no hay ninguno. Único sitio del módulo que compone query
--- strings: lo comparten 'telemetryPathFor' y 'comparisonPathFor', y con el
--- segundo endpoint parametrizado la alternativa era el mismo @case@ duplicado dos
--- veces.
+-- strings: lo comparten 'comparisonPathFor' y 'driversPathFor'.
 --
 -- Aquí vive el supuesto de __no escapar__: correcto para los valores de hoy
--- (alfanuméricos, guiones y comas), y el día que uno admita espacios o @&@ este es
--- el único punto que hay que cambiar.
+-- (alfanuméricos, guiones y comas: @latest@, @2026-13-R@, @16,1@), y el día que uno
+-- admita espacios o @&@ este es el único punto que hay que cambiar, con
+-- @renderQuery@ de @http-types@ (dependencia nueva en @common@, que se mantiene
+-- ligero a propósito para compilar bajo GHCJS).
 pathWith :: Text -> [(Text, Maybe Text)] -> Text
 pathWith path params =
   case catMaybes [fmap ((key <> "=") <>) value | (key, value) <- params] of

@@ -49,10 +49,6 @@ library
         Handler.Historical.Context
         Handler.Historical.Helper
         Handler.Historical.Manager
-        Handler.Telemetry
-        Handler.Telemetry.Context
-        Handler.Telemetry.Helper
-        Handler.Telemetry.Manager
         Handler.Comparison
         Handler.Comparison.Context
         Handler.Comparison.Helper

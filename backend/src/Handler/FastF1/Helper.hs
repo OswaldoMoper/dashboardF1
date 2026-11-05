@@ -1,5 +1,5 @@
 -- | Lo puro que comparten los consumidores del microservicio FastF1
--- ('Handler.Telemetry', 'Handler.Comparison' y 'Handler.Drivers'): la lectura
+-- ('Handler.Comparison' y 'Handler.Drivers'): la lectura
 -- de los @QueryParam@ que viajan como segmentos de su URL, y la escalera con procedencia
 -- de las áreas que guardan lo traído por clave ('fastf1Step'). Y, para quien juzga la
 -- cuenta de F1TV con la que FastF1 abre el archivo, lo que dice el fichero del token.

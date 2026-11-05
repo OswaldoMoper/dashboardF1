@@ -20,9 +20,7 @@ type ComparisonResponse = WithProvenance LapComparison
 
 -- | Los tres 'Maybe' vienen de los @QueryParam@ opcionales de 'Server.Api' y bajan
 -- sin interpretar: quien decide qué significa su ausencia es
--- 'Handler.Comparison.Helper.resolveParams'. Espejo de
--- 'Handler.Telemetry.telemetryHandler', que es el otro endpoint parametrizado del
--- repo.
+-- 'Handler.Comparison.Helper.resolveParams'.
 --
 -- El @Outcome@ que devuelve el @Context@ muere aquí, en 'Outcome.serve', y lo servido
 -- sale con sus cabeceras ('Provenance'); el cuerpo JSON es el de siempre.

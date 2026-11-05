@@ -1,7 +1,6 @@
 -- | Invariantes de la lógica pura de las áreas Historical
--- ('Handler.Historical.Helper'), Telemetry ('Handler.Telemetry.Helper', con la
--- resolución de parámetros), Comparison ('Handler.Comparison.Helper', ídem),
--- Drivers (ídem), TyreStrategy ('Handler.TyreStrategy.Helper'), Live
+-- ('Handler.Historical.Helper'), Comparison ('Handler.Comparison.Helper', con la
+-- resolución de parámetros), Drivers (ídem), TyreStrategy ('Handler.TyreStrategy.Helper'), Live
 -- ('Handler.Live.Helper' y las cabeceras de procedencia de 'Handler.Live') y los
 -- tipos crudos compartidos de OpenF1 ('Handler.OpenF1.Helper'). Con el último no
 -- queda ninguna función pura del backend sin cubrir.
@@ -22,7 +21,7 @@
 -- paquete @frontend@ no tiene ninguna (2026-08-04).
 --
 -- * 'Common.Chart' — el escalado del gráfico de comparación.
--- * 'Common.Format' — el formateo de cifras de las tablas de Historical y Telemetry
+-- * 'Common.Format' — el formateo de cifras de las tablas de Historical
 --   (2026-08-26). Tercero por la misma puerta, y el que más
 --   claramente es presentación: sin esta suite, que una celda no muestre
 --   @\"1.0e-2\"@ estaría solo revisado a ojo.
@@ -177,7 +176,6 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               StartNotice (..), StatEntity (..),
                                               StateBasis (..),
                                               StateReading (..),
-                                              TelemetryPoint (..),
                                               TracePoint (..),
                                               TrackCondition (..),
                                               TyreStint (..), UpNext (..),
@@ -277,8 +275,6 @@ import           Handler.OpenF1.Helper       (Answer (..), Of1Driver (..),
                                               brakeWait, brakeWindow,
                                               requestLine)
 import           Handler.OpenF1.Manager      (endsAfter, latestSession)
-import           Handler.Telemetry.Helper    (FastF1Point, assemblePoints)
-import qualified Handler.Telemetry.Helper    as Telemetry
 import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints,
                                               tyreStep)
 import qualified Network.HTTP.Client         as Client
@@ -394,42 +390,6 @@ main = hspec $ do
       parseNum "n/a" `shouldBe` Nothing
       parseNum "-" `shouldBe` Nothing
       parseNum "12 points" `shouldBe` Nothing
-
-  describe "assemblePoints" $ do
-    it "mapea cada muestra conservando las ocho magnitudes, el orden y los bloques por piloto" $
-      pointsOf telemetryArray
-        `shouldBe`
-          [ TelemetryPoint "VER" 0.0 0 312.5 1.0 0.0 8 11800
-          , TelemetryPoint "VER" 0.5 42 298.1 0.0 0.6 7 10500
-          , TelemetryPoint "NOR" 0.0 0 309.8 1.0 0.0 8 11650
-          ]
-
-    it "descarta solo la muestra sin canal de coche, no la vuelta de los demás" $
-      pointsOf sampleWithoutBrake
-        `shouldBe`
-          [ TelemetryPoint "VER" 0.0 0 312.5 1.0 0.0 8 11800
-          , TelemetryPoint "NOR" 0.0 0 309.8 1.0 0.0 8 11650
-          ]
-
-    it "descarta la muestra sin ningún canal de coche en vez de inventar ceros" $
-      pointsOf sampleWithoutCarData `shouldBe` []
-
-    it "devuelve [] sobre un arreglo vacío (sesión sin telemetría publicada)" $
-      pointsOf emptyArray `shouldBe` []
-
-  describe "Telemetry.resolveParams" $ do
-    it "sin parámetros aplica los defaults, que es el comportamiento previo a que existieran" $
-      Telemetry.resolveParams Nothing Nothing `shouldBe` Right ("latest", "all")
-
-    it "respeta el parámetro presente y deja el ausente en su defecto" $ do
-      Telemetry.resolveParams (Just "2026-13-R") Nothing `shouldBe` Right ("2026-13-R", "all")
-      Telemetry.resolveParams Nothing (Just "1,4") `shouldBe` Right ("latest", "1,4")
-
-    it "rechaza un parámetro escrito pero vacío con su motivo, aunque el otro sea bueno" $ do
-      Telemetry.resolveParams (Just "") Nothing
-        `shouldBe` Left (BadRequest "session está vacío: omítelo para usar la sesión por defecto")
-      Telemetry.resolveParams (Just "2026-13-R") (Just "")
-        `shouldBe` Left (BadRequest "driver está vacío: omítelo para pedir todos los coches")
 
   describe "assembleComparison" $ do
     it "mapea los coches en el orden pedido, la referencia primero, con sus sectores y su traza" $
@@ -858,7 +818,7 @@ main = hspec $ do
     it "sin nada guardado un fallo no tiene qué servir, y quien llama pone el ejemplo" $
       tyreStep tyreNow Nothing Nothing `shouldBe` (Nothing, Nothing)
 
-  -- La escalera de `/api/comparison`, `/api/telemetry` y `/api/drivers`, por clave. Lo guardado en la
+  -- La escalera de `/api/comparison` y `/api/drivers`, por clave. Lo guardado en la
   -- clave pedida es otra tanda que lo traído, y hay otra clave guardada, para que servir
   -- la equivocada no pueda pasar la prueba.
   describe "fastf1Step" $ do
@@ -3989,8 +3949,7 @@ main = hspec $ do
       formatTrimmed 1 393.5 `shouldBe` "393.5"
 
     it "no emite notación científica, que es lo que `show` hacía con `throttle`" $ do
-      -- `show (1.0e-2 :: Double)` == "1.0e-2", y la respuesta real de
-      -- /api/telemetry trae ese valor: la celda mostraba la cadena literal.
+      -- `show (1.0e-2 :: Double)` == "1.0e-2": una celda mostraría la cadena literal.
       formatFixed 2 1.0e-2 `shouldBe` "0.01"
       formatFixed 2 3.0e-2 `shouldBe` "0.03"
 
@@ -4025,8 +3984,7 @@ main = hspec $ do
       formatFixed (-3) 393.4 `shouldBe` "393"
 
     it "el no-dato da la raya y no una palabra inglesa en una celda de cifras" $ do
-      -- Quinto no-dato por esta clase de puerta; el NaN de 2026-07-31 venía de
-      -- FastF1, que es la fuente de TelemetryPoint.
+      -- Quinto no-dato por esta clase de puerta; el NaN de 2026-07-31 venía de FastF1.
       formatFixed 1 (0 / 0) `shouldBe` noData
       formatFixed 1 (1 / 0) `shouldBe` noData
       formatTrimmed 1 (-1 / 0) `shouldBe` noData
@@ -6642,18 +6600,9 @@ decodeRoot :: ByteString -> Root
 decodeRoot raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
 
--- | Espejo de 'driverStatsOf' para el área Telemetry: decodifica el arreglo plano
--- que emite el microservicio y le aplica el mapeo puro, para que cada caso
--- ejercite el 'FromJSON' y 'assemblePoints' __juntos__.
-pointsOf :: ByteString -> [TelemetryPoint]
-pointsOf = assemblePoints . decodePoints
-
-decodePoints :: ByteString -> [FastF1Point]
-decodePoints raw =
-  either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
-
--- | Espejo de 'pointsOf' para el área Comparison. Aquí el par decode + ensamblado
--- importa __más__ que en las otras dos: el criterio del área vive precisamente en
+-- | Espejo de 'driverStatsOf' para el área Comparison: decodifica la respuesta del
+-- microservicio y le aplica el mapeo puro. Aquí el par decode + ensamblado
+-- importa __más__ que en Historical: el criterio del área vive precisamente en
 -- que el coche sin vuelta __decodifique__ (@.:?@) para que el @Context@ decida con
 -- 'comparable'. Probar 'assembleComparison' sobre un
 -- 'RawComparison' construido a mano no cubriría eso.
@@ -6664,7 +6613,7 @@ decodeComparison :: ByteString -> RawComparison
 decodeComparison raw =
   either (error . ("fixture no decodificable: " <>)) id (eitherDecodeStrict raw)
 
--- | Espejo de 'pointsOf' para el área Drivers. El par importa por la misma razón
+-- | Espejo de 'comparisonOf' para el área Drivers. El par importa por la misma razón
 -- que en Comparison: el criterio del área vive en que la sesión sin parrilla
 -- __decodifique__ como @[]@ para que el @Context@ la trate como fallo, y en que
 -- el equipo ausente (@.:? … .!= \"\"@) no tumbe la lista entera.
@@ -6866,48 +6815,7 @@ driverWithoutWins =
 standingsListWithoutKeys :: ByteString
 standingsListWithoutKeys = envelope ""
 
--- | Recorte del arreglo de @telemetry-service@: dos muestras de un piloto y una
--- de otro, con las ocho claves. Sin envoltura —a diferencia de Ergast, el
--- microservicio devuelve el arreglo desnudo—, así que 'envelope' no se reusa.
-telemetryArray :: ByteString
-telemetryArray =
-  "[{\"tpDriver\":\"VER\",\"tpSessionTime\":0.0,\"tpDistance\":0.0,\
-  \\"tpSpeed\":312.5,\"tpThrottle\":1.0,\"tpBrake\":0.0,\
-  \\"tpGear\":8,\"tpRpm\":11800},\
-  \{\"tpDriver\":\"VER\",\"tpSessionTime\":0.5,\"tpDistance\":42.0,\
-  \\"tpSpeed\":298.1,\"tpThrottle\":0.0,\"tpBrake\":0.6,\
-  \\"tpGear\":7,\"tpRpm\":10500},\
-  \{\"tpDriver\":\"NOR\",\"tpSessionTime\":0.0,\"tpDistance\":0.0,\
-  \\"tpSpeed\":309.8,\"tpThrottle\":1.0,\"tpBrake\":0.0,\
-  \\"tpGear\":8,\"tpRpm\":11650}]"
-
--- | La muestra de en medio llega con @tpBrake@ en @null@ (FastF1 no midió el
--- canal). Con @.:@ una sola lectura ausente tumbaba el decode del arreglo
--- __completo__ y degradaba @/api/telemetry@ a cache\/dummy, perdiendo también la
--- vuelta de los demás pilotos.
-sampleWithoutBrake :: ByteString
-sampleWithoutBrake =
-  "[{\"tpDriver\":\"VER\",\"tpSessionTime\":0.0,\"tpDistance\":0.0,\
-  \\"tpSpeed\":312.5,\"tpThrottle\":1.0,\"tpBrake\":0.0,\
-  \\"tpGear\":8,\"tpRpm\":11800},\
-  \{\"tpDriver\":\"VER\",\"tpSessionTime\":0.5,\"tpDistance\":42.0,\
-  \\"tpSpeed\":298.1,\"tpThrottle\":0.0,\"tpBrake\":null,\
-  \\"tpGear\":7,\"tpRpm\":10500},\
-  \{\"tpDriver\":\"NOR\",\"tpSessionTime\":0.0,\"tpDistance\":0.0,\
-  \\"tpSpeed\":309.8,\"tpThrottle\":1.0,\"tpBrake\":0.0,\
-  \\"tpGear\":8,\"tpRpm\":11650}]"
-
--- | Muestra con solo los cuatro campos obligatorios (traza de posición sin
--- canales de coche): decodifica y se descarta, en vez de publicar un frenazo y un
--- punto muerto que FastF1 nunca midió.
-sampleWithoutCarData :: ByteString
-sampleWithoutCarData =
-  "[{\"tpDriver\":\"VER\",\"tpSessionTime\":0.5,\"tpDistance\":42.0,\
-  \\"tpSpeed\":298.1}]"
-
--- | Sesión sin telemetría publicada. Es este @[]@ el que hace que el
--- 'Handler.Telemetry.Context' caiga a cache\/dummy en vez de servir una tabla
--- vacía.
+-- | Un arreglo JSON vacío: la respuesta de una fuente que no tiene nada publicado.
 emptyArray :: ByteString
 emptyArray = "[]"
 

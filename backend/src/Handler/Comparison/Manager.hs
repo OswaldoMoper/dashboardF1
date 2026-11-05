@@ -1,17 +1,10 @@
 -- | Cliente del microservicio FastF1 — plumbing HTTP de comparación.
 --
--- Segundo consumidor del microservicio Python local, después de
--- 'Handler.Telemetry.Manager'. Comparte con él el esquema (@'Http'@, no HTTPS
--- como los tres clientes públicos), el host y el puerto de la 'Config', y también
--- la política de fallo — todo eso vive en 'Handler.FastF1.Manager'.
---
--- Hasta el 2026-08-03 este módulo importaba @telemetryPort@ directamente de
--- 'Handler.Telemetry.Manager' —un @Manager@ de negocio importando de otro, la
--- única vez en el repo— porque lo compartido era una línea y no justificaba un
--- módulo (2026-08-03). Lo que lo justifica ahora no es un
--- tercer consumidor sino que lo compartido dejó de ser un alias: los dos clientes
--- necesitan la misma 'HttpConfig' sin reintentos y el mismo techo de duración, y
--- eso no puede divergir entre áreas.
+-- Consumidor del microservicio Python local. Comparte con los demás clientes del
+-- servicio el esquema (@'Http'@, no HTTPS como los clientes públicos), el host y el
+-- puerto de la 'Config', y la política de fallo: la misma 'HttpConfig' sin
+-- reintentos y el mismo techo de duración, que no pueden divergir entre áreas. Todo
+-- eso vive en 'Handler.FastF1.Manager'.
 --
 -- Lo que sigue siendo propio de este cliente, y por eso los dos módulos existen:
 -- la base de URL (difiere en el último segmento), la forma de la respuesta (un
@@ -37,8 +30,7 @@ comparisonBase host = http host /: "fastf1" /: "comparison"
 -- 'Common.Types.LapComparison' es de 'Handler.Comparison.Helper' y la
 -- orquestación (cache, degradado) del 'Handler.Comparison.Context'.
 --
--- __La diferencia con 'Handler.Telemetry.Manager.fetchTelemetry'__: allí el
--- piloto es un segmento de path; aquí los coches van en el __query string__
+-- Los coches van en el __query string__ y no en el path
 -- (@\"drivers\" =: drivers@), porque así lo expone el servicio — la comparación
 -- es de varios coches y una lista en el path se confundiría con la jerarquía de
 -- recursos. Por eso la 'Option' lleva el puerto __y__ los parámetros.

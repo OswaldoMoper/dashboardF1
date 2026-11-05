@@ -3,17 +3,16 @@
 -- El 'Env' transporta la configuración y el estado mutable compartido entre
 -- handlers. Fase 3: gana la cache en memoria (STM) de live timing, poblada por
 -- 'Handler.Live.Context' con la última respuesta buena de cualquiera de sus dos
--- fuentes. Fase 4: las cajas de telemetría y comparación — importan más que las
--- otras tres porque el microservicio FastF1 es __nuestro__ y estará apagado la
--- mayor parte del tiempo, y son las dos que llevan __clave__, porque son los dos
--- endpoints que aceptan parámetros. El pool de PostgreSQL y otros clientes
+-- fuentes. Las cajas de comparación y parrilla importan más que las otras porque el
+-- microservicio FastF1 es __nuestro__ y estará apagado la mayor parte del tiempo, y
+-- llevan __clave__ porque sus endpoints aceptan parámetros. El pool de PostgreSQL y otros clientes
 -- externos aterrizan aquí conforme lleguen.
 module App where
 
 import           Common.Origin           (Source)
 import           Common.Types            (DriverEntry, HistoricalStat,
                                           LapComparison, LiveTable,
-                                          TelemetryPoint, TyreStint)
+                                          TyreStint)
 import           Config                  (Config)
 import           Control.Concurrent.MVar (MVar, newMVar)
 import           Control.Concurrent.STM  (TVar, newTVarIO)
@@ -113,25 +112,15 @@ data Env = Env
     -- con la hora en que llegó: la que sale en @X-Data-Fetched-At@ al servirla.
   , envHistoricalCache :: TVar (Maybe [HistoricalStat])
     -- ^ Última respuesta buena de @/api/historical@ (respaldo si Jolpica falla).
-  , envTelemetryCache  :: TVar (Map (Text, Text) (UTCTime, [TelemetryPoint]))
-    -- ^ Última respuesta buena de @/api/telemetry@ __por clave__ @(sesión,
-    -- piloto)@ ya resuelta (respaldo si el microservicio FastF1 no responde), con la
-    -- hora en que llegó: la que sale en @X-Data-Fetched-At@ al servirla.
-    --
-    -- Es la única de las cuatro cajas que no es un @Maybe@, y la diferencia no
-    -- es de rendimiento sino de __correctitud__: desde que el endpoint acepta
-    -- parámetros (2026-08-01), una caja única serviría la
-    -- última respuesta buena de @all@ a quien pidió un piloto concreto — datos
-    -- de otros coches presentados como suyos. Con clave, una combinación nunca
-    -- pedida degrada al dummy, que es honesto.
   , envComparisonCache :: TVar (Map (Text, Text, Int) (UTCTime, LapComparison))
     -- ^ Última respuesta buena de @/api/comparison@ __por clave__ @(sesión,
     -- coches, muestras)@ ya resuelta (respaldo si el microservicio FastF1 no
     -- responde), con la hora en que llegó.
     --
-    -- Nace con clave, sin pasar por la caja única de las tres primeras: el
-    -- endpoint acepta parámetros desde el primer día, así que la decisión del
-    -- 2026-08-01 se __aplica__, no se vuelve a discutir. Es también la única caja
+    -- Va con clave y no en una caja única porque el endpoint acepta parámetros: una
+    -- caja única serviría la última respuesta buena de unos coches a quien pidió
+    -- otros (2026-08-01). Con clave, una combinación nunca pedida degrada al dummy,
+    -- que es honesto. Es también la única caja
     -- cuyo valor no es una lista — 'LapComparison' es un objeto, y de ahí que el
     -- criterio de fallo del 'Handler.Comparison.Context' sea «ningún coche con
     -- sectores» y no \"lista vacía\".
@@ -218,7 +207,6 @@ mkEnv cfg = do
   liveCache <- newTVarIO Nothing
   tyreCache <- newTVarIO Nothing
   historicalCache <- newTVarIO Nothing
-  telemetryCache <- newTVarIO Map.empty
   comparisonCache <- newTVarIO Map.empty
   feedWindow <- newTVarIO (FeedWindow [] Nothing)
   meetingNames <- newTVarIO Map.empty
@@ -233,7 +221,6 @@ mkEnv cfg = do
       , envLiveCache       = liveCache
       , envTyreCache       = tyreCache
       , envHistoricalCache = historicalCache
-      , envTelemetryCache  = telemetryCache
       , envComparisonCache = comparisonCache
       , envFeedWindow      = feedWindow
       , envMeetingNames    = meetingNames

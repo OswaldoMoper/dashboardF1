@@ -3,8 +3,8 @@
 -- Modela la respuesta del microservicio FastF1 (@telemetry-service@,
 -- @GET \/fastf1\/drivers\/{session_key}@): una __lista__ de objetos con las
 -- mismas claves que 'DriverEntry'. El tipo crudo existe __aunque la forma
--- coincida hoy__, por la misma razón que en 'Handler.Telemetry.Helper' y
--- 'Handler.Comparison.Helper': no atar el DTO de @common@ al contrato de un
+-- coincida hoy__, por la misma razón que en 'Handler.Comparison.Helper': no atar
+-- el DTO de @common@ al contrato de un
 -- servicio que es nuestro y va a moverse. Sin efectos: determinista y testeable.
 --
 -- __El reparto entre obligatorio y prescindible sigue la identidad__, como en
@@ -67,9 +67,8 @@ instance FromJSON RawDriver where
 -- acrónimo no resolvió llegan con 'rdCode' repitiendo el número, y se dejan
 -- pasar. El coche está en la sesión aunque no se sepa quién lo lleva, así que
 -- esconderlo daría una parrilla incompleta sin decirlo — y el consumidor la
--- creería completa. A diferencia de 'Handler.Telemetry.Helper.assemblePoints',
--- aquí no hay canales de medida que puedan faltar: los tres campos están
--- siempre, con valor o vacíos.
+-- creería completa. No hay canales de medida que puedan faltar: los tres campos
+-- están siempre, con valor o vacíos.
 assembleDrivers :: [RawDriver] -> [DriverEntry]
 assembleDrivers = map entry
   where
@@ -85,8 +84,8 @@ assembleDrivers = map entry
 defaultSession :: Text
 defaultSession = "latest"
 
--- | Aplica el default al @QueryParam@ opcional de 'Server.Api'. Espejo de los
--- @resolveParams@ de Telemetry y Comparison, y por la misma razón: lo que
+-- | Aplica el default al @QueryParam@ opcional de 'Server.Api'. Espejo del
+-- @resolveParams@ de Comparison, y por la misma razón: lo que
 -- devuelve es también la __clave de cache__, resuelta una sola vez para que
 -- @?session=latest@ y la ausencia del parámetro no ocupen dos entradas con el
 -- mismo contenido.

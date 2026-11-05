@@ -20,7 +20,6 @@ import qualified Handler.F1TV                   as F1TV
 import qualified Handler.Historical             as Historical
 import qualified Handler.Live                   as Live
 import           Handler.Live.Helper            (CalendarEntry)
-import qualified Handler.Telemetry              as Telemetry
 import qualified Handler.TyreStrategy           as TyreStrategy
 import           Network.HTTP.Types             (hContentType, status200)
 -- 'Application' no se importa aquí: lo reexporta 'Servant', y pedirlo también a
@@ -44,22 +43,18 @@ instance ToJSON Home
 -- delegando en 'spaApp' (bundle del frontend). Va al final: Servant prueba en
 -- orden, así que @/home@ y @/api/*@ ganan y el resto cae en el SPA.
 --
--- @/api/telemetry@ estrena los primeros 'QueryParam' del repo y
--- @/api/comparison@ los repite. Todos son __opcionales__ (sin @Required@, así
--- que el handler recibe 'Maybe'): sin parámetros cada endpoint tiene que
--- comportarse exactamente como antes de existir ellos, y es el @resolveParams@
--- del @Context@ de cada área quien aplica los defaults. Los espejos del lado
--- frontend son 'Common.Route.telemetryPathFor' y
--- 'Common.Route.comparisonPathFor'.
+-- Los 'QueryParam' de @/api/comparison@ y @/api/drivers@ son __opcionales__ (sin
+-- @Required@, así que el handler recibe 'Maybe'): sin parámetros cada endpoint
+-- sirve su default, y es el @resolveParams@ del @Context@ de cada área quien lo
+-- aplica. Los espejos del lado frontend son 'Common.Route.comparisonPathFor' y
+-- 'Common.Route.driversPathFor'.
 --
--- Nótese que el parámetro de comparación es @drivers@ en plural y no @driver@:
--- la comparación es de __1 a 5__ coches y el microservicio responde 400 a
--- cualquier otra cantidad, mientras que el de telemetría admite @all@. @samples@
--- es un 'Int': lo que no es número lo rechaza Servant con 400, y lo que está
+-- El parámetro de comparación es @drivers@: la comparación es de __1 a 5__ coches
+-- y el microservicio responde 400 a cualquier otra cantidad. @samples@ es un 'Int': lo que no es número lo rechaza Servant con 400, y lo que está
 -- fuera de rango lo ajusta 'Handler.Comparison.Helper.adjustSamples'.
 --
--- @/api/live@, @/api/tyre-strategy@, @/api/telemetry@, @/api/comparison@ y
--- @/api/drivers@ responden con cabeceras propias: la
+-- @/api/live@, @/api/tyre-strategy@, @/api/comparison@ y @/api/drivers@
+-- responden con cabeceras propias: la
 -- procedencia del dato ('Provenance'). Cada tipo vive en su 'Handler' y no aquí
 -- porque este módulo importa aquéllos; el cuerpo JSON es el mismo de siempre.
 type Api =
@@ -67,10 +62,6 @@ type Api =
   :<|> "api" :> "live" :> Get '[JSON] Live.LiveResponse
   :<|> "api" :> "calendar" :> Get '[JSON] [CalendarEntry]
   :<|> "api" :> "historical" :> Get '[JSON] [HistoricalStat]
-  :<|> "api" :> "telemetry"
-         :> QueryParam "session" Text
-         :> QueryParam "driver" Text
-         :> Get '[JSON] Telemetry.TelemetryResponse
   :<|> "api" :> "comparison"
          :> QueryParam "session" Text
          :> QueryParam "drivers" Text
@@ -97,7 +88,6 @@ server env =
     :<|> Live.liveHandler env
     :<|> Live.calendarHandler env
     :<|> Historical.historicalHandler env
-    :<|> Telemetry.telemetryHandler env
     :<|> Comparison.comparisonHandler env
     :<|> Drivers.driversHandler env
     :<|> TyreStrategy.tyreStrategyHandler env

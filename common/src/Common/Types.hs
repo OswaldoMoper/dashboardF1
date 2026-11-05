@@ -816,35 +816,6 @@ instance FromJSON LiveTable where
       <*> o .:? "liveStints" .!= []
       <*> o .:  "liveNext"
 
--- | Punto de telemetría a lo largo de una vuelta.
---
--- La lista que sirve @\/api\/telemetry@ es __plana y multi-piloto__: trae la
--- vuelta rápida de varios coches concatenada, así que cada punto va etiquetado
--- con 'tpDriver' y el consumidor agrupa o filtra. Lista etiquetada en vez de
--- lista anidada por el mismo criterio que hizo heterogéneo a 'HistoricalStat'
--- (2026-07-29): el tipo de @Server.Api@ sigue siendo
--- @[TelemetryPoint]@ y ni el enrutado ni el widget cambian de forma.
---
--- La identidad aquí es __solo el acrónimo__, a diferencia de 'HistoricalStat'
--- (código + nombre + apellido, 2026-07-28): una fila de
--- telemetría no es una fila de identidad — el acrónimo es la etiqueta de serie,
--- y repetir tres campos de identidad en cada una de las ~60 muestras por piloto
--- es payload sin información nueva. Decidido el 2026-07-31.
-data TelemetryPoint = TelemetryPoint
-  { tpDriver      :: Text    -- ^ Acrónimo del piloto (p. ej. @"VER"@).
-  , tpSessionTime :: Double  -- ^ Tiempo de sesión en segundos.
-  , tpDistance    :: Double  -- ^ Distancia recorrida en metros.
-  , tpSpeed       :: Double
-  , tpThrottle    :: Double
-  , tpBrake       :: Double
-  , tpGear        :: Int
-  , tpRpm         :: Int
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance ToJSON TelemetryPoint
-instance FromJSON TelemetryPoint
-
 -- | La vuelta rápida de 1 a 5 coches de una sesión, __en el orden pedido__: el
 -- primero es la referencia. La Δ no viaja: se calcula con
 -- 'Common.Comparison.deltasAgainst' desde 'ceSectors'.
@@ -1028,9 +999,8 @@ instance FromJSON HistoricalStat
 -- constructor por widget mantiene la invariante que esa fase necesita intacta: una
 -- 'WidgetConfig' es __un__ widget. Decidido el 2026-08-26.
 --
--- La forma de 'WidgetParams' quedó decidida el 2026-09-01 —sesión, piloto y
--- pilotos— y __no__ discrimina clasificaciones, así que la distinción sigue
--- siendo de constructor y no de parámetro.
+-- 'WidgetParams' —sesión y pilotos— __no__ discrimina clasificaciones, así que la
+-- distinción sigue siendo de constructor y no de parámetro.
 data WidgetType
   = LiveTiming
   | LapComparison
@@ -1046,10 +1016,9 @@ instance FromJSON WidgetType
 -- | Con qué elección de sesión y de piloto(s) arranca un widget. 'Nothing' en un
 -- campo significa __omitir el parámetro__, o sea el default del endpoint.
 --
--- __Es espejo de 'Common.Route' y no una forma nueva__: @telemetryPathFor@ y
--- @comparisonPathFor@ empiezan por @'Maybe' 'Text' -> 'Maybe' 'Text'@, con el
--- mismo significado del 'Nothing' desde el 2026-08-01. El por
--- qué está en la decisión del 2026-09-01 (b).
+-- __Es espejo de 'Common.Route' y no una forma nueva__: @comparisonPathFor@ empieza
+-- por @'Maybe' 'Text' -> 'Maybe' 'Text'@, con el mismo significado del 'Nothing'
+-- desde el 2026-08-01. El por qué está en la decisión del 2026-09-01 (b).
 --
 -- __Es la semilla del estado del widget, no su sustituto.__ Los dos @\<select\>@
 -- de 'Widgets.Comparison' siguen sosteniendo la elección viva en un @Dynamic@;
@@ -1062,10 +1031,6 @@ instance FromJSON WidgetType
 data WidgetParams = WidgetParams
   { wpSession :: Maybe Text
     -- ^ Valor de @?session=@: una clave de sesión (p. ej. @"2026-05-R"@).
-  , wpDriver  :: Maybe Text
-    -- ^ Valor de @?driver=@ de telemetría: __un número de coche__ (p. ej.
-    -- @"1"@), no un acrónimo — el desajuste de vocabularios es el de
-    -- 'LapComparison'.
   , wpDrivers :: Maybe Text
     -- ^ Valor de @?drivers=@ de comparación, __ya compuesto__: números de
     -- coche separados por coma, la referencia primero (@"16,1"@). El tipo no
@@ -1079,13 +1044,12 @@ data WidgetParams = WidgetParams
 instance ToJSON WidgetParams
 instance FromJSON WidgetParams
 
--- | 'WidgetParams' sin ninguna elección: los tres campos en 'Nothing', o sea
+-- | 'WidgetParams' sin ninguna elección: los dos campos en 'Nothing', o sea
 -- «cada endpoint con su default». Es lo que monta una 'WidgetConfig' que no
 -- configura nada, y el motivo de que añadir el récord no cambie el render.
 noParams :: WidgetParams
 noParams = WidgetParams
   { wpSession = Nothing
-  , wpDriver  = Nothing
   , wpDrivers = Nothing
   }
 

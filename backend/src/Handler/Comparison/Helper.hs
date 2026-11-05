@@ -3,9 +3,8 @@
 -- Modela la respuesta del microservicio FastF1 (@telemetry-service@,
 -- @GET \/fastf1\/comparison\/{session_key}?drivers=16,1&samples=0@): __un objeto__
 -- con la lista de coches en el orden pedido, la referencia primero. El tipo crudo
--- existe __aunque la forma coincida hoy__, por la misma razón que en
--- 'Handler.Telemetry.Helper': no atar el DTO de @common@ al contrato de un
--- servicio que es nuestro y va a moverse. Sin efectos: determinista y testeable.
+-- existe __aunque la forma coincida hoy__: no atar el DTO de @common@ al contrato
+-- de un servicio que es nuestro y va a moverse. Sin efectos: determinista y testeable.
 --
 -- La identidad de cada coche (@ceCar@, @ceDriver@) es obligatoria (@.:@); el
 -- resto va con @.:?@ y su valor vacío, porque __un coche sin vuelta es una

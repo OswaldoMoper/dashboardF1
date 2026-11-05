@@ -6,8 +6,8 @@
 -- 'Handler.Live.Helper.feedRows' y 'Handler.Live.Helper.feedSession', y la
 -- orquestación de 'Handler.Live.Context'.
 --
--- Comparte con los otros dos clientes del microservicio ('Handler.Telemetry.Manager'
--- y 'Handler.Comparison.Manager') la 'HttpConfig' sin reintentos y el puerto de
+-- Comparte con los otros clientes del microservicio ('Handler.Comparison.Manager'
+-- y 'Handler.Drivers.Manager') la 'HttpConfig' sin reintentos y el puerto de
 -- 'Handler.FastF1.Manager'. __Lo que no comparte es el techo de duración__, y ésa es
 -- la única razón por la que este módulo no usa 'Handler.FastF1.Manager.fastf1Options'
 -- entero: ver 'feedTimeout'.

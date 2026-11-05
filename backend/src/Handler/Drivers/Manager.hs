@@ -1,15 +1,12 @@
 -- | Cliente del microservicio FastF1 — plumbing HTTP de la parrilla.
 --
--- __Tercer consumidor__ del microservicio Python local, después de
--- 'Handler.Telemetry.Manager' y 'Handler.Comparison.Manager'. Es el que el
--- 2026-08-03 fijaba como condición para extraer lo compartido a
--- 'Handler.FastF1.Manager' — que el 2026-08-04 se adelantó a cumplir por otra
--- razón (la política de reintentos), así que ese módulo simplemente tiene un
--- consumidor más y no hay nada que refactorizar.
+-- Consumidor del microservicio Python local, junto a 'Handler.Comparison.Manager' y
+-- 'Handler.Feed.Manager'; lo compartido (la política de fallo) vive en
+-- 'Handler.FastF1.Manager'.
 --
 -- Lo propio de este cliente, y por lo que existe: la base de URL y que __no
--- lleva query string__. La sesión va en el path, como en telemetría; a
--- diferencia de comparación, no hay parámetros que añadir a la 'Option'.
+-- lleva query string__. La sesión va en el path; a diferencia de comparación, no
+-- hay parámetros que añadir a la 'Option'.
 module Handler.Drivers.Manager
   ( driversBase
   , fetchDrivers

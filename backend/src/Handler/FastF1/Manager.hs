@@ -1,6 +1,6 @@
--- | Política de fallo de los clientes del microservicio FastF1, común a sus cuatro
--- consumidores ('Handler.Telemetry.Manager', 'Handler.Comparison.Manager',
--- 'Handler.Drivers.Manager' y 'Handler.Feed.Manager'). No puede divergir entre
+-- | Política de fallo de los clientes del microservicio FastF1, común a sus tres
+-- consumidores ('Handler.Comparison.Manager', 'Handler.Drivers.Manager' y
+-- 'Handler.Feed.Manager'). No puede divergir entre
 -- ellos: el mismo servicio caído degradaría a velocidades distintas según el widget
 -- (2026-08-04).
 --

@@ -45,20 +45,20 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
 - **Contrato de fallo de un `Context`:** devuelve `IO (Outcome a)` y no `IO a`, para poder
   distinguir una petición mala del cliente (`400`/`404`, se propagan) de un servicio caído
   (se degrada a cache o dummy). El criterio vive en el `Context`; el handler solo traduce
-  con `Outcome.serve` (2026-08-14). Lo usan las tres áreas que leen el microservicio con
-  parámetros: `Telemetry`, `Comparison` y `Drivers`; las demás no rechazan nada y devuelven `IO a`.
-- **Procedencia del dato:** `/api/live`, `/api/tyre-strategy`, `/api/telemetry`, `/api/comparison` y `/api/drivers` emiten
+  con `Outcome.serve` (2026-08-14). Lo usan las dos áreas que leen el microservicio con
+  parámetros: `Comparison` y `Drivers`; las demás no rechazan nada y devuelven `IO a`.
+- **Procedencia del dato:** `/api/live`, `/api/tyre-strategy`, `/api/comparison` y `/api/drivers` emiten
   `X-Data-Origin` (`fresh`/`recent`/`cached`/`sample`; solo `/api/live` tiene `recent`), `X-Data-Source`
   (`feed`/`openf1`/`fastf1`; falta con el dato de ejemplo) y, con los que salen de lo guardado —`recent` y
   `cached`—, `X-Data-Fetched-At` en ISO 8601 UTC; el cuerpo JSON no cambia. Cabeceras en `Provenance`; tipo y
-  valores en `Common.Origin`. Telemetría, comparación y parrilla guardan por clave y comparten la escalera
+  valores en `Common.Origin`. Comparación y parrilla guardan por clave y comparten la escalera
   (`Handler.FastF1.Helper.fastf1Step`): nunca sirven lo guardado de otra clave.
 - **Presupuesto de OpenF1:** acepta 30 peticiones por minuto y 3 por segundo, y lo dice en su propio rechazo.
   Toda petición pasa por un freno único (3 salidas por ventana de 1,2 s) en
   `Handler.OpenF1.Manager.fetchListWith`, y con `OPENF1_LOG` deja una línea por petición. El backend no
   vuelve a bajar a OpenF1 si lo que guardó tiene menos de 15 s y lo sirve como `recent`; el feed, que es
   propio, no se frena.
-- **NEGOCIO (`Handler/`) por área:** `Handler.<Área>{,.Context,.Helper,.Manager}` (interfaz → orquestación → efectos → pureza). Áreas: `Live`, `Historical`, `Telemetry`, `Comparison`, `TyreStrategy`; luego `OpenF1`/`Jolpica`/`FastF1` como `Manager`s. Cache en memoria (STM) como infra cuando llegue (Fase 3).
+- **NEGOCIO (`Handler/`) por área:** `Handler.<Área>{,.Context,.Helper,.Manager}` (interfaz → orquestación → efectos → pureza). Áreas: `Live`, `Historical`, `Comparison`, `Drivers`, `TyreStrategy`; luego `OpenF1`/`Jolpica`/`FastF1` como `Manager`s. Cache en memoria (STM) como infra cuando llegue (Fase 3).
 - **AUTOMATISMO (`Auto/`):** `Auto.Helper` (puro) y `Auto.Context` (efectos) para el comando `dashboardF1-auto`
   (`backend/auto/`), que programa con temporizadores de `systemd-run --user` las comprobaciones de un día de GP. No es
   INFRA ni un área: no tiene endpoint. Lee `GET /api/calendar`, el calendario que la instancia ya tiene en memoria, y
@@ -215,7 +215,7 @@ Resumen textual:
 - OpenF1 → Backend → Widgets (live timing, stints, laps)
 - Feed oficial → Microservicio (`/fastf1/live`) → Backend (`/api/live`) → Widgets (live timing, Tyre Strategy)
 - Jolpica → Backend → Widgets (histórico)
-- FastF1 → Microservicio → Backend → Widgets (telemetría)
+- FastF1 → Microservicio → Backend → Widgets (comparación de vueltas con sus trazas, parrilla)
 - Módulo de analítica → Backend → Widgets (KPIs)
 
 ## 4. Invariantes Arquitectónicas
