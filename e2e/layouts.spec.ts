@@ -275,7 +275,12 @@ test.describe('el arrastre', () => {
     // Race Overview con Constructores arriba del todo y Lap Comparison bajada a 30.
     const MOVED = [[0, 0, 60, 90], [60, 30, 60, 85], [0, 90, 60, 30], [60, 0, 60, 30]];
     const edit = (page: Page) => page.getByRole('button', { name: '✎ Editar layout' }).click();
-    const finish = (page: Page) => page.getByRole('button', { name: '✓ Terminar edición' }).click();
+    // La página escribe lo guardado una vuelta del bucle después del clic: se espera a esa vuelta,
+    // o una recarga inmediata lo pierde.
+    const finish = async (page: Page) => {
+      await page.getByRole('button', { name: '✓ Terminar edición' }).click();
+      await page.evaluate(() => new Promise((done) => setTimeout(done, 0)));
+    };
     const question = (page: Page) => page.locator('.confirm--reset .confirm__question');
     const cancelQuestion = (page: Page) => page.locator('.confirm--cancel .confirm__question');
     const cancel = (page: Page) => page.getByRole('button', { name: '✗ Cancelar' });
