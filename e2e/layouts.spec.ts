@@ -281,6 +281,9 @@ test.describe('el arrastre', () => {
       await page.getByRole('button', { name: '✓ Terminar edición' }).click();
       await page.evaluate(() => new Promise((done) => setTimeout(done, 0)));
     };
+    // Lo guardado de Race Overview, tal cual está en el navegador ('' si no hay nada).
+    const stored = (page: Page) =>
+      page.evaluate(() => localStorage.getItem('dashboardF1.layout.race-overview') ?? '');
     const question = (page: Page) => page.locator('.confirm--reset .confirm__question');
     const cancelQuestion = (page: Page) => page.locator('.confirm--cancel .confirm__question');
     const cancel = (page: Page) => page.getByRole('button', { name: '✗ Cancelar' });
@@ -443,6 +446,8 @@ test.describe('el arrastre', () => {
       await row.click();
       await expect(pieces.first()).toBeVisible();
       await modes.selectOption('values');
+      // Lo elegido fuera de la edición se escribe un fotograma después: se espera a verlo guardado.
+      await expect.poll(() => stored(page)).toContain('"savedMode":"values"');
       await reload(page);
       await expect(pieces.first()).toBeVisible();
       await expect(modes).toHaveValue('values');
