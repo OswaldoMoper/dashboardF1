@@ -79,7 +79,7 @@ gridDivisions = 24
 --
 -- Lo que eso compra es __exactitud en los bordes compartidos__, que es donde el
 -- redondeo se vería. Dos widgets pegados —uno acabando en 60 y el otro empezando
--- en 60, o el par @telemetry@\/@lap-comparison@ en 35— no dejan una raya
+-- en 60, o el par @live-timing@\/@driver-stats@ en 90— no dejan una raya
 -- de fondo entre ellos ni se montan un píxel, porque
 -- @calc(60 * 100% \/ 120)@ y @calc(60 * 100% \/ 120)@ son __la misma cantidad__ y
 -- no dos redondeos que casi coinciden. Lo que se paga es que el inspector del
@@ -139,15 +139,13 @@ snapTo divisions v
 -- Medidos en Edge con la base de 12 px sobre un lienzo de 1861 × 845 px
 -- (2026-09-29): el ancho más estrecho sin barra horizontal, redondeado __hacia
 -- arriba__ a múltiplo de 5 para caer en celda del imán. Las celdas de las tablas no
--- parten nunca; lo que cede es la fila de botones de 'Telemetry', que baja de
--- línea, y 'LapComparison', que se apila. 'TyreStrategy' nunca saca barra (sus
+-- parten nunca; lo que cede es 'LapComparison', que se apila. 'TyreStrategy' nunca saca barra (sus
 -- barras encogen): su número es el más estrecho con la leyenda en una línea, medido
 -- igual el 2026-10-27. 'Custom' no tiene widget y conserva el número a ojo.
 --
 -- Si un widget cambia de contenido, su número se vuelve a medir.
 minWidthFor :: WidgetType -> Int
 minWidthFor LiveTiming       = 30
-minWidthFor Telemetry        = 35
 minWidthFor LapComparison    = 25
 minWidthFor HistoricalStats  = 25
 minWidthFor ConstructorStats = 20
@@ -164,7 +162,6 @@ minWidthFor Custom           = 25
 -- apilarse sin bajar de 'minWidthFor'.
 minHeightFor :: WidgetType -> Int
 minHeightFor LiveTiming       = 20
-minHeightFor Telemetry        = 30
 minHeightFor LapComparison    = 50
 minHeightFor HistoricalStats  = 20
 minHeightFor ConstructorStats = 20

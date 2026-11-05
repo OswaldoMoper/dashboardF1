@@ -54,7 +54,7 @@ import           Data.Text     (Text)
 import           Reflex.Dom
 
 -- | Estado del fetch de @\/api\/historical@. 'Failed' (no 'Error') para no chocar
--- con nombres de @base@\/@Prelude@ (mismo criterio que 'Widgets.Telemetry').
+-- con nombres de @base@\/@Prelude@.
 -- Compartido por los dos widgets del módulo.
 data HState
   = Loading

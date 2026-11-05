@@ -8,7 +8,7 @@
 -- 'Common.Route.comparisonPathFor' al arrancar, al elegir coches y al pedir trazas
 -- (relativos, misma-origen), con los tres estados del fetch
 -- ('Loading' \/ 'Failed' \/ 'Loaded') y sin datos dummy locales, igual que
--- 'Widgets.LiveTiming', 'Widgets.Telemetry' e 'Widgets.Historical'.
+-- 'Widgets.LiveTiming' e 'Widgets.Historical'.
 --
 -- __Es el primer widget del repo que pinta una serie y no una tabla.__ Pinta el
 -- par de los dos primeros coches de 'Common.Types.LapComparison' (el primero es la
@@ -26,8 +26,8 @@
 -- respuesta.
 --
 -- __Es el primer widget del repo cuyo fetch no sale solo de 'getPostBuild'.__
--- Los tres switchers anteriores ('Widgets.Historical' ×2, 'Widgets.Telemetry')
--- filtran __en cliente__ sobre datos ya recibidos
+-- Los dos switchers de 'Widgets.Historical' filtran __en cliente__ sobre datos ya
+-- recibidos
 -- (2026-08-01); aquí no se puede, porque la comparación de otros dos coches
 -- sencillamente no está en la respuesta actual. De ahí las dos cosas nuevas:
 -- un 'Event' de URL que nace de elegir un coche y un estado de recarga que __no borra__

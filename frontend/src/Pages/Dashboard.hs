@@ -6,7 +6,7 @@
 --
 -- La pantalla no monta widgets hardcodeados: se **deriva de un 'Layout'**
 -- ('Common.Types'). 'renderWidget' despacha por
--- 'widgetType' a los widgets existentes ('liveTimingWidget' \/ 'telemetryWidget') y
+-- 'widgetType' a los widgets existentes ('liveTimingWidget' \/ 'comparisonWidget' \/ …) y
 -- da un placeholder para los tipos aún no implementados. Tres botones conmutan entre
 -- tres 'Layout' fijos ('raceOverview' \/ 'qualy' \/ 'strategy') sosteniendo un
 -- @Dynamic t Layout@; todos se montan una vez, cada uno en su capa, y los inactivos se ocultan
@@ -96,7 +96,6 @@ import           Widgets.Historical            (constructorStatsWidget,
 import           Widgets.Live                  (LiveView (..), delayedLive,
                                                 livePoll, sessionOf)
 import           Widgets.LiveTiming            (liveTimingWidget)
-import           Widgets.Telemetry             (telemetryWidget)
 import           Widgets.TyreStrategy          (tyreStrategyWidget)
 
 -- | Pantalla del dashboard: la cabecera —título y conmutación de layouts—, la
@@ -832,7 +831,6 @@ renderWidget :: MonadWidget t m
              -> m (Event t CardControl)
 renderWidget live revealed control put wc = case widgetType wc of
   LiveTiming       -> never <$ liveTimingWidget live
-  Telemetry        -> never <$ telemetryWidget
   LapComparison    -> comparisonWidget live revealed control put
   TyreStrategy     -> never <$ tyreStrategyWidget live
   HistoricalStats  -> never <$ driverStatsWidget
@@ -871,17 +869,17 @@ cfg wid wt (x, y, w, h) = WidgetConfig
   , wcH           = h
   }
 
--- | Layout "Race Overview": live timing, telemetría, comparación de vueltas y las
--- dos clasificaciones históricas, cada una en su sitio.
+-- | Layout "Race Overview": live timing, comparación de vueltas y las dos
+-- clasificaciones históricas, cada una en su sitio.
 --
 -- La colocación, en unidades de 120 (2026-09-03 y 2026-09-04):
 --
 -- > 0            60           120
 -- > ┌────────────┬────────────┐  0
--- > │            │  telemetry │
--- > │            ├────────────┤ 35
--- > │ live-timing│            │
--- > │            │ lap-compar │
+-- > │            │            │
+-- > │            │            │
+-- > │ live-timing│ lap-compar │
+-- > │            │            │
 -- > │            │            │
 -- > │            ├╌╌╌╌╌╌╌╌╌╌╌╌┤ 85
 -- > ├────────────┼────────────┤ 90
@@ -892,15 +890,14 @@ cfg wid wt (x, y, w, h) = WidgetConfig
 -- comprueban que el lienzo no rellena los huecos solo. Todos los números son
 -- múltiplos de 5, o sea celda del imán de 24×24.
 --
--- Un typo en los ids no lo caza el compilador, y por eso los seis rectángulos de
+-- Un typo en los ids no lo caza el compilador, y por eso los cinco rectángulos de
 -- este módulo los ejercita @backend-test@ contra "Common.Layout".
 raceOverview :: Layout
 raceOverview = Layout
   { layoutId = LayoutId "race-overview"
   , widgets  =
       [ cfg (WidgetId "live-timing")       LiveTiming       (  0,  0, 60, 90)
-      , cfg (WidgetId "telemetry")         Telemetry        ( 60,  0, 60, 35)
-      , cfg (WidgetId "lap-comparison")    LapComparison    ( 60, 35, 60, 50)
+      , cfg (WidgetId "lap-comparison")    LapComparison    ( 60,  0, 60, 85)
       , cfg (WidgetId "driver-stats")      HistoricalStats  (  0, 90, 60, 30)
       , cfg (WidgetId "constructor-stats") ConstructorStats ( 60, 90, 60, 30)
       ]

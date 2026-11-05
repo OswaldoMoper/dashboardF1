@@ -185,7 +185,7 @@ test.describe('el modo edición', () => {
 
 test.describe('el arrastre', () => {
   // Race Overview tal como lo escribe `Pages.Dashboard`, en unidades del lienzo.
-  const RACE = [[0, 0, 60, 90], [60, 0, 60, 35], [60, 35, 60, 50], [0, 90, 60, 30], [60, 90, 60, 30]];
+  const RACE = [[0, 0, 60, 90], [60, 0, 60, 85], [0, 90, 60, 30], [60, 90, 60, 30]];
 
   test.beforeEach(async ({ page }) => {
     await openDashboard(page);
@@ -218,9 +218,9 @@ test.describe('el arrastre', () => {
     await page.mouse.move(x + (dx * layer.width) / 120, y + (dy * layer.height) / 120, { steps: 12 });
   }
 
-  test('Constructores encima de Lap Comparison la baja (D125), y Esc lo deja todo como estaba', async ({ page }) => {
+  test('Constructores encima de Lap Comparison la baja, y Esc lo deja todo como estaba', async ({ page }) => {
     await page.getByRole('button', { name: '✎ Editar layout' }).click();
-    await carry(page, 4, 0, -55);
+    await carry(page, 3, 0, -88);
     await expect(page.locator('.widget-slot--held')).toHaveCount(1);
     await expect(page.locator('.canvas__layer:not(.canvas__layer--hidden) .canvas__target')).toBeVisible();
     await page.keyboard.press('Escape');
@@ -228,16 +228,16 @@ test.describe('el arrastre', () => {
     await page.waitForTimeout(400);
     expect(await units(page)).toEqual(RACE);
 
-    await carry(page, 4, 0, -55);
+    await carry(page, 3, 0, -88);
     await page.mouse.up();
     await page.waitForTimeout(400);
     await expect(page.locator('.widget-slot--held')).toHaveCount(0);
-    expect(await units(page)).toEqual([[0, 0, 60, 90], [60, 0, 60, 35], [60, 65, 60, 50], [0, 90, 60, 30], [60, 35, 60, 30]]);
+    expect(await units(page)).toEqual([[0, 0, 60, 90], [60, 30, 60, 85], [0, 90, 60, 30], [60, 0, 60, 30]]);
   });
 
   test('Pilotos a la columna derecha no se deja (D126): se marca y al soltar vuelve', async ({ page }) => {
     await page.getByRole('button', { name: '✎ Editar layout' }).click();
-    await carry(page, 3, 60, -55);
+    await carry(page, 2, 60, -55);
     await expect(page.locator('.widget-slot--blocked')).toHaveCount(1);
     await expect(page.locator('.canvas__layer:not(.canvas__layer--hidden) .canvas__target')).toBeHidden();
     await page.mouse.up();
@@ -248,7 +248,7 @@ test.describe('el arrastre', () => {
   test('la esquina ◢ estira Lap Comparison y Constructores encoge', async ({ page }) => {
     await page.getByRole('button', { name: '✎ Editar layout' }).click();
     const layer = await page.locator('.canvas__layer').first().boundingBox();
-    const slot = page.locator('.canvas__layer').first().locator(':scope > .widget-slot').nth(2);
+    const slot = page.locator('.canvas__layer').first().locator(':scope > .widget-slot').nth(1);
     await slot.hover();
     const grip = await slot.locator('.widget-slot__grip').boundingBox();
     if (!layer || !grip) throw new Error('no se ve la esquina');
@@ -260,11 +260,11 @@ test.describe('el arrastre', () => {
     await expect(page.locator('.widget-slot--held')).toHaveCount(1);
     await page.mouse.up();
     await page.waitForTimeout(400);
-    expect(await units(page)).toEqual([[0, 0, 60, 90], [60, 0, 60, 35], [60, 35, 60, 60], [0, 90, 60, 30], [60, 95, 60, 25]]);
+    expect(await units(page)).toEqual([[0, 0, 60, 90], [60, 0, 60, 95], [0, 90, 60, 30], [60, 95, 60, 25]]);
   });
 
   test('fuera de edición el título no coge la tarjeta', async ({ page }) => {
-    await carry(page, 4, 0, -55);
+    await carry(page, 3, 0, -88);
     await page.mouse.up();
     await page.waitForTimeout(400);
     await expect(page.locator('.widget-slot--held')).toHaveCount(0);
@@ -272,8 +272,8 @@ test.describe('el arrastre', () => {
   });
 
   test.describe('el layout se recuerda', () => {
-    // Race Overview con Constructores encima de Lap Comparison (D125).
-    const MOVED = [[0, 0, 60, 90], [60, 0, 60, 35], [60, 65, 60, 50], [0, 90, 60, 30], [60, 35, 60, 30]];
+    // Race Overview con Constructores arriba del todo y Lap Comparison bajada a 30.
+    const MOVED = [[0, 0, 60, 90], [60, 30, 60, 85], [0, 90, 60, 30], [60, 0, 60, 30]];
     const edit = (page: Page) => page.getByRole('button', { name: '✎ Editar layout' }).click();
     const finish = (page: Page) => page.getByRole('button', { name: '✓ Terminar edición' }).click();
     const question = (page: Page) => page.locator('.confirm--reset .confirm__question');
@@ -283,7 +283,7 @@ test.describe('el arrastre', () => {
 
     async function moveConstructors(page: Page): Promise<void> {
       await edit(page);
-      await carry(page, 4, 0, -55);
+      await carry(page, 3, 0, -88);
       await page.mouse.up();
       await page.waitForTimeout(400);
       expect(await units(page)).toEqual(MOVED);

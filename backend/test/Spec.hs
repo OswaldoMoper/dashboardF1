@@ -31,7 +31,7 @@
 --   __widget__ probada aquí: sin esto, lo único que impide mandar un acrónimo a
 --   un endpoint que lo absorbe en silencio estaría solo revisado a ojo.
 -- * 'Common.Layout' — la aritmética del lienzo y la traducción del rectángulo a
---   CSS (2026-09-07), más los seis rectángulos de los
+--   CSS (2026-09-07), más los cinco rectángulos de los
 --   layouts fijos, que son una __copia__ de @Pages.Dashboard@ porque @frontend@ no
 --   está en @cabal.project@ y la suite no puede importarlo.
 -- * 'Common.Origin' — la procedencia del dato que viaja en cabecera
@@ -295,8 +295,9 @@ import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck       (prop)
-import           Test.QuickCheck             (NonNegative (..), Positive (..),
-                                              Property, (.&&.), (===), (==>))
+import           Test.QuickCheck             (Gen, NonNegative (..), Positive (..),
+                                              Property, elements, forAll, (.&&.),
+                                              (===), (==>))
 
 main :: IO ()
 main = hspec $ do
@@ -4107,17 +4108,12 @@ main = hspec $ do
     -- Los números medidos en Edge, tipo por tipo: lo único que caza un 30 escrito
     -- donde iba un 35.
     it "son los medidos, como (ancho, alto)" $
-      map (\t -> (minWidthFor t, minHeightFor t))
-          [ LiveTiming, Telemetry, LapComparison, HistoricalStats
-          , ConstructorStats, TyreStrategy, Custom ]
-        `shouldBe` [ (30, 20), (35, 30), (25, 50), (25, 20)
+      map (\t -> (minWidthFor t, minHeightFor t)) allTypes
+        `shouldBe` [ (30, 20), (25, 50), (25, 20)
                    , (20, 20), (20, 20), (25, 20) ]
 
     it "caen todos en celda del imán" $
-      filter ((/= 0) . (`mod` 5))
-          (concatMap (\t -> [minWidthFor t, minHeightFor t])
-             [ LiveTiming, Telemetry, LapComparison, HistoricalStats
-             , ConstructorStats, TyreStrategy, Custom ])
+      filter ((/= 0) . (`mod` 5)) (concatMap (\t -> [minWidthFor t, minHeightFor t]) allTypes)
         `shouldBe` []
 
   describe "clampToMin" $ do
@@ -4127,8 +4123,10 @@ main = hspec $ do
     it "sube al mínimo el widget demasiado bajo para su contenido" $
       wcH (clampToMin (rect LapComparison (0, 0, 60, 10))) `shouldBe` minHeightFor LapComparison
 
-    it "deja intacto al que ya cumple, sin redondear ni pegar a la rejilla" $
-      clampToMin (rect Telemetry (7, 3, 63, 41)) `shouldBe` rect Telemetry (7, 3, 63, 41)
+    prop "deja intacto al que ya cumple, sin redondear ni pegar a la rejilla, sea del tipo que sea" $
+      forAll anyType $ \t x y (NonNegative dw) (NonNegative dh) ->
+        let r = rect t (x, y, minWidthFor t + dw, minHeightFor t + dh)
+         in clampToMin r === r
 
     -- El caso que fija el reparto del 2026-09-04 (c). Si esta función moviera el
     -- widget, `fitsAt` no tendría nunca nada que decir sobre un layout saneado y
@@ -4144,7 +4142,7 @@ main = hspec $ do
       wcW w `shouldBe` 200
       wcH w `shouldBe` 150
 
-    prop "sube siempre al mínimo del tipo, sea cual sea la entrada" clampReachesMin
+    prop "sube siempre al mínimo del tipo, sea cual sea la entrada" (forAll anyType clampReachesMin)
 
   describe "fitsAt" $ do
     it "acepta al widget que cabe donde dice estar" $
@@ -4171,32 +4169,29 @@ main = hspec $ do
     it "acepta al que llega justo al borde de abajo" $
       fitsAt (rect ConstructorStats (60, 90, 60, 30)) `shouldBe` True
 
+  -- Cada caso vale para cualquier par de tipos: el solape es de rectángulos.
   describe "overlaps" $ do
-    it "dos widgets separados no se enciman" $
-      overlaps (rect LiveTiming (0, 0, 50, 50)) (rect Telemetry (60, 60, 50, 50))
-        `shouldBe` False
+    let anyPair f = forAll anyType $ \a -> forAll anyType (f a)
+
+    prop "dos widgets separados no se enciman" $ anyPair $ \a b ->
+      not (overlaps (rect a (0, 0, 50, 50)) (rect b (60, 60, 50, 50)))
 
     -- El caso que el grupo acoplado del 2026-09-03 (b) produce constantemente:
     -- dentro de un grupo el borde entre dos miembros ES un separador compartido.
-    it "el borde compartido no es solape" $ do
-      overlaps (rect LiveTiming (0, 0, 60, 90)) (rect Telemetry (60, 0, 60, 35))
-        `shouldBe` False
-      overlaps (rect Telemetry (60, 0, 60, 35)) (rect Telemetry (60, 35, 60, 35))
-        `shouldBe` False
+    prop "el borde compartido no es solape" $ anyPair $ \a b ->
+      not (overlaps (rect a (0, 0, 60, 90)) (rect b (60, 0, 60, 35)))
+        && not (overlaps (rect a (60, 0, 60, 35)) (rect b (60, 35, 60, 35)))
 
-    it "un solo píxel de invasión ya es solape" $
-      overlaps (rect LiveTiming (0, 0, 61, 90)) (rect Telemetry (60, 0, 60, 35))
-        `shouldBe` True
+    prop "un solo píxel de invasión ya es solape" $ anyPair $ \a b ->
+      overlaps (rect a (0, 0, 61, 90)) (rect b (60, 0, 60, 35))
 
-    it "un widget contenido en otro sí solapa, y no es un caso límite que esconder" $
-      overlaps (rect LiveTiming (0, 0, 120, 120)) (rect Custom (10, 10, 20, 20))
-        `shouldBe` True
+    prop "un widget contenido en otro sí solapa, y no es un caso límite que esconder" $ anyPair $ \a b ->
+      overlaps (rect a (0, 0, 120, 120)) (rect b (10, 10, 20, 20))
 
-    it "un widget solapa consigo mismo" $
-      overlaps (rect LiveTiming (0, 0, 60, 90)) (rect LiveTiming (0, 0, 60, 90))
-        `shouldBe` True
+    prop "un widget solapa consigo mismo" $ forAll anyType $ \a ->
+      overlaps (rect a (0, 0, 60, 90)) (rect a (0, 0, 60, 90))
 
-    prop "es simétrica" overlapIsSymmetric
+    prop "es simétrica" (anyPair overlapIsSymmetric)
 
   -- La traducción del rectángulo a CSS (2026-09-07). Lo que
   -- se prueba NO es la aritmética —con `calc` la hace el navegador y aquí no hay
@@ -4216,13 +4211,13 @@ main = hspec $ do
       map (T.takeWhile (/= ':')) (T.splitOn "; " (slotStyle (rect LiveTiming (0, 0, 60, 90))))
         `shouldBe` ["left", "top", "width", "height"]
 
-    -- El borde entre `telemetry` y `lap-comparison` en Race Overview: el bajo de
+    -- El borde entre `live-timing` y `driver-stats` en Race Overview: el bajo de
     -- uno y el alto del otro tienen que salir como la MISMA cantidad, no como dos
     -- redondeos que casi coinciden. Es lo que impide la raya de fondo o el píxel
     -- montado entre dos widgets pegados.
     it "el borde compartido de dos widgets pegados es la misma cantidad exacta" $
-      let arriba = rect Telemetry     (60,  0, 60, 35)
-          abajo  = rect LapComparison (60, 35, 60, 50)
+      let arriba = rect LiveTiming      (0,  0, 60, 90)
+          abajo  = rect HistoricalStats (0, 90, 60, 30)
        in spanCss (wcY arriba + wcH arriba) `shouldBe` spanCss (wcY abajo)
 
     it "el widget que llena el lienzo va del 0 al 100 %" $
@@ -4237,7 +4232,7 @@ main = hspec $ do
     it "el hueco bajo lap-comparison sobrevive a la traducción" $
       spanCss 85 `shouldNotBe` spanCss 90
 
-  -- __El caso que más vale de todo el bloque.__ Los seis rectángulos de
+  -- __El caso que más vale de todo el bloque.__ Los cinco rectángulos de
   -- `Pages.Dashboard` están escritos a mano y un typo NO lo caza el compilador —
   -- mismo riesgo que los `WidgetId` literales del 2026-09-01, con la misma
   -- consecuencia: se nota al mirar la página, no al compilar.
@@ -4256,29 +4251,30 @@ main = hspec $ do
         onColumn divs wid d = rects (applyDrag divs column (d (WidgetId wid)))
 
     it "Constructores encima de Lap Comparison: la tapa de lado a lado y Lap Comparison baja entera" $
-      rects (onRace "constructor-stats" (\w -> MoveTo w 60 35))
-        `shouldBe` Just [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
+      rects (onRace "constructor-stats" (\w -> MoveTo w 60 0))
+        `shouldBe` Just [(0, 0, 60, 90), (60, 30, 60, 85), (0, 90, 60, 30), (60, 0, 60, 30)]
 
-    it "Telemetry 20 a la izquierda: Live Timing se estrecha por el lado del menor solape" $
-      rects (onRace "telemetry" (\w -> MoveTo w 40 0))
-        `shouldBe` Just [(0, 0, 40, 90), (40, 0, 60, 35), (60, 35, 60, 50), (0, 90, 60, 30), (60, 90, 60, 30)]
+    it "Lap Comparison 20 a la izquierda: Live Timing se estrecha por el lado del menor solape" $
+      rects (onRace "lap-comparison" (\w -> MoveTo w 40 0))
+        `shouldBe` Just [(0, 0, 40, 90), (40, 0, 60, 85), (0, 90, 60, 30), (60, 90, 60, 30)]
 
-    -- Telemetry 35 + Pilotos 30 + los mínimos de Lap Comparison (50) y Constructores
-    -- (20) suman 135: la columna no cabe, y en una columna no se prueba el otro eje.
+    -- Con Pilotos en y = 35, Lap Comparison no cabe encima (35 es menos que su mínimo,
+    -- 50) ni debajo (35 + 30 + 50 + los 20 de Constructores suman 135): la columna no
+    -- cabe, y en una columna no se prueba el otro eje.
     it "Pilotos a la columna derecha no se deja, con el imán y sin él" $ do
       onRace "driver-stats" (\w -> MoveTo w 60 35) `shouldBe` Nothing
       applyDrag 0 raceOverviewFixture (MoveTo (WidgetId "driver-stats") 60 35) `shouldBe` Nothing
 
-    it "estirar Telemetry empuja la columna, y Constructores encoge hasta su mínimo" $
-      rects (onRace "telemetry" (\w -> ResizeTo w 60 50))
-        `shouldBe` Just [(0, 0, 60, 90), (60, 0, 60, 50), (60, 50, 60, 50), (0, 90, 60, 30), (60, 100, 60, 20)]
+    it "estirar Lap Comparison empuja la columna, y Constructores encoge hasta su mínimo" $
+      rects (onRace "lap-comparison" (\w -> ResizeTo w 60 100))
+        `shouldBe` Just [(0, 0, 60, 90), (60, 0, 60, 100), (0, 90, 60, 30), (60, 100, 60, 20)]
 
     it "Live Timing sobre la columna derecha intercambia las columnas" $
       rects (onRace "live-timing" (\w -> MoveTo w 60 0))
-        `shouldBe` Just [(60, 0, 60, 90), (0, 0, 60, 35), (0, 35, 60, 50), (0, 90, 60, 30), (60, 90, 60, 30)]
+        `shouldBe` Just [(60, 0, 60, 90), (0, 0, 60, 85), (0, 90, 60, 30), (60, 90, 60, 30)]
 
     it "soltar en el mismo sitio no cambia nada" $
-      onRace "telemetry" (\w -> MoveTo w 60 0) `shouldBe` Just raceOverviewFixture
+      onRace "lap-comparison" (\w -> MoveTo w 60 0) `shouldBe` Just raceOverviewFixture
 
     it "lo que se sale del lienzo se queda en el borde" $
       onRace "constructor-stats" (\w -> MoveTo w 200 200) `shouldBe` Just raceOverviewFixture
@@ -4327,30 +4323,30 @@ main = hspec $ do
       map (uncurry magnetDivisions) [(True, False), (True, True), (False, True), (False, False)]
         `shouldBe` [gridDivisions, 0, gridDivisions, 0]
 
-    it "Constructores en y = 37,25: se pinta ahí, el contorno cae en 35 y Lap Comparison baja a 65 (D125)" $ do
-      let s = scene True (toY 37.25 False)
-      sceneHeld s `shouldBe` Just (Held cs 60 37.25 60 30 True)
-      fmap (\t -> (wcX t, wcY t, wcW t, wcH t)) (sceneTarget s) `shouldBe` Just (60, 35, 60, 30)
+    it "Constructores en y = 2,25: se pinta ahí, el contorno cae en 0 y Lap Comparison baja a 30" $ do
+      let s = scene True (toY 2.25 False)
+      sceneHeld s `shouldBe` Just (Held cs 60 2.25 60 30 True)
+      fmap (\t -> (wcX t, wcY t, wcW t, wcH t)) (sceneTarget s) `shouldBe` Just (60, 0, 60, 30)
       rects (sceneCards s)
-        `shouldBe` [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
+        `shouldBe` [(0, 0, 60, 90), (60, 30, 60, 85), (0, 90, 60, 30), (60, 0, 60, 30)]
 
-    it "en y = 60 no se deja: las demás se quedan en la foto y no hay contorno" $ do
-      let s = scene True (toY 60 False)
+    it "en y = 37,25 no se deja: las demás se quedan en la foto y no hay contorno" $ do
+      let s = scene True (toY 37.25 False)
       fmap heldFits (sceneHeld s) `shouldBe` Just False
       sceneCards s `shouldBe` raceOverviewFixture
       sceneTarget s `shouldBe` Nothing
 
     it "soltar deja el empuje; soltar donde no se deja, Esc y un clic sin mover dejan la foto" $ do
-      rects (boardLayout (stepBoard True Release (toY 37.25 False)))
-        `shouldBe` [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
-      boardLayout (stepBoard True Release (toY 60 False)) `shouldBe` raceOverviewFixture
-      boardLayout (stepBoard True Cancel (toY 37.25 False)) `shouldBe` raceOverviewFixture
+      rects (boardLayout (stepBoard True Release (toY 2.25 False)))
+        `shouldBe` [(0, 0, 60, 90), (60, 30, 60, 85), (0, 90, 60, 30), (60, 0, 60, 30)]
+      boardLayout (stepBoard True Release (toY 37.25 False)) `shouldBe` raceOverviewFixture
+      boardLayout (stepBoard True Cancel (toY 2.25 False)) `shouldBe` raceOverviewFixture
       boardLayout (stepBoard True Release grabbed) `shouldBe` raceOverviewFixture
-      boardCarry (stepBoard True Cancel (toY 37.25 False)) `shouldBe` Nothing
+      boardCarry (stepBoard True Cancel (toY 2.25 False)) `shouldBe` Nothing
 
-    it "con Alt, el imán encendido redondea de 1 en 1: el contorno cae en 37" $ do
-      fmap wcY (sceneTarget (scene True (toY 37.25 True))) `shouldBe` Just 37
-      fmap wcY (sceneTarget (scene True (stepBoard True (AltKey True) (toY 37.25 False)))) `shouldBe` Just 37
+    it "con Alt, el imán encendido redondea de 1 en 1: el contorno cae en 2" $ do
+      fmap wcY (sceneTarget (scene True (toY 2.25 True))) `shouldBe` Just 2
+      fmap wcY (sceneTarget (scene True (stepBoard True (AltKey True) (toY 2.25 False)))) `shouldBe` Just 2
 
     it "fuera del lienzo, la que se lleva se queda en el borde" $ do
       let far = stepBoard True (Point (90000, -90000) False) grabbed
@@ -4362,25 +4358,25 @@ main = hspec $ do
         `shouldBe` replicate 4 idle
       stepBoard True (Press cs ByTitle (1, 2) (0, 600)) idle `shouldBe` idle
       stepBoard True (Press (WidgetId "nadie") ByTitle (1, 2) canvas) idle `shouldBe` idle
-      fmap carryId (boardCarry (stepBoard True (Press (WidgetId "telemetry") ByCorner (1, 2) canvas) grabbed))
+      fmap carryId (boardCarry (stepBoard True (Press (WidgetId "lap-comparison") ByCorner (1, 2) canvas) grabbed))
         `shouldBe` Just cs
 
-    it "por la esquina, Lap Comparison a 61,25 de alto: el contorno en 60 y Constructores encoge a 25" $ do
+    it "por la esquina, Lap Comparison a 96,25 de alto: el contorno en 95 y Constructores encoge a 25" $ do
       let lc = WidgetId "lap-comparison"
           s  = scene True (stepBoard True (Point (700, 500 + 11.25 * 5) False)
                  (stepBoard True (Press lc ByCorner (700, 500) canvas) (boardOf raceOverviewFixture)))
-      sceneHeld s `shouldBe` Just (Held lc 60 35 60 61.25 True)
-      fmap (\t -> (wcX t, wcY t, wcW t, wcH t)) (sceneTarget s) `shouldBe` Just (60, 35, 60, 60)
+      sceneHeld s `shouldBe` Just (Held lc 60 0 60 96.25 True)
+      fmap (\t -> (wcX t, wcY t, wcW t, wcH t)) (sceneTarget s) `shouldBe` Just (60, 0, 60, 95)
       rects (sceneCards s)
-        `shouldBe` [(0, 0, 60, 90), (60, 0, 60, 35), (60, 35, 60, 60), (0, 90, 60, 30), (60, 95, 60, 25)]
+        `shouldBe` [(0, 0, 60, 90), (60, 0, 60, 95), (0, 90, 60, 30), (60, 95, 60, 25)]
 
-    it "por la esquina, de 70 en adelante no se deja; y no baja de su mínimo ni se sale del lienzo" $ do
+    it "por la esquina, de 105 en adelante no se deja; y no baja de su mínimo ni se sale del lienzo" $ do
       let lc       = WidgetId "lap-comparison"
           stretch p = scene True (stepBoard True (Point p False)
                         (stepBoard True (Press lc ByCorner (700, 500) canvas) (boardOf raceOverviewFixture)))
       fmap heldFits (sceneHeld (stretch (700, 500 + 22.5 * 5))) `shouldBe` Just False
       fmap (\h -> (heldW h, heldH h)) (sceneHeld (stretch (-90000, -90000))) `shouldBe` Just (25, 50)
-      fmap (\h -> (heldW h, heldH h)) (sceneHeld (stretch (90000, 90000))) `shouldBe` Just (60, 85)
+      fmap (\h -> (heldW h, heldH h)) (sceneHeld (stretch (90000, 90000))) `shouldBe` Just (60, 120)
 
     it "el estilo de la que se lleva: su rectángulo con dos decimales" $
       heldStyle (Held cs 60 37.25 60 30 True)
@@ -4391,9 +4387,9 @@ main = hspec $ do
 
   describe "Common.Saved" $ do
     let place w (x, y, wd, ht) = w { wcX = x, wcY = y, wcW = wd, wcH = ht }
-        -- D125: Constructores sube a 35 y Lap Comparison baja a 65.
+        -- Constructores sube arriba del todo y Lap Comparison baja a 30.
         moved = zipWith place raceOverviewFixture
-                  [(0, 0, 60, 90), (60, 0, 60, 35), (60, 65, 60, 50), (0, 90, 60, 30), (60, 35, 60, 30)]
+                  [(0, 0, 60, 90), (60, 30, 60, 85), (0, 90, 60, 30), (60, 0, 60, 30)]
         moving wid r = map (\w -> if widgetId w == WidgetId wid then place w r else w) raceOverviewFixture
         raceSides  = factoryControls raceOverviewFixture
         lapCard f  = Map.adjust f (WidgetId "lap-comparison")
@@ -4408,13 +4404,13 @@ main = hspec $ do
           [ (raceSides, raceOverviewFixture)
           , (raceSides, reverse raceOverviewFixture)
           , (raceSides, moved)
-          , (raceSides, moving "lap-comparison" (60, 35, 60, 51))
+          , (raceSides, moving "lap-comparison" (60, 0, 60, 86))
           , (rightSides, raceOverviewFixture)
           ]
         `shouldBe` [True, True, False, False, False]
 
     it "lo movido y vuelto a su sitio es otra vez el de fábrica" $
-      atFactory raceOverviewFixture raceSides (moving "lap-comparison" (60, 35, 60, 50))
+      atFactory raceOverviewFixture raceSides (moving "lap-comparison" (60, 0, 60, 85))
         `shouldBe` True
 
     it "dos estados se ven igual con los mismos rectángulos y lados, y no si cambia uno" $
@@ -4444,7 +4440,7 @@ main = hspec $ do
       factoryControls qualyFixture `shouldBe` Map.empty
       let lapOnly  = filter ((== LapComparison) . widgetType) raceOverviewFixture
           expected = decodeStrictText
-            "[{\"savedId\":\"lap-comparison\",\"savedX\":60,\"savedY\":35,\"savedW\":60,\"savedH\":50,\
+            "[{\"savedId\":\"lap-comparison\",\"savedX\":60,\"savedY\":0,\"savedW\":60,\"savedH\":85,\
             \\"savedSide\":\"left\",\"savedBand\":false,\"savedMode\":\"axis-values\",\"savedLap\":\"fastest\"}]"
       expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
       decodeStrictText (save lapOnly) `shouldBe` expected
@@ -4469,7 +4465,7 @@ main = hspec $ do
 
     it "un lado en una tarjeta que no es Lap Comparison se ignora" $
       restoreLayout raceOverviewFixture
-          (Just (saveLayout (Map.insert (WidgetId "telemetry") defaultControl { ccSide = SideRight } rightSides) moved))
+          (Just (saveLayout (Map.insert (WidgetId "driver-stats") defaultControl { ccSide = SideRight } rightSides) moved))
         `shouldBe` FromSaved moved rightSides
 
     it "un lado, una banda, un modo o una vuelta ilegibles no se leen, y lo que no encaja no conserva nada" $
@@ -4491,7 +4487,7 @@ main = hspec $ do
         , save (init raceOverviewFixture <> [rectNamed "constructores" ConstructorStats (60, 90, 60, 30)])
         , save (moving "lap-comparison" (60, 35, 60, 45))
         , save (moving "constructor-stats" (70, 90, 60, 30))
-        , save (moving "telemetry" (60, 0, 60, 40))
+        , save (moving "lap-comparison" (60, 0, 60, 95))
         ]
         `shouldBe` replicate 11 Unfit
 
@@ -4510,10 +4506,10 @@ main = hspec $ do
       unfitNote [] `shouldBe` ""
 
   describe "los layouts fijos de Pages.Dashboard" $ do
-    it "los seis widgets caben donde dicen estar" $
+    it "los cinco widgets caben donde dicen estar" $
       filter (not . fitsAt) (raceOverviewFixture <> qualyFixture) `shouldBe` []
 
-    it "clampToMin no cambia ninguno: los seis respetan ya su ancho mínimo" $
+    it "clampToMin no cambia ninguno: los cinco respetan ya su ancho mínimo" $
       map clampToMin (raceOverviewFixture <> qualyFixture)
         `shouldBe` (raceOverviewFixture <> qualyFixture)
 
@@ -4538,16 +4534,15 @@ main = hspec $ do
       filter (overlaps (rect Custom (60, 85, 60, 5))) raceOverviewFixture
         `shouldBe` []
 
-    -- Los mismos seis rectángulos, ahora vistos por el lado que la página
+    -- Los mismos cinco rectángulos, ahora vistos por el lado que la página
     -- consume. Los dos casos de arriba dicen que los rectángulos son legales;
     -- este dice CUÁLES son, que es lo único que caza un 35 escrito donde iba
     -- un 30.
-    it "los seis slots traducen a su rectángulo" $
+    it "los cinco slots traducen a su rectángulo" $
       map slotStyle (raceOverviewFixture <> qualyFixture)
         `shouldBe` map expectedSlot
              [ (  0,  0,  60,  90)
-             , ( 60,  0,  60,  35)
-             , ( 60, 35,  60,  50)
+             , ( 60,  0,  60,  85)
              , (  0, 90,  60,  30)
              , ( 60, 90,  60,  30)
              , (  0,  0, 120, 120)
@@ -4560,11 +4555,11 @@ main = hspec $ do
 
     -- Quién queda debajo del botón de plegar la cabecera, que es `fixed` en la
     -- esquina de la ventana. El caso vale por lo que NOMBRA: si mañana alguien
-    -- mueve `telemetry` a x=55, el hueco se quedaría en un widget que ya no lo
+    -- mueve `lap-comparison` a x=55, el hueco se quedaría en un widget que ya no lo
     -- necesita y le faltaría al que sí, y eso no se ve compilando.
-    it "solo telemetry y el live timing de Qualy tocan la esquina superior derecha" $
+    it "solo lap-comparison y el live timing de Qualy tocan la esquina superior derecha" $
       map widgetId (filter touchesTopRight (raceOverviewFixture <> qualyFixture))
-        `shouldBe` [WidgetId "telemetry", WidgetId "qualy-live-timing"]
+        `shouldBe` [WidgetId "lap-comparison", WidgetId "qualy-live-timing"]
 
     -- Las dos mitades de la condición, cada una por su lado: `live-timing`
     -- empieza arriba pero acaba en 60, y `constructor-stats` acaba en el borde
@@ -6472,21 +6467,21 @@ dragOnRace i corner magnet alt a b = (scene magnet moved, boardLayout (stepBoard
 -- | Tras 'clampToMin' el ancho y el alto cumplen los mínimos del tipo, venga como
 -- venga la entrada. Es la garantía entera de la función; lo que NO garantiza —que
 -- el widget quepa— es de 'fitsAt' (2026-09-04 c).
-clampReachesMin :: Int -> Int -> Int -> Int -> Bool
-clampReachesMin x y w h =
+clampReachesMin :: WidgetType -> Int -> Int -> Int -> Int -> Bool
+clampReachesMin t x y w h =
   wcW c >= minWidthFor (widgetType r) && wcH c >= minHeightFor (widgetType r)
   where
-    r = rect LiveTiming (x, y, w, h)
+    r = rect t (x, y, w, h)
     c = clampToMin r
 
 -- | Que A se encime con B y que B se encime con A son la misma pregunta. Si no lo
 -- fueran, el resultado dependería del orden de la lista de widgets — que es
 -- exactamente lo que el lienzo libre dejó de significar.
-overlapIsSymmetric :: Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Property
-overlapIsSymmetric ax ay aw ah bx by bw bh = overlaps a b === overlaps b a
+overlapIsSymmetric :: WidgetType -> WidgetType -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Property
+overlapIsSymmetric ta tb ax ay aw ah bx by bw bh = overlaps a b === overlaps b a
   where
-    a = rect LiveTiming (ax, ay, aw, ah)
-    b = rect Telemetry (bx, by, bw, bh)
+    a = rect ta (ax, ay, aw, ah)
+    b = rect tb (bx, by, bw, bh)
 
 -- * Helpers
 
@@ -6495,6 +6490,17 @@ overlapIsSymmetric ax ay aw ah bx by bw bh = overlaps a b === overlaps b a
 -- los layouts fijos, 'rectNamed' pone el id de verdad.
 rect :: WidgetType -> (Int, Int, Int, Int) -> WidgetConfig
 rect = rectNamed "w"
+
+-- | Todos los tipos de widget, en el orden de la prueba de los mínimos medidos.
+-- Escrita a mano: un tipo nuevo hay que añadirlo aquí, y nada avisa si falta.
+allTypes :: [WidgetType]
+allTypes =
+  [ LiveTiming, LapComparison, HistoricalStats
+  , ConstructorStats, TyreStrategy, Custom ]
+
+-- | Un tipo cualquiera, para los casos que valen sea cual sea el widget.
+anyType :: Gen WidgetType
+anyType = elements allTypes
 
 -- | Espejo de 'rect' con el 'WidgetId' explícito, para que los fallos del bloque
 -- de los layouts fijos digan __qué widget__ y no «el tercero».
@@ -6531,14 +6537,13 @@ expectedSlot (x, y, w, h) = T.intercalate "; "
 --
 -- __Es deuda, y conviene decirlo aquí donde se ve:__ si las coordenadas cambian
 -- allí y no aquí, estos casos siguen verdes midiendo un layout que ya no existe.
--- Se acepta porque la alternativa —no probarlos— deja los seis rectángulos
+-- Se acepta porque la alternativa —no probarlos— deja los cinco rectángulos
 -- escritos a mano sin nada que cace un typo, que es el riesgo que este bloque
 -- existe para cubrir.
 raceOverviewFixture :: [WidgetConfig]
 raceOverviewFixture =
   [ rectNamed "live-timing"       LiveTiming       (  0,  0, 60, 90)
-  , rectNamed "telemetry"         Telemetry        ( 60,  0, 60, 35)
-  , rectNamed "lap-comparison"    LapComparison    ( 60, 35, 60, 50)
+  , rectNamed "lap-comparison"    LapComparison    ( 60,  0, 60, 85)
   , rectNamed "driver-stats"      HistoricalStats  (  0, 90, 60, 30)
   , rectNamed "constructor-stats" ConstructorStats ( 60, 90, 60, 30)
   ]

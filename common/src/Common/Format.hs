@@ -3,8 +3,8 @@
 -- | Formateo de cifras y de tiempos para el dashboard.
 --
 -- Vive en @common@ y no en cada widget por dos razones. La primera es que los
--- consumidores son __dos áreas__ ('Widgets.Historical' y 'Widgets.Telemetry') y el
--- mismo defecto estaba en las dos. La segunda
+-- consumidores son __varios widgets__ ('Widgets.Historical', 'Widgets.Comparison')
+-- y una sola copia no diverge. La segunda
 -- es que así es __puro y testeable__: el paquete @frontend@ no tiene suite —solo
 -- compila con GHCJS— así que la lógica pura del lado cliente se prueba mudándola
 -- aquí, que es el criterio con el que nació 'Common.Chart'

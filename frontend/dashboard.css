@@ -506,7 +506,6 @@ body {
 /* ── Tablas ─────────────────────────────────────────────────────────────── */
 
 .live-timing,
-.telemetry,
 .historical {
   width: 100%;
   border-collapse: collapse;
@@ -514,7 +513,6 @@ body {
 }
 
 .live-timing th,
-.telemetry th,
 .historical th {
   padding: var(--sp-2) var(--sp-3);
   text-align: left;
@@ -528,7 +526,6 @@ body {
 }
 
 .live-timing td,
-.telemetry td,
 .historical td {
   padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--c-surface-2);
@@ -536,7 +533,6 @@ body {
 }
 
 .live-timing tbody tr:hover,
-.telemetry tbody tr:hover,
 .historical tbody tr:hover {
   background: var(--c-surface-2);
 }
@@ -707,17 +703,6 @@ body {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--c-muted);
-}
-
-/* Telemetría: Driver y las siete magnitudes. */
-.telemetry td:not(:first-child),
-.telemetry th:not(:first-child) {
-  text-align: right;
-}
-
-.telemetry td:not(:first-child) {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
 }
 
 /* Históricos: las dos tablas ya NO comparten posiciones, y por eso cada una lleva su

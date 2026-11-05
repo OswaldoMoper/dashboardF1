@@ -1033,7 +1033,6 @@ instance FromJSON HistoricalStat
 -- siendo de constructor y no de parámetro.
 data WidgetType
   = LiveTiming
-  | Telemetry
   | LapComparison
   | TyreStrategy
   | HistoricalStats   -- ^ Clasificación de __pilotos__ (puntos y victorias).
@@ -1052,13 +1051,12 @@ instance FromJSON WidgetType
 -- mismo significado del 'Nothing' desde el 2026-08-01. El por
 -- qué está en la decisión del 2026-09-01 (b).
 --
--- __Es la semilla del estado del widget, no su sustituto.__ El @driverSwitcher@
--- de 'Widgets.Telemetry' y los dos @\<select\>@ de 'Widgets.Comparison' siguen
--- sosteniendo la elección viva en un @Dynamic@; esto es con qué se monta. Con
--- 'noParams' el render es el de siempre.
+-- __Es la semilla del estado del widget, no su sustituto.__ Los dos @\<select\>@
+-- de 'Widgets.Comparison' siguen sosteniendo la elección viva en un @Dynamic@;
+-- esto es con qué se monta. Con 'noParams' el render es el de siempre.
 --
 -- __La forma es abierta a propósito, y eso es lo que hay que saber al leer un
--- campo:__ nada ata 'wpDriver' a 'Telemetry' ni 'wpDrivers' a 'LapComparison',
+-- campo:__ nada ata 'wpDrivers' a 'LapComparison',
 -- así que un widget puede leer un campo que no le corresponde. El tipo no lo
 -- impide.
 data WidgetParams = WidgetParams
@@ -1095,8 +1093,8 @@ noParams = WidgetParams
 --
 -- 'widgetId' lo pone __quien construye el 'Layout'__ y es opaco: único dentro del
 -- 'Layout' y estable frente a reordenar, ocultar y editar parámetros. Que sea
--- explícito es lo que hace referenciable a un widget — sin él la identidad era el
--- tipo y dos 'Telemetry' colisionaban. La unicidad es __convención y no tipo__:
+-- explícito es lo que hace referenciable a un widget: sin él la identidad sería el
+-- tipo y dos widgets del mismo tipo colisionarían. La unicidad es __convención y no tipo__:
 -- @['WidgetConfig']@ admite ids repetidos. Decidido el 2026-09-01.
 --
 -- __Los cuatro últimos campos son el lienzo libre__

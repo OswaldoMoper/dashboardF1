@@ -1,7 +1,7 @@
 -- | Rutas de la API como valores: fuente única de los paths que consume el
 -- frontend (fetch) y que expone el backend ('Server.Api'). Se mantienen como
 -- valores (no constructores homónimos) para no colisionar con los data
--- constructors de 'Common.Types' ('LiveTiming', 'Telemetry', …); de ahí el
+-- constructors de 'Common.Types' ('LiveTiming', 'LapComparison', …); de ahí el
 -- sufijo @Api@ en 'ApiRoute'.
 module Common.Route
   ( ApiRoute (..)
