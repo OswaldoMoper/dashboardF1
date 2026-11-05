@@ -117,19 +117,18 @@ Módulos (top-level, sin prefijo `Frontend.`; convención del 2026-07-16):
 
 Responsabilidades:
 
-- Exponer telemetría avanzada.
-- Comparación de vueltas.
+- Comparación de vueltas, con sus trazas.
+- La parrilla y las vueltas de una sesión.
 - Cachear resultados.
 - Mantener interfaz estable.
 
-Endpoints (los **cuatro** implementados desde el 2026-08-13):
+Endpoints:
 
-- `/fastf1/telemetry/{session_key}/{driver}`
 - `/fastf1/laps/{session_key}?driver=all`
 - `/fastf1/comparison/{session_key}?drivers=16,1&samples=0`
 - `/fastf1/drivers/{session_key}`
 
-`driver`/`drivers` son **números de coche** (o `all` en telemetría), no acrónimos: la traducción
+`driver`/`drivers` son **números de coche** (o `all` en las vueltas), no acrónimos: la traducción
 número→acrónimo la conoce solo el microservicio, así que entra número y **sale acrónimo**
 (2026-08-01 y 2026-08-03). La comparación es de **1 a 5** coches, **la referencia primero**, y trae los
 sectores de cada uno; la Δ la calcula `common`. Con `samples` (0, o de 60 a 250 de 5 en 5) trae también las

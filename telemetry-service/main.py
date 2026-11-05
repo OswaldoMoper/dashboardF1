@@ -1,7 +1,7 @@
 """telemetry-service — FastF1 detrás de una interfaz HTTP estable.
 
 Microservicio que encapsula FastF1 para que el backend Haskell no tenga que
-hablar Python ni pandas. Cuatro endpoints sobre datos archivados, más uno sobre
+hablar Python ni pandas. Tres endpoints sobre datos archivados, más uno sobre
 el feed en vivo:
 
 * ``GET /fastf1/live`` — la tabla de live timing de la sesión **en marcha**, con
@@ -10,12 +10,8 @@ el feed en vivo:
   sesión: OpenF1 devuelve 401 en todo mientras hay una en directo. Ver
   ``_live_snapshot``.
 
-Los cuatro de FastF1:
+Los tres de FastF1:
 
-* ``GET /fastf1/telemetry/{session_key}/{driver}`` — arreglo JSON plano de
-  muestras de telemetría, cada una **etiquetada con el acrónimo del piloto**
-  (``tpDriver``), con exactamente las claves de
-  ``Common.Types.TelemetryPoint``.
 * ``GET /fastf1/comparison/{session_key}?drivers=16,1&samples=0`` — **un objeto**
   (no una lista) con las claves de ``Common.Types.LapComparison``: la vuelta
   rápida de **1 a 5** coches, en el orden pedido, con sus sectores y, si
@@ -28,26 +24,26 @@ Los cuatro de FastF1:
   que pide números.
 * ``GET /fastf1/laps/{session_key}?driver=all`` — **todas las vueltas** de la
   sesión, una por objeto, con las claves prefijadas ``le``. Es el único de los
-  cuatro **sin DTO en** ``common``: nada en Haskell lo decodifica todavía (ver
+  tres **sin DTO en** ``common``: nada en Haskell lo decodifica todavía (ver
   el Haddock de ``laps``).
 
-En los tres primeros las claves son las del DTO de Haskell, para que el decode
-del backend sea directo; el cuarto usa el prefijo que su DTO usaría.
+En los dos primeros las claves son las del DTO de Haskell, para que el decode
+del backend sea directo; el tercero usa el prefijo que su DTO usaría.
 
 Contrato con el lado Haskell (decidido el 2026-07-31):
 
 * **Las unidades las fija el DTO, y las normaliza este servicio.** FastF1
-  publica ``Throttle`` en 0-100 y ``Brake`` como booleano; aquí salen como
-  ``tpThrottle`` en 0.0-1.0 y ``tpBrake`` como ``0.0``/``1.0``, que es lo que
-  el ``Double`` de Haskell espera.
+  publica ``Throttle`` en 0-100 y ``Brake`` como booleano; en la traza salen
+  como ``ctThrottle`` en 0.0-1.0 y ``ctBrake`` como ``0.0``/``1.0``, que es lo
+  que el ``Double`` de Haskell espera.
 * **Nunca ``NaN`` en el JSON.** ``json.dumps`` emite ``NaN`` y **aeson lo
-  rechaza**, tumbando el arreglo completo. Aquí un no-numérico se convierte a
+  rechaza**, tumbando la respuesta completa. Aquí un no-numérico se convierte a
   ``null`` si el campo es prescindible, y descarta la muestra si es
-  obligatorio (``tpDriver``/``tpSessionTime``/``tpDistance``/``tpSpeed``).
-* **Degradar es trabajo del backend.** Una sesión sin telemetría devuelve
-  ``[]`` (no un error): el ``Handler.Telemetry.Context`` es quien decide caer a
-  su cache o al dummy. Vale igual para la parrilla vacía y para las vueltas —y
-  por lo mismo, una vuelta sin tiempo **se emite** en vez de filtrarse.
+  obligatorio.
+* **Degradar es trabajo del backend.** Lo que falta no es un error: la parrilla y
+  las vueltas vacías salen como ``[]``, y el coche sin vuelta de la comparación,
+  sin sectores; el ``Context`` de cada área es quien decide caer a su cache o al
+  dummy. Por lo mismo, una vuelta sin tiempo **se emite** en vez de filtrarse.
 * **El orden se preserva, no se impone.** Una vuelta es una serie, y la parrilla
   y las vueltas llegan en el orden que FastF1 les da (en una carrera cargada, el
   de clasificación). Ordenar para presentar es del consumidor; aquí reordenar
@@ -56,10 +52,7 @@ Contrato con el lado Haskell (decidido el 2026-07-31):
 **Al arrancar carga la última carrera** antes de abrir el socket, y reintenta si
 falla (``_lifespan``).
 
-Variables de entorno: ``FASTF1_CACHE`` (default ``.fastf1-cache``) y
-``TELEMETRY_MAX_POINTS`` (default ``60``, muestras por piloto). Desde el
-2026-08-11 **no** afecta al delta de comparación: son cuatro fronteras de
-sector y no una serie submuestreada (2026-08-11).
+Variable de entorno: ``FASTF1_CACHE`` (default ``.fastf1-cache``).
 """
 
 from __future__ import annotations
@@ -80,7 +73,6 @@ from convert import _num, _text
 from feed import _LIVE_TOPICS, _feed_live
 
 CACHE_DIR = os.environ.get("FASTF1_CACHE", ".fastf1-cache")
-MAX_POINTS = max(1, int(os.environ.get("TELEMETRY_MAX_POINTS", "60")))
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 fastf1.Cache.enable_cache(CACHE_DIR)
@@ -395,96 +387,6 @@ def _interp(x: float, xs: List[float], ys: List[float]) -> Optional[float]:
     return ys[lo] + (ys[hi] - ys[lo]) * (x - xs[lo]) / span
 
 
-def _sample(label: str, row: Any) -> Optional[Dict[str, Any]]:
-    """Una muestra de ``get_car_data()`` como objeto JSON, o ``None``.
-
-    Los tres campos **obligatorios** (instante, punto de la vuelta y velocidad)
-    descartan la muestra si faltan: sin ellos no se puede situar ni leer. Los
-    cuatro canales de coche son **prescindibles** y salen como ``null``; el
-    backend descarta esa muestra en ``assemblePoints`` en vez de inventar un
-    frenazo o un punto muerto que FastF1 nunca midió.
-    """
-    session_time = _seconds(row.get("SessionTime"))
-    distance = _num(row.get("Distance"))
-    speed = _num(row.get("Speed"))
-    if session_time is None or distance is None or speed is None:
-        return None
-
-    throttle = _num(row.get("Throttle"))
-    brake = row.get("Brake")
-    gear = _num(row.get("nGear"))
-    rpm = _num(row.get("RPM"))
-
-    return {
-        "tpDriver": label,
-        "tpSessionTime": session_time,
-        "tpDistance": distance,
-        "tpSpeed": speed,
-        # FastF1 publica el acelerador en 0–100; el DTO lo quiere en 0.0–1.0.
-        "tpThrottle": None if throttle is None else throttle / 100.0,
-        # `Brake` es booleano en FastF1; el DTO lo quiere como Double.
-        "tpBrake": None
-        if brake is None or brake != brake
-        else (1.0 if bool(brake) else 0.0),
-        "tpGear": None if gear is None else int(gear),
-        "tpRpm": None if rpm is None else int(rpm),
-    }
-
-
-# ── Telemetría por piloto ─────────────────────────────────────────────────────
-
-
-def _driver_points(session: Any, number: str) -> List[Dict[str, Any]]:
-    """Telemetría submuestreada de la **vuelta más rápida** de un piloto.
-
-    La vuelta rápida es la única elección comparable entre coches. Un piloto sin
-    vuelta válida (no salió, abandonó en la primera, sin telemetría publicada)
-    se **omite en silencio**: la respuesta trae a los demás en vez de fallar
-    entera.
-
-    El submuestreo es obligatorio, no cosmético: una vuelta a 10 Hz son miles de
-    muestras por piloto y el widget pinta una tabla.
-    """
-    try:
-        lap = session.laps.pick_drivers([number]).pick_fastest()
-    except Exception:
-        return []
-    if lap is None or getattr(lap, "empty", False):
-        return []
-
-    try:
-        telemetry = lap.get_car_data().add_distance()
-    except Exception:
-        return []
-    if len(telemetry) == 0:
-        return []
-
-    label = _driver_label(session, number)
-
-    step = max(1, len(telemetry) // MAX_POINTS)
-    points: List[Dict[str, Any]] = []
-    for _, row in telemetry.iloc[::step].iterrows():
-        sample = _sample(label, row)
-        if sample is not None:
-            points.append(sample)
-    return points
-
-
-@app.get("/fastf1/telemetry/{session_key}/{driver}")
-def telemetry(session_key: str, driver: str) -> List[Dict[str, Any]]:
-    """Telemetría de la vuelta rápida de uno, varios o todos los pilotos.
-
-    El arreglo es **plano y etiquetado**: los puntos de cada piloto van
-    contiguos y en orden de vuelta (una vuelta es una serie temporal;
-    reordenarla la destruiría), y ``tpDriver`` dice de quién es cada uno.
-    """
-    session = _resolve_session(session_key)
-    points: List[Dict[str, Any]] = []
-    for number in _resolve_drivers(session, driver):
-        points.extend(_driver_points(session, number))
-    return points
-
-
 # ── Comparación de vueltas ────────────────────────────────────────────────────
 
 # Cuántos coches caben en una comparación.
@@ -767,8 +669,8 @@ def _lap_entry(label: str, number: str, row: Any) -> Dict[str, Any]:
     los tiempos van formateados por el servicio y no por el consumidor, y los
     sectores van en segundos como ``ceSectors``.
 
-    **Siempre devuelve un objeto**, nunca ``None``: a diferencia de ``_sample``,
-    aquí no hay campo cuya ausencia impida situar la fila. Una vuelta sin
+    **Siempre devuelve un objeto**, nunca ``None``: no hay campo cuya ausencia
+    impida situar la fila. Una vuelta sin
     ``LapTime`` sale con ``leTime`` en ``""`` (ver ``laps``).
     """
     lap_number = _num(row.get("LapNumber"))
@@ -796,11 +698,9 @@ def laps(session_key: str, driver: str = "all") -> List[Dict[str, Any]]:
 
     Es el primer endpoint que devuelve la **sesión entera** y no una vuelta: ~20
     coches por ~60 vueltas son ~1200 objetos. De ahí que ``driver`` exista —``all``
-    (default) o una lista de números de coche, el mismo vocabulario que
-    ``/fastf1/telemetry``—: filtrar en el servicio es barato y hacerlo después
-    obligaría a mover la sesión entera por la red para tirar el 95 %. Lo que **no**
-    hay es submuestreo: una vuelta es una fila, no una serie, así que
-    ``TELEMETRY_MAX_POINTS`` no aplica.
+    (default) o una lista de números de coche—: filtrar en el servicio es barato y
+    hacerlo después obligaría a mover la sesión entera por la red para tirar el
+    95 %. Lo que **no** hay es submuestreo: una vuelta es una fila, no una serie.
 
     **Las claves llevan el prefijo ``le`` y no hay DTO en** ``common``.
     ``leDriver``/``leNumber`` (acrónimo y número de coche), ``leLap`` (número de
