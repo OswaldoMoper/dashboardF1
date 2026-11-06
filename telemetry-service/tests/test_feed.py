@@ -13,7 +13,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from feed import _feed_live, _feed_rows, _feed_session, _feed_stints
+from feed import _LIVE_TOPICS, _feed_live, _feed_rows, _feed_session, _feed_stints
 
 AQUI = Path(__file__).resolve().parent
 FOTOS = sorted((AQUI / "fotos").glob("*.json"))
@@ -182,3 +182,28 @@ def test_la_respuesta_del_directo_es_la_sesion_las_filas_y_los_stints_de_la_mism
         "rows": _feed_rows(snapshot),
         "stints": _feed_stints(snapshot),
     }
+
+
+# ── El topic SessionStatus ────────────────────────────────────────────────────
+
+
+def test_el_topic_sessionstatus_se_pide():
+    assert "SessionStatus" in _LIVE_TOPICS
+
+
+def test_el_topic_viaja_crudo_y_aparte_del_campo_de_sessioninfo():
+    snapshot = {
+        "SessionInfo": {"Type": "Race", "SessionStatus": "Started"},
+        "SessionStatus": {"Status": "Aborted", "Started": "Started"},
+    }
+    session = _feed_session(snapshot)
+    assert session["siState"] == "Started"
+    assert session["siTopicStatus"] == "Aborted"
+
+
+@pytest.mark.parametrize("topic", [None, "Aborted", {}, {"Status": ""}, {"Started": "Started"}])
+def test_sin_estado_en_el_topic_no_va_la_clave(topic):
+    snapshot = {"SessionInfo": {"Type": "Race", "SessionStatus": "Started"}}
+    if topic is not None:
+        snapshot["SessionStatus"] = topic
+    assert "siTopicStatus" not in _feed_session(snapshot)

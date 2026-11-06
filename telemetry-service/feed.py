@@ -39,6 +39,7 @@ _LIVE_TOPICS = [
     "TrackStatus",
     "RaceControlMessages",
     "ExtrapolatedClock",
+    "SessionStatus",
 ]
 
 
@@ -339,7 +340,7 @@ def _feed_track(snapshot: Dict[str, Any]) -> Optional[Dict[str, str]]:
 def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Qué sesión anuncia el feed, con las claves de ``Handler.Feed.Helper``.
 
-    Sale de seis topics y ninguno se reordena ni se calcula: el reloj viaja
+    Sale de siete topics y ninguno se reordena ni se calcula: el reloj viaja
     **crudo** —el instante, el restante como texto y la marca— porque quien lo
     resuelve necesita saber cuándo está sirviendo, y eso no se sabe aquí. Lo
     mismo la hora de inicio (local, con su desfase aparte), los avisos de
@@ -366,7 +367,9 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
       **conserva el último en las siguientes**: quién lo enseñe mira la parte.
 
     Y el estado sale del **campo** ``SessionStatus`` de ``SessionInfo``, no del
-    topic homónimo, que es otro y cicla por segmento.
+    topic homónimo, que es otro y cicla por segmento. El topic viaja aparte y
+    crudo, en ``siTopicStatus``, solo si la foto lo trae: la foto da su valor de
+    ese momento, **sin hora**.
     """
     info = snapshot.get("SessionInfo")
     if not isinstance(info, dict):
@@ -391,6 +394,11 @@ def _feed_session(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     short_name = _text(circuit.get("ShortName"))
     if short_name:
         session["siCircuit"] = short_name
+
+    topic = snapshot.get("SessionStatus")
+    topic_status = _text(topic.get("Status")) if isinstance(topic, dict) else ""
+    if topic_status:
+        session["siTopicStatus"] = topic_status
 
     laps = snapshot.get("LapCount")
     if isinstance(laps, dict):

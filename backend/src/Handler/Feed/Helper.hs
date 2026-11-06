@@ -151,6 +151,10 @@ data FeedSession = FeedSession
     -- primera parte. __En las siguientes sigue llegando el último__ (medido en
     -- Malasia): quien lo enseñe mira 'fsPart'.
   , fsTrack          :: Maybe FeedTrack  -- ^ El estado de la pista; 'Nothing' sin el tema.
+  , fsTopicStatus    :: Maybe Text
+    -- ^ El topic @SessionStatus@ tal como llega (@\"Aborted\"@, @\"Inactive\"@…), que no
+    -- es 'fsState': cicla por parte. Su valor de ese momento, __sin hora__; 'Nothing'
+    -- sin el tema.
   }
   deriving (Eq, Show)
 
@@ -175,6 +179,7 @@ instance FromJSON FeedSession where
       <*> o .:? "siEntries"        .!= []
       <*> o .:? "siCutOffTime"
       <*> o .:? "siTrack"
+      <*> o .:? "siTopicStatus"
 
 -- | Un aviso de bandera de control de carrera, tal como llega.
 --

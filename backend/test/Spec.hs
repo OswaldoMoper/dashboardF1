@@ -2649,6 +2649,16 @@ main = hspec $ do
            (trySession "{}")
         `shouldBe` Right (Nothing, [], Nothing, Nothing, [])
 
+  describe "el topic SessionStatus" $ do
+    it "llega aparte del campo de SessionInfo, tal cual" $
+      fmap (\s -> (fsState s, fsTopicStatus s))
+           (trySession "{\"siState\":\"Started\",\"siTopicStatus\":\"Aborted\"}")
+        `shouldBe` Right ("Started", Just "Aborted")
+
+    it "sin él decodifica igual, como un microservicio viejo" $
+      fmap fsTopicStatus (trySession "{\"siState\":\"Started\"}")
+        `shouldBe` Right Nothing
+
     it "una fila trae la mejor de cada parte, si está eliminada y si va sin 107 %" $
       -- VER lidera la Q2 sin vuelta en ella: su BestLapTime ya se vació, y la de la
       -- Q1 solo sobrevive en la lista por partes.
