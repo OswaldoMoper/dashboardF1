@@ -8,6 +8,7 @@ description:
   punto de entrada, de modo que los módulos sean importables desde una suite de
   tests. Expone `GET /home`, la API de widgets `/api/*` y el bundle del frontend
   en el mismo puerto.
+license:            BSD-3-Clause
 author:             Oscar Oswaldo Moya Pérez
 maintainer:         oswaldomoyap@gmail.com
 build-type:         Simple

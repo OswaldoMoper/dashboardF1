@@ -6,6 +6,7 @@ description:
   Paquete de dominio con los tipos compartidos entre el backend Servant y el
   frontend Reflex (Fase 2). Se mantiene libre de dependencias pesadas para que
   el deriving genérico de aeson compile también bajo GHCJS.
+license:            BSD-3-Clause
 author:             Oscar Oswaldo Moya Pérez
 maintainer:         oswaldomoyap@gmail.com
 build-type:         Simple

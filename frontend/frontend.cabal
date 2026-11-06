@@ -6,6 +6,7 @@ description:
   Frontend reactivo del F1 Functional Dashboard con reflex-frp, compilado con
   el backend JavaScript nativo de GHC (javascript-unknown-ghcjs). En Fase 0
   solo renderiza el skeleton; los widgets llegan en Fase 2.
+license:            BSD-3-Clause
 author:             Oscar Oswaldo Moya Pérez
 maintainer:         oswaldomoyap@gmail.com
 build-type:         Simple
