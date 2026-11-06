@@ -22,7 +22,8 @@ module Handler.OpenF1.Helper
   ) where
 
 import           Control.Exception        (toException)
-import           Data.Aeson               (FromJSON (..), withObject, (.:))
+import           Data.Aeson               (FromJSON (..), withObject, (.!=), (.:),
+                                           (.:?))
 import           Data.ByteString          (ByteString)
 import           Data.Text                (Text)
 import qualified Data.Text                as T
@@ -36,7 +37,9 @@ import           Network.HTTP.Req         (HttpException (..))
 import           Outcome                  (httpStatusOf)
 import           Text.Printf              (printf)
 
--- | @/drivers@: identidad y equipo del piloto.
+-- | @/drivers@: identidad y equipo del piloto. El número y el acrónimo son
+-- obligatorios: sin uno de ellos no decodifica la lista entera. El equipo, nulo o
+-- ausente, sale @""@.
 data Of1Driver = Of1Driver
   { odNumber  :: Int
   , odAcronym :: Text
@@ -49,7 +52,7 @@ instance FromJSON Of1Driver where
     Of1Driver
       <$> o .: "driver_number"
       <*> o .: "name_acronym"
-      <*> o .: "team_name"
+      <*> o .:? "team_name" .!= ""
 
 -- | Cómo acabó una petición.
 data Answer

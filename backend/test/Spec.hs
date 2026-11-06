@@ -556,9 +556,10 @@ main = hspec $ do
   -- Único `describe` de la suite cuyos casos afirman que un fixture __no__
   -- decodifica, y por eso es el único que usa `tryOf1Drivers` en vez de un helper
   -- que aborte. `Of1Driver` es la puerta de entrada de dos áreas —Live y
-  -- TyreStrategy— y sus tres campos son obligatorios: lo que se fija aquí es que
-  -- ese «todo o nada» sea el criterio y no una casualidad, porque es lo que
-  -- decide si la tabla cae a cache/dummy o se sirve a medias.
+  -- TyreStrategy— y su número y su acrónimo son obligatorios: lo que se fija aquí
+  -- es que ese «todo o nada» sea el criterio y no una casualidad, porque es lo que
+  -- decide si la tabla cae a cache/dummy o se sirve a medias. El equipo, no: nulo o
+  -- ausente, sale vacío.
   --
   -- El camino feliz ya estaba cubierto de rebote —`stintsOf` y `rowsOf` decodifican
   -- esta misma parrilla y abortan si falla—, así que lo que estos casos añaden son
@@ -576,15 +577,17 @@ main = hspec $ do
       fmap (map (\d -> (odNumber d, odAcronym d, odTeam d))) (tryOf1Drivers openF1Grid)
         `shouldBe` Right [(1, "NOR", "McLaren"), (16, "LEC", "Ferrari")]
 
-    it "sin team_name no decodifica, y eso tumba la parrilla entera" $
-      -- El contrario exacto de `assembleDrivers`, que ante el equipo ausente
-      -- conserva la lista y pierde la decoración (`.:? … .!= ""`). Aquí los tres
-      -- campos son `.:`, así que el área pierde la traducción
-      -- `driver_number → name_acronym` y no solo el nombre del equipo: servir la
-      -- tabla sin ella daría filas que el widget no puede etiquetar. Que las dos
-      -- áreas traten el mismo no-dato al revés es decisión, y sin este caso nada
-      -- la sostiene.
-      tryOf1Drivers openF1GridWithoutTeam `shouldSatisfy` isLeft
+    it "sin team_name, o con él a null, el equipo sale vacío y la parrilla sigue" $
+      -- Como `assembleDrivers`: el equipo es decoración (`.:? … .!= ""`), y con él
+      -- la traducción `driver_number → name_acronym` sigue llegando entera.
+      map (fmap (map (\d -> (odNumber d, odAcronym d, odTeam d))) . tryOf1Drivers)
+          [openF1GridWithoutTeam, openF1GridTeamNull]
+        `shouldBe` replicate 2 (Right [(1, "NOR", "McLaren"), (16, "LEC", "")])
+
+    it "sin name_acronym no decodifica, y eso tumba la parrilla entera" $
+      -- Sin el acrónimo el área pierde la traducción `driver_number → name_acronym`:
+      -- servir la tabla sin ella daría filas que el widget no puede etiquetar.
+      tryOf1Drivers openF1GridWithoutAcronym `shouldSatisfy` isLeft
 
     it "con driver_number como cadena tampoco decodifica" $
       -- Los dos `/drivers` del repo discrepan en el tipo del mismo concepto: el de
@@ -1103,9 +1106,9 @@ main = hspec $ do
         `shouldBe` Right [1, 2, 3]
 
     it "con solo posición y piloto la fila sobrevive, con lo demás en blanco" $
-      -- El contrario de `Of1Driver`, que ante el equipo ausente tumba la parrilla
-      -- entera. Aquí degradar es lo correcto porque el precio de no hacerlo es la
-      -- tabla de la sesión en marcha, que es el único momento en que OpenF1 calla.
+      -- El contrario de `Of1Driver`, que sin acrónimo tumba la parrilla entera. Aquí
+      -- degradar es lo correcto porque el precio de no hacerlo es la tabla de la
+      -- sesión en marcha, que es el único momento en que OpenF1 calla.
       fmap feedRows (tryFeedRows feedTableMinimal)
         `shouldBe` Right [emptyLiveRow { ltPosition = 4, ltDriver = "ANT" }]
 
@@ -7088,14 +7091,26 @@ feedSessionUtcOnly :: ByteString
 feedSessionUtcOnly = "{\"siClockUtc\":\"2026-09-13T13:04:05.01Z\"}"
 
 -- | 'openF1Grid' sin @team_name@ en el segundo coche. Espejo de 'gridWithoutTeam'
--- para el otro @\/drivers@, y con el desenlace __contrario__: allí el equipo es
--- prescindible y la lista sobrevive; aquí es @.:@ y no decodifica ninguno de los
--- dos, porque lo que se perdería con el equipo es la traducción
--- @driver_number → name_acronym@ que las dos áreas consumen.
+-- para el otro @\/drivers@, y con el mismo desenlace: el equipo es decoración y la
+-- lista sobrevive.
 openF1GridWithoutTeam :: ByteString
 openF1GridWithoutTeam =
   "[{\"driver_number\":1,\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"},\
   \{\"driver_number\":16,\"name_acronym\":\"LEC\"}]"
+
+-- | 'openF1Grid' con @team_name@ a @null@ en el segundo coche: la forma con la que
+-- OpenF1 respondió ~3 h tras la carrera de México (@$[16]@).
+openF1GridTeamNull :: ByteString
+openF1GridTeamNull =
+  "[{\"driver_number\":1,\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"},\
+  \{\"driver_number\":16,\"name_acronym\":\"LEC\",\"team_name\":null}]"
+
+-- | 'openF1Grid' sin @name_acronym@ en el segundo coche: sin él la fila no se puede
+-- etiquetar.
+openF1GridWithoutAcronym :: ByteString
+openF1GridWithoutAcronym =
+  "[{\"driver_number\":1,\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"},\
+  \{\"driver_number\":16,\"team_name\":\"Ferrari\"}]"
 
 -- | 'openF1Grid' con @driver_number@ como cadena. No es una forma que OpenF1 emita:
 -- es la del __otro__ @\/drivers@, el de FastF1, que publica el número como texto
