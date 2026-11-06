@@ -292,8 +292,8 @@ import           Servant.API                 (ResponseHeader (..), getResponse,
 import           Test.Hspec
 import           Test.Hspec.QuickCheck       (prop)
 import           Test.QuickCheck             (Gen, NonNegative (..), Positive (..),
-                                              Property, elements, forAll, (.&&.),
-                                              (===), (==>))
+                                              Property, arbitrary, choose, elements,
+                                              forAll, vectorOf, (.&&.), (===), (==>))
 
 main :: IO ()
 main = hspec $ do
@@ -4355,8 +4355,12 @@ main = hspec $ do
       onColumn 0 "c1" (\w -> ResizeTo w 30 57)
         `shouldBe` Just [(0, 0, 30, 57), (0, 57, 30, 31), (0, 88, 30, 32)]
 
-    prop "tras un sí, los mismos widgets, sin solapes y cabiendo" dragKeepsLayoutValid
-    prop "la que se lleva queda donde se pide, dentro del lienzo y con su tamaño" moveKeepsHeld
+    prop "a lo que se llega arrastrando, los mismos widgets, sin solapes y cabiendo" $
+      forAll reachableLayout (\(factory, l) -> validAfter factory l)
+    prop "tras un sí, los mismos widgets, sin solapes y cabiendo" $
+      forAll reachableLayout (dragKeepsLayoutValid . snd)
+    prop "la que se lleva queda donde se pide, dentro del lienzo y con su tamaño" $
+      forAll reachableLayout (moveKeepsHeld . snd)
 
   -- Un lienzo de 1200 × 600 px: 10 px por unidad en x y 5 en y, para que las
   -- cuentas salgan exactas en coma flotante.
@@ -4431,7 +4435,8 @@ main = hspec $ do
         `shouldBe` "left: calc(60.00 * 100% / 120); top: calc(37.25 * 100% / 120); \
                    \width: calc(60.00 * 100% / 120); height: calc(30.00 * 100% / 120)"
 
-    prop "lo que enseña el contorno es lo que queda al soltar, y si no se deja queda la foto" carryShowsDrop
+    prop "lo que enseña el contorno es lo que queda al soltar, y si no se deja queda la foto" $
+      forAll reachableLayout (carryShowsDrop . snd)
 
   describe "Common.Saved" $ do
     let place w (x, y, wd, ht) = w { wcX = x, wcY = y, wcW = wd, wcH = ht }
@@ -4539,7 +4544,8 @@ main = hspec $ do
         ]
         `shouldBe` replicate 11 Unfit
 
-    prop "todo lo que deja el arrastre se guarda y vuelve igual" savedDropRoundTrips
+    prop "todo lo que deja el arrastre se guarda y vuelve igual" $
+      forAll reachableLayout (uncurry savedDropRoundTrips)
 
     it "la nota: con un layout, sin nombrarlo; con varios, todos por su nombre; sin ninguno, vacía" $ do
       unfitNote ["Qualy"]
@@ -6456,27 +6462,46 @@ snapStaysInCanvas :: Int -> Int -> Property
 snapStaysInCanvas d v = r >= 0 .&&. r <= canvasSpan
   where r = snapTo d v
 
--- | Cualquier gesto sobre Race Overview, mover o estirar: o no se deja, o deja los
--- mismos widgets en el mismo orden, sin solapes y cabiendo en el lienzo.
-dragKeepsLayoutValid :: Int -> Bool -> Int -> Int -> Bool
-dragKeepsLayoutValid i resize a b =
-  case applyDrag gridDivisions raceOverviewFixture drag of
-    Nothing -> True
-    Just l  ->
-      map widgetId l == map widgetId raceOverviewFixture
-        && all fitsAt l
-        && and [ not (overlaps x y) | (m, x) <- zip [0 :: Int ..] l, (n, y) <- zip [0 ..] l, m < n ]
+-- | Un layout al que se llega arrastrando, con el de fábrica del que sale: Race
+-- Overview o Qualy con de 0 a 6 gestos encima ('gestureOn'), de los que los que el
+-- tablero no deja se saltan. Solo salen layouts que un usuario puede tener.
+reachableLayout :: Gen ([WidgetConfig], [WidgetConfig])
+reachableLayout = do
+  factory  <- elements [raceOverviewFixture, qualyFixture]
+  n        <- choose (0, 6)
+  gestures <- vectorOf n arbitrary
+  pure (factory, foldl step factory gestures)
   where
-    held = raceOverviewFixture !! (i `mod` length raceOverviewFixture)
-    drag
-      | resize    = ResizeTo (widgetId held) (a `mod` 130) (b `mod` 130)
-      | otherwise = MoveTo (widgetId held) (a `mod` 140 - 10) (b `mod` 140 - 10)
+    step l (i, resize, a, b) = fromMaybe l (applyDrag gridDivisions l (gestureOn l i resize a b))
+
+-- | Mover o estirar la tarjeta @i@ de @l@ hasta un sitio cualquiera, también fuera
+-- del lienzo.
+gestureOn :: [WidgetConfig] -> Int -> Bool -> Int -> Int -> Drag
+gestureOn l i resize a b
+  | resize    = ResizeTo (widgetId held) (a `mod` 130) (b `mod` 130)
+  | otherwise = MoveTo (widgetId held) (a `mod` 140 - 10) (b `mod` 140 - 10)
+  where
+    held = l !! (i `mod` length l)
+
+-- | @l@ tiene los widgets de @start@ en el mismo orden, sin solapes y cabiendo en el
+-- lienzo.
+validAfter :: [WidgetConfig] -> [WidgetConfig] -> Bool
+validAfter start l =
+  map widgetId l == map widgetId start
+    && all fitsAt l
+    && and [ not (overlaps x y) | (m, x) <- zip [0 :: Int ..] l, (n, y) <- zip [0 ..] l, m < n ]
+
+-- | Cualquier gesto sobre @start@, mover o estirar: o no se deja, o deja un layout
+-- válido ('validAfter').
+dragKeepsLayoutValid :: [WidgetConfig] -> Int -> Bool -> Int -> Int -> Bool
+dragKeepsLayoutValid start i resize a b =
+  maybe True (validAfter start) (applyDrag gridDivisions start (gestureOn start i resize a b))
 
 -- | La tarjeta que se lleva no encoge nunca y acaba donde se pidió, recortado al
 -- lienzo.
-moveKeepsHeld :: Int -> Int -> Int -> Bool
-moveKeepsHeld i a b =
-  case applyDrag gridDivisions raceOverviewFixture (MoveTo (widgetId held) x y) of
+moveKeepsHeld :: [WidgetConfig] -> Int -> Int -> Int -> Bool
+moveKeepsHeld start i a b =
+  case applyDrag gridDivisions start (MoveTo (widgetId held) x y) of
     Nothing -> True
     Just l  -> case filter ((== widgetId held) . widgetId) l of
       [h] -> wcW h == wcW held && wcH h == wcH held
@@ -6484,41 +6509,43 @@ moveKeepsHeld i a b =
                && wcY h == max 0 (min (canvasSpan - wcH held) y)
       _   -> False
   where
-    held = raceOverviewFixture !! (i `mod` length raceOverviewFixture)
+    held = start !! (i `mod` length start)
     x = a `mod` 140 - 10
     y = b `mod` 140 - 10
 
--- | Se coja la tarjeta que se coja de Race Overview, por el título o por la esquina,
--- y se lleve a donde se lleve, con el imán o sin él: si se deja, el contorno es donde
--- queda la que se lleva y soltar deja lo que se pinta; si no, soltar deja la foto.
-carryShowsDrop :: Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool
-carryShowsDrop i corner magnet alt a b =
+-- | Se coja la tarjeta que se coja de @start@, por el título o por la esquina, y se
+-- lleve a donde se lleve, con el imán o sin él: si se deja, el contorno es donde queda
+-- la que se lleva y soltar deja lo que se pinta; si no, soltar deja la foto.
+carryShowsDrop :: [WidgetConfig] -> Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool
+carryShowsDrop start i corner magnet alt a b =
   case sceneHeld s of
     Just h | heldFits h ->
       dropped == sceneCards s
         && sceneTarget s == find ((== heldId h) . widgetId) (sceneCards s)
-    _ -> dropped == raceOverviewFixture
+    _ -> dropped == start
   where
-    (s, dropped) = dragOnRace i corner magnet alt a b
+    (s, dropped) = dragOn start i corner magnet alt a b
 
--- | Lo guardado de cualquier layout que deje el arrastre vuelve tal cual.
-savedDropRoundTrips :: Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool -> Bool
-savedDropRoundTrips i corner magnet alt a b right =
-  restoreLayout raceOverviewFixture (Just (saveLayout sides dropped)) == FromSaved dropped sides
+-- | Lo guardado de cualquier layout que deje el arrastre desde @start@ vuelve tal
+-- cual sobre su layout de fábrica.
+savedDropRoundTrips
+  :: [WidgetConfig] -> [WidgetConfig] -> Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool -> Bool
+savedDropRoundTrips factory start i corner magnet alt a b right =
+  restoreLayout factory (Just (saveLayout sides dropped)) == FromSaved dropped sides
   where
-    (_, dropped) = dragOnRace i corner magnet alt a b
+    (_, dropped) = dragOn start i corner magnet alt a b
     sides        = Map.map (\c -> if right then c { ccSide = otherSide (ccSide c) } else c)
-                     (factoryControls raceOverviewFixture)
+                     (factoryControls factory)
 
--- | Coger la tarjeta @i@ de Race Overview por el título o por la esquina, llevar el
--- puntero a un sitio cualquiera (también fuera del lienzo) y soltar: lo que se pinta
--- justo antes de soltar y lo que queda.
-dragOnRace :: Int -> Bool -> Bool -> Bool -> Int -> Int -> (Scene, [WidgetConfig])
-dragOnRace i corner magnet alt a b = (scene magnet moved, boardLayout (stepBoard magnet Release moved))
+-- | Coger la tarjeta @i@ de @start@ por el título o por la esquina, llevar el puntero
+-- a un sitio cualquiera (también fuera del lienzo) y soltar: lo que se pinta justo
+-- antes de soltar y lo que queda.
+dragOn :: [WidgetConfig] -> Int -> Bool -> Bool -> Bool -> Int -> Int -> (Scene, [WidgetConfig])
+dragOn start i corner magnet alt a b = (scene magnet moved, boardLayout (stepBoard magnet Release moved))
   where
-    held    = widgetId (raceOverviewFixture !! (i `mod` length raceOverviewFixture))
+    held    = widgetId (start !! (i `mod` length start))
     grip    = if corner then ByCorner else ByTitle
-    grabbed = stepBoard magnet (Press held grip (700, 500) (1200, 600)) (boardOf raceOverviewFixture)
+    grabbed = stepBoard magnet (Press held grip (700, 500) (1200, 600)) (boardOf start)
     moved   = stepBoard magnet (Point (fromIntegral (a `mod` 2000 - 400), fromIntegral (b `mod` 1000 - 200)) alt) grabbed
 
 -- | Tras 'clampToMin' el ancho y el alto cumplen los mínimos del tipo, venga como
