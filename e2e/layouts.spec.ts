@@ -584,7 +584,8 @@ test.describe('Lap Comparison y la cuenta de F1TV', () => {
     const notice = c.locator('.comparison__canvas .comparison__notice');
     await expect(notice).toContainText(
       'La cuenta de F1TV caducó el sáb 7 a las 17:06: las sesiones acabadas salen de ejemplo.');
-    await expect(notice.locator('code')).toHaveText(['dashboardF1-f1tv', 'dashboardF1-dev']);
+    await expect(notice.locator('code')).toHaveText(['dashboardF1-f1tv']);
+    await expect(notice).not.toContainText('reinicia');
     await expect(notice.getByRole('button', { name: 'Copiar' })).toBeVisible();
     await expect(c.locator('.comparison__account')).toHaveCount(0);
   });

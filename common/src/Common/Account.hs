@@ -12,7 +12,6 @@ module Common.Account
   , Notice (..)
   , accountNotice
   , loginCommand
-  , restartCommand
   ) where
 
 import           Common.Origin (Origin (..), originNotice)
@@ -150,8 +149,3 @@ accountSentence offset = \case
 -- | El comando que inicia sesión en la cuenta, el que copia el botón del aviso.
 loginCommand :: Text
 loginCommand = "dashboardF1-f1tv"
-
--- | El que hay que reiniciar después: el microservicio guarda en memoria la sesión que
--- cargó vacía.
-restartCommand :: Text
-restartCommand = "dashboardF1-dev"

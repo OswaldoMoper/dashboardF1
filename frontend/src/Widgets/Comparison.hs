@@ -53,7 +53,7 @@ module Widgets.Comparison where
 import           Client                        (fetchJson, fetchJsonSourced)
 import           Common.Account                (Foot (..), Notice (..),
                                                 accountFoot, accountNotice,
-                                                loginCommand, restartCommand)
+                                                loginCommand)
 import           Common.Chart                  (SectorPace (..),
                                                 SectorSpan (..), axisPolyline,
                                                 axisTicks, axisZeroY,
@@ -374,8 +374,6 @@ noticeView (Just n) =
       text " "
       (b, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "comparison__copy") $ text "Copiar"
       performEvent_ (DOM.liftJSM (() <$ JS.eval (copyScript loginCommand)) <$ domEvent Click b)
-      text " y reinicia "
-      el "code" $ text restartCommand
       text "."
 
 -- | Copia un texto sin comillas ni barras al portapapeles. Fuera de un contexto seguro
