@@ -52,7 +52,7 @@ Contrato con el lado Haskell (decidido el 2026-07-31), común a los tres:
 - **Degradar es del backend.** Lo que falta no es un error: el `Context` de cada área es quien cae a su cache STM o al dummy.
 - Sesión irresoluble → `404`; parámetros mal formados → `400`.
 
-Nota operativa: las sesiones cargadas se memorizan en proceso, así que **`latest` se congela mientras `uvicorn` viva**. Reiniciarlo para volver a resolverlo.
+Nota operativa: las sesiones cargadas se memorizan en proceso, así que **`latest` se congela mientras `uvicorn` viva**. Reiniciarlo para volver a resolverlo. Una sesión que cargó vacía (sin token de F1TV, sin vueltas) no se congela: se vuelve a pedir en cuanto cambia el fichero del token o a los 10 min, lo que pase antes.
 
 ### `GET /fastf1/comparison/{session_key}?drivers=16,1&samples=0` — implementado
 

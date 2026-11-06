@@ -67,7 +67,9 @@ from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import fastf1
+import platformdirs
 from fastapi import FastAPI, HTTPException
+from fastf1.exceptions import DataNotLoadedError
 
 from convert import _num, _text
 from feed import _LIVE_TOPICS, _feed_live
@@ -134,7 +136,13 @@ def _warm(attempt: str) -> bool:
         _say(f"la última carrera no se pudo cargar ({attempt}): {_why(exc)}")
         return False
     key = f"{session.event.year}-{int(session.event['RoundNumber'])}-R"
-    _say(f"última carrera en memoria ({key}, {time.monotonic() - started:.1f} s)")
+    if _is_empty(session):
+        _say(
+            f"última carrera vacía ({key}): sin datos del archivo; se vuelve a pedir "
+            f"al cambiar el token o en {EMPTY_RETRY / 60:.0f} min"
+        )
+    else:
+        _say(f"última carrera en memoria ({key}, {time.monotonic() - started:.1f} s)")
     return True
 
 
@@ -152,8 +160,19 @@ app = FastAPI(title="telemetry-service", version="0.1.0", lifespan=_lifespan)
 # hacer `session.load()`, que descarga y parsea la sesión entera. `latest` y su
 # clave `AÑO-RONDA-R` apuntan al mismo objeto: una sola copia, se pida como se
 # pida. Consecuencia aceptada: `latest` se congela mientras el proceso viva —
-# reiniciar `uvicorn` para volver a resolverlo.
+# reiniciar `uvicorn` para volver a resolverlo—, salvo si cargó vacía (`_empty`).
 _sessions: Dict[str, Any] = {}
+
+# Las sesiones del memo que cargaron vacías (`_is_empty`), por `id`: cuándo y con qué
+# token (`_token_stamp`). Se vuelven a pedir al pasar `EMPTY_RETRY` o al cambiar el
+# token, lo que pase antes.
+_empty: Dict[int, Tuple[float, Optional[int]]] = {}
+
+# Cuánto se guarda una sesión vacía, en segundos, si el token no cambia antes.
+EMPTY_RETRY = 10 * 60
+
+# El fichero en que FastF1 guarda el token de F1TV (`TokenManager`).
+_TOKEN_PATH = os.path.join(platformdirs.user_data_dir("fastf1"), "f1auth_token.json")
 
 # Todo lo que habla con FastF1 por red va bajo este cerrojo: su cache (SQLite)
 # no admite dos hilos a la vez.
@@ -215,23 +234,62 @@ def _resolve_session(session_key: str) -> Any:
     ``AÑO-RONDA-SESIÓN`` — con guiones, no barras, porque es **un solo segmento
     de path**: ``2026-13-R``, ``2026-13-Q``, ``2026-13-FP2``.
 
-    Carga una sesión a la vez (``_load_lock``); una sesión ya en memoria no
-    espera.
+    Carga una sesión a la vez (``_load_lock``); una sesión ya en memoria y con
+    datos no espera. Una vacía se sirve como está hasta que toca volver a pedirla
+    (``_empty``).
     """
     cached = _sessions.get(session_key)
-    if cached is not None:
+    if cached is not None and id(cached) not in _empty:
         return cached
     with _load_lock:
-        cached = _sessions.get(session_key)
+        cached = _memo_get(session_key)
         if cached is None:
             key = _race_key(session_key)
-            cached = _sessions.get(key)
+            cached = _memo_get(key)
             if cached is None:
+                stamp = _token_stamp()
                 cached = _load_session(key)
                 _sessions[key] = cached
+                if _is_empty(cached):
+                    _empty[id(cached)] = (time.monotonic(), stamp)
                 _give_back()
             _sessions[session_key] = cached
         return cached
+
+
+def _memo_get(session_key: str) -> Any:
+    """Lo que el memo tiene para ``session_key``, o ``None``. Una vacía a la que le
+    toca volver a pedirse sale del memo con todas sus claves, y da ``None``. Solo se
+    llama con ``_load_lock``."""
+    cached = _sessions.get(session_key)
+    mark = _empty.get(id(cached)) if cached is not None else None
+    if mark is None:
+        return cached
+    at, stamp = mark
+    if time.monotonic() - at < EMPTY_RETRY and _token_stamp() == stamp:
+        return cached
+    for k in [k for k, v in _sessions.items() if v is cached]:
+        del _sessions[k]
+    del _empty[id(cached)]
+    return None
+
+
+def _is_empty(session: Any) -> bool:
+    """Si la sesión cargó sin vueltas: sin token, FastF1 no falla, deja las vueltas sin
+    cargar (``DataNotLoadedError``) o la tabla vacía."""
+    try:
+        laps = session.laps
+    except DataNotLoadedError:
+        return True
+    return laps is None or bool(getattr(laps, "empty", True))
+
+
+def _token_stamp() -> Optional[int]:
+    """La hora de modificación del fichero del token, en ns; ``None`` si no existe."""
+    try:
+        return os.stat(_TOKEN_PATH).st_mtime_ns
+    except OSError:
+        return None
 
 
 def _race_key(session_key: str) -> str:
