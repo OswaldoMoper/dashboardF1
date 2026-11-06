@@ -4361,6 +4361,8 @@ main = hspec $ do
       forAll reachableLayout (dragKeepsLayoutValid . snd)
     prop "la que se lleva queda donde se pide, dentro del lienzo y con su tamaño" $
       forAll reachableLayout (moveKeepsHeld . snd)
+    prop "cada apartada se mueve en un solo eje: conserva x y ancho, o y y alto" $
+      forAll reachableLayout (pushedKeepOneAxis . snd)
 
   -- Un lienzo de 1200 × 600 px: 10 px por unidad en x y 5 en y, para que las
   -- cuentas salgan exactas en coma flotante.
@@ -6496,6 +6498,19 @@ validAfter start l =
 dragKeepsLayoutValid :: [WidgetConfig] -> Int -> Bool -> Int -> Int -> Bool
 dragKeepsLayoutValid start i resize a b =
   maybe True (validAfter start) (applyDrag gridDivisions start (gestureOn start i resize a b))
+
+-- | Con el imán o sin él, cada tarjeta que no es la que se lleva se aparta una vez y
+-- por un eje: conserva su x y su ancho, o su y y su alto. Que no crezca no es regla:
+-- con el imán, si la cadena encoge, el redondeo a la rejilla y la del borde pueden
+-- hacerla crecer.
+pushedKeepOneAxis :: [WidgetConfig] -> Bool -> Int -> Bool -> Int -> Int -> Bool
+pushedKeepOneAxis start magnet i resize a b =
+  case applyDrag (if magnet then gridDivisions else 0) start (gestureOn start i resize a b) of
+    Nothing -> True
+    Just l  -> and [ oneAxis p q | p <- start, q <- l, widgetId p == widgetId q, widgetId p /= held ]
+  where
+    held = widgetId (start !! (i `mod` length start))
+    oneAxis p q = (wcX p == wcX q && wcW p == wcW q) || (wcY p == wcY q && wcH p == wcH q)
 
 -- | La tarjeta que se lleva no encoge nunca y acaba donde se pidió, recortado al
 -- lienzo.
