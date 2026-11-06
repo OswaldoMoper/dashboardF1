@@ -88,8 +88,9 @@ import           Sync                       (trySync)
 import           System.Directory           (createDirectoryIfMissing,
                                              doesDirectoryExist, doesFileExist,
                                              getFileSize, getHomeDirectory,
-                                             getModificationTime, listDirectory)
-import           System.Environment         (getEnvironment)
+                                             getModificationTime, listDirectory,
+                                             makeAbsolute)
+import           System.Environment         (getEnvironment, lookupEnv)
 import           System.Exit                (ExitCode (..))
 import           System.FilePath            (takeFileName, (</>))
 import           System.IO                  (BufferMode (..), Handle,
@@ -619,15 +620,26 @@ stopUnits prefix =
     , ["reset-failed", T.unpack prefix <> "*"]
     ]
 
--- | @~\/MOPER@, donde viven las carpetas del día.
+-- | Donde viven las carpetas del día: @DASHBOARDF1_CARPETA@ si está puesta y no vacía
+-- (relativa al directorio actual), y si no @~\/MOPER@. Siempre absoluta; no comprueba
+-- que exista.
 mainFolder :: IO FilePath
-mainFolder = (</> "MOPER") <$> getHomeDirectory
+mainFolder = do
+  chosen <- lookupEnv "DASHBOARDF1_CARPETA"
+  case chosen of
+    Just dir | not (null dir) -> makeAbsolute dir
+    _                         -> (</> "MOPER") <$> getHomeDirectory
 
--- | Las carpetas del automatismo que hay en @~\/MOPER@, por nombre.
+-- | Las carpetas del automatismo que hay en 'mainFolder', por nombre; ninguna si
+-- 'mainFolder' no existe.
 autoFolders :: IO [FilePath]
 autoFolders = do
   base <- mainFolder
-  names <- filter ("dashboardF1-auto-" `isPrefixOf`) <$> listDirectory base
+  exists <- doesDirectoryExist base
+  names <-
+    if exists
+      then filter ("dashboardF1-auto-" `isPrefixOf`) <$> listDirectory base
+      else pure []
   map snd . filter fst <$> mapM (\n -> (\d -> (d, n)) <$> doesDirectoryExist (base </> n)) names
 
 -- | La carpeta en la que se escribió lo último (por su @resumen.txt@).

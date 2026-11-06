@@ -6107,8 +6107,17 @@ main = hspec $ do
         `shouldBe` ["Se paran (viernes 23):", "Se paran:"]
 
     it "la cabecera de la vista sale de la carpeta (D191)" $
-      Auto.viewHeader "dashboardF1-auto-viernes-2026-10-23-2"
+      Auto.viewHeader "~/MOPER" "dashboardF1-auto-viernes-2026-10-23-2"
         `shouldBe` "Viernes 23 · ~/MOPER/dashboardF1-auto-viernes-2026-10-23-2/"
+
+    it "la cabecera dice la carpeta que se usa, también fuera del home" $
+      Auto.viewHeader "/datos/f1" "dashboardF1-auto-viernes-2026-10-23-2"
+        `shouldBe` "Viernes 23 · /datos/f1/dashboardF1-auto-viernes-2026-10-23-2/"
+
+    it "la carpeta se enseña con ~ solo si está dentro del home" $
+      map (Auto.displayBase "/home/piloto")
+          ["/home/piloto/MOPER", "/home/piloto", "/home/pilotos/MOPER", "/datos/f1", "/datos/f1/"]
+        `shouldBe` ["~/MOPER", "~", "/home/pilotos/MOPER", "/datos/f1", "/datos/f1"]
 
   describe "Auto: la carpeta contra systemd" $ do
     it "lo de systemd, por descripción (salida real de list-units): pendiente con su hora, corriendo, falló" $

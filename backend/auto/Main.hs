@@ -6,6 +6,8 @@
 -- * @dashboardF1-auto estado@ — vuelve a enseñar la vista de la última carpeta.
 -- * @dashboardF1-auto cancela@ — enseña lo que queda en systemd y, con el OK, lo para.
 -- * @dashboardF1-auto dispara \<carpeta\> \<pieza\>@ — lo que corre cada temporizador.
+--
+-- Las carpetas del día van en @DASHBOARDF1_CARPETA@, o en @~\/MOPER@ sin ella ('mainFolder').
 module Main (main) where
 
 import           Auto.Context
@@ -18,9 +20,11 @@ import qualified Data.Text           as T
 import qualified Data.Text.IO        as TIO
 import           Data.Time.Clock     (getCurrentTime)
 import           Handler.Live.Helper (CalendarEntry (..))
-import           System.Directory    (createDirectoryIfMissing, doesFileExist,
+import           System.Directory    (createDirectoryIfMissing,
+                                      doesDirectoryExist, doesFileExist,
                                       findExecutable, getCurrentDirectory,
-                                      listDirectory, makeAbsolute)
+                                      getHomeDirectory, listDirectory,
+                                      makeAbsolute)
 import           System.Environment  (getArgs, getExecutablePath, lookupEnv)
 import           System.Exit         (exitFailure, exitSuccess)
 import           System.FilePath     ((</>))
@@ -106,12 +110,12 @@ launch l = do
   mapM_ say (dayTable now other plan)
   when (isJust manual && not (null fromCalendar)) $
     say ("  El calendario decía: " <> slotsSummary fromCalendar)
-  base <- mainFolder
+  (base, shown) <- existingBase
   existing <- listDirectory base
   let folder = nextFolder (dayFolder (if laEnsayo l then "ensayo" else label) day) existing
       path = base </> folder
   say ""
-  say ("Carpeta: ~/MOPER/" <> T.pack folder <> "/")
+  say ("Carpeta: " <> shown <> "/" <> T.pack folder <> "/")
   ok <- confirm "¿Programar? [s/N] "
   unless ok $ do
     say "No se programa nada."
@@ -167,7 +171,7 @@ pickInstance = do
 -- | Repinta la vista de esa carpeta cada minuto, hasta Ctrl+C.
 view :: FilePath -> IO ()
 view folder = forever $ do
-  base <- mainFolder
+  (base, shown) <- baseFolder
   let path = base </> folder
       prefix = T.pack folder <> "-"
   events <- readLines (path </> "resumen.txt")
@@ -177,7 +181,7 @@ view folder = forever $ do
   observer <- readLines (path </> "observador.txt")
   let states = unitStates units timers
       lines' =
-        viewLines (viewHeader folder) events states (reconcile (expectedPending events) states)
+        viewLines (viewHeader shown folder) events states (reconcile (expectedPending events) states)
           (lastOf vigia) (lastOf observer)
   TIO.putStr ("\ESC[2J\ESC[H" <> T.unlines lines')
   hFlush stdout
@@ -186,7 +190,23 @@ view folder = forever $ do
     lastOf xs = if null xs then Nothing else Just (last xs)
 
 estado :: IO ()
-estado = newestFolder >>= maybe (say "No hay ningún día lanzado.") view
+estado = existingBase >> newestFolder >>= maybe (say "No hay ningún día lanzado.") view
+
+-- | 'mainFolder' y cómo se enseña ('displayBase').
+baseFolder :: IO (FilePath, Text)
+baseFolder = do
+  base <- mainFolder
+  home <- getHomeDirectory
+  pure (base, displayBase home base)
+
+-- | Como 'baseFolder', pero si la carpeta no existe lo dice y sale.
+existingBase :: IO (FilePath, Text)
+existingBase = do
+  found@(base, shown) <- baseFolder
+  exists <- doesDirectoryExist base
+  unless exists $
+    quit ("No existe " <> shown <> ": créala, o pon otra carpeta en DASHBOARDF1_CARPETA.")
+  pure found
 
 cancela :: IO ()
 cancela = do

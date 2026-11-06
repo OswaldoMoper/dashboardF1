@@ -133,6 +133,7 @@ module Auto.Helper
   , expectedPending
   , reconcile
   , cancelHeader
+  , displayBase
   , viewHeader
   , viewLines
   ) where
@@ -148,7 +149,7 @@ import           Data.Aeson.Types      (Parser, parseEither)
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Lazy  as BL
 import           Data.Char             (isDigit)
-import           Data.List             (find, nub, sortOn, (\\))
+import           Data.List             (find, nub, sortOn, stripPrefix, (\\))
 import           Data.Maybe            (catMaybes, fromMaybe, isNothing,
                                         listToMaybe, mapMaybe)
 import           Data.Text             (Text)
@@ -165,6 +166,8 @@ import           Data.Time.LocalTime   (LocalTime (..), TimeZone, localDay,
                                         utcToLocalTime, utcToZonedTime)
 import           Handler.FastF1.Helper (TokenFile (..))
 import           Handler.Live.Helper   (CalendarEntry (..))
+import           System.FilePath       (dropTrailingPathSeparator, joinPath,
+                                        splitDirectories)
 import           Text.Printf           (printf)
 
 -- | La hora de México, fija en UTC−6: sin horario de verano desde 2022, y sin
@@ -1061,7 +1064,7 @@ instanceChange t who before after
       Just p  -> eventLine t "cambia" (who <> " a " <> instanceAt p)
       Nothing -> eventLine t "pierde" (who <> ": no contesta ninguna instancia")
 
--- | La carpeta del día, dentro de @~\/MOPER@.
+-- | La carpeta del día, dentro de la del automatismo.
 dayFolder :: Text -> Day -> FilePath
 dayFolder label day = "dashboardF1-auto-" <> T.unpack label <> "-" <> showGregorian day
 
@@ -1428,9 +1431,18 @@ cancelHeader day = "Se paran" <> maybe "" dayPart day <> ":"
       let (_, _, dom) = toGregorian d
        in " (" <> T.toLower (weekdayDisplay (dayOfWeek d)) <> " " <> T.pack (show dom) <> ")"
 
--- | La cabecera de la vista (D191): «Viernes 23 · ~/MOPER/\<carpeta\>/».
-viewHeader :: FilePath -> Text
-viewHeader folder = maybe "" dayPart (folderDay folder) <> "~/MOPER/" <> T.pack folder <> "/"
+-- | La carpeta del automatismo como se enseña: con @~@ si está dentro del home (el primer
+-- argumento) y, si no, entera; sin barra final.
+displayBase :: FilePath -> FilePath -> Text
+displayBase home base =
+  case stripPrefix (splitDirectories home) (splitDirectories base) of
+    Just rest -> T.pack (joinPath ("~" : rest))
+    Nothing   -> T.pack (dropTrailingPathSeparator base)
+
+-- | La cabecera de la vista (D191): «Viernes 23 · ~/MOPER/\<carpeta\>/», con la carpeta del
+-- automatismo como la da 'displayBase'.
+viewHeader :: Text -> FilePath -> Text
+viewHeader base folder = maybe "" dayPart (folderDay folder) <> base <> "/" <> T.pack folder <> "/"
   where
     dayPart d =
       let (_, _, dom) = toGregorian d
