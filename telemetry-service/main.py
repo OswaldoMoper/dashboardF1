@@ -292,6 +292,66 @@ def _token_stamp() -> Optional[int]:
         return None
 
 
+# La fracción del tramo de las vueltas que tiene que cubrir la telemetría para darla
+# por entera (`_telemetry_incomplete`).
+TELEMETRY_MIN_COVERAGE = 0.5
+
+
+def _telemetry_incomplete(session: Any) -> bool:
+    """Si la telemetría de una sesión cargada cubre menos de ``TELEMETRY_MIN_COVERAGE``
+    del tramo de sus vueltas, contando todos los coches juntos: sin telemetría
+    cargada, sí. Una sesión sin vueltas no cuenta, porque eso es ``_is_empty``."""
+    coverage = _coverage(_telemetry_span(session), _laps_span(session))
+    return coverage is not None and coverage < TELEMETRY_MIN_COVERAGE
+
+
+def _coverage(
+    telemetry: Optional[Tuple[float, float]], laps: Optional[Tuple[float, float]]
+) -> Optional[float]:
+    """Qué fracción del tramo de las vueltas cubre el de la telemetría, de 0 a 1. Cada
+    tramo es ``(desde, hasta)`` en segundos de sesión. ``None`` sin vueltas o con su
+    tramo vacío; ``0`` sin telemetría."""
+    if laps is None or laps[1] <= laps[0]:
+        return None
+    if telemetry is None:
+        return 0.0
+    overlap = min(telemetry[1], laps[1]) - max(telemetry[0], laps[0])
+    return max(0.0, min(1.0, overlap / (laps[1] - laps[0])))
+
+
+def _laps_span(session: Any) -> Optional[Tuple[float, float]]:
+    """De la primera salida a la última llegada de las vueltas; ``None`` sin vueltas."""
+    try:
+        laps = session.laps
+    except DataNotLoadedError:
+        return None
+    return _span(_seconds(laps["LapStartTime"].min()), _seconds(laps["Time"].max()))
+
+
+def _telemetry_span(session: Any) -> Optional[Tuple[float, float]]:
+    """Del primer al último ``SessionTime`` de la telemetría de todos los coches;
+    ``None`` sin telemetría."""
+    try:
+        cars = session.car_data
+    except DataNotLoadedError:
+        return None
+    times = [t for car in cars.values() for t in (car["SessionTime"].min(), car["SessionTime"].max())]
+    seconds = [s for s in map(_seconds, times) if s is not None]
+    return _span(min(seconds), max(seconds)) if seconds else None
+
+
+def _span(start: Optional[float], end: Optional[float]) -> Optional[Tuple[float, float]]:
+    return None if start is None or end is None else (start, end)
+
+
+def _seconds(value: Any) -> Optional[float]:
+    """Un ``Timedelta`` en segundos; ``None`` si es ``NaT`` o no lo es."""
+    try:
+        return _num(value.total_seconds())
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def _race_key(session_key: str) -> str:
     """La clave del memo para ``session_key``: ``latest`` pasa a ``AÑO-RONDA-R`` y
     lo demás queda igual. Consulta el calendario, así que solo se llama con
