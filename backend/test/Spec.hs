@@ -1801,6 +1801,83 @@ main = hspec $ do
       (sessionStateLabel SessionRedFlag, sessionStateFrom "Red")
         `shouldBe` ("Red", SessionRedFlag)
 
+  -- La roja del topic SessionStatus, con los avisos REALES de dos grabaciones: la
+  -- carrera de México (2026-11-01, 14:00 locales, 20:00 UTC), cuya roja llegó como
+  -- «RED FLAG - RACE SUSPENDED» sin bandera de pista y se reanudó sin verde (topic
+  -- `Aborted` 21:06:02, `Started` 21:45:00), y la P1 de Brasil (2026-11-06, 12:30
+  -- locales, 15:30 UTC), con la roja también en la pista y el topic en `Inactive`
+  -- de 15:47:47 a 15:49:00.
+  describe "la roja del topic SessionStatus" $ do
+    let instant :: Integer -> Int -> Int -> Int -> UTCTime
+        instant d h m s = addUTCTime (fromIntegral (h * 3600 + m * 60 + s))
+                            (UTCTime (fromGregorian 2026 11 (fromIntegral d)) 0)
+        notice u msg = FeedNotice u "Other" msg
+        upTo u fs = fs { fsFlags   = filter ((<= u) . ffUtc) (fsFlags fs)
+                       , fsNotices = filter ((<= u) . fnUtc) (fsNotices fs) }
+        mexico = (malaysiaQuali "" "Started")
+                   { fsType = "Race", fsName = "Race"
+                   , fsStartDate = Just "2026-11-01T14:00:00", fsGmtOffset = Just "-06:00:00"
+                   , fsFlags =
+                       [ FeedFlag "2026-11-01T20:14:53" "CLEAR" "Track"
+                       , FeedFlag "2026-11-01T21:08:04" "CLEAR" "Track"
+                       ]
+                   , fsNotices =
+                       [ notice "2026-11-01T21:06:02" "RED FLAG - RACE SUSPENDED"
+                       , notice "2026-11-01T21:32:43" "RACE WILL RESUME AT 15:45"
+                       ]
+                   }
+        brazil = (malaysiaQuali "" "Started")
+                   { fsType = "Practice", fsName = "Practice 1"
+                   , fsStartDate = Just "2026-11-06T12:30:00", fsGmtOffset = Just "-03:00:00"
+                   , fsFlags =
+                       [ FeedFlag "2026-11-06T15:42:08" "RED"   "Track"
+                       , FeedFlag "2026-11-06T15:44:15" "CLEAR" "Track"
+                       , FeedFlag "2026-11-06T15:49:00" "GREEN" "Track"
+                       ]
+                   , fsNotices = [notice "2026-11-06T15:47:44" "SESSION WILL RESUME AT 12:49"]
+                   }
+        -- Lo que había llegado hasta `u`, con el topic `topic`, servido en `now`.
+        servedAt fs topic u now = feedSession now (upTo u fs) { fsTopicStatus = topic }
+
+    it "México: con el topic en Aborted dice «Bandera roja» aunque la pista no lo diga" $
+      map (\(topic, u, now) -> siState (servedAt mexico topic u now))
+          [ (Just "Started", "2026-11-01T21:05:00", instant 1 21 5 0)
+          , (Just "Aborted", "2026-11-01T21:07:00", instant 1 21 7 0)
+          , (Just "Aborted", "2026-11-01T21:40:00", instant 1 21 40 0)
+          , (Just "Started", "2026-11-01T21:46:00", instant 1 21 46 0)
+          ]
+        `shouldBe`
+          [ Just (StateReading SessionStarted Heard)
+          , Just (StateReading SessionRedFlag Heard)
+          , Just (StateReading SessionRedFlag Heard)
+          , Just (StateReading SessionStarted Heard)
+          ]
+
+    it "México: con la roja del topic cuenta hasta «RACE WILL RESUME AT 15:45»" $
+      siCountdown (servedAt mexico (Just "Aborted") "2026-11-01T21:35:00" (instant 1 21 35 0))
+        `shouldBe` Just (Countdown "Reanuda" 600)
+
+    it "Brasil: con el topic en Inactive y la pista en roja sigue la roja, y la verde la cierra" $
+      map (\(u, now) -> (siState (servedAt brazil (Just "Inactive") u now), siCountdown (servedAt brazil (Just "Inactive") u now)))
+          [ ("2026-11-06T15:48:00", instant 6 15 48 0)
+          , ("2026-11-06T15:49:30", instant 6 15 49 30)
+          ]
+        `shouldBe`
+          [ (Just (StateReading SessionRedFlag Heard), Just (Countdown "Reanuda" 60))
+          , (Just (StateReading SessionStarted Heard), Nothing)
+          ]
+
+    it "con el topic en Started y la pista en roja, sigue la roja" $
+      siState (servedAt brazil (Just "Started") "2026-11-06T15:43:00" (instant 6 15 43 0))
+        `shouldBe` Just (StateReading SessionRedFlag Heard)
+
+    it "salvo Aborted, ningún valor del topic cambia lo que dice la pista" $
+      let instants = [ ("2026-11-06T15:35:00", instant 6 15 35 0), ("2026-11-06T15:43:00", instant 6 15 43 0)
+                     , ("2026-11-06T15:48:00", instant 6 15 48 0), ("2026-11-06T15:50:00", instant 6 15 50 0) ]
+          reading topic = [ siState (servedAt brazil topic u now) | (u, now) <- instants ]
+       in map reading [Just "Inactive", Just "Started", Just "Finished", Just "Finalised", Just "Ends", Just ""]
+            `shouldBe` replicate 6 (reading Nothing)
+
   -- Los avisos con hora, con los REALES de las grabaciones: la carrera de Malasia
   -- (2026-10-04, 15:00 locales, 07:00 UTC, salida retrasada por lluvia), la
   -- clasificación de Bakú (2026-09-25, 16:00 locales, 12:00 UTC, que salió a las 16:04)

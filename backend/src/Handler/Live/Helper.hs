@@ -542,16 +542,18 @@ countdownTo now label at
   | otherwise = Nothing
 
 -- | Con bandera a cuadros entre partes, cuándo sale la siguiente; con la roja, cuándo
--- se reanuda. Solo cuentan los avisos posteriores a la bandera, y manda el último.
+-- se reanuda. Solo cuentan los avisos posteriores al último aviso de pista que cuenta
+-- ('lastTrackFlag') o, sin él, a la hora de inicio, porque la roja del topic llega sin
+-- aviso de pista; y manda el último.
 restartCountdown :: UTCTime -> FeedSession -> SessionInfo -> SessionState -> Maybe Countdown
 restartCountdown now fs info state = do
   wanted <- case state of
     SessionChequered -> Just isPart
     SessionRedFlag   -> Just (== AnnouncedResume)
     _                -> Nothing
-  (flagAt, _) <- lastTrackFlag fs
+  since <- fmap fst (lastTrackFlag fs) <|> sessionStart fs
   (what, at) <- listToMaybe
-    [ (what, at) | (_, NoticeAt what _, Just at) <- noticesSince flagAt fs, wanted what ]
+    [ (what, at) | (_, NoticeAt what _, Just at) <- noticesSince since fs, wanted what ]
   countdownTo now (announcedLabel info what) at
   where
     isPart (AnnouncedPart _) = True
@@ -594,9 +596,12 @@ trackCondition track =
 -- | El estado de la sesión del feed, con las banderas que su campo no tiene.
 --
 -- Lo que diga el campo sale tal cual y como 'Common.Types.Heard', salvo mientras
--- diga «en marcha». Entonces manda el último aviso de pista entre la bandera a
--- cuadros, la roja y la verde, __contando solo los de desde la hora de inicio de la
--- sesión__ (la foto arrastra los de la anterior):
+-- diga «en marcha». Entonces, si el topic 'fsTopicStatus' dice @Aborted@,
+-- 'SessionRedFlag', oída, diga lo que diga la pista (la roja de una carrera puede
+-- llegar sin aviso de pista); ningún otro valor del topic cuenta. Si no, manda el
+-- último aviso de pista entre la bandera a cuadros, la roja y la verde, __contando
+-- solo los de desde la hora de inicio de la sesión__ (la foto arrastra los de la
+-- anterior):
 --
 -- * la verde, o ninguno: «en marcha»;
 -- * la roja: 'SessionRedFlag', oída, hasta la verde;
@@ -611,6 +616,8 @@ trackCondition track =
 feedState :: UTCTime -> FeedSession -> StateReading
 feedState now fs =
   case (field, lastTrackFlag fs) of
+    (SessionStarted, _)
+      | topicAborted                         -> StateReading SessionRedFlag Heard
     (SessionStarted, Just (at, Chequered))
       | partAnnouncedSince at                -> StateReading SessionChequered Heard
       | diffUTCTime now at >= chequeredGrace -> StateReading SessionFinalised Derived
@@ -619,6 +626,8 @@ feedState now fs =
     _                                       -> StateReading field Heard
   where
     field = sessionStateFrom (fsState fs)
+
+    topicAborted = fmap (T.toLower . T.strip) (fsTopicStatus fs) == Just "aborted"
 
     partAnnouncedSince at =
       T.strip (fsType fs) == "Qualifying"
