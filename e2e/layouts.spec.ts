@@ -235,7 +235,7 @@ test.describe('el arrastre', () => {
     expect(await units(page)).toEqual([[0, 0, 60, 90], [60, 30, 60, 85], [0, 90, 60, 30], [60, 0, 60, 30]]);
   });
 
-  test('Pilotos a la columna derecha no se deja (D126): se marca y al soltar vuelve', async ({ page }) => {
+  test('Pilotos a la columna derecha no se deja: se marca y al soltar vuelve', async ({ page }) => {
     await page.getByRole('button', { name: '✎ Editar layout' }).click();
     await carry(page, 2, 60, -55);
     await expect(page.locator('.widget-slot--blocked')).toHaveCount(1);

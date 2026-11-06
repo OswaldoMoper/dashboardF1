@@ -221,7 +221,7 @@ cancela = do
   unless ok $ say "No se cancela nada." >> exitSuccess
   now <- getCurrentTime
   base <- mainFolder
-  -- Antes de parar: lo que corre escribe su «para … (cancelado)» al pararse (D200).
+  -- Antes de parar: lo que corre escribe su «para … (cancelado)» al pararse.
   mapM_ (\f -> appendLine (base </> f </> "resumen.txt") (cancelLine now)) newest
   stopUnits "dashboardF1-auto-"
   say "Cancelado."

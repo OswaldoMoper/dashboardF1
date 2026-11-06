@@ -272,7 +272,7 @@ dayPlan cap now slots =
             <> [Planned (Checks (Just (slotName s))) lead Nothing | lead > now]
 
 -- | Cuánto después del inicio previsto de la P1 empieza la foto del reloj, y cuánto dura:
--- de 11:30 a 12:00–12:15, la ventana en que la pestaña se cierra a mano (D213).
+-- de 11:30 a 12:00–12:15, la ventana en que la pestaña se cierra a mano.
 clockPhotoAfter, clockPhotoLength :: NominalDiffTime
 clockPhotoAfter = 30 * 60
 clockPhotoLength = 15 * 60
@@ -381,7 +381,7 @@ logCheck c = (verdict, T.pack (printf "%d con «error», %d de OpenF1 429, %d de
       | lcRateLimited c > 0 || lcFeedCuts c > 0 = Aviso
       | otherwise                               = Ok
 
--- | OpenF1 con su código, o «sin respuesta» (D202).
+-- | OpenF1 con su código, o «sin respuesta».
 openf1Check :: Maybe Int -> (Verdict, Text)
 openf1Check code = (openf1Verdict code, maybe "sin respuesta" (T.pack . show) code)
 
@@ -404,7 +404,7 @@ tokenNeed entries day slots = case todays of
     yearOf d = let (y, _, _) = toGregorian d in y
 
 -- | El juicio del token en ese instante, con lo que tiene que cubrir ('tokenNeed': hoy y,
--- con calendario, el gran premio) y lo que hay en el fichero (D202, D203).
+-- con calendario, el gran premio) y lo que hay en el fichero.
 tokenCheck :: UTCTime -> UTCTime -> Maybe UTCTime -> TokenFile -> (Verdict, Text)
 tokenCheck now today gp file = case file of
   TokenMissing    -> (Falla, "no hay token (no existe ~/.local/share/fastf1/f1auth_token.json)")
@@ -439,7 +439,7 @@ data PageReply = PageReply
   }
 
 -- | El juicio de la página, con las instancias por el orden en que se preguntó (la del
--- lanzamiento primero) y lo que contestó la primera que contestó (D202, D203). Si contestó
+-- lanzamiento primero) y lo que contestó la primera que contestó. Si contestó
 -- otra, AVISO; cualquier petición que no dé lo esperado, FALLA.
 pageCheck :: [Int] -> Maybe PageReply -> (Verdict, Text)
 pageCheck asked Nothing = (Falla, "no contesta " <> T.intercalate " ni " (map instanceAt asked))
@@ -473,7 +473,7 @@ logVerdict given = case given of
   Just (path, Nothing)   -> (Falla, "no existe " <> T.pack path)
   Just (_, Just content) -> logCheck (countLog (sinceLastStart content))
 
--- | La línea «acaba» de una tanda en @resumen.txt@ (D202, D203): cuántas salieron con cada
+-- | La línea «acaba» de una tanda en @resumen.txt@: cuántas salieron con cada
 -- palabra y, entre paréntesis, cuáles no salieron OK.
 checksSummary :: UTCTime -> Text -> [(Text, Verdict)] -> Text
 checksSummary t label results = eventLine t "acaba" (label <> ": " <> T.intercalate ", " counts)
@@ -487,7 +487,7 @@ checksSummary t label results = eventLine t "acaba" (label <> ": " <> T.intercal
     listed Ok _    = ""
     listed _ names = " (" <> T.intercalate ", " names <> ")"
 
--- | La línea de @resumen.txt@ de una tanda que cancelaron a mitad (D204): «para
+-- | La línea de @resumen.txt@ de una tanda que cancelaron a mitad: «para
 -- comprobaciones de arranque (canceladas)».
 checksStopLine :: UTCTime -> Text -> Text
 checksStopLine t label = eventLine t "para" (label <> " (canceladas)")
@@ -571,9 +571,9 @@ liveTable = either (const Nothing) Just . eitherDecode . lrBody
 vigiaJsonName :: UTCTime -> FilePath
 vigiaJsonName = formatTime defaultTimeLocale "%H%M%S.json"
 
--- | La línea de @vigia.txt@ en palabras, para la vista (D196): las dos horas y, por
+-- | La línea de @vigia.txt@ en palabras, para la vista: las dos horas y, por
 -- orden, sesión, estado, vuelta, filas, fuente, OpenF1 y lo que tardó; lo que falta,
--- «sin …» (D201). Sin instancia (@live=-\/-@), solo eso y OpenF1. Una línea que no tiene
+-- «sin …». Sin instancia (@live=-\/-@), solo eso y OpenF1. Una línea que no tiene
 -- la forma de 'vigiaLine' sale tal cual.
 vigiaWords :: Text -> Text
 vigiaWords line = fromMaybe ("vigía " <> line) $ do
@@ -723,7 +723,7 @@ data ObserverEvent
   | PageRead PageReading (Maybe FilePath)  -- ^ Con la captura del minuto, si la hubo.
   deriving (Eq, Show)
 
--- | La línea de @observador.txt@ (D212, D213): las dos horas y lo que pasó. La banda va
+-- | La línea de @observador.txt@: las dos horas y lo que pasó. La banda va
 -- como «título · estado · derecha»; Lap Comparison, con su aviso si lo hay y si no con
 -- la vuelta y la última frontera; de los problemas, cuántos y el primero.
 observerLine :: UTCTime -> ObserverEvent -> Text
@@ -783,15 +783,15 @@ localPath line = case T.breakOn origin line of
   where
     origin = "http://127.0.0.1:"
 
--- | La línea de @resumen.txt@ al cerrar la página por la foto del reloj (D213).
+-- | La línea de @resumen.txt@ al cerrar la página por la foto del reloj.
 pauseLine :: UTCTime -> UTCTime -> Text
 pauseLine t reopen = eventLine t "cierra" ("observador (foto del reloj de la P1, hasta " <> clockPair "%H:%M" reopen <> ")")
 
--- | La línea de @resumen.txt@ al volver a abrir la página tras la pausa (D213).
+-- | La línea de @resumen.txt@ al volver a abrir la página tras la pausa.
 reopenLine :: UTCTime -> Int -> Text
 reopenLine t port = eventLine t "abre" ("observador en " <> instanceAt port)
 
--- | La línea de @resumen.txt@ cuando el lector se cuelga y se relanza (D213).
+-- | La línea de @resumen.txt@ cuando el lector se cuelga y se relanza.
 readerRelaunchLine :: UTCTime -> Text
 readerRelaunchLine t =
   eventLine t "relanza" ("observador (el lector no contestó en " <> T.pack (show readerTimeoutSeconds) <> " s)")
@@ -897,7 +897,7 @@ recordingStep now cap slot table run
     stalled = diffUTCTime now (max lastWrite (slotStart slot)) >= recordingStallAfter
     ended = not (rrAlive run) || stalled
 
--- | La línea de @resumen.txt@ de cómo acabó (D197, D200): «para grabación P1 (Finalised)»,
+-- | La línea de @resumen.txt@ de cómo acabó: «para grabación P1 (Finalised)»,
 -- «(tope)», «(cancelada)», o «deja grabación P1 (se cortó 6 veces; no relanza más)».
 recordingStopLine :: UTCTime -> Account -> Text -> Int -> RecordingEnd -> Text
 recordingStopLine t account session runs end = case end of
@@ -910,7 +910,7 @@ recordingStopLine t account session runs end = case end of
     what = recordingName account session
 
 -- | La línea de @resumen.txt@ de un minuto de la grabación de esa sesión, si lleva:
--- «relanza grabación P1 en grabacion-p1-2.txt (se cortó)» (D197), «(no crece desde las
+-- «relanza grabación P1 en grabacion-p1-2.txt (se cortó)», «(no crece desde las
 -- 11:52)», «(sin conectar; reintenta cada minuto sin contar)» solo en el primer intento,
 -- y «conecta grabación P1 en grabacion-p1-3.txt (tras 8 intentos)».
 recordingStepLine :: UTCTime -> Account -> Text -> RecordingRun -> RecordingStep -> Maybe Text
@@ -1103,7 +1103,7 @@ pieceLabel p = case p of
   Observer _      -> "observador"
   Recording a s   -> "grabación " <> sessionLabel s <> accountLabel a
 
--- | La unidad de systemd de una pieza: la carpeta y la pieza (D190).
+-- | La unidad de systemd de una pieza: la carpeta y la pieza.
 unitName :: FilePath -> Piece -> Text
 unitName folder p = T.pack folder <> "-" <> slug
   where
@@ -1251,7 +1251,7 @@ instanceName p    = "la de :" <> T.pack (show p)
 instanceAt :: Int -> Text
 instanceAt p = instanceName p <> " en :" <> T.pack (show p)
 
--- | La cabecera de la tabla (D189): el día, el gran premio si se sabe y las horas.
+-- | La cabecera de la tabla: el día, el gran premio si se sabe y las horas.
 dayHeader :: Day -> Maybe Text -> Text
 dayHeader day gp =
   T.intercalate " · " ([dateText] <> maybe [] pure gp <> ["horas de México (UTC)"])
@@ -1274,7 +1274,7 @@ weekdayDisplay d = case d of
   Saturday  -> "Sábado"
   Sunday    -> "Domingo"
 
--- | La tabla del día antes del OK (D189). Con horas que no son del calendario de la
+-- | La tabla del día antes del OK. Con horas que no son del calendario de la
 -- instancia ('Just' con su origen, «a mano» o «Jolpica»), una columna más con la hora
 -- de la sesión de cada fila.
 dayTable :: UTCTime -> Maybe (Text, [Slot]) -> [Planned] -> [Text]
@@ -1423,7 +1423,7 @@ reconcile expected states =
     pending = [label | (label, st) <- states, "pendiente" `T.isPrefixOf` st]
     aviso why label = verdictWord Aviso <> "  " <> why <> label
 
--- | La primera línea de @cancela@ (D193): «Se paran (viernes 23):».
+-- | La primera línea de @cancela@: «Se paran (viernes 23):».
 cancelHeader :: Maybe Day -> Text
 cancelHeader day = "Se paran" <> maybe "" dayPart day <> ":"
   where
@@ -1439,7 +1439,7 @@ displayBase home base =
     Just rest -> T.pack (joinPath ("~" : rest))
     Nothing   -> T.pack (dropTrailingPathSeparator base)
 
--- | La cabecera de la vista (D191): «Viernes 23 · ~/MOPER/\<carpeta\>/», con la carpeta del
+-- | La cabecera de la vista: «Viernes 23 · ~/MOPER/\<carpeta\>/», con la carpeta del
 -- automatismo como la da 'displayBase'.
 viewHeader :: Text -> FilePath -> Text
 viewHeader base folder = maybe "" dayPart (folderDay folder) <> base <> "/" <> T.pack folder <> "/"
@@ -1448,8 +1448,8 @@ viewHeader base folder = maybe "" dayPart (folderDay folder) <> base <> "/" <> T
       let (_, _, dom) = toGregorian d
        in weekdayDisplay (dayOfWeek d) <> " " <> T.pack (show dom) <> " · "
 
--- | La vista (D191): la cabecera, los sucesos, lo que sigue en systemd, los avisos, la
--- última línea del vigía, en palabras ('vigiaWords'), y la del observador, tal cual (D213).
+-- | La vista: la cabecera, los sucesos, lo que sigue en systemd, los avisos, la
+-- última línea del vigía, en palabras ('vigiaWords'), y la del observador, tal cual.
 viewLines :: Text -> [Text] -> [(Text, Text)] -> [Text] -> Maybe Text -> Maybe Text -> [Text]
 viewLines header events states avisos vigia observer =
   [header, ""]

@@ -332,7 +332,7 @@ fileState path = either (const Nothing) Just <$> trySync ((,) <$> getFileSize pa
 -- | El lector vivo: su entrada, su salida y su proceso.
 data Reader = Reader Handle Handle ProcessHandle
 
--- | El observador, en la carpeta del día (D205, D212, D213): lanza el lector (ese
+-- | El observador, en la carpeta del día: lanza el lector (ese
 -- ejecutable) y cada 'vigiaPeriod' abre la página en la primera instancia que la sirve,
 -- o la lee y, cuando toca ('captureDue'), la captura. Escribe su línea en
 -- @observador.txt@ y cada lectura tal cual en @observador\/@. __En la pausa de la foto
@@ -502,7 +502,7 @@ firstAnswer ports = getCurrentTime >>= go ports
         Nothing -> go rest begun
 
 -- | Una tanda de comprobaciones en la carpeta del día, con la hora hasta la que tiene que
--- valer el token hoy (D202, D203): OpenF1, el token de F1TV, la página y el log de la
+-- valer el token hoy: OpenF1, el token de F1TV, la página y el log de la
 -- instancia, cada una con su línea en @comprobaciones.txt@; en @resumen.txt@, «arranca»
 -- al empezar y «acaba» con la cuenta, o, con SIGINT (lo que manda @cancela@), su línea de
 -- parada. __Del token solo sale la caducidad__ ('tokenExpiry').

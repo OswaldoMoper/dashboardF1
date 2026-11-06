@@ -5279,7 +5279,7 @@ main = hspec $ do
                    , Auto.Planned (Auto.Recording Auto.WithAccount "Ensayo")    (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    ]
 
-    it "la pausa del observador es la foto del reloj: de +30 a +45 min de la P1 prevista (D213)" $
+    it "la pausa del observador es la foto del reloj: de +30 a +45 min de la P1 prevista" $
       ( Auto.clockPhotoWindow austinSlots
       , Auto.clockPhotoWindow [practice2Slot]
       , map (\t -> Auto.inPause t (Auto.clockPhotoWindow austinSlots))
@@ -5378,7 +5378,7 @@ main = hspec $ do
         `shouldBe` "0 con «error», 3 de OpenF1 429, 6 de cortes del feed"
 
   describe "Auto: las líneas de los ficheros" $ do
-    it "comprobaciones.txt: hora de México y UTC, palabra, qué y detalle (D189)" $
+    it "comprobaciones.txt: hora de México y UTC, palabra, qué y detalle" $
       Auto.checkLine (addUTCTime 11 (atUtc 23 16 2)) Auto.Ok "instancia" "master en :3000 responde"
         `shouldBe` "10:02:11 (16:02:11) OK     instancia   master en :3000 responde"
 
@@ -5399,11 +5399,11 @@ main = hspec $ do
                    , "17:32:00 live=-/- fetched=- sesion=- estado=- vuelta=- filas=0 t=60.000000s openf1=000"
                    ]
 
-    it "la línea del vigía en palabras, con la línea real del 10 de octubre (D196)" $
+    it "la línea del vigía en palabras, con la línea real del 10 de octubre" $
       Auto.vigiaWords "09:59:20 live=fresh/feed fetched=- sesion=Sprint estado=Started vuelta=11 filas=22 t=1.859218s openf1=401"
         `shouldBe` "vigía 03:59 (09:59): Sprint · Started · vuelta 11 · 22 filas · feed (fresh) · OpenF1 401 · 1,9 s"
 
-    it "lo que falta dice «sin …»; sin instancia, solo eso y OpenF1 (D201)" $
+    it "lo que falta dice «sin …»; sin instancia, solo eso y OpenF1" $
       map Auto.vigiaWords
           [ "16:21:00 live=recent/openf1 fetched=2026-10-23T16:20:00Z sesion=Practice 1 estado=- vuelta=- filas=1 t=0.081000s openf1=200"
           , "17:10:00 live=-/- fetched=- sesion=- estado=- vuelta=- filas=0 t=30.000000s openf1=200"
@@ -5430,7 +5430,7 @@ main = hspec $ do
     it "el .json de cada minuto lleva la hora UTC, como el manual" $
       Auto.vigiaJsonName (addUTCTime 5 (atUtc 23 16 5)) `shouldBe` "160505.json"
 
-    it "cómo para el vigía, y lo que arranca o para no cambia lo pendiente (D197, D200)" $
+    it "cómo para el vigía, y lo que arranca o para no cambia lo pendiente" $
       ( map (Auto.vigiaStopLine (atUtc 23 22 20)) [Auto.VigiaQuiet, Auto.VigiaCapped, Auto.VigiaCancelled]
       , Auto.expectedPending
           [ Auto.programLine (atUtc 23 16 0) (Auto.Planned Auto.Vigia (atUtc 23 16 0) Nothing)
@@ -5480,7 +5480,7 @@ main = hspec $ do
     it "pregunta primero a la del lanzamiento y después a la otra" $
       map (Auto.askOrder [3000, 3001]) [3000, 3001] `shouldBe` [[3000, 3001], [3001, 3000]]
 
-    it "cada cambio de quién contesta deja su línea, también al volver y al no contestar nadie (D198)" $
+    it "cada cambio de quién contesta deja su línea, también al volver y al no contestar nadie" $
       map (uncurry (Auto.instanceChange (atUtc 23 17 10) "vigía"))
           [(Just 3000, Just 3000), (Just 3000, Just 3001), (Just 3001, Just 3000), (Just 3001, Nothing), (Nothing, Nothing)]
         `shouldBe` [ Nothing
@@ -5589,7 +5589,7 @@ main = hspec $ do
                        , Nothing
                        ]
 
-    it "lo que escribe en resumen.txt (D197, D198, D200)" $
+    it "lo que escribe en resumen.txt" $
       let t = atUtc 23 17 40
        in ( Auto.recordingStepLine t Auto.WithoutAccount "Practice 1" (writing False 1 t) (Auto.Relaunch 2 Auto.Cut)
           , map (Auto.recordingStopLine t Auto.WithoutAccount "Practice 1" 6)
@@ -5735,7 +5735,7 @@ main = hspec $ do
       f1tvPath `shouldBe` "/api/f1tv"
 
   describe "Auto: las comprobaciones" $ do
-    it "OpenF1 con su código, o «sin respuesta» (D202)" $
+    it "OpenF1 con su código, o «sin respuesta»" $
       map Auto.openf1Check [Just 200, Just 401, Nothing]
         `shouldBe` [(Auto.Ok, "200"), (Auto.Aviso, "401"), (Auto.Falla, "sin respuesta")]
 
@@ -5754,7 +5754,7 @@ main = hspec $ do
       map FastF1.tokenExpiry [tokenJson 2 "1792953900.0", fakeJwt, "{\"version\": 1, \"value\": \"x\"}"]
         `shouldBe` [Nothing, Nothing, Nothing]
 
-    it "los dos umbrales del token y lo que dice cada uno (D202, D203)" $
+    it "los dos umbrales del token y lo que dice cada uno" $
       let check = Auto.tokenCheck (atUtc 23 16 0) (atUtc 23 22 0) (Just (atUtc 25 22 0)) . FastF1.TokenExpires
        in map check [atUtc 26 16 40, atUtc 25 18 40, atUtc 23 19 10, atUtc 13 15 40]
             `shouldBe` [ (Auto.Ok, "vale hasta lun 26 10:40 (16:40)")
@@ -5810,7 +5810,7 @@ main = hspec $ do
             ]
        in Auto.tokenNeed calendar austinFriday austinSlots `shouldBe` Just (atUtc 23 18 30, Just (atUtc 25 22 0))
 
-    it "la página: los tres códigos y la sesión; si contesta la otra, AVISO; si ninguna, FALLA (D202, D203)" $
+    it "la página: los tres códigos y la sesión; si contesta la otra, AVISO; si ninguna, FALLA" $
       let page p = Auto.PageReply p 200 (Just "text/html; charset=utf-8") (Just 200) (Just (200, encode (liveOf "Race" SessionFinalised Derived)))
        in [ Auto.pageCheck [3000, 3001] (Just (page 3000))
           , Auto.pageCheck [3000, 3001] (Just (page 3001))
@@ -5844,7 +5844,7 @@ main = hspec $ do
                    , (Auto.Aviso, "0 con «error», 1 de OpenF1 429, 6 de cortes del feed")
                    ]
 
-    it "lo que escribe una tanda: su línea en comprobaciones.txt y la cuenta en resumen.txt (D202, D203)" $
+    it "lo que escribe una tanda: su línea en comprobaciones.txt y la cuenta en resumen.txt" $
       ( Auto.checkLine (addUTCTime 1 (atUtc 23 16 0)) Auto.Aviso "token F1TV"
           "vale hoy; caduca el dom 25 12:40 (18:40), antes del fin del GP"
       , Auto.checksSummary (atUtc 23 16 0) "comprobaciones de arranque"
@@ -5857,7 +5857,7 @@ main = hspec $ do
                    , "10:45 (16:45) acaba    comprobaciones antes de la P1: 2 OK, 1 AVISO (log), 1 FALLA (página)"
                    )
 
-    it "una tanda cancelada a mitad dice que la cancelaron, como el vigía y la grabación (D204)" $
+    it "una tanda cancelada a mitad dice que la cancelaron, como el vigía y la grabación" $
       Auto.checksStopLine (atUtc 23 17 6) "comprobaciones de arranque"
         `shouldBe` "11:06 (17:06) para     comprobaciones de arranque (canceladas)"
 
@@ -5890,11 +5890,11 @@ main = hspec $ do
       )
         `shouldBe` (Nothing, Just (Just "no hay página abierta"))
 
-    it "la línea de un minuto, como D212: la banda partida, Live y la última frontera, y la captura" $
+    it "la línea de un minuto: la banda partida, Live y la última frontera, y la captura" $
       Auto.observerLine (atUtc 19 22 33) (Auto.PageRead vivoReading (Just "223300.png"))
         `shouldBe` "observador 16:33 (22:33): banda «Singapore Grand Prix · Singapore · Race · En marcha · United States Grand Prix · en 9 d 23 h 33 min» · Live Timing 22 filas · Lap Comparison Live, más rápida, S3 −0.999 s · sin problemas · captura 223300.png"
 
-    it "con el aviso de Lap Comparison, el aviso en vez de la vuelta (D212)" $
+    it "con el aviso de Lap Comparison, el aviso en vez de la vuelta" $
       Auto.observerLine (atUtc 19 22 34) (Auto.PageRead acabadaReading Nothing)
         `shouldBe` "observador 16:34 (22:34): banda «Singapore Grand Prix · Singapore · Race · Finalizada · United States Grand Prix · en 9 d 23 h 32 min» · Live Timing 22 filas · Lap Comparison sin Live, aviso «Sesión acabada: lo último del directo» · sin problemas"
 
@@ -5903,7 +5903,7 @@ main = hspec $ do
         (Auto.raReading =<< Auto.readerAnswer (TE.encodeUtf8 readerCaida))
         `shouldSatisfy` maybe False (" · 4 problemas («falló GET /api/live: net::ERR_EMPTY_RESPONSE», …)" `T.isSuffixOf`)
 
-    it "las demás líneas de observador.txt, como D212 y D213" $
+    it "las demás líneas de observador.txt" $
       [ Auto.observerLine (atUtc 23 18 0) (Auto.PageClosed (atUtc 23 18 15))
       , Auto.observerLine (atUtc 19 23 12) (Auto.PausedWithoutPage (atUtc 19 23 25))
       , Auto.observerLine (atUtc 23 18 15) (Auto.PageOpened 3000 627)
@@ -5919,7 +5919,7 @@ main = hspec $ do
                    , "observador 13:02 (19:02): el lector no contestó en 30 s; se relanza"
                    ]
 
-    it "sus líneas de resumen.txt, como D213" $
+    it "sus líneas de resumen.txt" $
       [ Auto.pauseLine (atUtc 23 18 0) (atUtc 23 18 15)
       , Auto.reopenLine (atUtc 23 18 15) 3000
       , Auto.readerRelaunchLine (atUtc 23 19 2)
@@ -5945,12 +5945,12 @@ main = hspec $ do
     it "abre la página sin diferido" $
       Auto.pageUrl 3001 `shouldBe` "http://127.0.0.1:3001/?retraso=0"
 
-    it "su fila en la tabla, con la pausa y el tope (D213)" $
+    it "su fila en la tabla, con la pausa y el tope" $
       any ("observador                        ahora            cuando para el vigía · pausa 12:00–12:15 (18:00–18:15) · tope 21:00 (03:00)" `T.isInfixOf`)
         (Auto.dayTable (atUtc 23 16 0) Nothing (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots))
         `shouldBe` True
 
-    it "en la vista, su última línea bajo la del vigía (D213)" $
+    it "en la vista, su última línea bajo la del vigía" $
       ( drop 3 (Auto.viewLines "cabecera" [] [] [] Nothing (Just "observador 12:38 (18:38): banda «…»"))
       , drop 3 (Auto.viewLines "cabecera" [] [] [] Nothing Nothing)
       )
@@ -5965,7 +5965,7 @@ main = hspec $ do
         `shouldBe` [ ("p1", "P1"), ("q", "Q"), ("sq", "SQ"), ("sprint", "Sprint")
                    , ("carrera", "carrera"), ("day-1", "day-1") ]
 
-    it "cada pieza tiene su unidad: la carpeta y la pieza (D190)" $
+    it "cada pieza tiene su unidad: la carpeta y la pieza" $
       map (Auto.unitName "dashboardF1-auto-viernes-2026-10-23")
           [Auto.Checks Nothing, Auto.Checks (Just "Practice 1"), Auto.Vigia, Auto.Observer Nothing, Auto.Recording Auto.WithoutAccount "Race"]
         `shouldBe` [ "dashboardF1-auto-viernes-2026-10-23-comprobaciones-inicio"
@@ -6032,7 +6032,7 @@ main = hspec $ do
                    ]
 
   describe "Auto: lo que enseña el comando" $ do
-    it "la cabecera del día, como en D189" $
+    it "la cabecera del día" $
       Auto.dayHeader austinFriday (Just "United States Grand Prix")
         `shouldBe` "Viernes 23 de octubre · United States Grand Prix · horas de México (UTC)"
 
@@ -6057,7 +6057,7 @@ main = hspec $ do
             ]
             `shouldBe` [True, True, True, True]
 
-    it "con las horas de Jolpica, la columna dice de dónde salen (D195)" $
+    it "con las horas de Jolpica, la columna dice de dónde salen" $
       take 1 (Auto.dayTable (atUtc 23 16 0) (Just ("Jolpica", austinSlots)) [])
         `shouldBe` ["  Qué                               Sesión (Jolpica) Empieza          Para (lo primero que llegue)"]
 
@@ -6102,11 +6102,11 @@ main = hspec $ do
     it "la hora del temporizador va en UTC" $
       Auto.onCalendar (atUtc 23 16 45) `shouldBe` "2026-10-23 16:45:00 UTC"
 
-    it "cancela dice de qué día es lo que para (D193)" $
+    it "cancela dice de qué día es lo que para" $
       map Auto.cancelHeader [Just austinFriday, Nothing]
         `shouldBe` ["Se paran (viernes 23):", "Se paran:"]
 
-    it "la cabecera de la vista sale de la carpeta (D191)" $
+    it "la cabecera de la vista sale de la carpeta" $
       Auto.viewHeader "~/MOPER" "dashboardF1-auto-viernes-2026-10-23-2"
         `shouldBe` "Viernes 23 · ~/MOPER/dashboardF1-auto-viernes-2026-10-23-2/"
 
