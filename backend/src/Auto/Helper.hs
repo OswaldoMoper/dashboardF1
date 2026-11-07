@@ -92,6 +92,12 @@ module Auto.Helper
   , readerRelaunchLine
   , ObserverEnd (..)
   , observerStopLine
+  , manualVigiaDelay
+  , ScriptEnd (..)
+  , scriptStep
+  , scriptStopLine
+  , scriptArgs
+  , scriptLog
   , recordingIdleSeconds
   , recordingStallAfter
   , maxRelaunches
@@ -109,6 +115,7 @@ module Auto.Helper
   , dayFolder
     -- * Lo que recibe cada pieza al disparar
   , Dispatch (..)
+  , Tools (..)
   , dispatchFor
   , withChecks
   , watchedSlot
@@ -214,7 +221,7 @@ import           Data.Time.LocalTime   (LocalTime (..), TimeZone, localDay,
 import           Handler.FastF1.Helper (TokenFile (..))
 import           Handler.Live.Helper   (CalendarEntry (..))
 import           System.FilePath       (dropTrailingPathSeparator, joinPath,
-                                        splitDirectories)
+                                        splitDirectories, (</>))
 import           Text.Printf           (printf)
 
 -- | La hora de México, fija en UTC−6: sin horario de verano desde 2022, y sin
@@ -275,6 +282,8 @@ data Piece
   = Checks (Maybe Text)  -- ^ Una tanda de comprobaciones: al lanzar, o antes de esa sesión.
   | Vigia
   | Observer (Maybe UTCTime)  -- ^ El observador, con el inicio de su pausa ('clockPhotoWindow').
+  | Memory       -- ^ La memoria: una fila por minuto con el Chromium y la memoria de WSL.
+  | ManualVigia  -- ^ El vigía manual: el guion de bash, testigo del vigía ('manualVigiaDelay').
   | Recording Account Text    -- ^ La grabación de esa sesión, con esa cuenta.
   deriving (Eq, Show)
 
@@ -296,7 +305,8 @@ capAfterStart = 6 * 3600
 
 -- | Lo que se programa para esas sesiones, lanzado en ese instante, con ese tope.
 --
--- Comprobaciones, vigía y observador al lanzar; por sesión, a T−45, las dos grabaciones
+-- Comprobaciones, vigía, observador, memoria y vigía manual al lanzar, con el tope de la
+-- última sesión; por sesión, a T−45, las dos grabaciones
 -- (sin y con cuenta) y otra tanda de comprobaciones. __Lo que ya debía haber arrancado
 -- arranca al lanzar__, y entonces su tanda de T−45 sobra (la de lanzar la cubre). Una
 -- sesión cuyo tope ya pasó no se programa. Sin sesiones, nada: ni el vigía.
@@ -308,7 +318,7 @@ dayLead :: NominalDiffTime
 dayLead = 90 * 60
 
 -- | 'dayPlan' con la hora de arranque de las piezas del día (comprobaciones de arranque,
--- vigía y observador): esa hora, o la del lanzamiento si ya pasó. Lo de cada sesión no
+-- vigía, observador, memoria y vigía manual): esa hora, o la del lanzamiento si ya pasó. Lo de cada sesión no
 -- cambia. Con la hora del lanzamiento es 'dayPlan'.
 dayPlanFrom :: NominalDiffTime -> UTCTime -> UTCTime -> [Slot] -> [Planned]
 dayPlanFrom cap now from slots =
@@ -319,6 +329,8 @@ dayPlanFrom cap now from slots =
         Planned (Checks Nothing) start Nothing
           : Planned Vigia start (Just (capOf (last live)))
           : Planned (Observer (fst <$> clockPhotoWindow slots)) start (Just (capOf (last live)))
+          : Planned Memory start (Just (capOf (last live)))
+          : Planned ManualVigia start (Just (capOf (last live)))
           : concatMap perSlot live
   where
     start = max now from
@@ -992,6 +1004,49 @@ observerStopLine t end = eventLine t "para" ("observador (" <> why <> ")")
       ObserverCapped    -> "tope"
       ObserverCancelled -> "cancelado"
 
+-- | Cuánto después de arrancar su pieza lanza el vigía manual su guion: 30 s, para que no
+-- pregunte a la vez que el vigía.
+manualVigiaDelay :: NominalDiffTime
+manualVigiaDelay = 30
+
+-- | Por qué para el guion de la memoria o del vigía manual.
+data ScriptEnd = ScriptVigiaGone | ScriptCapped | ScriptExited | ScriptCancelled
+  deriving (Eq, Show)
+
+-- | Si el guion de esa pieza para en ese instante, en ese minuto desde que arrancó, con lo
+-- que dijo systemd del vigía ('vigiaGone') y si el guion sigue vivo. Por orden: el tope,
+-- el vigía que ya no corre (__solo la memoria__: el vigía manual es su testigo y no
+-- depende de él) y el guion que salió solo. 'Nothing' es que sigue.
+scriptStep :: Piece -> UTCTime -> Maybe UTCTime -> Int -> Maybe Bool -> Bool -> Maybe ScriptEnd
+scriptStep piece now cap n vigiaAlive running
+  | maybe False (now >=) cap = Just ScriptCapped
+  | piece == Memory && vigiaGone n vigiaAlive = Just ScriptVigiaGone
+  | not running = Just ScriptExited
+  | otherwise = Nothing
+
+-- | La línea de @resumen.txt@ cuando para el guion de esa etiqueta.
+scriptStopLine :: UTCTime -> Text -> ScriptEnd -> Text
+scriptStopLine t label end = eventLine t "para" (label <> " (" <> why <> ")")
+  where
+    why = case end of
+      ScriptVigiaGone -> "paró el vigía"
+      ScriptCapped    -> "tope"
+      ScriptExited    -> "salió solo"
+      ScriptCancelled -> "cancelado"
+
+-- | Los argumentos del guion de esa pieza, con la instancia y la carpeta del día: el vigía
+-- manual, el puerto, su fichero y la carpeta de sus JSON; la memoria, su fichero. Las
+-- demás piezas no lanzan guion.
+scriptArgs :: Piece -> Int -> FilePath -> [String]
+scriptArgs piece port folder = case piece of
+  ManualVigia -> [show port, folder </> "vigia-manual.txt", folder </> "vigia-manual"]
+  Memory      -> [folder </> "memoria.tsv"]
+  _           -> []
+
+-- | El fichero al que va la salida del guion de esa pieza, en la carpeta del día.
+scriptLog :: Piece -> FilePath
+scriptLog piece = T.unpack (pieceSlug piece) <> ".log"
+
 -- | El tiempo de inactividad del feed que se le da a @dashboardF1-record@, como a mano:
 -- no es la duración, y con él no para solo en una bandera roja.
 recordingIdleSeconds :: Int
@@ -1124,7 +1179,8 @@ recordingName account session = "grabación " <> sessionLabel session <> suffix
 -- instancia del lanzamiento, su tope, la sesión que mira (la suya; el vigía, la
 -- última del día) con su hora prevista y, la grabación, la ruta de @dashboardF1-record@.
 -- Las comprobaciones, además, el log de la instancia y hasta cuándo tiene que valer el
--- token ('tokenNeed'); el observador, la ruta del lector y el inicio de su pausa.
+-- token ('tokenNeed'); el observador, la ruta del lector y el inicio de su pausa; la
+-- memoria y el vigía manual, la ruta de su guion.
 data Dispatch = Dispatch
   { diPort       :: Int
   , diCap        :: Maybe UTCTime
@@ -1136,23 +1192,40 @@ data Dispatch = Dispatch
   , diTokenGp    :: Maybe UTCTime
   , diReader     :: Maybe FilePath
   , diPause      :: Maybe UTCTime
+  , diScript     :: Maybe FilePath
   }
   deriving (Eq, Show)
 
--- | Con la ruta del grabador y la del lector, la instancia, las sesiones y el plan del día.
-dispatchFor :: FilePath -> FilePath -> Int -> [Slot] -> [Planned] -> Planned -> Dispatch
-dispatchFor recorder reader port slots plan p =
+-- | Las rutas de lo que lanzan las piezas: el grabador, el lector del observador y los
+-- guiones de la memoria y del vigía manual.
+data Tools = Tools
+  { toRecorder    :: FilePath
+  , toReader      :: FilePath
+  , toMemory      :: FilePath
+  , toManualVigia :: FilePath
+  }
+  deriving (Eq, Show)
+
+-- | Con las rutas de lo que se lanza, la instancia, las sesiones y el plan del día.
+dispatchFor :: Tools -> Int -> [Slot] -> [Planned] -> Planned -> Dispatch
+dispatchFor tools port slots plan p =
   (bareDispatch port)
     { diCap = plCap p
     , diSession = session
     , diStart = startOf =<< session
-    , diRecorder = recorderFor (plPiece p)
+    , diRecorder = case plPiece p of
+        Recording _ _ -> Just (toRecorder tools)
+        _             -> Nothing
     , diReader = case plPiece p of
-        Observer _ -> Just reader
+        Observer _ -> Just (toReader tools)
         _          -> Nothing
     , diPause = case plPiece p of
         Observer pause -> pause
         _              -> Nothing
+    , diScript = case plPiece p of
+        Memory      -> Just (toMemory tools)
+        ManualVigia -> Just (toManualVigia tools)
+        _           -> Nothing
     }
   where
     session = case plPiece p of
@@ -1160,10 +1233,9 @@ dispatchFor recorder reader port slots plan p =
       Checks s      -> s
       Vigia         -> listToMaybe (reverse [s | Recording _ s <- map plPiece plan])
       Observer _    -> Nothing
+      Memory        -> Nothing
+      ManualVigia   -> Nothing
     startOf s = lookup s [(slotName x, slotStart x) | x <- slots]
-    recorderFor piece = case piece of
-      Recording _ _ -> Just recorder
-      _             -> Nothing
 
 -- | A la orden de una tanda de comprobaciones, el log que se dio con @--log@ y lo que
 -- tiene que cubrir el token ('tokenNeed'); las demás piezas, igual.
@@ -1189,6 +1261,7 @@ dispatchArgs d =
     <> maybe [] (\t -> ["--fin-gp", isoText t]) (diTokenGp d)
     <> maybe [] (\r -> ["--lector", T.pack r]) (diReader d)
     <> maybe [] (\t -> ["--pausa", isoText t]) (diPause d)
+    <> maybe [] (\s -> ["--guion", T.pack s]) (diScript d)
   where
     isoText = T.pack . formatTime defaultTimeLocale isoUtc
 
@@ -1205,6 +1278,7 @@ bareDispatch port = Dispatch
   , diTokenGp = Nothing
   , diReader = Nothing
   , diPause = Nothing
+  , diScript = Nothing
   }
 
 parseDispara :: [Text] -> Either Text Dispatch
@@ -1228,6 +1302,7 @@ parseDispara = go (bareDispatch 0) False
     go d hasPort ("--lector" : r : rest) = go d {diReader = Just (T.unpack r)} hasPort rest
     go d hasPort ("--pausa" : t : rest)
       | Just start <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diPause = Just start} hasPort rest
+    go d hasPort ("--guion" : s : rest) = go d {diScript = Just (T.unpack s)} hasPort rest
     go _ _ (word : _) = Left ("dispara: no entiendo «" <> word <> "»")
 
 isoUtc :: String
@@ -1285,6 +1360,8 @@ pieceLabel p = case p of
   Checks (Just s) -> "comprobaciones antes de la " <> sessionLabel s
   Vigia           -> "vigía"
   Observer _      -> "observador"
+  Memory          -> "memoria"
+  ManualVigia     -> "vigía manual"
   Recording a s   -> "grabación " <> sessionLabel s <> accountLabel a
 
 -- | La unidad de systemd de una pieza: la carpeta y la pieza.
@@ -1299,6 +1376,8 @@ pieceSlug p = case p of
   Checks (Just s) -> "comprobaciones-" <> sessionShort s
   Vigia           -> "vigia"
   Observer _      -> "observador"
+  Memory          -> "memoria"
+  ManualVigia     -> "vigia-manual"
   Recording a s   -> T.pack (recordingStem a s)
 
 -- | Cómo termina el nombre de una grabación en pantalla: «, sin cuenta» o «, con cuenta».
@@ -1613,6 +1692,8 @@ dayTable now other plan =
       Checks _      -> "—"
       Vigia         -> "OpenF1 en 200 cinco min seguidos tras la " <> lastLabel <> capText p
       Observer w    -> "cuando para el vigía" <> maybe "" (pauseText . pauseFrom) w <> capText p
+      Memory        -> "cuando para el vigía" <> capText p
+      ManualVigia   -> "arranca 30 s tras el vigía; para solo con el tope" <> capText p
       Recording _ s -> "estado=Finalised de la " <> sessionLabel s <> capText p
     capText = maybe "" ((" · tope " <>) . clockPair "%H:%M") . plCap
     pauseText (from, to) =
@@ -1631,7 +1712,9 @@ gpSummary gp now days =
   T.intercalate " · " (maybe [] pure gp <> [count, "horas de México (UTC)"])
     : cols "Día" "Sesiones" "Arranca" "Carpeta"
     : map row days
-    <> ["  Cada día, al arrancar: comprobaciones, vigía y observador; por sesión, a T−45, sus comprobaciones y las dos grabaciones."]
+    <> [ "  Cada día, al arrancar: comprobaciones, vigía, observador, memoria y vigía manual (30 s después); por sesión, a T−45,"
+       , "  sus comprobaciones y las dos grabaciones."
+       ]
   where
     count = T.pack (show (length days)) <> if length days == 1 then " día" else " días"
     cols a b c d = "  " <> T.justifyLeft 14 ' ' a <> T.justifyLeft 24 ' ' b <> T.justifyLeft 17 ' ' c <> d
@@ -1725,8 +1808,7 @@ gpStateFile = "gp.json"
 data GpState = GpState
   { gsSlots      :: [Slot]
   , gsPort       :: Int
-  , gsRecorder   :: FilePath
-  , gsReader     :: FilePath
+  , gsTools      :: Tools
   , gsLog        :: Maybe FilePath
   , gsCapSeconds :: Int
   , gsEnsayo     :: Bool
@@ -1740,8 +1822,10 @@ instance ToJSON GpState where
     object
       [ "sesiones" .= [object ["nombre" .= slotName x, "inicio" .= slotStart x] | x <- gsSlots s]
       , "puerto" .= gsPort s
-      , "grabador" .= gsRecorder s
-      , "lector" .= gsReader s
+      , "grabador" .= toRecorder (gsTools s)
+      , "lector" .= toReader (gsTools s)
+      , "memoria" .= toMemory (gsTools s)
+      , "vigia-manual" .= toManualVigia (gsTools s)
       , "log" .= gsLog s
       , "tope" .= gsCapSeconds s
       , "ensayo" .= gsEnsayo s
@@ -1754,8 +1838,7 @@ instance FromJSON GpState where
     GpState
       <$> (mapM (withObject "sesión" (\x -> Slot <$> x .: "nombre" <*> x .: "inicio")) =<< o .: "sesiones")
       <*> o .: "puerto"
-      <*> o .: "grabador"
-      <*> o .: "lector"
+      <*> (Tools <$> o .: "grabador" <*> o .: "lector" <*> o .: "memoria" <*> o .: "vigia-manual")
       <*> o .:? "log"
       <*> o .: "tope"
       <*> o .: "ensayo"
@@ -1884,15 +1967,17 @@ viewHeader base folder = maybe "" dayPart (folderDay folder) <> base <> "/" <> T
        in weekdayDisplay (dayOfWeek d) <> " " <> T.pack (show dom) <> " · "
 
 -- | La vista: la cabecera, los sucesos, lo que sigue en systemd, los avisos, la
--- última línea del vigía, en palabras ('vigiaWords'), y la del observador, tal cual.
-viewLines :: Text -> [Text] -> [(Text, Text)] -> [Text] -> Maybe Text -> Maybe Text -> [Text]
-viewLines header events states avisos vigia observer =
+-- última línea del vigía, en palabras ('vigiaWords'), y las del vigía manual y del
+-- observador, tal cual.
+viewLines :: Text -> [Text] -> [(Text, Text)] -> [Text] -> Maybe Text -> Maybe Text -> Maybe Text -> [Text]
+viewLines header events states avisos vigia manual observer =
   [header, ""]
     <> events
     <> (if null states then [] else "" : "En systemd:" : map stateRow states)
     <> (if null avisos then [] else "" : avisos)
     <> [ ""
        , maybe "vigía: todavía sin líneas" vigiaWords vigia
+       , "vigía manual: " <> fromMaybe "todavía sin líneas" manual
        , fromMaybe "observador: todavía sin líneas" observer
        , "Ctrl+C sale; lo programado sigue"
        ]

@@ -5410,6 +5410,8 @@ main = hspec $ do
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)             (atUtc 23 16 0)  Nothing
                    , Auto.Planned Auto.Vigia                        (atUtc 23 16 0)  (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Observer (Just (atUtc 23 18 0))) (atUtc 23 16 0) (Just (atUtc 24 3 0))
+                   , Auto.Planned Auto.Memory                       (atUtc 23 16 0)  (Just (atUtc 24 3 0))
+                   , Auto.Planned Auto.ManualVigia                  (atUtc 23 16 0)  (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 1")     (atUtc 23 16 45) (Just (atUtc 23 23 30))
                    , Auto.Planned (Auto.Recording Auto.WithAccount "Practice 1")        (atUtc 23 16 45) (Just (atUtc 23 23 30))
                    , Auto.Planned (Auto.Checks (Just "Practice 1")) (atUtc 23 16 45) Nothing
@@ -5419,10 +5421,12 @@ main = hspec $ do
                    ]
 
     it "lanzado tarde, lo que debía haber arrancado arranca ya y su tanda sobra" $
-      take 4 (Auto.dayPlan Auto.capAfterStart (atUtc 23 17 0) austinSlots)
+      take 6 (Auto.dayPlan Auto.capAfterStart (atUtc 23 17 0) austinSlots)
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)         (atUtc 23 17 0) Nothing
                    , Auto.Planned Auto.Vigia                    (atUtc 23 17 0) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Observer (Just (atUtc 23 18 0))) (atUtc 23 17 0) (Just (atUtc 24 3 0))
+                   , Auto.Planned Auto.Memory                   (atUtc 23 17 0) (Just (atUtc 24 3 0))
+                   , Auto.Planned Auto.ManualVigia              (atUtc 23 17 0) (Just (atUtc 24 3 0))
                    , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 1") (atUtc 23 17 0) (Just (atUtc 23 23 30))
                    ]
 
@@ -5430,7 +5434,7 @@ main = hspec $ do
       ( map Auto.plPiece (Auto.dayPlan Auto.capAfterStart (atUtc 23 23 40) austinSlots)
       , Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) []
       )
-        `shouldBe` ( [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer (Just (atUtc 23 18 0))
+        `shouldBe` ( [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer (Just (atUtc 23 18 0)), Auto.Memory, Auto.ManualVigia
                      , Auto.Recording Auto.WithoutAccount "Practice 2", Auto.Recording Auto.WithAccount "Practice 2" ]
                    , [] )
 
@@ -5439,6 +5443,8 @@ main = hspec $ do
         `shouldBe` [ Auto.Planned (Auto.Checks Nothing)    (atUtc 23 16 0) Nothing
                    , Auto.Planned Auto.Vigia               (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    , Auto.Planned (Auto.Observer Nothing)  (atUtc 23 16 0) (Just (atUtc 23 16 25))
+                   , Auto.Planned Auto.Memory              (atUtc 23 16 0) (Just (atUtc 23 16 25))
+                   , Auto.Planned Auto.ManualVigia         (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    , Auto.Planned (Auto.Recording Auto.WithoutAccount "Ensayo") (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    , Auto.Planned (Auto.Recording Auto.WithAccount "Ensayo")    (atUtc 23 16 0) (Just (atUtc 23 16 25))
                    ]
@@ -5484,6 +5490,8 @@ main = hspec $ do
         `shouldBe` ( [ [ Auto.Planned (Auto.Checks Nothing) (novUtc 19 23 0) Nothing
                        , Auto.Planned Auto.Vigia (novUtc 19 23 0) (Just (novUtc 20 10 0))
                        , Auto.Planned (Auto.Observer (Just (novUtc 20 1 0))) (novUtc 19 23 0) (Just (novUtc 20 10 0))
+                       , Auto.Planned Auto.Memory (novUtc 19 23 0) (Just (novUtc 20 10 0))
+                       , Auto.Planned Auto.ManualVigia (novUtc 19 23 0) (Just (novUtc 20 10 0))
                        , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 1") (novUtc 19 23 45) (Just (novUtc 20 6 30))
                        , Auto.Planned (Auto.Recording Auto.WithAccount "Practice 1")    (novUtc 19 23 45) (Just (novUtc 20 6 30))
                        , Auto.Planned (Auto.Checks (Just "Practice 1")) (novUtc 19 23 45) Nothing
@@ -5491,13 +5499,13 @@ main = hspec $ do
                        , Auto.Planned (Auto.Recording Auto.WithAccount "Practice 2")    (novUtc 20 3 15) (Just (novUtc 20 10 0))
                        , Auto.Planned (Auto.Checks (Just "Practice 2")) (novUtc 20 3 15) Nothing
                        ] ]
-                   , [ [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing
+                   , [ [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing, Auto.Memory, Auto.ManualVigia
                        , Auto.Recording Auto.WithoutAccount "Practice 3", Auto.Recording Auto.WithAccount "Practice 3"
                        , Auto.Checks (Just "Practice 3")
                        , Auto.Recording Auto.WithoutAccount "Qualifying", Auto.Recording Auto.WithAccount "Qualifying"
                        , Auto.Checks (Just "Qualifying") ]
                      -- Un día con una sola sesión: lo del día a T−90 y su tanda de T−45, como con dos.
-                     , [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing
+                     , [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing, Auto.Memory, Auto.ManualVigia
                        , Auto.Recording Auto.WithoutAccount "Race", Auto.Recording Auto.WithAccount "Race"
                        , Auto.Checks (Just "Race") ] ]
                    )
@@ -5523,10 +5531,12 @@ main = hspec $ do
 
     it "lanzado el jueves 19 a las 17:30 de México, lo del día arranca ya y las grabaciones a su hora" $
       map (\p -> (Auto.plPiece p, Auto.plStart p))
-          (concatMap (take 4 . Auto.gdPlan) (take 1 (Auto.gpPlan Auto.capAfterStart (novUtc 19 23 30) gpSeason)))
+          (concatMap (take 6 . Auto.gdPlan) (take 1 (Auto.gpPlan Auto.capAfterStart (novUtc 19 23 30) gpSeason)))
         `shouldBe` [ (Auto.Checks Nothing, novUtc 19 23 30)
                    , (Auto.Vigia, novUtc 19 23 30)
                    , (Auto.Observer (Just (novUtc 20 1 0)), novUtc 19 23 30)
+                   , (Auto.Memory, novUtc 19 23 30)
+                   , (Auto.ManualVigia, novUtc 19 23 30)
                    , (Auto.Recording Auto.WithoutAccount "Practice 1", novUtc 19 23 45)
                    ]
 
@@ -5544,7 +5554,8 @@ main = hspec $ do
                        , "  Jueves 19     P1 18:30, P2 22:00      17:00 (23:00)    dashboardF1-auto-jueves-2026-11-19/"
                        , "  Viernes 20    P3 18:30, Q 22:00       17:00 (23:00)    dashboardF1-auto-viernes-2026-11-20/"
                        , "  Sábado 21     carrera 22:00           20:30 (02:30)    dashboardF1-auto-sabado-2026-11-21/"
-                       , "  Cada día, al arrancar: comprobaciones, vigía y observador; por sesión, a T−45, sus comprobaciones y las dos grabaciones."
+                       , "  Cada día, al arrancar: comprobaciones, vigía, observador, memoria y vigía manual (30 s después); por sesión, a T−45,"
+                       , "  sus comprobaciones y las dos grabaciones."
                        ]
 
     it "sin nombre de GP y con un solo día ya empezado: «1 día» y «ahora»" $
@@ -5611,7 +5622,7 @@ main = hspec $ do
         pendingThen =
           [(fri, Auto.pieceSlug p) | p <- [Auto.Recording Auto.WithoutAccount "Qualifying", Auto.Recording Auto.WithAccount "Qualifying", Auto.Checks (Just "Qualifying")]]
             <> [ (sat, Auto.pieceSlug p)
-               | p <- [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing
+               | p <- [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing, Auto.Memory, Auto.ManualVigia
                       , Auto.Recording Auto.WithoutAccount "Race", Auto.Recording Auto.WithAccount "Race", Auto.Checks (Just "Race") ] ]
         steps moves = Auto.replan Auto.capAfterStart readAt vegasSlots moves pendingThen
 
@@ -5629,9 +5640,13 @@ main = hspec $ do
                    , Auto.Unschedule sat (Auto.Checks Nothing)
                    , Auto.Unschedule sat Auto.Vigia
                    , Auto.Unschedule sat (Auto.Observer Nothing)
+                   , Auto.Unschedule sat Auto.Memory
+                   , Auto.Unschedule sat Auto.ManualVigia
                    , Auto.Schedule sat (Auto.Planned (Auto.Checks Nothing) (novUtc 21 17 30) Nothing)
                    , Auto.Schedule sat (Auto.Planned Auto.Vigia (novUtc 21 17 30) (Just (novUtc 22 10 0)))
                    , Auto.Schedule sat (Auto.Planned (Auto.Observer Nothing) (novUtc 21 17 30) (Just (novUtc 22 10 0)))
+                   , Auto.Schedule sat (Auto.Planned Auto.Memory (novUtc 21 17 30) (Just (novUtc 22 10 0)))
+                   , Auto.Schedule sat (Auto.Planned Auto.ManualVigia (novUtc 21 17 30) (Just (novUtc 22 10 0)))
                    , Auto.Schedule sat (Auto.Planned (Auto.Recording Auto.WithoutAccount "Qualifying") (novUtc 21 18 15) (Just (novUtc 22 1 0)))
                    , Auto.Schedule sat (Auto.Planned (Auto.Recording Auto.WithAccount "Qualifying") (novUtc 21 18 15) (Just (novUtc 22 1 0)))
                    , Auto.Schedule sat (Auto.Planned (Auto.Checks (Just "Qualifying")) (novUtc 21 18 15) Nothing)
@@ -5687,7 +5702,7 @@ main = hspec $ do
                    , "sabado" )
 
     it "gp.json se lee como se escribió" $
-      let st = Auto.GpState vegasSlots 3000 "/nix/store/x-record" "/nix/store/y-observa" Nothing 21600 False (Just "/tmp/cal.json") folders
+      let st = Auto.GpState vegasSlots 3000 storeTools Nothing 21600 False (Just "/tmp/cal.json") folders
        in eitherDecode (encode st) `shouldBe` Right st
 
     it "acaba con el último tope del GP; sin sesiones, ya acabó" $
@@ -5868,7 +5883,7 @@ main = hspec $ do
   describe "Auto: lo que recibe cada pieza al disparar" $ do
     it "el vigía mira la última sesión del día; el observador lleva el lector y su pausa; cada grabación, la suya y el grabador; todos, la instancia y su tope" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-       in map (Auto.dispatchArgs . Auto.dispatchFor storeRecorder storeReader 3001 austinSlots plan) (take 4 plan)
+       in map (Auto.dispatchArgs . Auto.dispatchFor storeTools 3001 austinSlots plan . (plan !!)) [0, 1, 2, 5]
             `shouldBe` [ ["--puerto", "3001"]
                        , [ "--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--sesion", "Practice 2"
                          , "--inicio", "2026-10-23T21:00:00Z" ]
@@ -5878,14 +5893,21 @@ main = hspec $ do
                          , "--inicio", "2026-10-23T17:30:00Z", "--grabador", T.pack storeRecorder ]
                        ]
 
+    it "la memoria y el vigía manual llevan su guion y el tope del día, sin sesión que mirar" $
+      let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
+       in map (Auto.dispatchArgs . Auto.dispatchFor storeTools 3001 austinSlots plan . (plan !!)) [3, 4]
+            `shouldBe` [ ["--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--guion", T.pack storeMemory]
+                       , ["--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--guion", T.pack storeManualVigia]
+                       ]
+
     it "lo que se programa se vuelve a leer igual al disparar (ida y vuelta)" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-          dispatches = map (Auto.dispatchFor storeRecorder storeReader 3000 austinSlots plan) plan
+          dispatches = map (Auto.dispatchFor storeTools 3000 austinSlots plan) plan
        in map (Auto.parseDispara . Auto.dispatchArgs) dispatches `shouldBe` map Right dispatches
 
     it "la sesión que mira, con su hora; sin la hora no hay sesión que mirar" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
-          vigia = Auto.dispatchFor storeRecorder storeReader 3000 austinSlots plan (plan !! 1)
+          vigia = Auto.dispatchFor storeTools 3000 austinSlots plan (plan !! 1)
        in (Auto.watchedSlot vigia, Auto.watchedSlot vigia {Auto.diStart = Nothing})
             `shouldBe` (Just practice2Slot, Nothing)
 
@@ -6321,15 +6343,15 @@ main = hspec $ do
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
           need = Just (atUtc 23 22 0, Just (atUtc 25 22 0))
           orders =
-            map (\p -> Auto.withChecks (Just "/home/x/dev.txt") need p (Auto.dispatchFor storeRecorder storeReader 3000 austinSlots plan p)) plan
+            map (\p -> Auto.withChecks (Just "/home/x/dev.txt") need p (Auto.dispatchFor storeTools 3000 austinSlots plan p)) plan
        in ( map Auto.dispatchArgs (take 1 orders)
           , map Auto.diLog orders
           , map (Auto.parseDispara . Auto.dispatchArgs) orders == map Right orders
           )
             `shouldBe` ( [ [ "--puerto", "3000", "--log", "/home/x/dev.txt"
                            , "--fin-hoy", "2026-10-23T22:00:00Z", "--fin-gp", "2026-10-25T22:00:00Z" ] ]
-                       , [ Just "/home/x/dev.txt", Nothing, Nothing, Nothing, Nothing, Just "/home/x/dev.txt", Nothing, Nothing
-                         , Just "/home/x/dev.txt" ]
+                       , [ Just "/home/x/dev.txt", Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Just "/home/x/dev.txt"
+                         , Nothing, Nothing, Just "/home/x/dev.txt" ]
                        , True
                        )
 
@@ -6406,13 +6428,77 @@ main = hspec $ do
         (Auto.dayTable (atUtc 23 16 0) Nothing (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots))
         `shouldBe` True
 
-    it "en la vista, su última línea bajo la del vigía" $
-      ( drop 3 (Auto.viewLines "cabecera" [] [] [] Nothing (Just "observador 12:38 (18:38): banda «…»"))
-      , drop 3 (Auto.viewLines "cabecera" [] [] [] Nothing Nothing)
+    it "en la vista, su última línea bajo la del vigía y la del vigía manual, tal cual" $
+      ( drop 3 (Auto.viewLines "cabecera" [] [] [] Nothing (Just manualLine) (Just "observador 12:38 (18:38): banda «…»"))
+      , drop 3 (Auto.viewLines "cabecera" [] [] [] Nothing Nothing Nothing)
       )
-        `shouldBe` ( ["vigía: todavía sin líneas", "observador 12:38 (18:38): banda «…»", "Ctrl+C sale; lo programado sigue"]
-                   , ["vigía: todavía sin líneas", "observador: todavía sin líneas", "Ctrl+C sale; lo programado sigue"]
+        `shouldBe` ( [ "vigía: todavía sin líneas", "vigía manual: " <> manualLine
+                     , "observador 12:38 (18:38): banda «…»", "Ctrl+C sale; lo programado sigue" ]
+                   , [ "vigía: todavía sin líneas", "vigía manual: todavía sin líneas"
+                     , "observador: todavía sin líneas", "Ctrl+C sale; lo programado sigue" ]
                    )
+
+  describe "Auto: la memoria y el vigía manual" $ do
+    let cap = Just (atUtc 24 3 0)
+        t = atUtc 23 20 0
+
+    it "la memoria para cuando para el vigía; el vigía manual, solo con su tope; los dos, si su guion se cae" $
+      [ Auto.scriptStep Auto.Memory t cap 2 (Just False) True
+      , Auto.scriptStep Auto.ManualVigia t cap 2 (Just False) True
+      , Auto.scriptStep Auto.Memory t cap 0 (Just False) True        -- el primer minuto, aún no
+      , Auto.scriptStep Auto.Memory t cap 2 Nothing True             -- systemd no contestó
+      , Auto.scriptStep Auto.Memory t cap 2 (Just True) True
+      , Auto.scriptStep Auto.ManualVigia (atUtc 24 3 0) cap 2 (Just True) True
+      , Auto.scriptStep Auto.Memory (atUtc 24 3 0) cap 2 (Just False) True  -- el tope va antes
+      , Auto.scriptStep Auto.ManualVigia t cap 2 (Just True) False
+      ]
+        `shouldBe` [ Just Auto.ScriptVigiaGone, Nothing, Nothing, Nothing, Nothing
+                   , Just Auto.ScriptCapped, Just Auto.ScriptCapped, Just Auto.ScriptExited ]
+
+    it "su línea al parar, con el motivo" $
+      [ Auto.scriptStopLine (atUtc 23 20 35) "memoria" Auto.ScriptVigiaGone
+      , Auto.scriptStopLine (atUtc 24 3 0) "vigía manual" Auto.ScriptCapped
+      , Auto.scriptStopLine (atUtc 23 20 35) "vigía manual" Auto.ScriptExited
+      , Auto.scriptStopLine (atUtc 23 20 35) "memoria" Auto.ScriptCancelled
+      ]
+        `shouldBe` [ "14:35 (20:35) para     memoria (paró el vigía)"
+                   , "21:00 (03:00) para     vigía manual (tope)"
+                   , "14:35 (20:35) para     vigía manual (salió solo)"
+                   , "14:35 (20:35) para     memoria (cancelado)"
+                   ]
+
+    it "sus ficheros van en la carpeta del día; las demás piezas no lanzan guion" $
+      ( Auto.scriptArgs Auto.ManualVigia 3001 "/m/d"
+      , Auto.scriptArgs Auto.Memory 3001 "/m/d"
+      , Auto.scriptArgs Auto.Vigia 3001 "/m/d"
+      , map Auto.scriptLog [Auto.Memory, Auto.ManualVigia]
+      )
+        `shouldBe` ( ["3001", "/m/d/vigia-manual.txt", "/m/d/vigia-manual"]
+                   , ["/m/d/memoria.tsv"]
+                   , []
+                   , ["memoria.log", "vigia-manual.log"]
+                   )
+
+    it "sus filas en la tabla, con el tope del día" $
+      let table = Auto.dayTable (atUtc 23 16 0) Nothing (Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots)
+          row label stops = "  " <> T.justifyLeft 34 ' ' label <> T.justifyLeft 17 ' ' "ahora" <> stops
+       in map (`elem` table)
+            [ row "memoria" "cuando para el vigía · tope 21:00 (03:00)"
+            , row "vigía manual" "arranca 30 s tras el vigía; para solo con el tope · tope 21:00 (03:00)"
+            ]
+            `shouldBe` [True, True]
+
+    it "su unidad no se confunde con la del vigía: lo pendiente y la carpeta" $
+      let folder = "dashboardF1-auto-viernes-2026-11-20"
+          fri = fromGregorian 2026 11 20
+       in ( Auto.pendingKeys [(fri, folder)]
+              [ Auto.TimerRow (T.pack folder <> "-vigia.timer") (Just 1)
+              , Auto.TimerRow (T.pack folder <> "-vigia-manual.timer") (Just 1)
+              , Auto.TimerRow (T.pack folder <> "-memoria.timer") (Just 1)
+              ]
+          , Auto.foldersWithUnits [folder] [T.pack folder <> "-vigia-manual.service"]
+          )
+            `shouldBe` ([(fri, "vigia"), (fri, "vigia-manual"), (fri, "memoria")], [folder])
 
   describe "Auto: los nombres" $ do
     it "las sesiones del feed, cortas en unidades y ficheros y legibles en pantalla" $
@@ -6423,11 +6509,14 @@ main = hspec $ do
 
     it "cada pieza tiene su unidad: la carpeta y la pieza" $
       map (Auto.unitName "dashboardF1-auto-viernes-2026-10-23")
-          [Auto.Checks Nothing, Auto.Checks (Just "Practice 1"), Auto.Vigia, Auto.Observer Nothing, Auto.Recording Auto.WithoutAccount "Race"]
+          [ Auto.Checks Nothing, Auto.Checks (Just "Practice 1"), Auto.Vigia, Auto.Observer Nothing, Auto.Memory
+          , Auto.ManualVigia, Auto.Recording Auto.WithoutAccount "Race" ]
         `shouldBe` [ "dashboardF1-auto-viernes-2026-10-23-comprobaciones-inicio"
                    , "dashboardF1-auto-viernes-2026-10-23-comprobaciones-p1"
                    , "dashboardF1-auto-viernes-2026-10-23-vigia"
                    , "dashboardF1-auto-viernes-2026-10-23-observador"
+                   , "dashboardF1-auto-viernes-2026-10-23-memoria"
+                   , "dashboardF1-auto-viernes-2026-10-23-vigia-manual"
                    , "dashboardF1-auto-viernes-2026-10-23-grabacion-carrera"
                    ]
 
@@ -8681,6 +8770,19 @@ storeRecorder = "/nix/store/l1n2f98y39fnd80fy8ig28x4hskbliql-dashboardF1-record/
 
 storeReader :: FilePath
 storeReader = "/nix/store/8pzdra310y8yw52xlwa5lnr3z1njd2r3-dashboardF1-observa/bin/dashboardF1-observa"
+
+storeMemory :: FilePath
+storeMemory = "/nix/store/0aaa000000000000000000000000000a-dashboardF1-memoria/bin/dashboardF1-memoria"
+
+storeManualVigia :: FilePath
+storeManualVigia = "/nix/store/0bbb000000000000000000000000000b-dashboardF1-vigia-manual/bin/dashboardF1-vigia-manual"
+
+storeTools :: Auto.Tools
+storeTools = Auto.Tools storeRecorder storeReader storeMemory storeManualVigia
+
+-- | Una línea del vigía manual, como la escribe su guion.
+manualLine :: T.Text
+manualLine = "20:16:06 live=fresh/feed fetched=- sesion=Qualifying estado=Started vuelta=- filas=22 t=1.774999s openf1=401"
 
 -- | Lo que leyó el lector con `live-99.js` en «vivo» (prueba de la 99).
 vivoReading :: Auto.PageReading

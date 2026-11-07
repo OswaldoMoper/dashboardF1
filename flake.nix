@@ -250,6 +250,8 @@
             text = ''
               export DASHBOARDF1_RECORD=${self'.packages.record}/bin/dashboardF1-record
               export DASHBOARDF1_OBSERVA=${self'.packages.observa}/bin/dashboardF1-observa
+              export DASHBOARDF1_MEMORIA=${self'.packages.memoria}/bin/dashboardF1-memoria
+              export DASHBOARDF1_VIGIA_MANUAL=${self'.packages.vigiaManual}/bin/dashboardF1-vigia-manual
               exec ${self'.packages.backend}/bin/dashboardF1-auto "$@"
             '';
           }}/bin/dashboardF1-auto-store";
@@ -440,6 +442,21 @@
             fi
             exec python telemetry-service/record_live.py "$@"
           '';
+        };
+
+        # No errexit: a grep or pgrep with no match in a normal minute must not end the loop.
+        packages.vigiaManual = pkgs.writeShellApplication {
+          name = "dashboardF1-vigia-manual";
+          runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.gnugrep ];
+          bashOptions = [ ];
+          text = builtins.readFile ./backend/auto/vigia-manual.sh;
+        };
+
+        packages.memoria = pkgs.writeShellApplication {
+          name = "dashboardF1-memoria";
+          runtimeInputs = [ pkgs.coreutils pkgs.gawk pkgs.procps ];
+          bashOptions = [ ];
+          text = builtins.readFile ./backend/auto/memoria.sh;
         };
 
         # No `runtimeInputs`: it uses the dev shell's cabal, which already has

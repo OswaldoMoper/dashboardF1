@@ -107,10 +107,7 @@ launch l = do
   when (null plan) $ do
     say "Ese día no hay sesiones por delante: no se programa nada."
     exitSuccess
-  recorder <-
-    maybe (quit "no encuentro dashboardF1-record: lanza con dashboardF1-auto") pure =<< findRecorder
-  reader <-
-    maybe (quit "no encuentro dashboardF1-observa: lanza con dashboardF1-auto") pure =<< findReader
+  tools <- findTools "dashboardF1-auto"
   say (dayHeader day gp)
   say ""
   mapM_ say (dayTable now other plan)
@@ -139,7 +136,7 @@ launch l = do
     appendLine (path </> "comprobaciones.txt")
       (checkLine now Falla "calendario" (why <> "; horas " <> (if source == "Jolpica" then "de Jolpica" else source)))
   mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now plan okAt planned)
-  programDay logFile need recorder reader port path folder slots okAt planned planned
+  programDay logFile need tools port path folder slots okAt planned planned
   view folder
 
 -- | El @--log@ en absoluto; si no existe, lo dice y sale.
@@ -164,9 +161,9 @@ refuseIfBusy = do
 -- (de él sale la sesión que mira el vigía), y apunta cada una en su @resumen.txt@; la que
 -- no se puede programar lo dice en la terminal.
 programDay ::
-  Maybe FilePath -> Maybe (UTCTime, Maybe UTCTime) -> FilePath -> FilePath -> Int -> FilePath -> FilePath
+  Maybe FilePath -> Maybe (UTCTime, Maybe UTCTime) -> Tools -> Int -> FilePath -> FilePath
     -> [Slot] -> UTCTime -> [Planned] -> [Planned] -> IO ()
-programDay logFile need recorder reader port path folder slots okAt planned pieces = do
+programDay logFile need tools port path folder slots okAt planned pieces = do
   exe <- getExecutablePath
   workDir <- getCurrentDirectory
   forM_ pieces $ \p -> do
@@ -174,7 +171,7 @@ programDay logFile need recorder reader port path folder slots okAt planned piec
         at = if plStart p <= okAt then Nothing else Just (plStart p)
     done <-
       schedule exe workDir path (unitName folder piece) (pieceLabel piece)
-        (dispatchArgs (withChecks logFile need p (dispatchFor recorder reader port slots planned p))) at
+        (dispatchArgs (withChecks logFile need p (dispatchFor tools port slots planned p))) at
     case done of
       Right () -> appendLine (path </> "resumen.txt") (programLine okAt p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
@@ -215,10 +212,7 @@ launchGp l = do
   when (null days) $ do
     say "No queda ningún GP por delante: no se programa nada."
     exitSuccess
-  recorder <-
-    maybe (quit "no encuentro dashboardF1-record: lanza con dashboardF1-autodev") pure =<< findRecorder
-  reader <-
-    maybe (quit "no encuentro dashboardF1-observa: lanza con dashboardF1-autodev") pure =<< findReader
+  tools <- findTools "dashboardF1-autodev"
   (base, shown) <- existingBase
   existing <- listDirectory base
   let folders = map (\d -> nextFolder (dayFolder (label d) (gdDay d)) existing) days
@@ -249,7 +243,7 @@ launchGp l = do
         forM_ ((,) <$> failure <*> other) $ \(why, _) ->
           appendLine (path </> "comprobaciones.txt") (checkLine now Falla "calendario" (why <> "; horas de Jolpica"))
         mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now (gdPlan seen) okAt (gdPlan d))
-        programDay logFile (tokenNeed entries (gdDay d) (gdSlots d)) recorder reader port path folder
+        programDay logFile (tokenNeed entries (gdDay d) (gdSlots d)) tools port path folder
           (gdSlots d) okAt (gdPlan d) (gdPlan d)
   let kept = [(gdDay seen, f) | (seen, f) <- shownDays, any ((== gdDay seen) . gdDay) planned]
   forM_ (listToMaybe kept) $ \(_, first) -> do
@@ -259,8 +253,7 @@ launchGp l = do
       GpState
         { gsSlots = concatMap gdSlots planned
         , gsPort = port
-        , gsRecorder = recorder
-        , gsReader = reader
+        , gsTools = tools
         , gsLog = logFile
         , gsCapSeconds = round cap
         , gsEnsayo = laEnsayo l
@@ -317,7 +310,7 @@ runRelectura path = do
       Schedule d p -> do
         let day = find ((== d) . gdDay) newDays
             daySlots = maybe [] gdSlots day
-        programDay (gsLog st) (tokenNeed [] d daySlots) (gsRecorder st) (gsReader st) (gsPort st)
+        programDay (gsLog st) (tokenNeed [] d daySlots) (gsTools st) (gsPort st)
           (base </> folderOf d) (folderOf d) daySlots now (maybe [p] gdPlan day) [p]
     writeGpState (path </> gpStateFile) st {gsSlots = newSlots, gsFolders = folders}
 
@@ -363,11 +356,12 @@ view folder = forever $ do
   units <- either (const []) id <$> autoUnits (prefix <> "*")
   timers <- either (const []) id <$> autoTimers (prefix <> "*")
   vigia <- readLines (path </> "vigia.txt")
+  manual <- readLines (path </> "vigia-manual.txt")
   observer <- readLines (path </> "observador.txt")
   let states = unitStates units timers
       lines' =
         viewLines (viewHeader shown folder) events states (reconcile (expectedPending events) states)
-          (lastOf vigia) (lastOf observer)
+          (lastOf vigia) (lastOf manual) (lastOf observer)
   TIO.putStr ("\ESC[2J\ESC[H" <> T.unlines lines')
   hFlush stdout
   threadDelay 60000000
@@ -422,11 +416,28 @@ findRecorder = lookupEnv "DASHBOARDF1_RECORD" >>= maybe (findExecutable "dashboa
 findReader :: IO (Maybe FilePath)
 findReader = lookupEnv "DASHBOARDF1_OBSERVA" >>= maybe (findExecutable "dashboardF1-observa") (pure . Just)
 
+-- | Lo que lanzan las piezas: de las variables que pone @nix run .#auto@ o, sin ellas, del
+-- @PATH@. Si falta algo, lo dice (con el lanzador con que hay que lanzar) y sale.
+findTools :: Text -> IO Tools
+findTools launcher =
+  Tools
+    <$> found "dashboardF1-record" findRecorder
+    <*> found "dashboardF1-observa" findReader
+    <*> found "dashboardF1-memoria" (fromEnvOrPath "DASHBOARDF1_MEMORIA" "dashboardF1-memoria")
+    <*> found "dashboardF1-vigia-manual" (fromEnvOrPath "DASHBOARDF1_VIGIA_MANUAL" "dashboardF1-vigia-manual")
+  where
+    found name look = maybe (quit ("no encuentro " <> name <> ": lanza con " <> launcher)) pure =<< look
+    fromEnvOrPath var exe = lookupEnv var >>= maybe (findExecutable exe) (pure . Just)
+
 -- | Lo que corre un temporizador al disparar: la pieza de su etiqueta.
 dispara :: FilePath -> Text -> [Text] -> IO ()
 dispara path label rest
   | label == relecturaLabel = runRelectura path
   | label == pieceLabel Vigia = either quit (\d -> withSlot d (\s -> runVigia path label s d)) (parseDispara rest)
+  | Just piece <- find ((== label) . pieceLabel) [Memory, ManualVigia] =
+      either quit
+        (\d -> maybe (quit "dispara: la memoria y el vigía manual necesitan --guion") (\s -> runScript path label piece s d) (diScript d))
+        (parseDispara rest)
   | Right d <- parseDispara rest
   , Just s <- diSession d
   , account : _ <- [a | a <- [minBound .. maxBound], label == pieceLabel (Recording a s)] =

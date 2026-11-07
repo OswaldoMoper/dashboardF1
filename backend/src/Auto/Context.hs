@@ -7,6 +7,7 @@ module Auto.Context
   , openf1Status
   , runVigia
   , runObserver
+  , runScript
   , runRecording
   , runChecks
   , jolpicaDay
@@ -38,27 +39,29 @@ import           Auto.Helper                (Account, CalendarAnswer,
                                              RecordingEnd (..),
                                              RecordingRun (..),
                                              RecordingStep (..),
-                                             RelaunchWhy (..), Slot (..),
-                                             TimerRow, UnitRow (..),
+                                             RelaunchWhy (..), ScriptEnd (..),
+                                             Slot (..), TimerRow, UnitRow (..),
                                              VigiaEnd (..), VigiaReading (..),
                                              VigiaWatch (..), askOrder,
                                              captureDue, captureName, checkLine,
                                              checksStopLine, checksSummary,
                                              inPause, instanceChange,
                                              jolpicaSlots, liveTable,
-                                             logVerdict, observerLine,
-                                             observerStopLine, onCalendar,
-                                             openf1Check, pageCheck, pageUrl,
-                                             pauseFrom, pauseLine, readCalendar,
-                                             readerAnswer, readerRelaunchLine,
+                                             logVerdict, manualVigiaDelay,
+                                             observerLine, observerStopLine,
+                                             onCalendar, openf1Check, pageCheck,
+                                             pageUrl, pauseFrom, pauseLine,
+                                             readCalendar, readerAnswer,
+                                             readerRelaunchLine,
                                              readerTimeoutSeconds, recorderArgs,
                                              recordingFile, recordingLog,
                                              recordingName, recordingStep,
                                              recordingStepLine,
                                              recordingStopLine, reopenLine,
-                                             slotsFromCalendar, slotsOn,
-                                             startLine, tokenCheck, unitName,
-                                             vigiaDone, vigiaGone,
+                                             scriptArgs, scriptLog, scriptStep,
+                                             scriptStopLine, slotsFromCalendar,
+                                             slotsOn, startLine, tokenCheck,
+                                             unitName, vigiaDone, vigiaGone,
                                              vigiaJsonName, vigiaLine,
                                              vigiaReading, vigiaStep,
                                              vigiaStopLine)
@@ -345,6 +348,63 @@ fileState path = either (const Nothing) Just <$> trySync ((,) <$> getFileSize pa
 -- | El lector vivo: su entrada, su salida y su proceso.
 data Reader = Reader Handle Handle ProcessHandle
 
+-- | Si el servicio del vigía de esa carpeta del día corre (o está arrancando); 'Nothing'
+-- si no se pudo preguntar a systemd.
+vigiaRunning :: FilePath -> IO (Maybe Bool)
+vigiaRunning folder =
+  either (const Nothing) (Just . any ((`elem` ["active", "activating"]) . urActive))
+    <$> autoUnits (unitName (takeFileName folder) Vigia <> ".service")
+
+-- | La memoria o el vigía manual, en la carpeta del día: lanza su guion (ese ejecutable,
+-- con 'scriptArgs') en su propio grupo y con la salida en su @.log@ —el vigía manual,
+-- 'manualVigiaDelay' después de arrancar— y cada 'vigiaPeriod' mira si para
+-- ('scriptStep'). Lo para como al grabador ('stopRecorder'); con SIGINT (lo que manda
+-- @cancela@ a toda la unidad) espera a que salga. La parada deja su línea en @resumen.txt@.
+runScript :: FilePath -> Text -> Piece -> FilePath -> Dispatch -> IO ()
+runScript folder label piece script d = do
+  start <- getCurrentTime
+  appendLine summary (startLine start label)
+  current <- newIORef Nothing
+  end <-
+    handleJust cancelled pure $ do
+      when (piece == ManualVigia) $
+        threadDelay (ceiling (realToFrac manualVigiaDelay * 1000000 :: Double))
+      writeIORef current =<< launchScript
+      watch start current (0 :: Int)
+  readIORef current >>= mapM_ (\ph -> do
+    alive <- isNothing <$> getProcessExitCode ph
+    when alive (stopRecorder (end /= ScriptCancelled) ph))
+  stopped <- getCurrentTime
+  appendLine summary (scriptStopLine stopped label end)
+  where
+    summary = folder </> "resumen.txt"
+    cancelled e = if e == UserInterrupt then Just ScriptCancelled else Nothing
+    -- 'Nothing' si no arrancó: en su primer minuto, 'scriptStep' lo da por salido.
+    launchScript = do
+      started <-
+        trySync
+          ( do
+              logHandle <- openFile (folder </> scriptLog piece) AppendMode
+              (_, _, _, ph) <-
+                createProcess
+                  (proc script (scriptArgs piece (diPort d) folder))
+                    { std_out = UseHandle logHandle
+                    , std_err = UseHandle logHandle
+                    , create_group = True
+                    }
+              pure ph
+          )
+          :: IO (Either SomeException ProcessHandle)
+      pure (either (const Nothing) Just started)
+    watch start current n = do
+      waitNextMinute start
+      now <- getCurrentTime
+      alive <- vigiaRunning folder
+      running <- maybe (pure False) (fmap isNothing . getProcessExitCode) =<< readIORef current
+      case scriptStep piece now (diCap d) (n + 1) alive running of
+        Just e  -> pure e
+        Nothing -> watch start current (n + 1)
+
 -- | El observador, en la carpeta del día: lanza el lector (ese
 -- ejecutable) y cada 'vigiaPeriod' abre la página en la primera instancia que la sirve,
 -- o la lee y, cuando toca ('captureDue'), la captura. Escribe su línea en
@@ -367,9 +427,7 @@ runObserver folder label readerExe d = do
     note t e = appendLine (folder </> "observador.txt") (observerLine t e)
     cancelled e = if e == UserInterrupt then Just ObserverCancelled else Nothing
     window = pauseFrom <$> diPause d
-    vigiaUnit = unitName (takeFileName folder) Vigia <> ".service"
-    vigiaAlive =
-      either (const Nothing) (Just . any ((`elem` ["active", "activating"]) . urActive)) <$> autoUnits vigiaUnit
+    vigiaAlive = vigiaRunning folder
 
     startReader = do
       logHandle <- openFile (folder </> "observador.log") AppendMode
