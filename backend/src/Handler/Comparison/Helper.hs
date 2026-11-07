@@ -14,6 +14,7 @@ module Handler.Comparison.Helper
   ( -- * Envoltura cruda del microservicio FastF1
     RawComparison (..)
   , RawEntry (..)
+  , RawGap (..)
     -- * Transformación pura
   , assembleComparison
   , comparable
@@ -26,7 +27,8 @@ module Handler.Comparison.Helper
   ) where
 
 import           Common.Types          (ComparisonEntry (..),
-                                        LapComparison (..), TracePoint)
+                                        LapComparison (..), TelemetryGap (..),
+                                        TracePoint)
 import           Data.Aeson            (FromJSON (..), withObject, (.!=), (.:),
                                         (.:?))
 import           Data.Maybe            (isJust)
@@ -37,8 +39,9 @@ import           Outcome               (Rejection)
 
 -- | La comparación tal como la emite el microservicio.
 data RawComparison = RawComparison
-  { rcEntries :: [RawEntry]
-  , rcSamples :: Int
+  { rcEntries   :: [RawEntry]
+  , rcSamples   :: Int
+  , rcTelemetry :: Maybe RawGap
   }
   deriving (Eq, Show)
 
@@ -47,6 +50,19 @@ instance FromJSON RawComparison where
     RawComparison
       <$> o .:  "lcEntries"
       <*> o .:? "lcSamples" .!= 0
+      <*> o .:? "lcTelemetry"
+
+-- | Lo que falta de la telemetría, tal como lo emite el microservicio con trazas y la
+-- telemetría de la sesión incompleta.
+data RawGap = RawGap
+  { rgCoverage :: Double
+  , rgRetryAt  :: Text
+  }
+  deriving (Eq, Show)
+
+instance FromJSON RawGap where
+  parseJSON = withObject "RawGap" $ \o ->
+    RawGap <$> o .: "coverage" <*> o .: "retryAt"
 
 -- | Un coche tal como lo emite el microservicio. Los tiempos llegan ya
 -- formateados (@\"1:29.345\"@) porque formatear es trabajo del servicio Python
@@ -80,11 +96,13 @@ instance FromJSON RawEntry where
 assembleComparison :: RawComparison -> LapComparison
 assembleComparison raw =
   MkLapComparison
-    { lcEntries = map entry (rcEntries raw)
-    , lcSamples = rcSamples raw
-    , lcNotice  = ""
+    { lcEntries   = map entry (rcEntries raw)
+    , lcSamples   = rcSamples raw
+    , lcNotice    = ""
+    , lcTelemetry = gap <$> rcTelemetry raw
     }
   where
+    gap g = MkTelemetryGap {tgCoverage = rgCoverage g, tgRetryAt = rgRetryAt g}
     entry e =
       MkComparisonEntry
         { ceCar       = reCar e

@@ -176,6 +176,7 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               StartNotice (..), StatEntity (..),
                                               StateBasis (..),
                                               StateReading (..),
+                                              TelemetryGap (..),
                                               TracePoint (..),
                                               TrackCondition (..),
                                               TyreStint (..), UpNext (..),
@@ -415,7 +416,12 @@ main = hspec $ do
                 ]
             , lcSamples = 2
             , lcNotice = ""
+            , lcTelemetry = Nothing
             }
+
+    it "pasa tal cual lo que falta de la telemetría, si el microservicio lo manda" $
+      lcTelemetry (comparisonOf comparisonWithGap)
+        `shouldBe` Just (MkTelemetryGap 0.0421 "2026-11-07T00:40:05Z")
 
     it "decodifica un coche sin vuelta en vez de tumbar el objeto" $ do
       -- El caso medido en Monza (el 16) y Zandvoort (el 87 y el 3): el servicio
@@ -427,6 +433,21 @@ main = hspec $ do
 
     it "no da por comparable una comparación en la que ningún coche tiene vuelta" $
       comparable (comparisonOf comparisonWithoutLaps) `shouldBe` False
+
+  describe "LapComparison en JSON" $ do
+    let bare = MkLapComparison {lcEntries = [], lcSamples = 0, lcNotice = "", lcTelemetry = Nothing}
+    it "sin lcTelemetry o con null se lee como Nothing, como lo grabado de antes" $ do
+      eitherDecodeStrict "{\"lcEntries\":[],\"lcSamples\":0,\"lcNotice\":\"\"}" `shouldBe` Right bare
+      eitherDecodeStrict "{\"lcEntries\":[],\"lcSamples\":0,\"lcNotice\":\"\",\"lcTelemetry\":null}"
+        `shouldBe` Right bare
+
+    it "lo que falta de la telemetría va y vuelve igual" $ do
+      let c = bare {lcSamples = 100, lcTelemetry = Just (MkTelemetryGap 0.04 "2026-11-07T00:40:00Z")}
+      eitherDecode (encode c) `shouldBe` Right c
+
+    it "sin lcNotice no se lee: lo de antes sigue siendo obligatorio" $
+      (eitherDecodeStrict "{\"lcEntries\":[],\"lcSamples\":0}" :: Either String LapComparison)
+        `shouldSatisfy` either (const True) (const False)
 
   describe "Comparison.adjustSamples" $ do
     it "deja tal cual 0 y lo que ya está en 60–250 de 5 en 5, sin aviso" $
@@ -6990,6 +7011,13 @@ comparisonWithoutLap =
 comparisonWithoutLaps :: ByteString
 comparisonWithoutLaps =
   "{\"lcEntries\":[{\"ceCar\":\"16\",\"ceDriver\":\"LEC\"},{\"ceCar\":\"1\",\"ceDriver\":\"NOR\"}]}"
+
+-- | Con trazas y la telemetría de la sesión incompleta: el microservicio añade
+-- @lcTelemetry@, con la cobertura y la hora UTC de volver a pedirla.
+comparisonWithGap :: ByteString
+comparisonWithGap =
+  "{\"lcSamples\":100,\"lcEntries\":[],\
+  \\"lcTelemetry\":{\"coverage\":0.0421,\"retryAt\":\"2026-11-07T00:40:05Z\"}}"
 
 -- | Recorte de @GET \/fastf1\/drivers\/{session_key}@ — los tres primeros coches
 -- de la parrilla real de la sesión del 2026-08-06, en el orden que los da

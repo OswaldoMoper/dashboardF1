@@ -820,14 +820,42 @@ instance FromJSON LiveTable where
 -- primero es la referencia. La Δ no viaja: se calcula con
 -- 'Common.Comparison.deltasAgainst' desde 'ceSectors'.
 data LapComparison = MkLapComparison
-  { lcEntries :: [ComparisonEntry]
-  , lcSamples :: Int   -- ^ Muestras por coche en 'ceTrace', ya ajustadas; 0 sin trazas.
-  , lcNotice  :: Text  -- ^ Qué se ajustó de lo pedido, o vacío.
+  { lcEntries   :: [ComparisonEntry]
+  , lcSamples   :: Int   -- ^ Muestras por coche en 'ceTrace', ya ajustadas; 0 sin trazas.
+  , lcNotice    :: Text  -- ^ Qué se ajustó de lo pedido, o vacío.
+  , lcTelemetry :: Maybe TelemetryGap
+    -- ^ Con trazas y la telemetría de la sesión incompleta, cuánto cubre y cuándo se
+    -- vuelve a pedir; 'Nothing' sin trazas o con ella entera.
   }
   deriving stock (Eq, Show, Generic)
 
 instance ToJSON LapComparison
-instance FromJSON LapComparison
+
+-- | Sin @lcTelemetry@, o con @null@, es 'Nothing': lo grabado antes de que existiera
+-- se sigue leyendo.
+instance FromJSON LapComparison where
+  parseJSON = withObject "LapComparison" $ \o ->
+    MkLapComparison
+      <$> o .:  "lcEntries"
+      <*> o .:  "lcSamples"
+      <*> o .:  "lcNotice"
+      <*> o .:? "lcTelemetry"
+
+-- | La telemetría incompleta de una sesión: qué fracción del tramo de sus vueltas
+-- cubre, de 0 a 1, y la hora UTC (ISO 8601, sin fracción) a la que el microservicio
+-- la vuelve a pedir. En JSON, @coverage@ y @retryAt@, como la emite el microservicio.
+data TelemetryGap = MkTelemetryGap
+  { tgCoverage :: Double
+  , tgRetryAt  :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON TelemetryGap where
+  toJSON g = object ["coverage" .= tgCoverage g, "retryAt" .= tgRetryAt g]
+
+instance FromJSON TelemetryGap where
+  parseJSON = withObject "TelemetryGap" $ \o ->
+    MkTelemetryGap <$> o .: "coverage" <*> o .: "retryAt"
 
 -- | Un coche de la comparación.
 --

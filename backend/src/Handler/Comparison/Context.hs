@@ -91,8 +91,9 @@ dummy =
         [ entry "16" "LEC" "1:29.512" (29.0, 31.0, 29.512)
         , entry "1" "NOR" "1:29.345" (29.048, 30.871, 29.426)
         ]
-    , lcSamples = 0
-    , lcNotice  = ""
+    , lcSamples   = 0
+    , lcNotice    = ""
+    , lcTelemetry = Nothing
     }
   where
     entry car driver lap sectors =

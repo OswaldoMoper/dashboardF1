@@ -349,7 +349,9 @@ ruleButtons buttons marked = divClass "comparison__rule" $ do
 
 -- | Lo que se pinta: la comparación del directo si la hay, o lo último de FastF1.
 shownState :: Maybe [LiveEntry] -> CState -> CState
-shownState (Just es) _ = Loaded (MkLapComparison (map leEntry es) 0 "")
+shownState (Just es) _ =
+  Loaded MkLapComparison
+    {lcEntries = map leEntry es, lcSamples = 0, lcNotice = "", lcTelemetry = Nothing}
 shownState Nothing s   = s
 
 -- | El tooltip de un desplegable cuyo coche sale sin barras, en directo o con FastF1.
