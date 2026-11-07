@@ -1162,17 +1162,48 @@ body {
   justify-content: space-around;
 }
 
-/* La gráfica con su fila de valores y, al lado del eje, la columna de sus números.
-   El ancho de la columna lo pone el widget (`axisColumnWidth`); su alto es el del
-   lienzo (`chartHeight`). Los números van a la altura de su línea, con `top` desde
-   el widget. */
+/* La gráfica con su fila de valores y, al lado del eje, la columna de sus números, en
+   una rejilla: arriba el lienzo y la columna, que miden lo mismo y crecen juntos;
+   debajo la fila de valores. El ancho de la columna lo pone el widget
+   (`axisColumnWidth`), y los números van a la altura de su línea, con `top` en tanto
+   por ciento desde el widget. */
 .comparison__plotrow {
-  display: flex;
-  align-items: flex-start;
+  flex: 1 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 1fr auto;
 }
 
 .comparison__plotrow--axis-left {
-  flex-direction: row-reverse;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.comparison__plotrow .comparison__plotarea {
+  display: contents;
+}
+
+.comparison__plotrow .comparison__canvas {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.comparison__plotrow .comparison__frontiers {
+  grid-row: 2;
+  grid-column: 1;
+}
+
+.comparison__plotrow .comparison__axis {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.comparison__plotrow--axis-left .comparison__canvas,
+.comparison__plotrow--axis-left .comparison__frontiers {
+  grid-column: 2;
+}
+
+.comparison__plotrow--axis-left .comparison__axis {
+  grid-column: 1;
 }
 
 .comparison__plotarea {
@@ -1243,8 +1274,6 @@ body {
 
 .comparison__axis {
   position: relative;
-  flex: none;
-  height: 200px;
 }
 
 .comparison__tick {
@@ -1376,8 +1405,10 @@ body {
    los pone `Widgets.Comparison` como atributos de presentación, y una regla CSS
    aquí los sobrescribiría en silencio (el CSS gana a los atributos). */
 .comparison__chart {
-  display: block;
+  position: absolute;
+  inset: 0;
   width: 100%;
+  height: 100%;
   background: var(--c-surface-2);
   border-radius: var(--r-sm);
 }
@@ -1386,6 +1417,7 @@ body {
 .comparison__curve {
   position: absolute;
   top: 0;
+  height: 100%;
 }
 
 /* La fila de fronteras: cada celda va centrada en la X de su punto (`left` lo pone
@@ -1610,25 +1642,30 @@ body {
   pointer-events: none;
 }
 
-/* Con trazas, la tarjeta se llena: cada caja hasta el lienzo crece con lo que sobra, y
-   el lienzo se lo queda. Sin trazas, las cajas miden lo que su contenido. */
-.widget--comparison:has(.comparison__canvas--traces) {
+/* Con una gráfica pintada (las trazas o la del tipo 1), la tarjeta se llena: cada caja
+   hasta el lienzo crece con lo que sobra, y el lienzo se lo queda. Sin ella (cargando,
+   o un aviso en su lugar), las cajas miden lo que su contenido. */
+.widget--comparison:has(.comparison__canvas--traces),
+.widget--comparison:has(.comparison__plotrow) {
   display: flex;
   flex-direction: column;
 }
 
-.comparison__card:has(.comparison__canvas--traces) {
+.comparison__card:has(.comparison__canvas--traces),
+.comparison__card:has(.comparison__plotrow) {
   flex: 1 0 auto;
   display: flex;
   flex-direction: column;
 }
 
-.comparison__body:has(.comparison__canvas--traces) {
+.comparison__body:has(.comparison__canvas--traces),
+.comparison__body:has(.comparison__plotrow) {
   flex: 1 0 auto;
   align-items: stretch;
 }
 
-.comparison__plot:has(.comparison__canvas--traces) {
+.comparison__plot:has(.comparison__canvas--traces),
+.comparison__plot:has(.comparison__plotrow) {
   display: flex;
   flex-direction: column;
 }

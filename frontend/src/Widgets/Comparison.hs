@@ -279,7 +279,7 @@ comparisonWidget live revealed start put = mdo
   let layout   = cardLayout . maybe 0 fst <$> size
       fits     = maybe True snd <$> size
       rowNow   = rowHeightNow <$> shown <*> view <*> state
-      drawn    = tracesDrawn <$> view <*> state
+      drawn    = canvasDrawn <$> view <*> state
       changed  = leftmost
                    [ () <$ updated shown, () <$ updated state, () <$ updated view
                    , () <$ updated stacked, revealed ]
@@ -440,15 +440,16 @@ rowHeightNow :: ChartMode -> View -> CState -> Double
 rowHeightNow m v (Loaded c) | not (null (frontierCells (seriesOf (vBase v) c))) = rowHeight m
 rowHeightNow _ _ _          = 0
 
--- | El alto sin crecer del lienzo de las trazas pintado ('Common.Traces.tracesHeight'),
--- o 'Nothing' si no hay trazas pintadas: otro tipo, o sin comparación, o con el aviso
--- de la referencia sin vuelta en su lugar.
-tracesDrawn :: View -> CState -> Maybe Double
-tracesDrawn v (Loaded c)
-  | chartTypeTraces (vType v)
-  , Nothing <- missingReference (vBase v) c
+-- | El alto sin crecer del lienzo pintado: el de las trazas ('Common.Traces.tracesHeight')
+-- o el de la gráfica del tipo 1 ('Common.Chart.chartHeight'). 'Nothing' sin comparación,
+-- o con trazas que no se pintan (el aviso de la referencia sin vuelta en su lugar).
+-- Con un aviso en lugar de la gráfica del tipo 1 no hay lienzo que medir.
+canvasDrawn :: View -> CState -> Maybe Double
+canvasDrawn v (Loaded c)
+  | not (chartTypeTraces (vType v)) = Just chartHeight
+  | Nothing <- missingReference (vBase v) c
   , _ : _ : _ <- lcEntries c = Just (tracesHeight (TraceRows (traceChannels (vType v))))
-tracesDrawn _ _ = Nothing
+canvasDrawn _ _ = Nothing
 
 -- | La serie que se pinta con una base: la Δ del coche que no es la base
 -- ('Common.Comparison.pairWith'), o @[]@.
@@ -562,9 +563,9 @@ baselineSelect = do
 
 -- | Lo que se mide de la tarjeta: su ancho por dentro, en px, y si caben las dos
 -- líneas de la fila de fronteras sin que pida scroll
--- ('Common.ComparisonCard.valuesFitMeasured', con las trazas sin crecer: se descuenta
--- lo que el navegador ha estirado su lienzo). El 'Behavior' da el alto de la fila
--- pintada y el alto sin crecer de las trazas pintadas ('tracesDrawn').
+-- ('Common.ComparisonCard.valuesFitMeasured', con el lienzo sin crecer: se descuenta
+-- lo que el navegador lo ha estirado). El 'Behavior' da el alto de la fila pintada y
+-- el alto sin crecer del lienzo pintado ('canvasDrawn').
 --
 -- Se mide al montarse, cada vez que cambia la ventana o el tamaño de la tarjeta o de
 -- su contenido ('sizeChanges'), y un instante después de cada evento del último argumento
@@ -592,13 +593,13 @@ cardSize root card drawnNow changed = mdo
   holdUniqDyn =<< holdDyn Nothing (Just <$> ffilter (\(w, _) -> w > 0) measured)
   where
     cardEl = DOM.uncheckedCastTo DOM.HTMLElement (_element_raw card)
-    measure (row, traces) = DOM.liftJSM $ do
+    measure (row, base) = DOM.liftJSM $ do
       w       <- DOM.getOffsetWidth cardEl
       content <- DOM.getOffsetHeight cardEl
       client  <- DOM.getClientHeight (_element_raw root)
-      canvas  <- DOM.querySelector cardEl (".comparison__canvas--traces" :: Text)
+      canvas  <- DOM.querySelector cardEl (".comparison__canvas" :: Text)
       drawnH  <- maybe (pure 0) (\e -> DOM.getHeight =<< DOM.getBoundingClientRect e) canvas
-      let extra = maybe 0 (\base -> max 0 (drawnH - base)) traces
+      let extra = maybe 0 (\b -> max 0 (drawnH - b)) base
       pure (w, valuesFitMeasured client content (row + extra))
 
 -- | Cuántas veces se vuelve a medir una tarjeta que mide 0 (10 s en total).
@@ -1039,7 +1040,7 @@ plotView overlay rm l axis v les (Loaded c)
   | otherwise =
       elAttr "div" (plotRowAttrs axis) $ do
         clicks <- divClass "comparison__plotarea" $ do
-          divClass "comparison__canvas" $ do
+          elAttr "div" canvasAttrs $ do
             deltaChart series
             when (clAxisInside l) $
               mapM_ insideTick (insideAxisLabels axis (clChart l) series)
@@ -1204,9 +1205,12 @@ insideTick (x, y, label) =
         , ("style", "left: " <> formatFixed 1 x <> "px; " <> topAt y)
         ]
 
--- | La posición vertical de un número centrado en la Y de su línea.
+-- | La posición vertical de un número centrado en la Y de su línea, con la Y del
+-- @viewBox@ en tanto por ciento del alto: el lienzo y la columna del eje crecen
+-- juntos con la tarjeta.
 topAt :: Double -> Text
-topAt y = "top: " <> formatFixed 1 (y - valueHeight / 2) <> "px"
+topAt y =
+  "top: calc(" <> formatFixed 3 (y / chartHeight * 100) <> "% - " <> formatFixed 3 (valueHeight / 2) <> "px)"
 
 -- | El delta acumulado como @\<polyline\>@ sobre un @viewBox@ fijo, con la línea
 -- del cero dibujada aparte y una línea tenue por cada número del eje salvo el cero.
@@ -1357,18 +1361,26 @@ svgEl name attrs child =
 svgNamespace :: Maybe Text
 svgNamespace = Just "http://www.w3.org/2000/svg"
 
--- | Lienzo: @viewBox@ fijo de 'Common.Chart' y ancho fluido.
+-- | La caja de la gráfica del tipo 1: nunca más baja que 'Common.Chart.chartHeight';
+-- lo que crezca la tarjeta se lo queda ella.
+canvasAttrs :: Map Text Text
+canvasAttrs =
+  Map.fromList
+    [ ("class", "comparison__canvas")
+    , ("style", "min-height: " <> num chartHeight <> "px")
+    ]
+
+-- | Lienzo: @viewBox@ fijo de 'Common.Chart', del ancho y el alto de su caja.
 --
 -- @preserveAspectRatio=\"none\"@ porque el eje X es la vuelta y el Y son
 -- segundos: no son magnitudes comparables, así que conservar la proporción no
--- significa nada y estirar a lo ancho aprovecha la pantalla.
+-- significa nada y estirar aprovecha la pantalla. Las líneas no engordan al
+-- estirarse (@vector-effect@).
 chartAttrs :: Map Text Text
 chartAttrs =
   Map.fromList
     [ ("class", "comparison__chart")
     , ("viewBox", "0 0 " <> num chartWidth <> " " <> num chartHeight)
-    , ("width", "100%")
-    , ("height", num chartHeight)
     , ("preserveAspectRatio", "none")
     ]
 
@@ -1379,7 +1391,6 @@ curveAttrs =
   Map.fromList
     [ ("class", "comparison__curve")
     , ("viewBox", "0 0 " <> num chartWidth <> " " <> num chartHeight)
-    , ("height", num chartHeight)
     , ("preserveAspectRatio", "none")
     , ( "style"
       , "left: " <> formatFixed 1 curveInset <> "px; width: calc(100% - "
@@ -1398,6 +1409,7 @@ gridLineAttrs y =
     , ("stroke", "#888888")
     , ("stroke-opacity", "0.3")
     , ("stroke-width", "1")
+    , ("vector-effect", "non-scaling-stroke")
     ]
 
 -- | Línea de referencia del cero, discontinua para que no se confunda con la
@@ -1413,6 +1425,7 @@ zeroLineAttrs series =
     , ("stroke", "#888888")
     , ("stroke-width", "1")
     , ("stroke-dasharray", "4 4")
+    , ("vector-effect", "non-scaling-stroke")
     ]
   where
     y = num (axisZeroY series)
@@ -1428,6 +1441,7 @@ polylineAttrs series =
     , ("stroke", "#e10600")
     , ("stroke-width", "2")
     , ("stroke-linejoin", "round")
+    , ("vector-effect", "non-scaling-stroke")
     ]
 
 -- | Un número del lienzo como texto de atributo. Entero por el mismo motivo que
