@@ -180,6 +180,14 @@
             exec nix run .#e2e -- --record "$@"
           '';
         };
+
+        e2eDataLauncher = pkgs.writeShellApplication {
+          name = "dashboardF1-e2e-datos";
+          text = ''
+            ${guardRoot}
+            exec cabal run -v0 backend:exe:dashboardF1-e2e-datos -- e2e/recordings
+          '';
+        };
       in
       {
         # ── Backend Servant (Fase 1: /home + /api/* en :8080, override con PORT) ──
@@ -608,6 +616,7 @@
             autoLauncher
             e2eLauncher
             e2eRecordLauncher
+            e2eDataLauncher
             self'.packages.pytest
             self'.packages.hspec
             self'.packages.test
@@ -629,6 +638,7 @@
             echo "  todas   : dashboardF1-test        # pytest, hspec y, si pasan, e2e"
             echo "  e2e     : dashboardF1-e2e         # tsc + Playwright, con lo grabado en e2e/recordings"
             echo "  e2e rec : dashboardF1-e2e-record  # graba /api/* de :3000 (otro con E2E_URL; queda a nombre de :3000)"
+            echo "  e2e dat : dashboardF1-e2e-datos   # reescribe e2e/recordings con los datos inventados del guion"
             echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
             echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
             echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"

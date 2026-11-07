@@ -85,7 +85,7 @@ test.describe('los layouts', () => {
   }
 });
 
-// La grabación sirve `/api/live` de OpenF1 y sin `liveStints`: la tarjeta lo dice y no
+// El HAR sirve `/api/live` de OpenF1 y sin `liveStints`: la tarjeta lo dice y no
 // pinta filas. Sin retraso, para no esperar los 41 s de fábrica.
 test('Tyre Strategy fuera del feed: el aviso y ninguna fila', async ({ page }) => {
   await openDashboard(page);
@@ -95,9 +95,9 @@ test('Tyre Strategy fuera del feed: el aviso y ninguna fila', async ({ page }) =
   await expect(card.locator('.tyre-strategy__row')).toHaveCount(0);
 });
 
-// La foto de `/api/live` al acabar la P3 de Austin, servida como del feed: 22 coches, 92 stints
-// en 49 juegos (4 ya usados al montarlos, 43 pasos por boxes dentro de un juego) y la vuelta
-// más alta en la 25.
+// La foto de `/api/live` al acabar la P3 (`E2eDatos.feedP3`), servida como del feed: 22 coches,
+// 75 stints en 40 juegos (9 ya usados al montarlos, 35 pasos por boxes dentro de un juego) y la
+// vuelta más alta en la 23.
 async function showFeed(page: Page, table: unknown): Promise<Locator> {
   await openDashboard(page);
   await page.route('**/api/live', (route) =>
@@ -114,16 +114,16 @@ async function showFeed(page: Page, table: unknown): Promise<Locator> {
 test('Tyre Strategy con el feed: una barra por juego, su total, el rayado, las muescas y el eje', async ({ page }) => {
   const card = await showFeed(page, feedP3);
   await expect(card.locator('.tyre-strategy__row')).toHaveCount(22);
-  await expect(card.locator('.tyre-strategy__bar')).toHaveCount(49);
-  await expect(card.locator('.tyre-strategy__bar--used')).toHaveCount(4);
-  await expect(card.locator('.tyre-strategy__notch')).toHaveCount(43);
+  await expect(card.locator('.tyre-strategy__bar')).toHaveCount(40);
+  await expect(card.locator('.tyre-strategy__bar--used')).toHaveCount(9);
+  await expect(card.locator('.tyre-strategy__notch')).toHaveCount(35);
   await expect(card.locator('.tyre-strategy__grid')).toHaveCount(22 * 4);
-  await expect(card.locator('.tyre-strategy__tick')).toHaveText(['0', '5', '10', '15', '20', '25']);
-  await expect(card.locator('.tyre-strategy__scale')).toHaveText('25 vueltas');
+  await expect(card.locator('.tyre-strategy__tick')).toHaveText(['0', '5', '10', '15', '20']);
+  await expect(card.locator('.tyre-strategy__scale')).toHaveText('23 vueltas');
   const lec = card.locator('.tyre-strategy__row').filter({ hasText: '3 LEC' });
-  await expect(lec.locator('.tyre-strategy__total')).toHaveText(['10', '10']);
+  await expect(lec.locator('.tyre-strategy__total')).toHaveText(['11', '12']);
   await expect(lec.locator('.tyre-strategy__bar').first()).toHaveAttribute(
-    'title', 'MEDIUM · vueltas 1–10 (10) · nuevo, edad 0 · 3 salidas: 1–3, 4–7, 8–10');
+    'title', 'MEDIUM · vueltas 1–11 (11) · nuevo, edad 0 · 3 salidas: 1–4, 5–8, 9–11');
   await expect(card.locator('.tyre-strategy__empty')).toHaveCount(0);
 });
 

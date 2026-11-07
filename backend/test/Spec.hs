@@ -227,6 +227,7 @@ import qualified Data.Text.Encoding          as TE
 import           Data.Time.Calendar          (Day, fromGregorian)
 import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
                                               addUTCTime)
+import           E2eDatos                    (feedP3, harJson)
 import           GHC.TypeLits                (symbolVal)
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison,
@@ -705,6 +706,30 @@ main = hspec $ do
   describe "TyreStint del feed" $
     it "decodifica un stint con las claves de _feed_stints" $
       eitherDecodeStrict feedStintBor `shouldBe` Right borStint
+
+  -- Lo que `e2e/layouts.spec.ts` cuenta sobre lo generado: si cambia el guion, falla aquí
+  -- antes que en el navegador.
+  describe "E2eDatos" $ do
+    it "la P3 da 22 filas, 40 juegos, 9 usados, 35 muescas y 23 vueltas" $ do
+      let rows = setRows feedP3
+          bars = concatMap setBars rows
+      (length rows, length bars, length (filter setUsed bars), sum (map (length . setNotches) bars))
+        `shouldBe` (22, 40, 9, 35)
+      stintScale (liveSession feedP3) (liveStints feedP3) `shouldBe` 23
+    it "Leclerc, tercero, lleva 11 y 12; sin los stints del 77, Bottas es el único sin salir" $ do
+      [ (rowLabel r, map setTotal (setBars r)) | r <- setRows feedP3, setDriver r == "LEC" ]
+        `shouldBe` [("3 LEC", [11, 12])]
+      let withoutBot = feedP3 {liveStints = filter ((/= "77") . tsCar) (liveStints feedP3)}
+      [ rowLabel r | r <- setRows withoutBot, null (setBars r) ] `shouldBe` ["22 BOT"]
+    it "el HAR trae una respuesta por cada ruta que la página pide al cargar" $
+      [ u
+      | Object o <- [harJson]
+      , Just (Object l) <- [KM.lookup "log" o]
+      , Just (Array es) <- [KM.lookup "entries" l]
+      , Object e <- foldr (:) [] es
+      , Just (Object r) <- [KM.lookup "request" e]
+      , Just (String u) <- [KM.lookup "url" r]
+      ] `shouldBe` map ("http://localhost:3000/api/" <>) ["historical", "comparison", "drivers", "live"]
 
   -- Las barras del widget, con LEC de la P2 de Austin (H 1–8, S 9–11, S 12–30) y COL, que
   -- llega a la 32: fuera de carrera la escala es la vuelta más alta.

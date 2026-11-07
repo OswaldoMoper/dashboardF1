@@ -116,11 +116,25 @@ executable dashboardF1-auto
       , time
     ghc-options: -threaded
 
+executable dashboardF1-e2e-datos
+    import:           shared
+    hs-source-dirs:   e2e-datos
+    main-is:          Main.hs
+    other-modules:    E2eDatos
+    build-depends:
+        base            >= 4.14 && < 5
+      , aeson
+      , bytestring
+      , common
+      , filepath
+      , text
+
 test-suite backend-test
     import:           shared
     type:             exitcode-stdio-1.0
-    hs-source-dirs:   test
+    hs-source-dirs:   test e2e-datos
     main-is:          Spec.hs
+    other-modules:    E2eDatos
     build-depends:
         base            >= 4.14 && < 5
       , QuickCheck
