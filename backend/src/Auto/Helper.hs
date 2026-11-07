@@ -136,8 +136,12 @@ module Auto.Helper
   , bareLaunch
   , parseLaunch
   , launchProblem
-  , gpAllowed
-  , gpRefusal
+  , Mode (..)
+  , modeFrom
+  , inMode
+  , modeProblem
+  , modeLauncher
+  , gpPlanFor
   , parseHoras
   , jolpicaSlots
   , CalendarAnswer (..)
@@ -1463,14 +1467,42 @@ launchProblem l
       Just "--relectura es del GP: dashboardF1-autodev gp --relectura <minutos>"
   | otherwise = Nothing
 
--- | El modo con el que se lanzó, del valor de @DASHBOARDF1_MODO@ que pone el lanzador
--- @dashboardF1-autodev@: solo con «desarrollo» se programa el GP.
-gpAllowed :: Maybe String -> Bool
-gpAllowed = (== Just "desarrollo")
+-- | Con qué se lanza: «ver» (@dashboardF1-auto@: el GP, con una tanda de comprobaciones por
+-- día) o «desarrollo» (@dashboardF1-autodev@: además vigías, observador, memoria,
+-- grabaciones y la relectura de horas, y el modo por día).
+data Mode = Ver | Desarrollo
+  deriving (Eq, Show)
 
--- | Lo que contesta @gp@ lanzado sin el modo «desarrollo».
-gpRefusal :: Text
-gpRefusal = "dashboardF1-auto gp llegará con el modo «ver»; para programar el GP con grabaciones: dashboardF1-autodev gp"
+-- | El modo, del valor de @DASHBOARDF1_MODO@ que pone @dashboardF1-autodev@: con
+-- «desarrollo», ese; con cualquier otro o sin él, «ver».
+modeFrom :: Maybe String -> Mode
+modeFrom m = if m == Just "desarrollo" then Desarrollo else Ver
+
+-- | Lo pedido en ese modo: en «ver», sin día, es el GP.
+inMode :: Mode -> Launch -> Launch
+inMode mode l
+  | mode == Ver && isNothing (laDay l) = l {laGp = True}
+  | otherwise = l
+
+-- | Lo que ese modo no hace, con el mensaje para quien lo lanzó: en «ver», el modo por día
+-- y la relectura.
+modeProblem :: Mode -> Launch -> Maybe Text
+modeProblem Desarrollo _ = Nothing
+modeProblem Ver l
+  | Just day <- laDay l = Just ("el modo por día es de dashboardF1-autodev: dashboardF1-autodev " <> day)
+  | isJust (laRelectura l) = Just "--relectura es del modo desarrollo: dashboardF1-autodev gp --relectura <minutos>"
+  | otherwise = Nothing
+
+-- | El lanzador de ese modo, para los mensajes.
+modeLauncher :: Mode -> Text
+modeLauncher Ver        = "dashboardF1-auto"
+modeLauncher Desarrollo = "dashboardF1-autodev"
+
+-- | 'gpPlan' en ese modo: en «ver», de cada día solo las comprobaciones de arranque.
+gpPlanFor :: Mode -> NominalDiffTime -> UTCTime -> [Slot] -> [GpDay]
+gpPlanFor Desarrollo cap now = gpPlan cap now
+gpPlanFor Ver cap now =
+  filter (not . null . gdPlan) . map (\d -> d {gdPlan = filter ((== Checks Nothing) . plPiece) (gdPlan d)}) . gpPlan cap now
 
 -- | Las carpetas que tienen alguna unidad en systemd, en el orden en que se dan. Una
 -- unidad es de la carpeta más larga cuyo nombre, con un guion, la empieza: la de
@@ -1706,16 +1738,20 @@ dayTable now other plan =
 
 -- | El resumen del GP antes del OK, encima de la tabla de cada día: el GP si se sabe,
 -- una fila por día con sus sesiones, la hora a la que arrancan sus piezas («ahora» si
--- ya pasó) y la carpeta en que se lanza, y lo que se programa cada día.
-gpSummary :: Maybe Text -> UTCTime -> [(GpDay, FilePath)] -> [Text]
-gpSummary gp now days =
+-- ya pasó) y la carpeta en que se lanza, y lo que se programa cada día en ese modo.
+gpSummary :: Mode -> Maybe Text -> UTCTime -> [(GpDay, FilePath)] -> [Text]
+gpSummary mode gp now days =
   T.intercalate " · " (maybe [] pure gp <> [count, "horas de México (UTC)"])
     : cols "Día" "Sesiones" "Arranca" "Carpeta"
     : map row days
-    <> [ "  Cada día, al arrancar: comprobaciones, vigía, observador, memoria y vigía manual (30 s después); por sesión, a T−45,"
-       , "  sus comprobaciones y las dos grabaciones."
-       ]
+    <> note
   where
+    note = case mode of
+      Ver -> ["  Cada día, al arrancar: una tanda de comprobaciones (página, cuenta, OpenF1)."]
+      Desarrollo ->
+        [ "  Cada día, al arrancar: comprobaciones, vigía, observador, memoria y vigía manual (30 s después); por sesión, a T−45,"
+        , "  sus comprobaciones y las dos grabaciones."
+        ]
     count = T.pack (show (length days)) <> if length days == 1 then " día" else " días"
     cols a b c d = "  " <> T.justifyLeft 14 ' ' a <> T.justifyLeft 24 ' ' b <> T.justifyLeft 17 ' ' c <> d
     row (d, folder) =

@@ -1,12 +1,15 @@
--- | @dashboardF1-auto@: programa las comprobaciones de un día de GP en systemd.
+-- | @dashboardF1-auto@: programa un GP, o un día de GP, en systemd. El modo lo pone el
+-- lanzador en @DASHBOARDF1_MODO@ ('modeFrom').
 --
--- * @dashboardF1-auto [día] [--horas p1=11:30,…] [--ensayo] [--log \<fichero\>]@ — enseña
---   el día, pide el OK y programa; después se queda enseñando la vista (Ctrl+C sale sin
---   cancelar). @--log@ es el fichero al que va la terminal de la instancia.
--- * @dashboardF1-autodev gp [--ensayo] [--calendario \<fichero\>] [--log \<fichero\>]@ —
---   lo mismo para todos los días del GP que viene, con un solo OK. Solo con
---   @DASHBOARDF1_MODO=desarrollo@, que pone el lanzador. @--calendario@ es un
---   @\/api\/calendar@ guardado en un fichero.
+-- * @dashboardF1-auto [gp] [--ensayo] [--calendario \<fichero\>] [--log \<fichero\>]@ — modo
+--   «ver»: el GP que viene, una tanda de comprobaciones por día, con un solo OK.
+-- * @dashboardF1-autodev gp [--ensayo] [--calendario \<fichero\>] [--relectura \<min\>]
+--   [--log \<fichero\>]@ — modo «desarrollo»: el GP con todas sus piezas y la relectura
+--   de horas. @--calendario@ es un @\/api\/calendar@ guardado en un fichero.
+-- * @dashboardF1-autodev [día] [--horas p1=11:30,…] [--ensayo] [--log \<fichero\>]@ — un
+--   día con todas sus piezas. @--log@ es el fichero al que va la terminal de la instancia.
+--
+-- Tras el OK se queda enseñando la vista (Ctrl+C sale sin cancelar).
 -- * @dashboardF1-auto estado@ — vuelve a enseñar la vista de la última carpeta.
 -- * @dashboardF1-auto cancela@ — enseña lo que queda en systemd y, con el OK, lo para.
 -- * @dashboardF1-auto dispara \<carpeta\> \<pieza\>@ — lo que corre cada temporizador.
@@ -49,11 +52,15 @@ main = do
     "dispara" : folder : label : rest -> dispara (T.unpack folder) label rest
     _                                 -> either quit start (parseLaunch args)
 
--- | El día o el GP, tras comprobar que lo pedido casa ('launchProblem').
+-- | El día o el GP, en el modo del lanzador ('inMode'), tras comprobar que lo pedido casa
+-- ('launchProblem') y que el modo lo hace ('modeProblem').
 start :: Launch -> IO ()
-start l = do
+start asked = do
+  mode <- modeFrom <$> lookupEnv "DASHBOARDF1_MODO"
+  let l = inMode mode asked
   forM_ (launchProblem l) quit
-  if laGp l then launchGp l else launch l
+  forM_ (modeProblem mode l) quit
+  if laGp l then launchGp mode l else launch l
 
 say :: Text -> IO ()
 say = TIO.putStrLn
@@ -75,7 +82,7 @@ launch l = do
   now <- getCurrentTime
   (label, day) <- either quit pure (resolveDay (mexicoDay now) (laDay l))
   when (laEnsayo l && isNothing (laHoras l)) $
-    quit "el ensayo necesita --horas: p. ej. dashboardF1-auto --horas p1=11:50,p2=12:05 --ensayo"
+    quit "el ensayo necesita --horas: p. ej. dashboardF1-autodev --horas p1=11:50,p2=12:05 --ensayo"
   manual <- traverse (either quit pure . parseHoras day) (laHoras l)
   logFile <- checkedLog l
   refuseIfBusy
@@ -85,7 +92,7 @@ launch l = do
         _           -> []
       fromCalendar = slotsOn day (slotsFromCalendar entries)
       failure = calendarFailure answer
-      relaunch hours = "  dashboardF1-auto " <> label <> " --horas " <> hours
+      relaunch hours = "  dashboardF1-autodev " <> label <> " --horas " <> hours
   jolpica <-
     if isJust failure && isNothing manual then jolpicaDay day else pure Nothing
   forM_ failure $ \why -> do
@@ -107,7 +114,7 @@ launch l = do
   when (null plan) $ do
     say "Ese día no hay sesiones por delante: no se programa nada."
     exitSuccess
-  tools <- findTools "dashboardF1-auto"
+  tools <- findTools "dashboardF1-autodev"
   say (dayHeader day gp)
   say ""
   mapM_ say (dayTable now other plan)
@@ -176,14 +183,13 @@ programDay logFile need tools port path folder slots okAt planned pieces = do
       Right () -> appendLine (path </> "resumen.txt") (programLine okAt p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
 
--- | El GP que viene, todos sus días con un OK ('gpPlan'). Las horas: las de
--- @--calendario@, las de la instancia o, si esta no las da, las de Jolpica. Los
+-- | El GP que viene, todos sus días con un OK, en ese modo ('gpPlanFor'). Las horas: las
+-- de @--calendario@, las de la instancia o, si esta no las da, las de Jolpica. Los
 -- @resumen.txt@ se escriben del último día al primero, para que la última carpeta escrita
--- ('newestFolder', la de @estado@) sea la del primer día.
-launchGp :: Launch -> IO ()
-launchGp l = do
-  mode <- lookupEnv "DASHBOARDF1_MODO"
-  unless (gpAllowed mode) $ quit gpRefusal
+-- ('newestFolder', la de @estado@) sea la del primer día. Solo en «desarrollo» se
+-- programa la relectura de horas.
+launchGp :: Mode -> Launch -> IO ()
+launchGp mode l = do
   now <- getCurrentTime
   logFile <- checkedLog l
   refuseIfBusy
@@ -205,19 +211,19 @@ launchGp l = do
         _                 -> Nothing
       slots = maybe (slotsFromCalendar entries) snd other
       cap = if laEnsayo l then 15 * 60 else capAfterStart
-      days = gpPlan cap now slots
+      days = gpPlanFor mode cap now slots
       starts = map slotStart (concatMap gdSlots days)
       gp = listToMaybe [ceGrandPrix e | e <- entries, not (T.null (ceGrandPrix e)), ceStart e `elem` starts]
       label d = if laEnsayo l then "ensayo" else gdLabel d
   when (null days) $ do
     say "No queda ningún GP por delante: no se programa nada."
     exitSuccess
-  tools <- findTools "dashboardF1-autodev"
+  tools <- findTools (modeLauncher mode)
   (base, shown) <- existingBase
   existing <- listDirectory base
   let folders = map (\d -> nextFolder (dayFolder (label d) (gdDay d)) existing) days
       shownDays = zip days folders
-  mapM_ say (gpSummary gp now shownDays)
+  mapM_ say (gpSummary mode gp now shownDays)
   forM_ shownDays $ \(d, folder) -> do
     say ""
     say (dayHeader (gdDay d) gp)
@@ -230,7 +236,7 @@ launchGp l = do
   ok <- confirm (if length days == 1 then "¿Programar el día? [s/N] " else "¿Programar los " <> T.pack (show (length days)) <> " días? [s/N] ")
   unless ok $ say "No se programa nada." >> exitSuccess
   okAt <- getCurrentTime
-  let planned = gpPlan cap okAt slots
+  let planned = gpPlanFor mode cap okAt slots
   when (null planned) $ do
     say ("El OK llegó a las " <> clockPair "%H:%M" okAt <> " y ya no queda nada por delante: no se programa nada.")
     exitSuccess
@@ -246,7 +252,7 @@ launchGp l = do
         programDay logFile (tokenNeed entries (gdDay d) (gdSlots d)) tools port path folder
           (gdSlots d) okAt (gdPlan d) (gdPlan d)
   let kept = [(gdDay seen, f) | (seen, f) <- shownDays, any ((== gdDay seen) . gdDay) planned]
-  forM_ (listToMaybe kept) $ \(_, first) -> do
+  forM_ (if mode == Desarrollo then listToMaybe kept else Nothing) $ \(_, first) -> do
     let path = base </> first
         every = fromMaybe relecturaDefault (laRelectura l)
     writeGpState (path </> gpStateFile)

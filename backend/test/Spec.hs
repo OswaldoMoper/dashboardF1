@@ -5548,7 +5548,7 @@ main = hspec $ do
     it "Las Vegas lanzado el lunes 16: una fila por día con sus sesiones, cuándo arranca y su carpeta" $
       let days = Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason
           folders = map (\d -> Auto.dayFolder (Auto.gdLabel d) (Auto.gdDay d)) days
-       in Auto.gpSummary (Just "Las Vegas Grand Prix") (novUtc 16 18 0) (zip days folders)
+       in Auto.gpSummary Auto.Desarrollo (Just "Las Vegas Grand Prix") (novUtc 16 18 0) (zip days folders)
             `shouldBe` [ "Las Vegas Grand Prix · 3 días · horas de México (UTC)"
                        , "  Día           Sesiones                Arranca          Carpeta"
                        , "  Jueves 19     P1 18:30, P2 22:00      17:00 (23:00)    dashboardF1-auto-jueves-2026-11-19/"
@@ -5560,11 +5560,16 @@ main = hspec $ do
 
     it "sin nombre de GP y con un solo día ya empezado: «1 día» y «ahora»" $
       let days = Auto.gpPlan Auto.capAfterStart (novUtc 8 16 0) gpSeason
-       in take 3 (Auto.gpSummary Nothing (novUtc 8 16 0) (zip days ["dashboardF1-auto-domingo-2026-11-08-2"]))
+       in take 3 (Auto.gpSummary Auto.Desarrollo Nothing (novUtc 8 16 0) (zip days ["dashboardF1-auto-domingo-2026-11-08-2"]))
             `shouldBe` [ "1 día · horas de México (UTC)"
                        , "  Día           Sesiones                Arranca          Carpeta"
                        , "  Domingo 8     carrera 11:00           ahora            dashboardF1-auto-domingo-2026-11-08-2/"
                        ]
+
+    it "en «ver», la nota dice que cada día va una tanda de comprobaciones" $
+      let days = Auto.gpPlanFor Auto.Ver Auto.capAfterStart (novUtc 16 18 0) gpSeason
+       in drop 5 (Auto.gpSummary Auto.Ver Nothing (novUtc 16 18 0) (zip days ["a", "b", "c"]))
+            `shouldBe` ["  Cada día, al arrancar: una tanda de comprobaciones (página, cuenta, OpenF1)."]
 
   describe "Auto: la app de todos (master)" $ do
     it "si alguien contesta se usa; si su unidad está en marcha se espera; si no, se arranca" $
@@ -6565,9 +6570,36 @@ main = hspec $ do
           ]
         `shouldBe` [True, True, True, False, False, False, False]
 
-    it "solo el modo «desarrollo» programa el GP" $
-      map Auto.gpAllowed [Just "desarrollo", Nothing, Just "ver", Just ""]
-        `shouldBe` [True, False, False, False]
+    it "el modo es «desarrollo» solo con DASHBOARDF1_MODO=desarrollo; si no, «ver»" $
+      map Auto.modeFrom [Just "desarrollo", Nothing, Just "ver", Just ""]
+        `shouldBe` [Auto.Desarrollo, Auto.Ver, Auto.Ver, Auto.Ver]
+
+    it "en «ver», a secas es el GP; un día y la relectura se niegan; en «desarrollo», nada cambia" $
+      let day = Auto.bareLaunch {Auto.laDay = Just "viernes"}
+          reread = Auto.bareLaunch {Auto.laGp = True, Auto.laRelectura = Just 5}
+       in ( map (Auto.inMode Auto.Ver) [Auto.bareLaunch, day]
+          , map (Auto.inMode Auto.Desarrollo) [Auto.bareLaunch, day]
+          , map (Auto.modeProblem Auto.Ver) [Auto.bareLaunch {Auto.laGp = True}, day, reread]
+          , map (isJust . Auto.modeProblem Auto.Desarrollo) [day, reread]
+          )
+            `shouldBe` ( [Auto.bareLaunch {Auto.laGp = True}, day]
+                       , [Auto.bareLaunch, day]
+                       , [ Nothing
+                         , Just "el modo por día es de dashboardF1-autodev: dashboardF1-autodev viernes"
+                         , Just "--relectura es del modo desarrollo: dashboardF1-autodev gp --relectura <minutos>" ]
+                       , [False, False]
+                       )
+
+    it "en «ver», de cada día del GP solo las comprobaciones de arranque, a T−90; en «desarrollo», gpPlan" $
+      ( map (\d -> (Auto.gdLabel d, Auto.gdPlan d)) (Auto.gpPlanFor Auto.Ver Auto.capAfterStart (novUtc 16 18 0) gpSeason)
+      , Auto.gpPlanFor Auto.Desarrollo Auto.capAfterStart (novUtc 16 18 0) gpSeason
+      )
+        `shouldBe` ( [ ("jueves", [Auto.Planned (Auto.Checks Nothing) (novUtc 19 23 0) Nothing])
+                     , ("viernes", [Auto.Planned (Auto.Checks Nothing) (novUtc 20 23 0) Nothing])
+                     , ("sabado", [Auto.Planned (Auto.Checks Nothing) (novUtc 22 2 30) Nothing])
+                     ]
+                   , Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason
+                   )
 
     it "--relectura lleva minutos positivos, y es del GP" $
       ( map Auto.parseLaunch [["gp", "--relectura", "5"]]

@@ -173,7 +173,7 @@
           '';
         };
 
-        # The same command in development mode: the only one that programs a whole GP.
+        # Development mode: every piece, the hourly re-read and the one-day mode.
         autodevLauncher = pkgs.writeShellApplication {
           name = "dashboardF1-autodev";
           text = ''
@@ -645,8 +645,9 @@
             echo "  feed    : dashboardF1-live        # la tabla del directo, ahora"
             echo "  grabar  : dashboardF1-record [--f1tv] <fichero> [segundos]"
             echo "  cuenta  : dashboardF1-f1tv [--status | --clear]  # inicia sesión en F1TV; el token lo guarda FastF1"
-            echo "  auto    : dashboardF1-auto [día] [--horas p1=HH:MM,…] [--ensayo] | estado | cancela"
-            echo "  autodev : dashboardF1-autodev gp [--ensayo] [--calendario <fichero>] [--relectura <min>]  # todo el GP con un OK; o lo de auto"
+            echo "  auto    : dashboardF1-auto [gp] [--ensayo --calendario <fichero>] | estado | cancela  # el GP en «ver»: una comprobación por día"
+            echo "  autodev : dashboardF1-autodev gp [--ensayo] [--calendario <fichero>] [--relectura <min>]  # el GP con todo y un OK"
+            echo "            dashboardF1-autodev [día] [--horas p1=HH:MM,…] [--ensayo]  # un día con todo"
             echo "            # las carpetas del día, en DASHBOARDF1_CARPETA (sin ella, ~/MOPER)"
           '';
         };
