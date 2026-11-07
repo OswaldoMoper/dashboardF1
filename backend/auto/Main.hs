@@ -3,6 +3,10 @@
 -- * @dashboardF1-auto [día] [--horas p1=11:30,…] [--ensayo] [--log \<fichero\>]@ — enseña
 --   el día, pide el OK y programa; después se queda enseñando la vista (Ctrl+C sale sin
 --   cancelar). @--log@ es el fichero al que va la terminal de la instancia.
+-- * @dashboardF1-autodev gp [--ensayo] [--calendario \<fichero\>] [--log \<fichero\>]@ —
+--   lo mismo para todos los días del GP que viene, con un solo OK. Solo con
+--   @DASHBOARDF1_MODO=desarrollo@, que pone el lanzador. @--calendario@ es un
+--   @\/api\/calendar@ guardado en un fichero.
 -- * @dashboardF1-auto estado@ — vuelve a enseñar la vista de la última carpeta.
 -- * @dashboardF1-auto cancela@ — enseña lo que queda en systemd y, con el OK, lo para.
 -- * @dashboardF1-auto dispara \<carpeta\> \<pieza\>@ — lo que corre cada temporizador.
@@ -14,11 +18,14 @@ import           Auto.Context
 import           Auto.Helper
 import           Control.Concurrent  (threadDelay)
 import           Control.Monad       (forM_, forever, unless, when)
-import           Data.Maybe          (isJust, isNothing, listToMaybe)
+import           Data.List           (find, nub, sortOn)
+import           Data.Maybe          (fromMaybe, isJust, isNothing, listToMaybe,
+                                      mapMaybe)
 import           Data.Text           (Text)
 import qualified Data.Text           as T
 import qualified Data.Text.IO        as TIO
-import           Data.Time.Clock     (getCurrentTime)
+import           Data.Time.Calendar  (showGregorian)
+import           Data.Time.Clock     (UTCTime, getCurrentTime)
 import           Handler.Live.Helper (CalendarEntry (..))
 import           System.Directory    (createDirectoryIfMissing,
                                       doesDirectoryExist, doesFileExist,
@@ -40,7 +47,13 @@ main = do
     ["estado"]                        -> estado
     ["cancela"]                       -> cancela
     "dispara" : folder : label : rest -> dispara (T.unpack folder) label rest
-    _                                 -> either quit launch (parseLaunch args)
+    _                                 -> either quit start (parseLaunch args)
+
+-- | El día o el GP, tras comprobar que lo pedido casa ('launchProblem').
+start :: Launch -> IO ()
+start l = do
+  forM_ (launchProblem l) quit
+  if laGp l then launchGp l else launch l
 
 say :: Text -> IO ()
 say = TIO.putStrLn
@@ -64,15 +77,8 @@ launch l = do
   when (laEnsayo l && isNothing (laHoras l)) $
     quit "el ensayo necesita --horas: p. ej. dashboardF1-auto --horas p1=11:50,p2=12:05 --ensayo"
   manual <- traverse (either quit pure . parseHoras day) (laHoras l)
-  logFile <- traverse makeAbsolute (laLog l)
-  forM_ logFile $ \f -> do
-    exists <- doesFileExist f
-    unless exists $ quit ("no existe " <> T.pack f <> ": revisa --log")
-  busy <- either quit pure =<< autoUnits "dashboardF1-auto-*"
-  unless (null busy) $ do
-    say "Ya hay algo programado:"
-    mapM_ (say . ("  " <>) . urUnit) busy
-    quit "Para volver a lanzar, antes: dashboardF1-auto cancela"
+  logFile <- checkedLog l
+  refuseIfBusy
   (port, answer) <- pickInstance
   let entries = case answer of
         Calendar es -> filter ((== day) . mexicoDay . ceStart) es
@@ -133,6 +139,33 @@ launch l = do
     appendLine (path </> "comprobaciones.txt")
       (checkLine now Falla "calendario" (why <> "; horas " <> (if source == "Jolpica" then "de Jolpica" else source)))
   mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now plan okAt planned)
+  programDay logFile need recorder reader port path folder slots okAt planned
+  view folder
+
+-- | El @--log@ en absoluto; si no existe, lo dice y sale.
+checkedLog :: Launch -> IO (Maybe FilePath)
+checkedLog l = do
+  logFile <- traverse makeAbsolute (laLog l)
+  forM_ logFile $ \f -> do
+    exists <- doesFileExist f
+    unless exists $ quit ("no existe " <> T.pack f <> ": revisa --log")
+  pure logFile
+
+-- | Si ya hay algo programado, lo enseña y sale.
+refuseIfBusy :: IO ()
+refuseIfBusy = do
+  busy <- either quit pure =<< autoUnits "dashboardF1-auto-*"
+  unless (null busy) $ do
+    say "Ya hay algo programado:"
+    mapM_ (say . ("  " <>) . urUnit) busy
+    quit "Para volver a lanzar, antes: dashboardF1-auto cancela"
+
+-- | Programa en systemd las piezas de un día, en su carpeta, y apunta cada una en su
+-- @resumen.txt@; la que no se puede programar lo dice en la terminal.
+programDay ::
+  Maybe FilePath -> Maybe (UTCTime, Maybe UTCTime) -> FilePath -> FilePath -> Int -> FilePath -> FilePath
+    -> [Slot] -> UTCTime -> [Planned] -> IO ()
+programDay logFile need recorder reader port path folder slots okAt planned = do
   exe <- getExecutablePath
   workDir <- getCurrentDirectory
   forM_ planned $ \p -> do
@@ -144,7 +177,90 @@ launch l = do
     case done of
       Right () -> appendLine (path </> "resumen.txt") (programLine okAt p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
-  view folder
+
+-- | El GP que viene, todos sus días con un OK ('gpPlan'). Las horas: las de
+-- @--calendario@, las de la instancia o, si esta no las da, las de Jolpica. Los
+-- @resumen.txt@ se escriben del último día al primero, para que la última carpeta escrita
+-- ('newestFolder', la de @estado@) sea la del primer día.
+launchGp :: Launch -> IO ()
+launchGp l = do
+  mode <- lookupEnv "DASHBOARDF1_MODO"
+  unless (gpAllowed mode) $ quit gpRefusal
+  now <- getCurrentTime
+  logFile <- checkedLog l
+  refuseIfBusy
+  (port, answer) <- pickInstance
+  fromFile <- traverse readCalendarFile (laCalendario l)
+  let failure = if isJust fromFile then Nothing else calendarFailure answer
+      entries = case fromMaybe answer fromFile of
+        Calendar es -> es
+        _           -> []
+  jolpica <- if isJust failure then jolpicaSeason else pure Nothing
+  forM_ failure $ \why -> do
+    say (checkLine now Falla "calendario" why)
+    when (isNothing jolpica) $ do
+      say "Jolpica tampoco da las horas: no se programa nada."
+      exitFailure
+  let other = case (laCalendario l, jolpica) of
+        (Just _, _)       -> Just ("fichero", slotsFromCalendar entries)
+        (Nothing, Just j) -> Just ("Jolpica", j)
+        _                 -> Nothing
+      slots = maybe (slotsFromCalendar entries) snd other
+      cap = if laEnsayo l then 15 * 60 else capAfterStart
+      days = gpPlan cap now slots
+      starts = map slotStart (concatMap gdSlots days)
+      gp = listToMaybe [ceGrandPrix e | e <- entries, not (T.null (ceGrandPrix e)), ceStart e `elem` starts]
+      label d = if laEnsayo l then "ensayo" else gdLabel d
+  when (null days) $ do
+    say "No queda ningún GP por delante: no se programa nada."
+    exitSuccess
+  recorder <-
+    maybe (quit "no encuentro dashboardF1-record: lanza con dashboardF1-autodev") pure =<< findRecorder
+  reader <-
+    maybe (quit "no encuentro dashboardF1-observa: lanza con dashboardF1-autodev") pure =<< findReader
+  (base, shown) <- existingBase
+  existing <- listDirectory base
+  let folders = map (\d -> nextFolder (dayFolder (label d) (gdDay d)) existing) days
+      shownDays = zip days folders
+  mapM_ say (gpSummary gp now shownDays)
+  forM_ shownDays $ \(d, folder) -> do
+    say ""
+    say (dayHeader (gdDay d) gp)
+    say ""
+    -- La columna de la hora, con las sesiones de este GP: su nombre no se repite dentro de él.
+    mapM_ say (dayTable now (fmap (\(source, _) -> (source, gdSlots d)) other) (gdPlan d))
+    say ""
+    say ("Carpeta: " <> shown <> "/" <> T.pack folder <> "/")
+  say ""
+  ok <- confirm (if length days == 1 then "¿Programar el día? [s/N] " else "¿Programar los " <> T.pack (show (length days)) <> " días? [s/N] ")
+  unless ok $ say "No se programa nada." >> exitSuccess
+  okAt <- getCurrentTime
+  let planned = gpPlan cap okAt slots
+  when (null planned) $ do
+    say ("El OK llegó a las " <> clockPair "%H:%M" okAt <> " y ya no queda nada por delante: no se programa nada.")
+    exitSuccess
+  forM_ (reverse shownDays) $ \(seen, folder) ->
+    case find ((== gdDay seen) . gdDay) planned of
+      Nothing -> say ("El OK llegó tarde: del " <> T.pack (showGregorian (gdDay seen)) <> " ya no queda nada, no se programa.")
+      Just d -> do
+        let path = base </> folder
+        createDirectoryIfMissing True path
+        forM_ ((,) <$> failure <*> other) $ \(why, _) ->
+          appendLine (path </> "comprobaciones.txt") (checkLine now Falla "calendario" (why <> "; horas de Jolpica"))
+        mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now (gdPlan seen) okAt (gdPlan d))
+        programDay logFile (tokenNeed entries (gdDay d) (gdSlots d)) recorder reader port path folder
+          (gdSlots d) okAt (gdPlan d)
+  maybe (pure ()) view (listToMaybe [f | (seen, f) <- shownDays, any ((== gdDay seen) . gdDay) planned])
+
+-- | El calendario de @--calendario@: un @\/api\/calendar@ guardado. Si no existe o no se
+-- entiende, lo dice y sale.
+readCalendarFile :: FilePath -> IO CalendarAnswer
+readCalendarFile file = do
+  exists <- doesFileExist file
+  unless exists $ quit ("no existe " <> T.pack file <> ": revisa --calendario")
+  answer <- calendarFromFile file
+  forM_ (calendarFailure answer) $ \why -> quit ("no entiendo " <> T.pack file <> ": " <> why)
+  pure answer
 
 -- | La instancia a la que se sigue: la que conteste en :3000 o :3001 y, si contestan
 -- las dos, la que se elija.
@@ -214,15 +330,16 @@ cancela = do
   timers <- either quit pure =<< autoTimers "dashboardF1-auto-*"
   let states = unitStates units timers
   when (null units) $ say "No hay nada programado." >> exitSuccess
-  newest <- newestFolder
-  say (cancelHeader (folderDay =<< newest))
+  folders <- sortOn (\f -> (folderDay f, f)) <$> autoFolders
+  let pending = foldersWithUnits folders (map urUnit units)
+  say (cancelHeader (nub (mapMaybe folderDay pending)))
   mapM_ (\(label, st) -> say ("  " <> T.justifyLeft 34 ' ' label <> st)) states
   ok <- confirm "¿Cancelar? [s/N] "
   unless ok $ say "No se cancela nada." >> exitSuccess
   now <- getCurrentTime
   base <- mainFolder
   -- Antes de parar: lo que corre escribe su «para … (cancelado)» al pararse.
-  mapM_ (\f -> appendLine (base </> f </> "resumen.txt") (cancelLine now)) newest
+  mapM_ (\f -> appendLine (base </> f </> "resumen.txt") (cancelLine now)) pending
   stopUnits "dashboardF1-auto-"
   say "Cancelado."
 

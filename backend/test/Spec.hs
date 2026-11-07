@@ -6294,13 +6294,39 @@ main = hspec $ do
   describe "Auto: lo que pide quien lo lanza" $ do
     it "el día, --horas, --ensayo y --log, en cualquier orden" $
       map Auto.parseLaunch [[], ["--ensayo", "--log", "/tmp/dev.txt", "--horas", "p1=11:50", "viernes"]]
-        `shouldBe` [ Right (Auto.Launch Nothing Nothing False Nothing)
-                   , Right (Auto.Launch (Just "viernes") (Just "p1=11:50") True (Just "/tmp/dev.txt"))
+        `shouldBe` [ Right Auto.bareLaunch
+                   , Right Auto.bareLaunch
+                       { Auto.laDay = Just "viernes", Auto.laHoras = Just "p1=11:50"
+                       , Auto.laEnsayo = True, Auto.laLog = Just "/tmp/dev.txt" }
+                   ]
+
+    it "gp ocupa el sitio del día, con --calendario, en cualquier orden" $
+      map Auto.parseLaunch [["gp"], ["--calendario", "/tmp/cal.json", "--ensayo", "gp"]]
+        `shouldBe` [ Right Auto.bareLaunch {Auto.laGp = True}
+                   , Right Auto.bareLaunch {Auto.laGp = True, Auto.laEnsayo = True, Auto.laCalendario = Just "/tmp/cal.json"}
                    ]
 
     it "lo que no se entiende no se adivina" $
-      map (isLeft . Auto.parseLaunch) [["--horas"], ["--log"], ["viernes", "sabado"], ["--hora", "p1=11:50"]]
-        `shouldBe` [True, True, True, True]
+      map (isLeft . Auto.parseLaunch)
+          [ ["--horas"], ["--log"], ["viernes", "sabado"], ["--hora", "p1=11:50"]
+          , ["--calendario"], ["gp", "viernes"], ["viernes", "gp"], ["gp", "gp"] ]
+        `shouldBe` replicate 8 True
+
+    it "--horas es de un día, --calendario del GP, y el ensayo del GP pide su calendario" $
+      map (isJust . Auto.launchProblem)
+          [ Auto.bareLaunch {Auto.laGp = True, Auto.laHoras = Just "p1=11:50"}
+          , Auto.bareLaunch {Auto.laCalendario = Just "/tmp/cal.json"}
+          , Auto.bareLaunch {Auto.laGp = True, Auto.laEnsayo = True}
+          , Auto.bareLaunch {Auto.laGp = True, Auto.laEnsayo = True, Auto.laCalendario = Just "/tmp/cal.json"}
+          , Auto.bareLaunch {Auto.laGp = True, Auto.laCalendario = Just "/tmp/cal.json"}
+          , Auto.bareLaunch {Auto.laGp = True}
+          , Auto.bareLaunch {Auto.laDay = Just "viernes", Auto.laHoras = Just "p1=11:50"}
+          ]
+        `shouldBe` [True, True, True, False, False, False, False]
+
+    it "solo el modo «desarrollo» programa el GP" $
+      map Auto.gpAllowed [Just "desarrollo", Nothing, Just "ver", Just ""]
+        `shouldBe` [True, False, False, False]
 
     it "las horas a mano son de México, ese día, y salen ordenadas" $
       map (Auto.parseHoras austinFriday) ["p1=11:30,p2=15:00", " P2=15:00 , p1=11:30 "]
@@ -6406,9 +6432,19 @@ main = hspec $ do
     it "la hora del temporizador va en UTC" $
       Auto.onCalendar (atUtc 23 16 45) `shouldBe` "2026-10-23 16:45:00 UTC"
 
-    it "cancela dice de qué día es lo que para" $
-      map Auto.cancelHeader [Just austinFriday, Nothing]
-        `shouldBe` ["Se paran (viernes 23):", "Se paran:"]
+    it "cancela dice de qué día es lo que para, y con el GP, de cuáles" $
+      map Auto.cancelHeader [[austinFriday], [], [fromGregorian 2026 11 19, fromGregorian 2026 11 20, fromGregorian 2026 11 21]]
+        `shouldBe` ["Se paran (viernes 23):", "Se paran:", "Se paran (jueves 19, viernes 20, sábado 21):"]
+
+    it "cancela escribe en cada carpeta con algo en systemd, y la de -2 no se confunde con la suya" $
+      Auto.foldersWithUnits
+          [ "dashboardF1-auto-jueves-2026-11-19", "dashboardF1-auto-viernes-2026-11-20"
+          , "dashboardF1-auto-viernes-2026-11-20-2", "dashboardF1-auto-sabado-2026-11-21" ]
+          [ "dashboardF1-auto-jueves-2026-11-19-vigia.timer"
+          , "dashboardF1-auto-viernes-2026-11-20-2-grabacion-p3.service"
+          , "dashboardF1-auto-sabado-2026-11-21-comprobaciones-inicio.timer" ]
+        `shouldBe` [ "dashboardF1-auto-jueves-2026-11-19", "dashboardF1-auto-viernes-2026-11-20-2"
+                   , "dashboardF1-auto-sabado-2026-11-21" ]
 
     it "la cabecera de la vista sale de la carpeta" $
       Auto.viewHeader "~/MOPER" "dashboardF1-auto-viernes-2026-10-23-2"

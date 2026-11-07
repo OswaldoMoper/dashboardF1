@@ -116,7 +116,11 @@ module Auto.Helper
   , folderDay
     -- * Lo que pide quien lo lanza
   , Launch (..)
+  , bareLaunch
   , parseLaunch
+  , launchProblem
+  , gpAllowed
+  , gpRefusal
   , parseHoras
   , jolpicaSlots
   , CalendarAnswer (..)
@@ -140,6 +144,7 @@ module Auto.Helper
   , unitStates
   , expectedPending
   , reconcile
+  , foldersWithUnits
   , cancelHeader
   , displayBase
   , viewHeader
@@ -160,7 +165,7 @@ import           Data.Char             (isDigit)
 import           Data.Function         (on)
 import           Data.List             (find, groupBy, nub, sortOn, stripPrefix,
                                         (\\))
-import           Data.Maybe            (catMaybes, fromMaybe, isNothing,
+import           Data.Maybe            (catMaybes, fromMaybe, isJust, isNothing,
                                         listToMaybe, mapMaybe)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
@@ -1194,20 +1199,34 @@ folderDay folder = do
   let date = T.take 10 (T.drop 1 (T.dropWhile (/= '-') rest))
   parseTimeM False defaultTimeLocale "%Y-%m-%d" (T.unpack date)
 
--- | Lo que pide quien lanza el día: el día, las horas a mano, si es un ensayo y el log de
--- la instancia.
+-- | Lo que pide quien lanza: el día o el GP entero, las horas a mano, si es un ensayo, el
+-- log de la instancia y, para el GP, un calendario en un fichero.
 data Launch = Launch
-  { laDay    :: Maybe Text
-  , laHoras  :: Maybe Text
-  , laEnsayo :: Bool
-  , laLog    :: Maybe FilePath
+  { laDay        :: Maybe Text
+  , laHoras      :: Maybe Text
+  , laEnsayo     :: Bool
+  , laLog        :: Maybe FilePath
+  , laGp         :: Bool
+  , laCalendario :: Maybe FilePath
   }
   deriving (Eq, Show)
 
--- | Los argumentos de @dashboardF1-auto [día] [--horas …] [--ensayo] [--log …]@, en
--- cualquier orden.
+-- | Sin nada pedido: hoy, con las horas del calendario.
+bareLaunch :: Launch
+bareLaunch =
+  Launch
+    { laDay = Nothing
+    , laHoras = Nothing
+    , laEnsayo = False
+    , laLog = Nothing
+    , laGp = False
+    , laCalendario = Nothing
+    }
+
+-- | Los argumentos de @dashboardF1-auto [día | gp] [--horas …] [--ensayo] [--log …]
+-- [--calendario …]@, en cualquier orden. @gp@ ocupa el sitio del día.
 parseLaunch :: [Text] -> Either Text Launch
-parseLaunch = go (Launch Nothing Nothing False Nothing)
+parseLaunch = go bareLaunch
   where
     go l [] = Right l
     go l ("--ensayo" : rest) = go l {laEnsayo = True} rest
@@ -1215,9 +1234,46 @@ parseLaunch = go (Launch Nothing Nothing False Nothing)
     go l ("--horas" : spec : rest) = go l {laHoras = Just spec} rest
     go _ ["--log"] = Left "--log necesita el fichero: p. ej. --log ~/MOPER/dashboardF1-openf1-viernes-2026-10-23.txt"
     go l ("--log" : file : rest) = go l {laLog = Just (T.unpack file)} rest
+    go _ ["--calendario"] = Left "--calendario necesita el fichero: p. ej. --calendario ~/MOPER/calendario-ensayo.json"
+    go l ("--calendario" : file : rest) = go l {laCalendario = Just (T.unpack file)} rest
+    go l ("gp" : rest)
+      | free l = go l {laGp = True} rest
     go l (word : rest)
-      | not ("--" `T.isPrefixOf` word) && isNothing (laDay l) = go l {laDay = Just word} rest
+      | not ("--" `T.isPrefixOf` word) && free l = go l {laDay = Just word} rest
     go _ (word : _) = Left ("no entiendo «" <> word <> "»")
+    free l = isNothing (laDay l) && not (laGp l)
+
+-- | Lo que no casa en lo que se pidió, con el mensaje para quien lo lanzó: @--horas@ es de
+-- un día, @--calendario@ es del GP, y el ensayo del GP necesita su calendario.
+launchProblem :: Launch -> Maybe Text
+launchProblem l
+  | laGp l && isJust (laHoras l) =
+      Just "--horas es de un día; el GP se ensaya con un calendario: dashboardF1-autodev gp --ensayo --calendario <fichero>"
+  | not (laGp l) && isJust (laCalendario l) =
+      Just "--calendario es del GP: dashboardF1-autodev gp --calendario <fichero>"
+  | laGp l && laEnsayo l && isNothing (laCalendario l) =
+      Just "el ensayo del GP necesita un calendario: dashboardF1-autodev gp --ensayo --calendario <fichero>"
+  | otherwise = Nothing
+
+-- | El modo con el que se lanzó, del valor de @DASHBOARDF1_MODO@ que pone el lanzador
+-- @dashboardF1-autodev@: solo con «desarrollo» se programa el GP.
+gpAllowed :: Maybe String -> Bool
+gpAllowed = (== Just "desarrollo")
+
+-- | Lo que contesta @gp@ lanzado sin el modo «desarrollo».
+gpRefusal :: Text
+gpRefusal = "dashboardF1-auto gp llegará con el modo «ver»; para programar el GP con grabaciones: dashboardF1-autodev gp"
+
+-- | Las carpetas que tienen alguna unidad en systemd, en el orden en que se dan. Una
+-- unidad es de la carpeta más larga cuyo nombre, con un guion, la empieza: la de
+-- @…-2026-11-06-2-vigia@ es @…-2026-11-06-2@, no @…-2026-11-06@.
+foldersWithUnits :: [FilePath] -> [Text] -> [FilePath]
+foldersWithUnits folders units = filter (`elem` owners) folders
+  where
+    owners = mapMaybe owner units
+    owner u =
+      fmap snd . listToMaybe . reverse . sortOn fst $
+        [(length f, f) | f <- folders, (T.pack f <> "-") `T.isPrefixOf` u]
 
 -- | Las horas a mano, @p1=11:50,p2=12:05@: hora de México, ese día. 'Left' lleva el
 -- mensaje para quien lo lanzó.
@@ -1504,12 +1560,15 @@ reconcile expected states =
     aviso why label = verdictWord Aviso <> "  " <> why <> label
 
 -- | La primera línea de @cancela@: «Se paran (viernes 23):».
-cancelHeader :: Maybe Day -> Text
-cancelHeader day = "Se paran" <> maybe "" dayPart day <> ":"
+cancelHeader :: [Day] -> Text
+cancelHeader days = "Se paran" <> dayPart <> ":"
   where
-    dayPart d =
+    dayPart
+      | null days = ""
+      | otherwise = " (" <> T.intercalate ", " (map dayName days) <> ")"
+    dayName d =
       let (_, _, dom) = toGregorian d
-       in " (" <> T.toLower (weekdayDisplay (dayOfWeek d)) <> " " <> T.pack (show dom) <> ")"
+       in T.toLower (weekdayDisplay (dayOfWeek d)) <> " " <> T.pack (show dom)
 
 -- | La carpeta del automatismo como se enseña: con @~@ si está dentro del home (el primer
 -- argumento) y, si no, entera; sin barra final.

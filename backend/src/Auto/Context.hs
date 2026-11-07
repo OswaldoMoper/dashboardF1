@@ -10,6 +10,8 @@ module Auto.Context
   , runRecording
   , runChecks
   , jolpicaDay
+  , jolpicaSeason
+  , calendarFromFile
   , autoUnits
   , autoTimers
   , schedule
@@ -557,12 +559,23 @@ askPage (port : rest) = do
 -- | Las sesiones de ese día según Jolpica. 'Nothing' si no contesta, no se entiende o no
 -- trae ninguna ese día.
 jolpicaDay :: Day -> IO (Maybe [Slot])
-jolpicaDay day = do
+jolpicaDay day = (nonEmpty . slotsOn day =<<) <$> jolpicaSeason
+
+-- | Las sesiones de la temporada según Jolpica. 'Nothing' si no contesta, no se entiende o
+-- no trae ninguna.
+jolpicaSeason :: IO (Maybe [Slot])
+jolpicaSeason = do
   cfg <- loadConfig
   body <- trySync (fetchSeasonSchedule cfg) :: IO (Either SomeException BL.ByteString)
-  pure $ case slotsOn day <$> (either (Left . show) Right body >>= jolpicaSlots) of
-    Right slots@(_ : _) -> Just slots
-    _                   -> Nothing
+  pure (either (const Nothing) nonEmpty (either (Left . show) Right body >>= jolpicaSlots))
+
+nonEmpty :: [a] -> Maybe [a]
+nonEmpty xs = if null xs then Nothing else Just xs
+
+-- | Un @\/api\/calendar@ guardado en ese fichero, leído como el de la instancia
+-- ('readCalendar'). El fichero tiene que existir.
+calendarFromFile :: FilePath -> IO CalendarAnswer
+calendarFromFile file = readCalendar 200 Nothing <$> BL.readFile file
 
 -- | Las unidades cuyo nombre casa con el patrón, también las que fallaron.
 autoUnits :: Text -> IO (Either Text [UnitRow])
