@@ -1254,16 +1254,11 @@ body {
   padding: 0 var(--sp-2);
 }
 
-/* La línea de la cuenta, en la esquina de abajo: tampoco quita alto. */
-.comparison__card {
-  position: relative;
-}
-
+/* La línea de la cuenta, en su fila debajo de la leyenda y a la derecha: con
+   cualquier texto y a cualquier ancho, no la pisa. Sin línea no hay fila. */
 .comparison__account {
-  position: absolute;
-  right: var(--sp-3);
-  bottom: var(--sp-2);
-  margin: 0;
+  margin: var(--sp-1) var(--sp-3) 0 0;
+  text-align: right;
   font-size: var(--fs-sm);
   color: var(--c-muted);
 }

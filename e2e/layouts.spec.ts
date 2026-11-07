@@ -597,6 +597,17 @@ test.describe('Lap Comparison y la cuenta de F1TV', () => {
     await expect(c.locator('.comparison__notice')).toHaveCount(0);
   });
 
+  test('la línea del pie va debajo de la leyenda, sin pisarla, y dentro de la tarjeta', async ({ page }) => {
+    const c = await card(page, { state: 'valid', until }, { 'X-Data-Origin': 'fresh', 'X-Data-Source': 'fastf1' });
+    await expect(c.locator('.comparison__account')).toBeVisible();
+    const legend = await c.locator('.comparison__legend').boundingBox();
+    const account = await c.locator('.comparison__account').boundingBox();
+    const widget = await c.boundingBox();
+    expect(legend && account && widget).toBeTruthy();
+    expect(account!.y).toBeGreaterThanOrEqual(legend!.y + legend!.height);
+    expect(account!.y + account!.height).toBeLessThanOrEqual(widget!.y + widget!.height);
+  });
+
   test('válida y con lo guardado: el aviso de guardado, sin comando', async ({ page }) => {
     const c = await card(page, { state: 'valid', until },
       { 'X-Data-Origin': 'cached', 'X-Data-Source': 'fastf1', 'X-Data-Fetched-At': '2026-11-07T20:15:00Z' });

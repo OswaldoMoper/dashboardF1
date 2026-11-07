@@ -411,7 +411,7 @@ copyScript t =
     <> "else{var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';"
     <> "document.body.appendChild(a);a.select();document.execCommand('copy');a.remove();}})('" <> t <> "')"
 
--- | La línea de la cuenta, en la esquina de abajo ('Common.Account.accountFoot').
+-- | La línea de la cuenta, en su fila debajo de la leyenda ('Common.Account.accountFoot').
 footView :: DomBuilder t m => Maybe Foot -> m ()
 footView Nothing              = blank
 footView (Just (FootQuiet t)) = elClass "p" "comparison__account" $ text t
