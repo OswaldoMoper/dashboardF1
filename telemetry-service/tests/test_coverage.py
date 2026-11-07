@@ -1,11 +1,17 @@
 """``main._coverage`` y ``main._telemetry_incomplete``: si la telemetría de una sesión
-cargada cubre el tramo de sus vueltas. Con sesiones falsas, sin red.
+cargada cubre el tramo de sus vueltas. Y lo que se hace con una incompleta: qué fichero
+de la caché se borra, la carga sin la caché HTTP y ``lcTelemetry`` en la comparación.
+Con sesiones falsas, sin red.
 
 Importa ``main`` (carga FastF1) con la caché en un directorio temporal.
 """
 
 import importlib
+import os
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
+import fastf1
 import pandas as pd
 import pytest
 from fastf1.exceptions import DataNotLoadedError
@@ -85,3 +91,70 @@ MEXICO = (3600.0, 3600.0 + 115 * 60)
 )
 def test_incompleta_si_cubre_menos_de_la_mitad_de_las_vueltas(main, sesion, incompleta):
     assert main._telemetry_incomplete(sesion) is incompleta
+
+
+# La carpeta de la carrera de México en la caché, tal como la da ``Session.api_path``.
+MEXICO_PATH = "/static/2026/2026-11-01_Mexico_City_Grand_Prix/2026-11-01_Race/"
+
+
+def test_el_car_data_es_el_fichero_que_escribe_fastf1(main):
+    sesion = SimpleNamespace(api_path=MEXICO_PATH)
+    suyo = fastf1.Cache._get_cache_file_path(MEXICO_PATH, "car_data")
+    assert os.path.realpath(main._car_data_file(sesion)) == os.path.realpath(suyo)
+
+
+def test_se_borra_el_car_data_y_lo_demas_de_la_sesion_se_queda(main):
+    sesion = SimpleNamespace(api_path=MEXICO_PATH)
+    car = main._car_data_file(sesion)
+    pos = os.path.join(os.path.dirname(car), "position_data.ff1pkl")
+    os.makedirs(os.path.dirname(car), exist_ok=True)
+    for f in (car, pos):
+        with open(f, "wb") as out:
+            out.write(b"x")
+    main._drop_car_data(sesion)
+    assert not os.path.exists(car)
+    assert os.path.exists(pos)
+    main._drop_car_data(sesion)
+
+
+@pytest.mark.parametrize("renew, apagadas", [(False, (False, False)), (True, (True, False))])
+def test_al_renovar_se_carga_sin_la_cache_http_y_con_la_procesada(main, monkeypatch, renew, apagadas):
+    vistas = []
+
+    class Cargable:
+        def load(self, **_):
+            vistas.append((fastf1.Cache._http_tmp_disabled, fastf1.Cache._func_tmp_disabled))
+
+    monkeypatch.setattr(main.fastf1, "get_session", lambda *_: Cargable())
+    main._load_session("2026-20-R", renew)
+    assert vistas == [apagadas]
+    assert (fastf1.Cache._http_tmp_disabled, fastf1.Cache._func_tmp_disabled) == (False, False)
+
+
+@pytest.fixture
+def respuesta(main, monkeypatch):
+    """``main.comparison`` sobre una sesión falsa: ``incompleta`` la apunta en
+    ``_incomplete`` con un 4 % y la hora de volver a pedirla."""
+    sesion = SimpleNamespace()
+    monkeypatch.setattr(main, "_incomplete", {})
+    monkeypatch.setattr(main, "_resolve_session", lambda _: sesion)
+    monkeypatch.setattr(main, "_resolve_drivers", lambda *_: ["1", "16"])
+    monkeypatch.setattr(main, "_qualifying_parts", lambda _: [])
+    monkeypatch.setattr(main, "_comparison_entry", lambda _s, n, *_: {"ceCar": n})
+
+    def pedir(samples, incompleta):
+        if incompleta:
+            hora = datetime(2026, 11, 7, 0, 40, 5, tzinfo=timezone.utc)
+            main._incomplete[id(sesion)] = (0.0, None, 0.04213, hora)
+        return main.comparison("2026-20-R", "1,16", samples)
+
+    return pedir
+
+
+def test_con_trazas_y_la_telemetria_incompleta_lleva_su_cobertura_y_la_hora(respuesta):
+    assert respuesta(100, True)["lcTelemetry"] == {"coverage": 0.0421, "retryAt": "2026-11-07T00:40:05Z"}
+
+
+@pytest.mark.parametrize("samples, incompleta", [(0, True), (100, False), (0, False)])
+def test_sin_trazas_o_entera_no_lleva_nada(respuesta, samples, incompleta):
+    assert "lcTelemetry" not in respuesta(samples, incompleta)

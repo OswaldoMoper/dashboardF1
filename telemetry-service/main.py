@@ -62,9 +62,9 @@ import os
 import sys
 import threading
 import time
-from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from contextlib import asynccontextmanager, nullcontext
+from datetime import datetime, timedelta, timezone
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 
 import fastf1
 import platformdirs
@@ -171,6 +171,19 @@ _empty: Dict[int, Tuple[float, Optional[int]]] = {}
 # Cuánto se guarda una sesión vacía, en segundos, si el token no cambia antes.
 EMPTY_RETRY = 10 * 60
 
+# Las sesiones del memo con la telemetría incompleta (`_telemetry_incomplete`), por
+# `id`: cuándo y con qué token, como en `_empty`, su cobertura y la hora UTC a la que
+# toca volver a pedirlas. Se vuelven a pedir igual que las vacías, a los
+# `INCOMPLETE_RETRY`, borrando antes su `car_data` de la caché (`_renew`).
+_incomplete: Dict[int, Tuple[float, Optional[int], float, datetime]] = {}
+
+# Cuánto se guarda una sesión con la telemetría incompleta, si el token no cambia antes.
+INCOMPLETE_RETRY = 10 * 60
+
+# Las claves que se cargan la próxima vez sin la caché HTTP, porque su `car_data` se
+# borró de la caché procesada: lo nuevo se descarga y se escribe ahí.
+_renew: Set[str] = set()
+
 # El fichero en que FastF1 guarda el token de F1TV (`TokenManager`).
 _TOKEN_PATH = os.path.join(platformdirs.user_data_dir("fastf1"), "f1auth_token.json")
 
@@ -235,11 +248,11 @@ def _resolve_session(session_key: str) -> Any:
     de path**: ``2026-13-R``, ``2026-13-Q``, ``2026-13-FP2``.
 
     Carga una sesión a la vez (``_load_lock``); una sesión ya en memoria y con
-    datos no espera. Una vacía se sirve como está hasta que toca volver a pedirla
-    (``_empty``).
+    datos no espera. Una vacía, o con la telemetría incompleta, se sirve como está
+    hasta que toca volver a pedirla (``_empty``, ``_incomplete``).
     """
     cached = _sessions.get(session_key)
-    if cached is not None and id(cached) not in _empty:
+    if cached is not None and id(cached) not in _empty and id(cached) not in _incomplete:
         return cached
     with _load_lock:
         cached = _memo_get(session_key)
@@ -248,30 +261,74 @@ def _resolve_session(session_key: str) -> Any:
             cached = _memo_get(key)
             if cached is None:
                 stamp = _token_stamp()
-                cached = _load_session(key)
+                cached = _load_session(key, key in _renew)
+                _renew.discard(key)
                 _sessions[key] = cached
                 if _is_empty(cached):
                     _empty[id(cached)] = (time.monotonic(), stamp)
+                else:
+                    _mark_if_incomplete(key, cached, stamp)
                 _give_back()
             _sessions[session_key] = cached
         return cached
 
 
 def _memo_get(session_key: str) -> Any:
-    """Lo que el memo tiene para ``session_key``, o ``None``. Una vacía a la que le
-    toca volver a pedirse sale del memo con todas sus claves, y da ``None``. Solo se
-    llama con ``_load_lock``."""
+    """Lo que el memo tiene para ``session_key``, o ``None``. Una vacía o incompleta a
+    la que le toca volver a pedirse sale del memo con todas sus claves, y da ``None``;
+    de la incompleta se borra además su ``car_data`` de la caché (``_drop_car_data``).
+    Solo se llama con ``_load_lock``."""
     cached = _sessions.get(session_key)
-    mark = _empty.get(id(cached)) if cached is not None else None
+    if cached is None:
+        return None
+    empty = id(cached) in _empty
+    mark = _empty.get(id(cached)) or _incomplete.get(id(cached))
     if mark is None:
         return cached
-    at, stamp = mark
-    if time.monotonic() - at < EMPTY_RETRY and _token_stamp() == stamp:
+    at, stamp = mark[0], mark[1]
+    wait = EMPTY_RETRY if empty else INCOMPLETE_RETRY
+    if time.monotonic() - at < wait and _token_stamp() == stamp:
         return cached
-    for k in [k for k, v in _sessions.items() if v is cached]:
+    keys = [k for k, v in _sessions.items() if v is cached]
+    for k in keys:
         del _sessions[k]
-    del _empty[id(cached)]
+    if empty:
+        del _empty[id(cached)]
+    else:
+        del _incomplete[id(cached)]
+        _drop_car_data(cached)
+        _renew.update(k for k in keys if k != "latest")
+        _say(f"telemetría incompleta ({', '.join(keys)}): se borra su car_data y se vuelve a pedir")
     return None
+
+
+def _mark_if_incomplete(key: str, session: Any, stamp: Optional[int]) -> None:
+    """Si la telemetría de ``session`` está incompleta, la apunta en ``_incomplete``
+    con su cobertura y la hora de volver a pedirla, y lo dice en el log."""
+    if not _telemetry_incomplete(session):
+        return
+    coverage = _telemetry_coverage(session) or 0.0
+    retry_at = datetime.now(timezone.utc) + timedelta(seconds=INCOMPLETE_RETRY)
+    _incomplete[id(session)] = (time.monotonic(), stamp, coverage, retry_at)
+    _say(
+        f"telemetría incompleta ({key}, {coverage * 100:.0f} %): se vuelve a pedir "
+        f"al cambiar el token o en {INCOMPLETE_RETRY / 60:.0f} min"
+    )
+
+
+def _car_data_file(session: Any) -> str:
+    """Dónde guarda FastF1 el ``car_data`` procesado de ``session``: en la carpeta de la
+    sesión dentro de ``CACHE_DIR``, que es su ``api_path`` sin ``/static/``."""
+    return os.path.join(CACHE_DIR, session.api_path[len("/static/"):], "car_data.ff1pkl")
+
+
+def _drop_car_data(session: Any) -> None:
+    """Borra de la caché el ``car_data`` procesado de ``session``, si está; lo demás de
+    la sesión se queda."""
+    try:
+        os.remove(_car_data_file(session))
+    except FileNotFoundError:
+        pass
 
 
 def _is_empty(session: Any) -> bool:
@@ -301,8 +358,14 @@ def _telemetry_incomplete(session: Any) -> bool:
     """Si la telemetría de una sesión cargada cubre menos de ``TELEMETRY_MIN_COVERAGE``
     del tramo de sus vueltas, contando todos los coches juntos: sin telemetría
     cargada, sí. Una sesión sin vueltas no cuenta, porque eso es ``_is_empty``."""
-    coverage = _coverage(_telemetry_span(session), _laps_span(session))
+    coverage = _telemetry_coverage(session)
     return coverage is not None and coverage < TELEMETRY_MIN_COVERAGE
+
+
+def _telemetry_coverage(session: Any) -> Optional[float]:
+    """Qué fracción del tramo de las vueltas de ``session`` cubre su telemetría
+    (``_coverage``)."""
+    return _coverage(_telemetry_span(session), _laps_span(session))
 
 
 def _coverage(
@@ -362,9 +425,10 @@ def _race_key(session_key: str) -> str:
     return f"{year}-{rnd}-R"
 
 
-def _load_session(session_key: str) -> Any:
+def _load_session(session_key: str, renew: bool = False) -> Any:
     """Carga la sesión sin mirar el memo. Solo se llama con ``_load_lock``, y nunca
-    con ``latest``: ``_race_key`` la traduce antes."""
+    con ``latest``: ``_race_key`` la traduce antes. Con ``renew``, sin la caché HTTP:
+    lo que falte de la caché procesada se descarga de nuevo y se escribe en ella."""
     parts = session_key.split("-")
     if len(parts) != 3:
         raise HTTPException(
@@ -384,7 +448,13 @@ def _load_session(session_key: str) -> Any:
 
     try:
         session = fastf1.get_session(year, rnd, identifier)
-        session.load(laps=True, telemetry=True, weather=False, messages=False)
+        fresh = (
+            fastf1.Cache.disabled(disable_http_cache=True, disable_func_cache=False)
+            if renew
+            else nullcontext()
+        )
+        with fresh:
+            session.load(laps=True, telemetry=True, weather=False, messages=False)
     except HTTPException:
         raise
     except Exception as exc:
@@ -681,7 +751,9 @@ def comparison(session_key: str, drivers: str, samples: int = 0) -> Dict[str, An
     pedido. La Δ no viaja: la calcula ``common`` desde ``ceSectors``
     (``Common.Comparison.deltasAgainst``), contra la referencia o contra el más
     rápido. Con ``samples`` > 0, cada coche lleva además dónde cruzó S1 y S2
-    (``ceFrontiers``) y su traza (``ceTrace``); con 0 no se toca la telemetría.
+    (``ceFrontiers``) y su traza (``ceTrace``); con 0 no se toca la telemetría. Si
+    además la telemetría de la sesión está incompleta (``_incomplete``), lleva
+    ``lcTelemetry``: su cobertura, de 0 a 1, y la hora UTC a la que se vuelve a pedir.
 
     ``drivers`` fuera de 1 a 5 coches (``all`` incluido) o ``samples`` que no sea 0
     o de 60 a 250 de 5 en 5 son un **400**. Un coche sin vuelta **no** es un error:
@@ -707,10 +779,17 @@ def comparison(session_key: str, drivers: str, samples: int = 0) -> Dict[str, An
             detail="samples debe ser 0 o de 60 a 250 de 5 en 5",
         )
     parts = _qualifying_parts(session)
-    return {
+    reply: Dict[str, Any] = {
         "lcSamples": samples,
         "lcEntries": [_comparison_entry(session, n, samples, parts) for n in numbers],
     }
+    gap = _incomplete.get(id(session))
+    if samples and gap is not None:
+        reply["lcTelemetry"] = {
+            "coverage": round(gap[2], 4),
+            "retryAt": gap[3].strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    return reply
 
 
 # ── Parrilla ──────────────────────────────────────────────────────────────────
