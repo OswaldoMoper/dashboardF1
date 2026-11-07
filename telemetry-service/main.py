@@ -77,7 +77,7 @@ from feed import _LIVE_TOPICS, _feed_live
 CACHE_DIR = os.environ.get("FASTF1_CACHE", ".fastf1-cache")
 
 os.makedirs(CACHE_DIR, exist_ok=True)
-fastf1.Cache.enable_cache(CACHE_DIR)
+fastf1.Cache.configure(cache_dir=CACHE_DIR)
 
 
 # ── Arranque ──────────────────────────────────────────────────────────────────
