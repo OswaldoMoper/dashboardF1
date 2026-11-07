@@ -2,21 +2,15 @@ import { defineConfig, devices } from '@playwright/test';
 
 // Tres procesos que se reparten las pruebas una a una, de las dos ventanas, y un
 // reintento: una prueba que solo pasa al reintentar sale como «flaky», y ese aviso se lee.
-// Al grabar corre solo `graba.spec.ts`, y fuera de la grabación no corre: cada prueba
-// reescribe `recordings/api.har` al cerrarse, así que quedaría la última.
-const recording = process.env.E2E_RECORD === '1';
-
 export default defineConfig({
   testDir: '.',
-  testMatch: recording ? 'graba.spec.ts' : undefined,
-  testIgnore: recording ? undefined : 'graba.spec.ts',
-  fullyParallel: !recording,
-  workers: recording ? 1 : 3,
+  fullyParallel: true,
+  workers: 3,
   retries: 1,
   reporter: 'list',
   use: {
-    // `E2E_URL` solo cuenta al grabar; lo grabado queda a nombre de :3000.
-    baseURL: recording ? (process.env.E2E_URL ?? 'http://localhost:3000') : 'http://localhost:3000',
+    // El HAR está a nombre de :3000 (`dashboardF1-e2e-datos`).
+    baseURL: 'http://localhost:3000',
     trace: 'retain-on-failure',
   },
   projects: [

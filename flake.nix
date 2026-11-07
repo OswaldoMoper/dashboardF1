@@ -173,14 +173,6 @@
           '';
         };
 
-        e2eRecordLauncher = pkgs.writeShellApplication {
-          name = "dashboardF1-e2e-record";
-          text = ''
-            ${guardRoot}
-            exec nix run .#e2e -- --record "$@"
-          '';
-        };
-
         e2eDataLauncher = pkgs.writeShellApplication {
           name = "dashboardF1-e2e-datos";
           text = ''
@@ -487,26 +479,10 @@
           runtimeInputs = [ pkgs.playwright-test pkgs.typescript ];
           text = ''
             ${guardRoot}
-            record=""
-            args=()
-            for arg in "$@"; do
-              if [ "$arg" = --record ]; then record=1; else args+=("$arg"); fi
-            done
             cd e2e
             ln -sfn ${pkgs.playwright-test}/lib/node_modules node_modules
             tsc -p .
-            if [ -n "$record" ]; then
-              E2E_RECORD=1 playwright test --project=edge-1912x914 "''${args[@]}"
-              # The recording is replayed against :3000 wherever it was made.
-              origin="''${E2E_URL:-http://localhost:3000}"
-              origin="''${origin#*://}"
-              origin="''${origin%/}"
-              if [ "$origin" != localhost:3000 ]; then
-                sed -i "s|$origin|localhost:3000|g" recordings/api.har
-              fi
-              exit 0
-            fi
-            E2E_FRONTEND=${self'.packages.frontend} exec playwright test "''${args[@]}"
+            E2E_FRONTEND=${self'.packages.frontend} exec playwright test "$@"
           '';
         };
 
@@ -615,7 +591,6 @@
             devLauncher
             autoLauncher
             e2eLauncher
-            e2eRecordLauncher
             e2eDataLauncher
             self'.packages.pytest
             self'.packages.hspec
@@ -636,8 +611,7 @@
             echo "  python  : dashboardF1-pytest      # pytest del microservicio (telemetry-service/tests)"
             echo "  pruebas : dashboardF1-hspec       # cabal build all + cabal test all"
             echo "  todas   : dashboardF1-test        # pytest, hspec y, si pasan, e2e"
-            echo "  e2e     : dashboardF1-e2e         # tsc + Playwright, con lo grabado en e2e/recordings"
-            echo "  e2e rec : dashboardF1-e2e-record  # graba /api/* de :3000 (otro con E2E_URL; queda a nombre de :3000)"
+            echo "  e2e     : dashboardF1-e2e         # tsc + Playwright, con /api/* de e2e/recordings"
             echo "  e2e dat : dashboardF1-e2e-datos   # reescribe e2e/recordings con los datos inventados del guion"
             echo "  servir  : dashboardF1-serve       # el binario de cabal, :8097, STATIC_DIR=result"
             echo "  api     : dashboardF1-api live    # curl -i a /api/live, con cabeceras"
