@@ -5600,6 +5600,68 @@ main = hspec $ do
                      , "17:00 (23:00) arranca  master en :3000 como dashboardF1-master" ]
                    , [] )
 
+  -- Reprogramar, con la Q de Las Vegas leída el viernes 20 a las 19:00 de México (la P3 ya corre).
+  describe "Auto: reprogramar" $ do
+    let fri = fromGregorian 2026 11 20
+        sat = fromGregorian 2026 11 21
+        qAt t = Auto.Slot "Qualifying" t
+        vegasQ = qAt (novUtc 21 4 0)
+        moveQ t = map (\s -> if s == vegasQ then qAt t else s) gpSeason
+        readAt = novUtc 21 1 0
+        pendingThen =
+          [(fri, Auto.pieceSlug p) | p <- [Auto.Recording Auto.WithoutAccount "Qualifying", Auto.Recording Auto.WithAccount "Qualifying", Auto.Checks (Just "Qualifying")]]
+            <> [ (sat, Auto.pieceSlug p)
+               | p <- [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing
+                      , Auto.Recording Auto.WithoutAccount "Race", Auto.Recording Auto.WithAccount "Race", Auto.Checks (Just "Race") ] ]
+        steps moves = Auto.replan Auto.capAfterStart readAt vegasSlots moves pendingThen
+
+    it "solo se mueve lo que cambió: las de otro GP, las que faltan y las de más no cuentan; sin respuesta, nada" $
+      ( Auto.slotMoves vegasSlots (Just (moveQ (novUtc 21 19 0) <> [Auto.Slot "Sprint" (novUtc 21 20 0)]))
+      , map (Auto.slotMoves vegasSlots) [Just gpSeason, Just (filter (/= vegasQ) gpSeason), Nothing]
+      )
+        `shouldBe` ([Auto.Move "Qualifying" (novUtc 21 4 0) (novUtc 21 19 0)], [[], [], []])
+
+    it "la Q del viernes al sábado: se cancela el viernes y el sábado arranca a T−90 de la Q; la carrera, igual" $
+      steps [Auto.Move "Qualifying" (novUtc 21 4 0) (novUtc 21 19 0)]
+        `shouldBe` [ Auto.Unschedule fri (Auto.Recording Auto.WithoutAccount "Qualifying")
+                   , Auto.Unschedule fri (Auto.Recording Auto.WithAccount "Qualifying")
+                   , Auto.Unschedule fri (Auto.Checks (Just "Qualifying"))
+                   , Auto.Unschedule sat (Auto.Checks Nothing)
+                   , Auto.Unschedule sat Auto.Vigia
+                   , Auto.Unschedule sat (Auto.Observer Nothing)
+                   , Auto.Schedule sat (Auto.Planned (Auto.Checks Nothing) (novUtc 21 17 30) Nothing)
+                   , Auto.Schedule sat (Auto.Planned Auto.Vigia (novUtc 21 17 30) (Just (novUtc 22 10 0)))
+                   , Auto.Schedule sat (Auto.Planned (Auto.Observer Nothing) (novUtc 21 17 30) (Just (novUtc 22 10 0)))
+                   , Auto.Schedule sat (Auto.Planned (Auto.Recording Auto.WithoutAccount "Qualifying") (novUtc 21 18 15) (Just (novUtc 22 1 0)))
+                   , Auto.Schedule sat (Auto.Planned (Auto.Recording Auto.WithAccount "Qualifying") (novUtc 21 18 15) (Just (novUtc 22 1 0)))
+                   , Auto.Schedule sat (Auto.Planned (Auto.Checks (Just "Qualifying")) (novUtc 21 18 15) Nothing)
+                   ]
+
+    it "un retraso del mismo día: solo lo de esa sesión, en su carpeta" $
+      steps [Auto.Move "Qualifying" (novUtc 21 4 0) (novUtc 21 4 30)]
+        `shouldBe` [ Auto.Unschedule fri (Auto.Recording Auto.WithoutAccount "Qualifying")
+                   , Auto.Unschedule fri (Auto.Recording Auto.WithAccount "Qualifying")
+                   , Auto.Unschedule fri (Auto.Checks (Just "Qualifying"))
+                   , Auto.Schedule fri (Auto.Planned (Auto.Recording Auto.WithoutAccount "Qualifying") (novUtc 21 3 45) (Just (novUtc 21 10 30)))
+                   , Auto.Schedule fri (Auto.Planned (Auto.Recording Auto.WithAccount "Qualifying") (novUtc 21 3 45) (Just (novUtc 21 10 30)))
+                   , Auto.Schedule fri (Auto.Planned (Auto.Checks (Just "Qualifying")) (novUtc 21 3 45) Nothing)
+                   ]
+
+    it "lo que ya corre no se toca, y su movimiento no se cuenta; sin movimientos, nada" $
+      let p3Late = [Auto.Move "Practice 3" (novUtc 21 0 30) (novUtc 21 0 50)]
+       in (steps p3Late, Auto.reportedMoves p3Late (steps p3Late), steps [])
+            `shouldBe` ([], [], [])
+
+    it "la línea va en la carpeta del día de antes y en la del nuevo, en hora de México" $
+      let qToSat = Auto.Move "Qualifying" (novUtc 21 4 0) (novUtc 21 19 0)
+       in ( Auto.reportedMoves [qToSat] (steps [qToSat])
+          , Auto.moveDays qToSat
+          , Auto.moveDays qToSat {Auto.mvTo = novUtc 21 4 30}
+          , Auto.moveLine readAt qToSat
+          )
+            `shouldBe` ( [qToSat], [fri, sat], [fri]
+                       , "19:00 (01:00) reprograma Q · vie 22:00 → sáb 13:00" )
+
   describe "Auto.sessionFinalised" $ do
     it "solo la sesión con ESE nombre y en Finalised, oído o deducido" $
       -- La P1 finalizada sigue en /api/live cuando arranca la grabación de la P2: si

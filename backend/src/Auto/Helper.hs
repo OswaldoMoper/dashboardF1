@@ -26,6 +26,15 @@ module Auto.Helper
   , gpAhead
   , GpDay (..)
   , gpPlan
+    -- * Reprogramar
+  , Move (..)
+  , slotMoves
+  , applyMoves
+  , ReplanStep (..)
+  , replan
+  , reportedMoves
+  , moveDays
+  , moveLine
   , clockPhotoWindow
   , pauseFrom
     -- * Cuándo para cada pieza
@@ -112,6 +121,7 @@ module Auto.Helper
   , sessionLabel
   , pieceLabel
   , unitName
+  , pieceSlug
   , nextFolder
   , folderDay
     -- * Lo que pide quien lo lanza
@@ -346,6 +356,92 @@ gpPlan cap now slots =
         plan = dayPlanFrom cap now (addUTCTime (negate dayLead) (slotStart first)) daySlots
   , not (null plan)
   ]
+
+-- | Una sesión programada que ahora tiene otra hora.
+data Move = Move
+  { mvSession :: Text
+  , mvFrom    :: UTCTime
+  , mvTo      :: UTCTime
+  }
+  deriving (Eq, Show)
+
+-- | Lo que cambió de hora entre las sesiones programadas y las que da OpenF1 ahora. De cada
+-- programada cuenta la de OpenF1 con su nombre más cercana a menos de 'gpGap' (las de otros
+-- GP se llaman igual). __Solo se mueve lo que cambió__: la que OpenF1 no trae conserva su
+-- hora, la que trae de más no entra, y sin respuesta ('Nothing', p. ej. un 401) no hay nada.
+slotMoves :: [Slot] -> Maybe [Slot] -> [Move]
+slotMoves old fresh = mapMaybe moveOf old
+  where
+    moveOf o =
+      case sortOn (distance o) [f | f <- fromMaybe [] fresh, slotName f == slotName o, distance o f <= gpGap] of
+        n : _ | slotStart n /= slotStart o -> Just (Move (slotName o) (slotStart o) (slotStart n))
+        _ -> Nothing
+    distance o f = abs (diffUTCTime (slotStart f) (slotStart o))
+
+-- | Las sesiones con sus horas nuevas.
+applyMoves :: [Move] -> [Slot] -> [Slot]
+applyMoves moves = map (\s -> maybe s (\m -> s {slotStart = mvTo m}) (find ((== slotName s) . mvSession) moves))
+
+-- | Un paso de reprogramar, en la carpeta de un día.
+data ReplanStep
+  = Unschedule Day Piece   -- ^ Cancelar esa pieza pendiente.
+  | Schedule Day Planned   -- ^ Programarla; la carpeta de ese día puede no existir aún.
+  deriving (Eq, Show)
+
+-- | Lo que hay que mover, en ese instante, del GP de esas sesiones cuando se mueven así,
+-- sabiendo qué piezas siguen pendientes (día y 'pieceSlug'). Compara el plan con las horas
+-- de antes y con las nuevas, pieza por pieza: una pendiente que cambia se cancela y se
+-- vuelve a programar (si sigue en el plan), una nueva se programa. __Lo que ya arrancó no
+-- se toca__, cambie o no. Primero todo lo que se cancela, después lo que se programa.
+replan :: NominalDiffTime -> UTCTime -> [Slot] -> [Move] -> [(Day, Text)] -> [ReplanStep]
+replan cap now slots moves pending
+  | null moves = []
+  | otherwise = unschedule <> schedule
+  where
+    keyed days = [((gdDay d, pieceSlug (plPiece p)), (gdDay d, p)) | d <- days, p <- gdPlan d]
+    before = keyed (gpPlan cap now slots)
+    after = keyed (gpPlan cap now (applyMoves moves slots))
+    unschedule =
+      [Unschedule day (plPiece p) | (k, (day, p)) <- before, k `elem` pending, fmap snd (lookup k after) /= Just p]
+    schedule =
+      [ Schedule day p
+      | (k, (day, p)) <- after
+      , maybe True (\(_, q) -> k `elem` pending && q /= p) (lookup k before)
+      ]
+
+-- | Los movimientos que tocan alguna pieza de su sesión: los demás (los de una sesión que
+-- ya corre) no se cuentan en @resumen.txt@.
+reportedMoves :: [Move] -> [ReplanStep] -> [Move]
+reportedMoves moves steps = filter (\m -> mvSession m `elem` touched) moves
+  where
+    touched = mapMaybe (sessionOf . stepPiece) steps
+    stepPiece (Unschedule _ p) = p
+    stepPiece (Schedule _ p)   = plPiece p
+    sessionOf p = case p of
+      Recording _ s   -> Just s
+      Checks (Just s) -> Just s
+      _               -> Nothing
+
+-- | Los días de México en cuya carpeta va la línea de un movimiento: el de antes y el de
+-- después (uno, si no cambia de día).
+moveDays :: Move -> [Day]
+moveDays m = nub [mexicoDay (mvFrom m), mexicoDay (mvTo m)]
+
+-- | La línea de @resumen.txt@ de un movimiento: «reprograma Q · vie 22:00 → sáb 13:00», en
+-- hora de México.
+moveLine :: UTCTime -> Move -> Text
+moveLine t m =
+  eventLine t "reprograma" (sessionLabel (mvSession m) <> " · " <> dayClock (mvFrom m) <> " → " <> dayClock (mvTo m))
+  where
+    dayClock x = shortWeekday (dayOfWeek (mexicoDay x)) <> " " <> mexicoHour x
+    shortWeekday d = case d of
+      Monday    -> "lun"
+      Tuesday   -> "mar"
+      Wednesday -> "mié"
+      Thursday  -> "jue"
+      Friday    -> "vie"
+      Saturday  -> "sáb"
+      Sunday    -> "dom"
 
 -- | Cuánto después del inicio previsto de la P1 empieza la foto del reloj, y cuánto dura:
 -- de 11:30 a 12:00–12:15, la ventana en que la pestaña se cierra a mano.
@@ -1181,14 +1277,17 @@ pieceLabel p = case p of
 
 -- | La unidad de systemd de una pieza: la carpeta y la pieza.
 unitName :: FilePath -> Piece -> Text
-unitName folder p = T.pack folder <> "-" <> slug
-  where
-    slug = case p of
-      Checks Nothing  -> "comprobaciones-inicio"
-      Checks (Just s) -> "comprobaciones-" <> sessionShort s
-      Vigia           -> "vigia"
-      Observer _      -> "observador"
-      Recording a s   -> T.pack (recordingStem a s)
+unitName folder p = T.pack folder <> "-" <> pieceSlug p
+
+-- | Lo que distingue a una pieza dentro de su carpeta: el final del nombre de su unidad.
+-- El observador es uno por día, sea cual sea su pausa.
+pieceSlug :: Piece -> Text
+pieceSlug p = case p of
+  Checks Nothing  -> "comprobaciones-inicio"
+  Checks (Just s) -> "comprobaciones-" <> sessionShort s
+  Vigia           -> "vigia"
+  Observer _      -> "observador"
+  Recording a s   -> T.pack (recordingStem a s)
 
 -- | Cómo termina el nombre de una grabación en pantalla: «, sin cuenta» o «, con cuenta».
 accountLabel :: Account -> Text
