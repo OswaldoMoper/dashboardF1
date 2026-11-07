@@ -1,7 +1,7 @@
 -- | El automatismo del GP — lógica pura.
 --
--- Las reglas con las que @dashboardF1-auto@ programa un día de GP y juzga lo que ve:
--- qué sesiones hay ese día, cuándo arranca y cuándo para cada pieza, y qué dice cada
+-- Las reglas con las que @dashboardF1-auto@ programa un día de GP, o el GP entero, y juzga
+-- lo que ve: qué sesiones hay cada día, cuándo arranca y cuándo para cada pieza, y qué dice cada
 -- línea de los ficheros de la carpeta del día. Sin efectos.
 module Auto.Helper
   ( -- * Las horas
@@ -19,6 +19,13 @@ module Auto.Helper
   , recordingLead
   , capAfterStart
   , dayPlan
+  , dayLead
+  , dayPlanFrom
+    -- * Un GP de una vez
+  , gpGap
+  , gpAhead
+  , GpDay (..)
+  , gpPlan
   , clockPhotoWindow
   , pauseFrom
     -- * Cuándo para cada pieza
@@ -120,6 +127,7 @@ module Auto.Helper
     -- * Lo que enseña el comando
   , dayHeader
   , dayTable
+  , gpSummary
   , slotsSummary
   , horasFlag
   , onCalendar
@@ -149,7 +157,9 @@ import           Data.Aeson.Types      (Parser, parseEither)
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Lazy  as BL
 import           Data.Char             (isDigit)
-import           Data.List             (find, nub, sortOn, stripPrefix, (\\))
+import           Data.Function         (on)
+import           Data.List             (find, groupBy, nub, sortOn, stripPrefix,
+                                        (\\))
 import           Data.Maybe            (catMaybes, fromMaybe, isNothing,
                                         listToMaybe, mapMaybe)
 import           Data.Text             (Text)
@@ -254,22 +264,73 @@ capAfterStart = 6 * 3600
 -- arranca al lanzar__, y entonces su tanda de T−45 sobra (la de lanzar la cubre). Una
 -- sesión cuyo tope ya pasó no se programa. Sin sesiones, nada: ni el vigía.
 dayPlan :: NominalDiffTime -> UTCTime -> [Slot] -> [Planned]
-dayPlan cap now slots =
+dayPlan cap now = dayPlanFrom cap now now
+
+-- | Cuánto antes de la primera sesión del día arrancan sus piezas en el modo GP (T−90).
+dayLead :: NominalDiffTime
+dayLead = 90 * 60
+
+-- | 'dayPlan' con la hora de arranque de las piezas del día (comprobaciones de arranque,
+-- vigía y observador): esa hora, o la del lanzamiento si ya pasó. Lo de cada sesión no
+-- cambia. Con la hora del lanzamiento es 'dayPlan'.
+dayPlanFrom :: NominalDiffTime -> UTCTime -> UTCTime -> [Slot] -> [Planned]
+dayPlanFrom cap now from slots =
   case live of
     [] -> []
     _ ->
       sortOn plStart $
-        Planned (Checks Nothing) now Nothing
-          : Planned Vigia now (Just (capOf (last live)))
-          : Planned (Observer (fst <$> clockPhotoWindow slots)) now (Just (capOf (last live)))
+        Planned (Checks Nothing) start Nothing
+          : Planned Vigia start (Just (capOf (last live)))
+          : Planned (Observer (fst <$> clockPhotoWindow slots)) start (Just (capOf (last live)))
           : concatMap perSlot live
   where
+    start = max now from
     live = filter ((> now) . capOf) (sortOn slotStart slots)
     capOf s = addUTCTime cap (slotStart s)
     perSlot s =
       let lead = addUTCTime (negate recordingLead) (slotStart s)
        in [Planned (Recording a (slotName s)) (max now lead) (Just (capOf s)) | a <- [minBound .. maxBound]]
             <> [Planned (Checks (Just (slotName s))) lead Nothing | lead > now]
+
+-- | El hueco entre dos sesiones seguidas a partir del cual son de GP distintos: 3 días.
+-- No sirve para un GP con un hueco mayor dentro, ni para dos GP a menos de eso.
+gpGap :: NominalDiffTime
+gpGap = 3 * 86400
+
+-- | Las sesiones del GP que viene: el primero, por hora, con alguna sesión cuyo tope
+-- (inicio + ese tope) no ha pasado en ese instante; a mitad de un GP, el que corre, con
+-- todas sus sesiones, también las ya pasadas. Vacío si no queda ninguno.
+gpAhead :: NominalDiffTime -> UTCTime -> [Slot] -> [Slot]
+gpAhead cap now =
+  fromMaybe [] . find (any ((> now) . addUTCTime cap . slotStart)) . gpGroups . sortOn slotStart
+  where
+    gpGroups = foldr joinNext []
+    joinNext s (next@(t : _) : rest)
+      | diffUTCTime (slotStart t) (slotStart s) <= gpGap = (s : next) : rest
+    joinNext s groups = [s] : groups
+
+-- | Un día de México del GP: su nombre de carpeta (el de 'resolveDay'), sus sesiones por
+-- hora y lo que se programa ese día.
+data GpDay = GpDay
+  { gdLabel :: Text
+  , gdDay   :: Day
+  , gdSlots :: [Slot]
+  , gdPlan  :: [Planned]
+  }
+  deriving (Eq, Show)
+
+-- | Lo que se programa del GP que viene ('gpAhead'), lanzado en ese instante, con ese
+-- tope: un 'GpDay' por día de México con sesión, en orden, con las piezas del día a
+-- T−90 de su primera sesión ('dayLead', 'dayPlanFrom'). Un día al que no le queda nada
+-- no sale.
+gpPlan :: NominalDiffTime -> UTCTime -> [Slot] -> [GpDay]
+gpPlan cap now slots =
+  [ GpDay (weekdayName (dayOfWeek day)) day daySlots plan
+  | daySlots@(first : _) <- groupBy ((==) `on` (mexicoDay . slotStart)) (gpAhead cap now slots)
+  , let day = mexicoDay (slotStart first)
+        plan = dayPlanFrom cap now (addUTCTime (negate dayLead) (slotStart first)) daySlots
+  , not (null plan)
+  ]
 
 -- | Cuánto después del inicio previsto de la P1 empieza la foto del reloj, y cuánto dura:
 -- de 11:30 a 12:00–12:15, la ventana en que la pestaña se cierra a mano.
@@ -1306,6 +1367,25 @@ dayTable now other plan =
     lastLabel = case reverse [s | Recording _ s <- map plPiece plan] of
       s : _ -> sessionLabel s
       []    -> "última sesión"
+
+-- | El resumen del GP antes del OK, encima de la tabla de cada día: el GP si se sabe,
+-- una fila por día con sus sesiones, la hora a la que arrancan sus piezas («ahora» si
+-- ya pasó) y la carpeta en que se lanza, y lo que se programa cada día.
+gpSummary :: Maybe Text -> UTCTime -> [(GpDay, FilePath)] -> [Text]
+gpSummary gp now days =
+  T.intercalate " · " (maybe [] pure gp <> [count, "horas de México (UTC)"])
+    : cols "Día" "Sesiones" "Arranca" "Carpeta"
+    : map row days
+    <> ["  Cada día, al arrancar: comprobaciones, vigía y observador; por sesión, a T−45, sus comprobaciones y las dos grabaciones."]
+  where
+    count = T.pack (show (length days)) <> if length days == 1 then " día" else " días"
+    cols a b c d = "  " <> T.justifyLeft 14 ' ' a <> T.justifyLeft 24 ' ' b <> T.justifyLeft 17 ' ' c <> d
+    row (d, folder) =
+      cols (dayName (gdDay d)) (slotsSummary (gdSlots d))
+        (maybe "—" (startText now) (listToMaybe (gdPlan d))) (T.pack folder <> "/")
+    dayName day =
+      let (_, _, dom) = toGregorian day
+       in weekdayDisplay (dayOfWeek day) <> " " <> T.pack (show dom)
 
 -- | Las sesiones de un día en una línea: «P1 11:30, P2 15:00».
 slotsSummary :: [Slot] -> Text

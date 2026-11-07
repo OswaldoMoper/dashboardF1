@@ -5454,6 +5454,107 @@ main = hspec $ do
                    , [False, True, True, False]
                    )
 
+  -- El GP de una vez, con Brasil y Las Vegas 2026: lo que no es del GP que viene también está.
+  describe "Auto.gpAhead y Auto.gpPlan" $ do
+    it "el GP que viene es el primero con algo por delante; sin nada, ninguno" $
+      ( Auto.gpAhead Auto.capAfterStart (novUtc 5 0 0) gpSeason
+      , Auto.gpAhead Auto.capAfterStart (novUtc 9 0 0) gpSeason
+      , Auto.gpAhead Auto.capAfterStart (novUtc 30 0 0) gpSeason
+      , Auto.gpAhead Auto.capAfterStart (novUtc 5 0 0) []
+      )
+        `shouldBe` (brazilSlots, vegasSlots, [], [])
+
+    it "dos sesiones a 3 días son del mismo GP; a un minuto más, de dos" $
+      let at3 = [Auto.Slot "Race" (novUtc 4 12 0), Auto.Slot "Practice 1" (novUtc 1 12 0)]
+          past3 = [Auto.Slot "Race" (novUtc 4 12 1), Auto.Slot "Practice 1" (novUtc 1 12 0)]
+       in map (map Auto.slotName . Auto.gpAhead Auto.capAfterStart (novUtc 1 0 0)) [at3, past3]
+            `shouldBe` [["Practice 1", "Race"], ["Practice 1"]]
+
+    it "Las Vegas lanzado el lunes 16: jueves, viernes y sábado de México, cada uno a T−90 de su primera sesión" $
+      gpDays (Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason)
+        `shouldBe` [ ("jueves", fromGregorian 2026 11 19, Just (novUtc 19 23 0), ["Practice 1", "Practice 2"])
+                   , ("viernes", fromGregorian 2026 11 20, Just (novUtc 20 23 0), ["Practice 3", "Qualifying"])
+                   , ("sabado", fromGregorian 2026 11 21, Just (novUtc 22 2 30), ["Race"])
+                   ]
+
+    it "el jueves de Las Vegas entero: lo del día a T−90, cada grabación a T−45, la pausa solo con P1" $
+      ( map Auto.gdPlan (take 1 (Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason))
+      , map (map Auto.plPiece . Auto.gdPlan) (drop 1 (Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason))
+      )
+        `shouldBe` ( [ [ Auto.Planned (Auto.Checks Nothing) (novUtc 19 23 0) Nothing
+                       , Auto.Planned Auto.Vigia (novUtc 19 23 0) (Just (novUtc 20 10 0))
+                       , Auto.Planned (Auto.Observer (Just (novUtc 20 1 0))) (novUtc 19 23 0) (Just (novUtc 20 10 0))
+                       , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 1") (novUtc 19 23 45) (Just (novUtc 20 6 30))
+                       , Auto.Planned (Auto.Recording Auto.WithAccount "Practice 1")    (novUtc 19 23 45) (Just (novUtc 20 6 30))
+                       , Auto.Planned (Auto.Checks (Just "Practice 1")) (novUtc 19 23 45) Nothing
+                       , Auto.Planned (Auto.Recording Auto.WithoutAccount "Practice 2") (novUtc 20 3 15) (Just (novUtc 20 10 0))
+                       , Auto.Planned (Auto.Recording Auto.WithAccount "Practice 2")    (novUtc 20 3 15) (Just (novUtc 20 10 0))
+                       , Auto.Planned (Auto.Checks (Just "Practice 2")) (novUtc 20 3 15) Nothing
+                       ] ]
+                   , [ [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing
+                       , Auto.Recording Auto.WithoutAccount "Practice 3", Auto.Recording Auto.WithAccount "Practice 3"
+                       , Auto.Checks (Just "Practice 3")
+                       , Auto.Recording Auto.WithoutAccount "Qualifying", Auto.Recording Auto.WithAccount "Qualifying"
+                       , Auto.Checks (Just "Qualifying") ]
+                     -- Un día con una sola sesión: lo del día a T−90 y su tanda de T−45, como con dos.
+                     , [ Auto.Checks Nothing, Auto.Vigia, Auto.Observer Nothing
+                       , Auto.Recording Auto.WithoutAccount "Race", Auto.Recording Auto.WithAccount "Race"
+                       , Auto.Checks (Just "Race") ] ]
+                   )
+
+    it "Brasil lanzado el jueves 5: viernes, sábado y domingo" $
+      gpDays (Auto.gpPlan Auto.capAfterStart (novUtc 5 18 0) gpSeason)
+        `shouldBe` [ ("viernes", fromGregorian 2026 11 6, Just (novUtc 6 14 0), ["Practice 1", "Practice 2"])
+                   , ("sabado", fromGregorian 2026 11 7, Just (novUtc 7 13 0), ["Practice 3", "Qualifying"])
+                   , ("domingo", fromGregorian 2026 11 8, Just (novUtc 8 15 30), ["Race"])
+                   ]
+
+    it "a mitad del GP, lo que queda: lo de hoy ya, lo de mañana a T−90; lo que pasó su tope, nada" $
+      ( gpDays (Auto.gpPlan Auto.capAfterStart (novUtc 7 17 30) gpSeason)
+      , map Auto.gdLabel (Auto.gpPlan Auto.capAfterStart (novUtc 8 0 0) gpSeason)
+      , map Auto.gdLabel (Auto.gpPlan Auto.capAfterStart (novUtc 8 23 0) gpSeason)
+      )
+        `shouldBe` ( [ ("sabado", fromGregorian 2026 11 7, Just (novUtc 7 17 30), ["Practice 3", "Qualifying"])
+                     , ("domingo", fromGregorian 2026 11 8, Just (novUtc 8 15 30), ["Race"])
+                     ]
+                   , ["domingo"]
+                   , ["jueves", "viernes", "sabado"]
+                   )
+
+    it "lanzado el jueves 19 a las 17:30 de México, lo del día arranca ya y las grabaciones a su hora" $
+      map (\p -> (Auto.plPiece p, Auto.plStart p))
+          (concatMap (take 4 . Auto.gdPlan) (take 1 (Auto.gpPlan Auto.capAfterStart (novUtc 19 23 30) gpSeason)))
+        `shouldBe` [ (Auto.Checks Nothing, novUtc 19 23 30)
+                   , (Auto.Vigia, novUtc 19 23 30)
+                   , (Auto.Observer (Just (novUtc 20 1 0)), novUtc 19 23 30)
+                   , (Auto.Recording Auto.WithoutAccount "Practice 1", novUtc 19 23 45)
+                   ]
+
+    it "dayPlan es dayPlanFrom con la hora del lanzamiento" $
+      Auto.dayPlanFrom Auto.capAfterStart (atUtc 23 16 0) (atUtc 23 16 0) austinSlots
+        `shouldBe` Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
+
+  describe "Auto.gpSummary" $ do
+    it "Las Vegas lanzado el lunes 16: una fila por día con sus sesiones, cuándo arranca y su carpeta" $
+      let days = Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason
+          folders = map (\d -> Auto.dayFolder (Auto.gdLabel d) (Auto.gdDay d)) days
+       in Auto.gpSummary (Just "Las Vegas Grand Prix") (novUtc 16 18 0) (zip days folders)
+            `shouldBe` [ "Las Vegas Grand Prix · 3 días · horas de México (UTC)"
+                       , "  Día           Sesiones                Arranca          Carpeta"
+                       , "  Jueves 19     P1 18:30, P2 22:00      17:00 (23:00)    dashboardF1-auto-jueves-2026-11-19/"
+                       , "  Viernes 20    P3 18:30, Q 22:00       17:00 (23:00)    dashboardF1-auto-viernes-2026-11-20/"
+                       , "  Sábado 21     carrera 22:00           20:30 (02:30)    dashboardF1-auto-sabado-2026-11-21/"
+                       , "  Cada día, al arrancar: comprobaciones, vigía y observador; por sesión, a T−45, sus comprobaciones y las dos grabaciones."
+                       ]
+
+    it "sin nombre de GP y con un solo día ya empezado: «1 día» y «ahora»" $
+      let days = Auto.gpPlan Auto.capAfterStart (novUtc 8 16 0) gpSeason
+       in take 3 (Auto.gpSummary Nothing (novUtc 8 16 0) (zip days ["dashboardF1-auto-domingo-2026-11-08-2"]))
+            `shouldBe` [ "1 día · horas de México (UTC)"
+                       , "  Día           Sesiones                Arranca          Carpeta"
+                       , "  Domingo 8     carrera 11:00           ahora            dashboardF1-auto-domingo-2026-11-08-2/"
+                       ]
+
   describe "Auto.sessionFinalised" $ do
     it "solo la sesión con ESE nombre y en Finalised, oído o deducido" $
       -- La P1 finalizada sigue en /api/live cuando arranca la grabación de la P2: si
@@ -8282,6 +8383,37 @@ writing alive runs at =
 practice1Slot, practice2Slot :: Auto.Slot
 practice1Slot = Auto.Slot "Practice 1" (atUtc 23 17 30)
 practice2Slot = Auto.Slot "Practice 2" (atUtc 23 21 0)
+
+-- | Un instante de noviembre de 2026 en UTC: día, hora y minuto.
+novUtc :: Integer -> Integer -> Integer -> UTCTime
+novUtc d h m = UTCTime (fromGregorian 2026 11 (fromInteger d)) (fromInteger (h * 3600 + m * 60))
+
+-- | Brasil y Las Vegas 2026 con las horas de Jolpica (2026-11-07). Las Vegas cae de
+-- viernes a domingo en UTC y de jueves a sábado en México.
+brazilSlots, vegasSlots :: [Auto.Slot]
+brazilSlots =
+  [ Auto.Slot "Practice 1" (novUtc 6 15 30)
+  , Auto.Slot "Practice 2" (novUtc 6 19 0)
+  , Auto.Slot "Practice 3" (novUtc 7 14 30)
+  , Auto.Slot "Qualifying" (novUtc 7 18 0)
+  , Auto.Slot "Race"       (novUtc 8 17 0)
+  ]
+vegasSlots =
+  [ Auto.Slot "Practice 1" (novUtc 20 0 30)
+  , Auto.Slot "Practice 2" (novUtc 20 4 0)
+  , Auto.Slot "Practice 3" (novUtc 21 0 30)
+  , Auto.Slot "Qualifying" (novUtc 21 4 0)
+  , Auto.Slot "Race"       (novUtc 22 4 0)
+  ]
+
+-- | Los dos GP juntos y al revés, como no los da ninguna fuente: el orden no lo pone quien llama.
+gpSeason :: [Auto.Slot]
+gpSeason = reverse (brazilSlots <> vegasSlots)
+
+-- | Cada día del GP: su nombre, su fecha, cuándo arranca lo primero y sus sesiones.
+gpDays :: [Auto.GpDay] -> [(T.Text, Day, Maybe UTCTime, [T.Text])]
+gpDays =
+  map (\d -> (Auto.gdLabel d, Auto.gdDay d, Auto.plStart <$> listToMaybe (Auto.gdPlan d), map Auto.slotName (Auto.gdSlots d)))
 
 -- | @current\/races.json@ de Jolpica (2026-10-15) con dos carreras tal cual, sin el
 -- circuito: EE. UU. (ronda 18, con P2 y P3) y Singapur (ronda 17, con sprint).
