@@ -158,6 +158,18 @@ module Auto.Helper
   , programLine
   , lateOkLines
   , cancelLine
+  , quitLine
+    -- * La relectura de horas
+  , relecturaLabel
+  , relecturaUnit
+  , relecturaLine
+  , relecturaDefault
+  , gpStateFile
+  , GpState (..)
+  , gpLastCap
+  , pendingKeys
+  , folderFor
+  , dayLabel
     -- * Lo que dice systemd
   , UnitRow (..)
   , TimerRow (..)
@@ -175,9 +187,9 @@ import           Common.Types          (LapProgress (..), LiveTable (..),
                                         SessionInfo (..), SessionState (..),
                                         StateReading (..), sessionStateLabel)
 import           Config                (startupMark)
-import           Data.Aeson            (FromJSON (..), Object, Value,
-                                        eitherDecode, eitherDecodeStrict,
-                                        withObject, (.:), (.:?))
+import           Data.Aeson            (FromJSON (..), Object, ToJSON (..),
+                                        Value, eitherDecode, eitherDecodeStrict,
+                                        object, withObject, (.:), (.:?), (.=))
 import           Data.Aeson.Types      (Parser, parseEither)
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Lazy  as BL
@@ -1317,6 +1329,7 @@ data Launch = Launch
   , laLog        :: Maybe FilePath
   , laGp         :: Bool
   , laCalendario :: Maybe FilePath
+  , laRelectura  :: Maybe Int  -- ^ Minutos entre dos relecturas de las horas del GP.
   }
   deriving (Eq, Show)
 
@@ -1330,10 +1343,11 @@ bareLaunch =
     , laLog = Nothing
     , laGp = False
     , laCalendario = Nothing
+    , laRelectura = Nothing
     }
 
 -- | Los argumentos de @dashboardF1-auto [día | gp] [--horas …] [--ensayo] [--log …]
--- [--calendario …]@, en cualquier orden. @gp@ ocupa el sitio del día.
+-- [--calendario …] [--relectura \<min\>]@, en cualquier orden. @gp@ ocupa el sitio del día.
 parseLaunch :: [Text] -> Either Text Launch
 parseLaunch = go bareLaunch
   where
@@ -1345,6 +1359,10 @@ parseLaunch = go bareLaunch
     go l ("--log" : file : rest) = go l {laLog = Just (T.unpack file)} rest
     go _ ["--calendario"] = Left "--calendario necesita el fichero: p. ej. --calendario ~/MOPER/calendario-ensayo.json"
     go l ("--calendario" : file : rest) = go l {laCalendario = Just (T.unpack file)} rest
+    go l ("--relectura" : minutes : rest)
+      | not (T.null minutes) && T.all isDigit minutes && read (T.unpack minutes) > (0 :: Int) =
+          go l {laRelectura = Just (read (T.unpack minutes))} rest
+    go _ ("--relectura" : _) = Left "--relectura necesita los minutos: p. ej. --relectura 5"
     go l ("gp" : rest)
       | free l = go l {laGp = True} rest
     go l (word : rest)
@@ -1362,6 +1380,8 @@ launchProblem l
       Just "--calendario es del GP: dashboardF1-autodev gp --calendario <fichero>"
   | laGp l && laEnsayo l && isNothing (laCalendario l) =
       Just "el ensayo del GP necesita un calendario: dashboardF1-autodev gp --ensayo --calendario <fichero>"
+  | not (laGp l) && isJust (laRelectura l) =
+      Just "--relectura es del GP: dashboardF1-autodev gp --relectura <minutos>"
   | otherwise = Nothing
 
 -- | El modo con el que se lanzó, del valor de @DASHBOARDF1_MODO@ que pone el lanzador
@@ -1674,6 +1694,102 @@ lateOkLines shown seen okAt planned = case mapMaybe change seen of
 cancelLine :: UTCTime -> Text
 cancelLine t = eventLine t "cancela" "todo lo pendiente"
 
+-- | La línea de @resumen.txt@ de una pieza que se quita sin cancelar lo demás (la de esa
+-- etiqueta, al reprogramar o al acabar la relectura).
+quitLine :: UTCTime -> Text -> Text
+quitLine t label = eventLine t "quita" label
+
+-- | La pieza que relee las horas del GP; vive en la carpeta del primer día.
+relecturaLabel :: Text
+relecturaLabel = "relectura de horas"
+
+-- | Su unidad, en la carpeta del primer día: con el prefijo del automatismo, así que
+-- @cancela@ la para.
+relecturaUnit :: FilePath -> Text
+relecturaUnit folder = T.pack folder <> "-relectura"
+
+-- | La línea de @resumen.txt@ que la programa, cada tantos minutos.
+relecturaLine :: UTCTime -> Int -> Text
+relecturaLine t every = eventLine t "programa" (relecturaLabel <> " · cada " <> T.pack (show every) <> " min")
+
+-- | Cuánto espera la relectura entre dos lecturas sin @--relectura@: una hora.
+relecturaDefault :: Int
+relecturaDefault = 60
+
+-- | El fichero de la carpeta del primer día con lo que la relectura necesita.
+gpStateFile :: FilePath
+gpStateFile = "gp.json"
+
+-- | Lo que la relectura necesita para comparar y volver a programar: las horas con que
+-- está programado el GP, cómo se lanzó y la carpeta de cada día.
+data GpState = GpState
+  { gsSlots      :: [Slot]
+  , gsPort       :: Int
+  , gsRecorder   :: FilePath
+  , gsReader     :: FilePath
+  , gsLog        :: Maybe FilePath
+  , gsCapSeconds :: Int
+  , gsEnsayo     :: Bool
+  , gsCalendario :: Maybe FilePath
+  , gsFolders    :: [(Day, FilePath)]
+  }
+  deriving (Eq, Show)
+
+instance ToJSON GpState where
+  toJSON s =
+    object
+      [ "sesiones" .= [object ["nombre" .= slotName x, "inicio" .= slotStart x] | x <- gsSlots s]
+      , "puerto" .= gsPort s
+      , "grabador" .= gsRecorder s
+      , "lector" .= gsReader s
+      , "log" .= gsLog s
+      , "tope" .= gsCapSeconds s
+      , "ensayo" .= gsEnsayo s
+      , "calendario" .= gsCalendario s
+      , "carpetas" .= [object ["dia" .= d, "carpeta" .= f] | (d, f) <- gsFolders s]
+      ]
+
+instance FromJSON GpState where
+  parseJSON = withObject "gp.json" $ \o ->
+    GpState
+      <$> (mapM (withObject "sesión" (\x -> Slot <$> x .: "nombre" <*> x .: "inicio")) =<< o .: "sesiones")
+      <*> o .: "puerto"
+      <*> o .: "grabador"
+      <*> o .: "lector"
+      <*> o .:? "log"
+      <*> o .: "tope"
+      <*> o .: "ensayo"
+      <*> o .:? "calendario"
+      <*> (mapM (withObject "carpeta" (\x -> (,) <$> x .: "dia" <*> x .: "carpeta")) =<< o .: "carpetas")
+
+-- | Cuándo acaba el GP de esas sesiones con ese tope: el último inicio más el tope.
+gpLastCap :: NominalDiffTime -> [Slot] -> Maybe UTCTime
+gpLastCap cap slots = case map slotStart slots of
+  [] -> Nothing
+  xs -> Just (addUTCTime cap (maximum xs))
+
+-- | Las piezas pendientes (temporizador esperando) de esas carpetas, con su día y su
+-- 'pieceSlug'. Una unidad es de la carpeta más larga que la empieza ('foldersWithUnits').
+pendingKeys :: [(Day, FilePath)] -> [TimerRow] -> [(Day, Text)]
+pendingKeys folders timers =
+  [ (day, slug)
+  | t <- timers
+  , isJust (trNext t)
+  , Just unit <- [T.stripSuffix ".timer" (trUnit t)]
+  , (day, folder) : _ <- [reverse (sortOn (length . snd) [x | x@(_, f) <- folders, (T.pack f <> "-") `T.isPrefixOf` unit])]
+  , Just slug <- [T.stripPrefix (T.pack folder <> "-") unit]
+  ]
+
+-- | La carpeta de ese día: la que ya tiene o, si no, una nueva junto a las que hay.
+folderFor :: Text -> [FilePath] -> [(Day, FilePath)] -> Day -> [(Day, FilePath)]
+folderFor label existing folders day
+  | any ((== day) . fst) folders = folders
+  | otherwise = folders <> [(day, nextFolder (dayFolder label day) (existing <> map snd folders))]
+
+-- | El nombre de carpeta de un día de la semana (sin acentos, como 'resolveDay').
+dayLabel :: Day -> Text
+dayLabel = weekdayName . dayOfWeek
+
 -- | Una unidad de @systemctl --user list-units -o json@.
 data UnitRow = UnitRow
   { urUnit        :: Text
@@ -1718,14 +1834,15 @@ eventParts line
   | T.length line > 23 = Just (T.strip (T.take 8 (T.drop 14 line)), T.strip (T.drop 23 line))
   | otherwise = Nothing
 
--- | Lo que @resumen.txt@ da por pendiente: lo programado que no ha arrancado ni se canceló,
--- también lo de «ahora» hasta que su temporizador dispare.
+-- | Lo que @resumen.txt@ da por pendiente: lo programado que no ha arrancado ni se canceló
+-- ni se quitó ('quitLine'), también lo de «ahora» hasta que su temporizador dispare.
 expectedPending :: [Text] -> [Text]
 expectedPending = foldl step [] . mapMaybe eventParts
   where
     step acc (verb, what) = case verb of
       "programa" -> acc <> [fst (T.breakOn " · " what)]
       "arranca"  -> filter (/= what) acc
+      "quita"    -> filter (/= what) acc
       "cancela"  -> []
       _          -> acc
 

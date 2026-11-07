@@ -5662,6 +5662,51 @@ main = hspec $ do
             `shouldBe` ( [qToSat], [fri, sat], [fri]
                        , "19:00 (01:00) reprograma Q · vie 22:00 → sáb 13:00" )
 
+  describe "Auto: la relectura de horas" $ do
+    let fri = fromGregorian 2026 11 20
+        thu = fromGregorian 2026 11 19
+        folders = [(thu, "dashboardF1-auto-jueves-2026-11-19"), (fri, "dashboardF1-auto-viernes-2026-11-20-2")]
+
+    it "lo pendiente sale de los temporizadores que esperan, con su día y su pieza; la de -2 es la suya" $
+      Auto.pendingKeys folders
+          [ Auto.TimerRow "dashboardF1-auto-viernes-2026-11-20-2-grabacion-q.timer" (Just 1)
+          , Auto.TimerRow "dashboardF1-auto-viernes-2026-11-20-2-vigia.timer" Nothing
+          , Auto.TimerRow "dashboardF1-auto-jueves-2026-11-19-relectura.timer" (Just 1)
+          , Auto.TimerRow "dashboardF1-auto-viernes-2026-11-20-comprobaciones-q.timer" (Just 1)
+          , Auto.TimerRow "dashboardF1-auto-viernes-2026-11-20-2-grabacion-q.service" (Just 1)
+          ]
+        `shouldBe` [(fri, "grabacion-q"), (thu, "relectura")]
+
+    it "un día sin carpeta gana una al lado de las que hay; uno con carpeta conserva la suya" $
+      ( Auto.folderFor "sabado" ["dashboardF1-auto-sabado-2026-11-21"] folders (fromGregorian 2026 11 21)
+      , Auto.folderFor "viernes" [] folders fri
+      , Auto.dayLabel (fromGregorian 2026 11 21)
+      )
+        `shouldBe` ( folders <> [(fromGregorian 2026 11 21, "dashboardF1-auto-sabado-2026-11-21-2")]
+                   , folders
+                   , "sabado" )
+
+    it "gp.json se lee como se escribió" $
+      let st = Auto.GpState vegasSlots 3000 "/nix/store/x-record" "/nix/store/y-observa" Nothing 21600 False (Just "/tmp/cal.json") folders
+       in eitherDecode (encode st) `shouldBe` Right st
+
+    it "acaba con el último tope del GP; sin sesiones, ya acabó" $
+      (Auto.gpLastCap Auto.capAfterStart vegasSlots, Auto.gpLastCap Auto.capAfterStart [])
+        `shouldBe` (Just (novUtc 22 10 0), Nothing)
+
+    it "programada, la vista la da por pendiente; quitada, ya no, sin borrar lo demás" $
+      let programmed = [Auto.relecturaLine (novUtc 16 18 0) 60, Auto.programLine (novUtc 16 18 0) (Auto.Planned Auto.Vigia (novUtc 19 23 0) Nothing)]
+       in ( programmed
+          , Auto.expectedPending programmed
+          , Auto.expectedPending (programmed <> [Auto.quitLine (novUtc 22 10 0) Auto.relecturaLabel])
+          , Auto.relecturaUnit "dashboardF1-auto-jueves-2026-11-19"
+          )
+            `shouldBe` ( [ "12:00 (18:00) programa relectura de horas · cada 60 min"
+                         , "12:00 (18:00) programa vigía · 17:00 (23:00)" ]
+                       , ["relectura de horas", "vigía"]
+                       , ["vigía"]
+                       , "dashboardF1-auto-jueves-2026-11-19-relectura" )
+
   describe "Auto.sessionFinalised" $ do
     it "solo la sesión con ESE nombre y en Finalised, oído o deducido" $
       -- La P1 finalizada sigue en /api/live cuando arranca la grabación de la P2: si
@@ -6434,6 +6479,15 @@ main = hspec $ do
     it "solo el modo «desarrollo» programa el GP" $
       map Auto.gpAllowed [Just "desarrollo", Nothing, Just "ver", Just ""]
         `shouldBe` [True, False, False, False]
+
+    it "--relectura lleva minutos positivos, y es del GP" $
+      ( map Auto.parseLaunch [["gp", "--relectura", "5"]]
+      , map (isLeft . Auto.parseLaunch) [["gp", "--relectura"], ["gp", "--relectura", "0"], ["gp", "--relectura", "x"], ["gp", "--relectura", ""]]
+      , isJust (Auto.launchProblem Auto.bareLaunch {Auto.laRelectura = Just 5})
+      )
+        `shouldBe` ( [Right Auto.bareLaunch {Auto.laGp = True, Auto.laRelectura = Just 5}]
+                   , [True, True, True, True]
+                   , True )
 
     it "las horas a mano son de México, ese día, y salen ordenadas" $
       map (Auto.parseHoras austinFriday) ["p1=11:30,p2=15:00", " P2=15:00 , p1=11:30 "]

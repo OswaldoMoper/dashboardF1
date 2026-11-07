@@ -15,6 +15,12 @@ module Auto.Context
   , autoUnits
   , autoTimers
   , schedule
+  , scheduleEvery
+  , stopUnit
+  , stopTimer
+  , openf1Slots
+  , readGpState
+  , writeGpState
   , stopUnits
   , mainFolder
   , autoFolders
@@ -23,9 +29,10 @@ module Auto.Context
   , readLines
   ) where
 
+import           App                        (ScheduledSession)
 import           Auto.Helper                (Account, CalendarAnswer,
-                                             Dispatch (..), LiveReply (..),
-                                             ObserverEnd (..),
+                                             Dispatch (..), GpState,
+                                             LiveReply (..), ObserverEnd (..),
                                              ObserverEvent (..), PageReply (..),
                                              Piece (..), ReaderAnswer (..),
                                              RecordingEnd (..),
@@ -49,8 +56,9 @@ import           Auto.Helper                (Account, CalendarAnswer,
                                              recordingName, recordingStep,
                                              recordingStepLine,
                                              recordingStopLine, reopenLine,
-                                             slotsOn, startLine, tokenCheck,
-                                             unitName, vigiaDone, vigiaGone,
+                                             slotsFromCalendar, slotsOn,
+                                             startLine, tokenCheck, unitName,
+                                             vigiaDone, vigiaGone,
                                              vigiaJsonName, vigiaLine,
                                              vigiaReading, vigiaStep,
                                              vigiaStopLine)
@@ -60,14 +68,15 @@ import           Config                     (loadConfig)
 import           Control.Concurrent         (threadDelay)
 import           Control.Exception          (AsyncException (..), SomeException,
                                              handleJust)
-import           Control.Monad              (forM_, join, unless, when)
+import           Control.Monad              (forM_, join, unless, void, when)
 import           Control.Retry              (limitRetries)
-import           Data.Aeson                 (FromJSON, eitherDecode)
+import           Data.Aeson                 (FromJSON, eitherDecode, encode)
 import qualified Data.ByteString            as BS
 import qualified Data.ByteString.Char8      as BS8
 import qualified Data.ByteString.Lazy       as BL
 import           Data.IORef                 (newIORef, readIORef, writeIORef)
 import           Data.List                  (isPrefixOf, sortOn)
+import           Data.Map.Strict            (Map)
 import           Data.Maybe                 (fromMaybe, isJust, isNothing)
 import           Data.String                (fromString)
 import           Data.Text                  (Text)
@@ -81,6 +90,8 @@ import           Data.Time.Clock            (NominalDiffTime, UTCTime,
                                              getCurrentTime)
 import           Handler.FastF1.Manager     (readTokenFile)
 import           Handler.Historical.Manager (fetchSeasonSchedule)
+import           Handler.Live.Context       (fetchSchedule)
+import           Handler.Live.Helper        (calendarEntries)
 import           Handler.OpenF1.Manager     (latestSession, openf1Base)
 import qualified Network.HTTP.Client        as HC
 import qualified Network.HTTP.Req           as R
@@ -620,6 +631,70 @@ schedule exe workDir folder unit label args at = do
   pure $ case code of
     ExitSuccess -> Right ()
     _           -> Left (T.strip (T.pack err))
+
+-- | Como 'schedule', pero se repite: la primera vez tras ese intervalo y después cada
+-- ese intervalo desde que arrancó la anterior.
+scheduleEvery :: FilePath -> FilePath -> FilePath -> Text -> Text -> [Text] -> NominalDiffTime -> IO (Either Text ())
+scheduleEvery exe workDir folder unit label args every = do
+  let seconds = show (max 1 (round every :: Integer)) <> "s"
+  (code, _, err) <-
+    readProcessWithExitCode
+      "systemd-run"
+      ( [ "--user"
+        , "--unit=" <> T.unpack unit
+        , "--description=" <> T.unpack label
+        , "--on-active=" <> seconds
+        , "--on-unit-active=" <> seconds
+        , "--timer-property=AccuracySec=1s"
+        , "--property=KillSignal=SIGINT"
+        , "--working-directory=" <> workDir
+        , "--"
+        , exe
+        , "dispara"
+        , folder
+        , T.unpack label
+        ]
+          <> map T.unpack args
+      )
+      ""
+  pure $ case code of
+    ExitSuccess -> Right ()
+    _           -> Left (T.strip (T.pack err))
+
+-- | Para el temporizador y el servicio de esa unidad, y nada más: el nombre exacto, no un
+-- patrón (el de @…-grabacion-q@ casaría con @…-grabacion-q-cuenta@).
+stopUnit :: Text -> IO ()
+stopUnit unit =
+  mapM_
+    (\args -> readProcessWithExitCode "systemctl" ("--user" : args) "")
+    [ ["stop", T.unpack unit <> ".timer"]
+    , ["stop", T.unpack unit <> ".service"]
+    , ["reset-failed", T.unpack unit <> ".timer", T.unpack unit <> ".service"]
+    ]
+
+-- | Para solo el temporizador de esa unidad: lo que corre su servicio acaba por sí mismo.
+stopTimer :: Text -> IO ()
+stopTimer unit = void (readProcessWithExitCode "systemctl" ["--user", "stop", T.unpack unit <> ".timer"] "")
+
+-- | Las sesiones que OpenF1 da ahora (las que no han terminado), como las sirve @master@.
+-- 'Nothing' si no contesta (un 401, por ejemplo) o no trae ninguna.
+openf1Slots :: IO (Maybe [Slot])
+openf1Slots = do
+  cfg <- loadConfig
+  now <- getCurrentTime
+  result <- trySync (fetchSchedule cfg now) :: IO (Either SomeException ([ScheduledSession], Map Int Text))
+  pure (either (const Nothing) (nonEmpty . slotsFromCalendar . calendarEntries . fst) result)
+
+-- | El 'GpState' de ese fichero; 'Left' con el motivo si no existe o no se entiende.
+readGpState :: FilePath -> IO (Either Text GpState)
+readGpState file = do
+  exists <- doesFileExist file
+  if not exists
+    then pure (Left ("no existe " <> T.pack file))
+    else either (Left . T.pack) Right . eitherDecode <$> BL.readFile file
+
+writeGpState :: FilePath -> GpState -> IO ()
+writeGpState file = BL.writeFile file . encode
 
 -- | Para todo lo que casa con el prefijo y limpia lo que había fallado. Primero los
 -- temporizadores y después los servicios: al revés, parar un servicio descarga su

@@ -34,7 +34,7 @@ import           System.Directory    (createDirectoryIfMissing,
                                       makeAbsolute)
 import           System.Environment  (getArgs, getExecutablePath, lookupEnv)
 import           System.Exit         (exitFailure, exitSuccess)
-import           System.FilePath     ((</>))
+import           System.FilePath     (takeDirectory, takeFileName, (</>))
 import           System.IO           (BufferMode (..), hFlush, hSetBuffering,
                                       hSetEncoding, stderr, stdin, stdout, utf8)
 
@@ -139,7 +139,7 @@ launch l = do
     appendLine (path </> "comprobaciones.txt")
       (checkLine now Falla "calendario" (why <> "; horas " <> (if source == "Jolpica" then "de Jolpica" else source)))
   mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now plan okAt planned)
-  programDay logFile need recorder reader port path folder slots okAt planned
+  programDay logFile need recorder reader port path folder slots okAt planned planned
   view folder
 
 -- | El @--log@ en absoluto; si no existe, lo dice y sale.
@@ -160,15 +160,16 @@ refuseIfBusy = do
     mapM_ (say . ("  " <>) . urUnit) busy
     quit "Para volver a lanzar, antes: dashboardF1-auto cancela"
 
--- | Programa en systemd las piezas de un día, en su carpeta, y apunta cada una en su
--- @resumen.txt@; la que no se puede programar lo dice en la terminal.
+-- | Programa en systemd esas piezas de un día, en su carpeta, con el plan entero del día
+-- (de él sale la sesión que mira el vigía), y apunta cada una en su @resumen.txt@; la que
+-- no se puede programar lo dice en la terminal.
 programDay ::
   Maybe FilePath -> Maybe (UTCTime, Maybe UTCTime) -> FilePath -> FilePath -> Int -> FilePath -> FilePath
-    -> [Slot] -> UTCTime -> [Planned] -> IO ()
-programDay logFile need recorder reader port path folder slots okAt planned = do
+    -> [Slot] -> UTCTime -> [Planned] -> [Planned] -> IO ()
+programDay logFile need recorder reader port path folder slots okAt planned pieces = do
   exe <- getExecutablePath
   workDir <- getCurrentDirectory
-  forM_ planned $ \p -> do
+  forM_ pieces $ \p -> do
     let piece = plPiece p
         at = if plStart p <= okAt then Nothing else Just (plStart p)
     done <-
@@ -249,8 +250,76 @@ launchGp l = do
           appendLine (path </> "comprobaciones.txt") (checkLine now Falla "calendario" (why <> "; horas de Jolpica"))
         mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now (gdPlan seen) okAt (gdPlan d))
         programDay logFile (tokenNeed entries (gdDay d) (gdSlots d)) recorder reader port path folder
-          (gdSlots d) okAt (gdPlan d)
-  maybe (pure ()) view (listToMaybe [f | (seen, f) <- shownDays, any ((== gdDay seen) . gdDay) planned])
+          (gdSlots d) okAt (gdPlan d) (gdPlan d)
+  let kept = [(gdDay seen, f) | (seen, f) <- shownDays, any ((== gdDay seen) . gdDay) planned]
+  forM_ (listToMaybe kept) $ \(_, first) -> do
+    let path = base </> first
+        every = fromMaybe relecturaDefault (laRelectura l)
+    writeGpState (path </> gpStateFile)
+      GpState
+        { gsSlots = concatMap gdSlots planned
+        , gsPort = port
+        , gsRecorder = recorder
+        , gsReader = reader
+        , gsLog = logFile
+        , gsCapSeconds = round cap
+        , gsEnsayo = laEnsayo l
+        , gsCalendario = laCalendario l
+        , gsFolders = kept
+        }
+    exe <- getExecutablePath
+    workDir <- getCurrentDirectory
+    done <- scheduleEvery exe workDir path (relecturaUnit first) relecturaLabel [] (fromIntegral (every * 60))
+    case done of
+      Right () -> appendLine (path </> "resumen.txt") (relecturaLine okAt every)
+      Left err -> TIO.hPutStrLn stderr ("no se pudo programar la " <> relecturaLabel <> ": " <> err)
+  maybe (pure ()) (view . snd) (listToMaybe kept)
+
+-- | La relectura de horas de un GP: con las horas de ahora (OpenF1, o el fichero de
+-- @--calendario@), cancela y programa lo que diga 'replan', escribe las líneas en las
+-- carpetas y guarda las horas nuevas. Tras el último tope del GP para su temporizador.
+runRelectura :: FilePath -> IO ()
+runRelectura path = do
+  st <- either quit pure =<< readGpState (path </> gpStateFile)
+  now <- getCurrentTime
+  let cap = fromIntegral (gsCapSeconds st)
+      base = takeDirectory path
+      summaryOf folder = base </> folder </> "resumen.txt"
+  when (maybe True (now >=) (gpLastCap cap (gsSlots st))) $ do
+    appendLine (path </> "resumen.txt") (quitLine now relecturaLabel)
+    stopTimer (relecturaUnit (takeFileName path))
+    exitSuccess
+  fresh <- case gsCalendario st of
+    Just file -> do
+      answer <- calendarFromFile file
+      pure (case answer of
+        Calendar es | not (null es) -> Just (slotsFromCalendar es)
+        _                           -> Nothing)
+    Nothing -> openf1Slots
+  let moves = slotMoves (gsSlots st) fresh
+  unless (null moves) $ do
+    timers <- either (const []) id <$> autoTimers "dashboardF1-auto-*"
+    existing <- listDirectory base
+    let steps = replan cap now (gsSlots st) moves (pendingKeys (gsFolders st) timers)
+        reported = reportedMoves moves steps
+        newSlots = applyMoves moves (gsSlots st)
+        newDays = gpPlan cap now newSlots
+        label d = if gsEnsayo st then "ensayo" else dayLabel d
+        wanted = nub ([d | m <- reported, d <- moveDays m] <> [d | Schedule d _ <- steps])
+        folders = foldl (\fs d -> folderFor (label d) existing fs d) (gsFolders st) wanted
+        folderOf d = fromMaybe (T.unpack (label d)) (lookup d folders)
+    forM_ wanted $ \d -> createDirectoryIfMissing True (base </> folderOf d)
+    forM_ reported $ \m -> forM_ (moveDays m) $ \d -> appendLine (summaryOf (folderOf d)) (moveLine now m)
+    forM_ steps $ \step -> case step of
+      Unschedule d p -> do
+        stopUnit (unitName (folderOf d) p)
+        appendLine (summaryOf (folderOf d)) (quitLine now (pieceLabel p))
+      Schedule d p -> do
+        let day = find ((== d) . gdDay) newDays
+            daySlots = maybe [] gdSlots day
+        programDay (gsLog st) (tokenNeed [] d daySlots) (gsRecorder st) (gsReader st) (gsPort st)
+          (base </> folderOf d) (folderOf d) daySlots now (maybe [p] gdPlan day) [p]
+    writeGpState (path </> gpStateFile) st {gsSlots = newSlots, gsFolders = folders}
 
 -- | El calendario de @--calendario@: un @\/api\/calendar@ guardado. Si no existe o no se
 -- entiende, lo dice y sale.
@@ -356,6 +425,7 @@ findReader = lookupEnv "DASHBOARDF1_OBSERVA" >>= maybe (findExecutable "dashboar
 -- | Lo que corre un temporizador al disparar: la pieza de su etiqueta.
 dispara :: FilePath -> Text -> [Text] -> IO ()
 dispara path label rest
+  | label == relecturaLabel = runRelectura path
   | label == pieceLabel Vigia = either quit (\d -> withSlot d (\s -> runVigia path label s d)) (parseDispara rest)
   | Right d <- parseDispara rest
   , Just s <- diSession d

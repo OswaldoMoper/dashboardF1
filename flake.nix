@@ -629,7 +629,7 @@
             echo "  grabar  : dashboardF1-record [--f1tv] <fichero> [segundos]"
             echo "  cuenta  : dashboardF1-f1tv [--status | --clear]  # inicia sesión en F1TV; el token lo guarda FastF1"
             echo "  auto    : dashboardF1-auto [día] [--horas p1=HH:MM,…] [--ensayo] | estado | cancela"
-            echo "  autodev : dashboardF1-autodev gp [--ensayo] [--calendario <fichero>]  # todo el GP con un OK; o lo de auto"
+            echo "  autodev : dashboardF1-autodev gp [--ensayo] [--calendario <fichero>] [--relectura <min>]  # todo el GP con un OK; o lo de auto"
             echo "            # las carpetas del día, en DASHBOARDF1_CARPETA (sin ella, ~/MOPER)"
           '';
         };
