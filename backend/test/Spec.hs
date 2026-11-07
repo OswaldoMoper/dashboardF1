@@ -51,7 +51,8 @@ import           App                         (ScheduledSession (..),
 import qualified Auto.Helper                 as Auto
 import           Common.Account              (Foot (..), Notice (..),
                                               Stamp (..), accountFoot,
-                                              accountNotice, localStamp)
+                                              accountNotice, cardNotice,
+                                              localStamp, retryDue)
 import           Common.Carry                (Board (..), Carry (..), Grip (..),
                                               Hand (..), Held (..), Scene (..),
                                               boardOf, heldStyle,
@@ -5810,6 +5811,45 @@ main = hspec $ do
       , accountNotice 360 True Nothing (Just Sample) Nothing
       ]
         `shouldBe` replicate 3 Nothing
+
+  describe "Common.Account: el aviso de la telemetría incompleta" $ do
+    let valid   = F1TVValid "2026-11-07T23:06:58Z"
+        expired = F1TVExpired "2026-11-07T23:06:58Z"
+        at      = Just "2026-11-07T20:15:00Z"
+        gap c   = Just (MkTelemetryGap c "2026-11-07T00:40:05Z")
+    it "sin ella, el mismo aviso que accountNotice" $ do
+      let cases = [ (l, a, o, f) | l <- [False, True]
+                                 , a <- [Nothing, Just valid, Just expired, Just F1TVMissing]
+                                 , o <- [Nothing, Just Fresh, Just Cached, Just Sample]
+                                 , f <- [Nothing, at] ]
+      [cardNotice 360 l a o f Nothing | (l, a, o, f) <- cases]
+        `shouldBe` [accountNotice 360 l a o f | (l, a, o, f) <- cases]
+
+    it "cuánto cubre y a qué hora se vuelve a pedir; con 0 %, que no hay; sin hora que se lea, sin ella" $
+      [ cardNotice 360 False (Just valid) (Just Fresh) Nothing (gap 0.0421)
+      , cardNotice 360 False Nothing Nothing Nothing (gap 0.003)
+      , cardNotice 360 False (Just valid) (Just Fresh) Nothing (Just (MkTelemetryGap 0.2 "luego"))
+      ]
+        `shouldBe` [ Just (Notice "Telemetría incompleta: cubre el 4 % de las vueltas. Se vuelve a pedir a las 18:40." False)
+                   , Just (Notice "No hay telemetría de las vueltas. Se vuelve a pedir a las 18:40." False)
+                   , Just (Notice "Telemetría incompleta: cubre el 20 % de las vueltas. Se vuelve a pedir." False)
+                   ]
+
+    it "con lo guardado, las dos frases juntas; con la cuenta que no vale, solo la suya; en el directo, ninguno" $
+      [ cardNotice 360 False (Just valid) (Just Cached) at (gap 0.0421)
+      , cardNotice 360 False (Just expired) (Just Sample) Nothing (gap 0.0421)
+      , cardNotice 360 True (Just valid) (Just Fresh) Nothing (gap 0.0421)
+      ]
+        `shouldBe` [ Just (Notice "Dato guardado: la fuente no responde ahora mismo (14:15). Telemetría incompleta: cubre el 4 % de las vueltas. Se vuelve a pedir a las 18:40." False)
+                   , Just (Notice "La cuenta de F1TV caducó el sáb 7 a las 17:06: las sesiones acabadas salen de ejemplo." True)
+                   , Nothing
+                   ]
+
+    it "toca volver a pedirla el primer minuto después de su hora; con una hora que no se lee, nunca" $ do
+      -- 2026-11-07T00:40:05Z es el minuto 29 900 200 desde 1970 (date -u +%s, entre 60).
+      let g = MkTelemetryGap 0.04 "2026-11-07T00:40:05Z"
+      map (`retryDue` g) [29900199 .. 29900202] `shouldBe` [False, False, True, True]
+      retryDue maxBound (MkTelemetryGap 0.04 "luego") `shouldBe` False
 
   describe "Handler.FastF1: el estado de la cuenta para la página" $ do
     it "vale, caducó (también justo ahora, como en Auto), no hay o no se entiende" $

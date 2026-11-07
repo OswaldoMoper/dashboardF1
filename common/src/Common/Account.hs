@@ -11,11 +11,14 @@ module Common.Account
   , accountFoot
   , Notice (..)
   , accountNotice
+  , cardNotice
+  , gapSentence
+  , retryDue
   , loginCommand
   ) where
 
 import           Common.Origin (Origin (..), originNotice)
-import           Common.Types  (F1TVAccount (..))
+import           Common.Types  (F1TVAccount (..), TelemetryGap (..))
 import           Control.Monad (guard)
 import           Data.Char     (isDigit)
 import           Data.Text     (Text)
@@ -34,22 +37,30 @@ data Stamp = Stamp
 -- en la zona dada. Otra forma da 'Nothing'.
 localStamp :: Int -> Text -> Maybe Stamp
 localStamp offset raw = do
-  guard (T.length s == 20 && and [T.index s i == c | (i, c) <- separators])
-  [y, mo, d, h, mi] <- traverse number [(0, 4), (5, 2), (8, 2), (11, 2), (14, 2)]
-  guard (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h < 24 && mi < 60)
-  let (days, inDay) = ((daysFromCivil y mo d * 24 + h) * 60 + mi - offset) `divMod` 1440
+  m <- utcMinutes raw
+  let (days, inDay) = (m - offset) `divMod` 1440
   pure Stamp
     { stWeekday = weekdayName ((days + 4) `mod` 7)
     , stDay     = civilDay days
     , stClock   = twoDigits (inDay `div` 60) <> ":" <> twoDigits (inDay `mod` 60)
     }
   where
+    twoDigits n = T.justifyRight 2 '0' (T.pack (show n))
+
+-- | Los minutos desde el 1970-01-01 (UTC) de un texto @AAAA-MM-DDTHH:MM:SSZ@, sin los
+-- segundos. Otra forma da 'Nothing'.
+utcMinutes :: Text -> Maybe Int
+utcMinutes raw = do
+  guard (T.length s == 20 && and [T.index s i == c | (i, c) <- separators])
+  [y, mo, d, h, mi] <- traverse number [(0, 4), (5, 2), (8, 2), (11, 2), (14, 2)]
+  guard (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h < 24 && mi < 60)
+  pure ((daysFromCivil y mo d * 24 + h) * 60 + mi)
+  where
     s = T.strip raw
     separators = [(4, '-'), (7, '-'), (10, 'T'), (13, ':'), (16, ':'), (19, 'Z')]
     number (i, n) =
       let t = T.take n (T.drop i s)
        in if T.all isDigit t then Just (read (T.unpack t)) else Nothing
-    twoDigits n = T.justifyRight 2 '0' (T.pack (show n))
 
 -- | Días desde el 1970-01-01 de una fecha del calendario gregoriano.
 daysFromCivil :: Int -> Int -> Int -> Int
@@ -136,6 +147,38 @@ accountNotice offset False account origin fetchedAt =
       Just Recent -> kept
       _           -> "."
     kept = ": es lo guardado" <> maybe "" (" de las " <>) clock <> "."
+
+-- | El aviso de la tarjeta: 'accountNotice' y, si la comparación con trazas trae la
+-- telemetría incompleta, su frase ('gapSentence'). Con la cuenta que no vale, solo el
+-- de la cuenta; si no, el de la procedencia y el de la telemetría juntos. En el
+-- directo, ninguno.
+cardNotice
+  :: Int -> Bool -> Maybe F1TVAccount -> Maybe Origin -> Maybe Text -> Maybe TelemetryGap -> Maybe Notice
+cardNotice _ True _ _ _ _ = Nothing
+cardNotice offset False account origin fetchedAt gap =
+  case (accountNotice offset False account origin fetchedAt, gapSentence offset <$> gap) of
+    (n@(Just (Notice _ True)), _)   -> n
+    (Just (Notice t False), Just g) -> Just (Notice (t <> ". " <> g) False)
+    (Nothing, Just g)               -> Just (Notice g False)
+    (n, Nothing)                    -> n
+
+-- | La frase de la telemetría incompleta: cuánto cubre, en % redondeado (con 0 %, que
+-- no hay), y a qué hora local se vuelve a pedir; sin la hora si no se lee.
+gapSentence :: Int -> TelemetryGap -> Text
+gapSentence offset g = lead <> retry
+  where
+    pct = round (tgCoverage g * 100) :: Int
+    lead
+      | pct <= 0  = "No hay telemetría de las vueltas."
+      | otherwise = "Telemetría incompleta: cubre el " <> T.pack (show pct) <> " % de las vueltas."
+    retry = maybe " Se vuelve a pedir." (\st -> " Se vuelve a pedir a las " <> stClock st <> ".")
+                  (localStamp offset (tgRetryAt g))
+
+-- | Si a los @now@ minutos desde 1970 (UTC) ya toca volver a pedir la comparación: un
+-- minuto entero después de la hora de @g@, para no llegar antes que el microservicio.
+-- Con una hora que no se lee, nunca.
+retryDue :: Int -> TelemetryGap -> Bool
+retryDue now g = maybe False (\m -> now > m) (utcMinutes (tgRetryAt g))
 
 accountSentence :: Int -> F1TVAccount -> Maybe Text
 accountSentence offset = \case

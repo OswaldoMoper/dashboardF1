@@ -565,13 +565,13 @@ test.describe('Lap Comparison y la cuenta de F1TV', () => {
     lcNotice: '',
   };
 
-  // La tarjeta con la cuenta y la procedencia de la comparación que se le dan.
-  async function card(page: Page, account: object, origin: Record<string, string>): Promise<Locator> {
+  // La tarjeta con la cuenta, la procedencia de la comparación y la comparación que se le dan.
+  async function card(page: Page, account: object, origin: Record<string, string>, body: object = comparison): Promise<Locator> {
     await openDashboard(page);
     await page.route('**/api/f1tv', (route) => route.fulfill({ json: account }));
     await page.route(
       (url) => url.pathname === '/api/comparison',
-      (route) => route.fulfill({ contentType: 'application/json;charset=utf-8', headers: origin, body: JSON.stringify(comparison) }),
+      (route) => route.fulfill({ contentType: 'application/json;charset=utf-8', headers: origin, body: JSON.stringify(body) }),
     );
     await page.goto('/?retraso=0');
     const c = page.locator('.canvas__layer:not(.canvas__layer--hidden) .widget--comparison');
@@ -604,5 +604,15 @@ test.describe('Lap Comparison y la cuenta de F1TV', () => {
     await expect(notice).toHaveText('Dato guardado: la fuente no responde ahora mismo (14:15)');
     await expect(notice.locator('code')).toHaveCount(0);
     await expect(c.locator('.comparison__account')).toHaveText('F1TV: vale hasta sáb 7, 17:06');
+  });
+
+  test('la telemetría incompleta: con trazas, el aviso con el % y la hora; en Delta por sectores, ninguno', async ({ page }) => {
+    const gap = { ...comparison, lcSamples: 100, lcTelemetry: { coverage: 0.0421, retryAt: '2026-11-07T00:40:05Z' } };
+    const c = await card(page, { state: 'valid', until }, { 'X-Data-Origin': 'fresh', 'X-Data-Source': 'fastf1' }, gap);
+    await expect(c.locator('.comparison__notice')).toHaveCount(0);
+    await c.locator('select', { has: page.locator('option', { hasText: 'Lap Speed Trace' }) })
+      .selectOption({ label: 'Lap Speed Trace' });
+    await expect(c.locator('.comparison__canvas .comparison__notice')).toHaveText(
+      'Telemetría incompleta: cubre el 4 % de las vueltas. Se vuelve a pedir a las 18:40.');
   });
 });

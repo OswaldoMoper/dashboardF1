@@ -52,8 +52,8 @@ module Widgets.Comparison where
 
 import           Client                        (fetchJson, fetchJsonSourced)
 import           Common.Account                (Foot (..), Notice (..),
-                                                accountFoot, accountNotice,
-                                                loginCommand)
+                                                accountFoot, cardNotice,
+                                                loginCommand, retryDue)
 import           Common.Chart                  (SectorPace (..),
                                                 SectorSpan (..), axisPolyline,
                                                 axisTicks, axisZeroY,
@@ -119,8 +119,9 @@ import           Common.Types                  (ComparisonEntry (..),
                                                 DriverEntry (..),
                                                 LapComparison (..),
                                                 LiveTable (..), LiveTimingRow,
-                                                SessionInfo)
-import           Control.Monad                 (forM, forM_, unless, when)
+                                                SessionInfo, TelemetryGap (..))
+import           Control.Monad                 (forM, forM_, guard, unless,
+                                                when)
 import           Control.Monad.IO.Class        (liftIO)
 import           Data.List                     (find)
 import           Data.Map                      (Map)
@@ -128,6 +129,7 @@ import qualified Data.Map                      as Map
 import           Data.Maybe                    (fromMaybe, isJust, listToMaybe)
 import           Data.Text                     (Text)
 import qualified Data.Text                     as T
+import           Data.Time.Clock.POSIX         (utcTimeToPOSIXSeconds)
 import qualified GHCJS.DOM                     as DOM (currentWindowUnchecked)
 import qualified GHCJS.DOM.DOMRectReadOnly     as DOM (getHeight)
 import qualified GHCJS.DOM.Element             as DOM (getBoundingClientRect,
@@ -186,7 +188,8 @@ data CState
 --
 -- La cuenta de F1TV se pide a @\/api\/f1tv@ con cada comparación y cada minuto; con la
 -- procedencia de la comparación da la línea del pie y el aviso de encima de la gráfica
--- ('Common.Account').
+-- ('Common.Account'). Con trazas y la telemetría incompleta, el aviso lo dice, y la
+-- comparación se vuelve a pedir una vez, el primer minuto después de su hora ('dueGap').
 --
 -- El lado de la tabla de mando, la banda y el modo elegido arrancan en @start@, y
 -- @put@ los pone como trae ('Common.ComparisonCard.CardControl'). Devuelve cada
@@ -233,6 +236,7 @@ comparisonWidget live revealed start put = mdo
             [ comparisonPathFor Nothing Nothing <$> tag (current wanted) pb
             , attachWith (\n d -> comparisonPathFor Nothing (Just d) n) (current wanted) picked
             , attachWith (comparisonPathFor Nothing) (current drivers) (ffilter (> 0) (updated wanted))
+            , attachWith (\(d, n) _ -> comparisonPathFor Nothing d n) ((,) <$> current drivers <*> current wanted) again
             ]
           liveData     = liveCardRows <$> (liveFor <$> liveCard <*> ty)
           shownSession = fmap fst <$> liveData
@@ -256,9 +260,12 @@ comparisonWidget live revealed start put = mdo
       asked   <- fetchJson (f1tvPath <$ leftmost [() <$ request, () <$ minute])
       account <- holdDyn Nothing asked
       zone    <- browserZone
+      tried   <- holdDyn Nothing (Just . tgRetryAt <$> again)
       let onLive = isJust <$> liveData
           foot   = accountFoot zone <$> onLive <*> account
-          notice = (\l a (o, at) -> accountNotice zone l a o at) <$> onLive <*> account <*> shownAt
+          gap    = shownGap <$> ty <*> stFast
+          again  = attachWithMaybe dueGap ((,) <$> current gap <*> current tried) minute
+          notice = (\l a (o, at) g -> cardNotice zone l a o at g) <$> onLive <*> account <*> shownAt <*> gap
       pure (chosenE, st, v, side, band, rule)
   liveIn   <- holdUniqDyn (liveInput <$> lvWait live <*> lvPoll live)
   first    <- sample (current liveIn)
@@ -353,6 +360,23 @@ shownState (Just es) _ =
   Loaded MkLapComparison
     {lcEntries = map leEntry es, lcSamples = 0, lcNotice = "", lcTelemetry = Nothing}
 shownState Nothing s   = s
+
+-- | Lo que falta de la telemetría de lo que se enseña de FastF1, solo en los modos con
+-- trazas: los demás no la usan.
+shownGap :: ChartType -> CState -> Maybe TelemetryGap
+shownGap t s
+  | chartTypeTraces t = lcTelemetry =<< shownComparison s
+  | otherwise         = Nothing
+
+-- | Si con el minuto de @tick@ toca volver a pedir la comparación por lo que falta de
+-- su telemetría ('Common.Account.retryDue'), y no se pidió ya por esa misma hora.
+dueGap :: (Maybe TelemetryGap, Maybe Text) -> TickInfo -> Maybe TelemetryGap
+dueGap (gap, done) tick = do
+  g <- gap
+  guard (Just (tgRetryAt g) /= done && retryDue minute g)
+  pure g
+  where
+    minute = floor (utcTimeToPOSIXSeconds (_tickInfo_lastUTC tick) / 60)
 
 -- | El tooltip de un desplegable cuyo coche sale sin barras, en directo o con FastF1.
 noLapNote :: Maybe [LiveEntry] -> CState -> Text -> Maybe Text
