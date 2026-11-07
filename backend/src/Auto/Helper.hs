@@ -128,6 +128,16 @@ module Auto.Helper
   , calendarFailure
   , instanceName
   , instanceAt
+    -- * La app de todos: master
+  , masterUnit
+  , masterDir
+  , MasterAction (..)
+  , masterAction
+  , masterRunArgs
+  , dayLogWindow
+  , journalArgs
+  , masterLogName
+  , masterLine
     -- * Lo que enseña el comando
   , dayHeader
   , dayTable
@@ -1367,6 +1377,76 @@ instanceName p    = "la de :" <> T.pack (show p)
 -- | El camino con su puerto: «master en :3000».
 instanceAt :: Int -> Text
 instanceAt p = instanceName p <> " en :" <> T.pack (show p)
+
+-- | La unidad con la que el automatismo arranca @master@. Fuera de @dashboardF1-auto-*@:
+-- @cancela@ no la para y no impide volver a lanzar.
+masterUnit :: Text
+masterUnit = "dashboardF1-master"
+
+-- | Dónde vive el código que corre como @master@: el que se dé (@DASHBOARDF1_MASTER@) o,
+-- sin él, @~\/MOPER\/dashboardF1@. Nunca la carpeta desde la que se lanza.
+masterDir :: FilePath -> Maybe FilePath -> FilePath
+masterDir home override = case override of
+  Just dir | not (null dir) -> dir
+  _                         -> joinPath [home, "MOPER", "dashboardF1"]
+
+-- | Qué hacer con @master@ al lanzar y cada hora.
+data MasterAction
+  = UseRunning    -- ^ Alguien contesta en @:3000@: se usa ese, lo arrancara quien lo arrancara.
+  | WaitStarting  -- ^ No contesta, pero su unidad está en marcha: arrancando (compila); no se toca.
+  | StartMaster   -- ^ Nadie contesta y su unidad no corre: se arranca.
+  deriving (Eq, Show)
+
+-- | Con si contesta alguien en @:3000@ y el estado de 'masterUnit' en systemd (su
+-- @ActiveState@; 'Nothing' si no existe). Una unidad en marcha que nunca contesta no se
+-- reinicia: eso lo dice la comprobación.
+masterAction :: Bool -> Maybe Text -> MasterAction
+masterAction answers unitState
+  | answers = UseRunning
+  | unitState `elem` map Just ["active", "activating", "reloading"] = WaitStarting
+  | otherwise = StartMaster
+
+-- | Los argumentos de @systemd-run@ que arrancan @master@ como el de la guía del GP
+-- (@OPENF1_LOG=1 PORT=3000 dashboardF1-dev@), con ese @nix@, desde 'masterDir'. Su
+-- salida va al diario de systemd; parar la unidad le manda SIGINT, como Ctrl+C.
+masterRunArgs :: FilePath -> FilePath -> [String]
+masterRunArgs nix dir =
+  [ "--user"
+  , "--unit=" <> T.unpack masterUnit
+  , "--description=master en :3000"
+  , "--property=KillSignal=SIGINT"
+  , "--working-directory=" <> dir
+  , "--setenv=OPENF1_LOG=1"
+  , "--setenv=PORT=3000"
+  , "--"
+  , nix
+  , "run"
+  , ".#dev"
+  ]
+
+-- | El tramo del diario de @master@ que es de ese día: desde que arrancan sus piezas
+-- (T−90) hasta el último tope. 'Nothing' sin piezas.
+dayLogWindow :: [Planned] -> Maybe (UTCTime, UTCTime)
+dayLogWindow plan = case (map plStart plan, mapMaybe plCap plan) of
+  (starts@(_ : _), caps@(_ : _)) -> Just (minimum starts, maximum caps)
+  _                              -> Nothing
+
+-- | Los argumentos de @journalctl@ que sacan ese tramo del diario de 'masterUnit', con
+-- las líneas tal cual las escribe @master@ (como su log a mano).
+journalArgs :: (UTCTime, UTCTime) -> [String]
+journalArgs (from, to) =
+  ["--user", "-u", T.unpack masterUnit, "--since", onCalendar from, "--until", onCalendar to, "--no-pager", "-o", "cat"]
+
+-- | El fichero de la carpeta del día con su tramo del diario de @master@.
+masterLogName :: FilePath
+masterLogName = "master.log"
+
+-- | La línea de @resumen.txt@ de lo que se hizo con @master@ en ese instante.
+masterLine :: UTCTime -> MasterAction -> Text
+masterLine t action = case action of
+  UseRunning   -> eventLine t "usa" "master en :3000 (ya contestaba)"
+  WaitStarting -> eventLine t "espera" ("master en :3000: " <> masterUnit <> " está arrancando")
+  StartMaster  -> eventLine t "arranca" ("master en :3000 como " <> masterUnit)
 
 -- | La cabecera de la tabla: el día, el gran premio si se sabe y las horas.
 dayHeader :: Day -> Maybe Text -> Text

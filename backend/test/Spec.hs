@@ -5555,6 +5555,51 @@ main = hspec $ do
                        , "  Domingo 8     carrera 11:00           ahora            dashboardF1-auto-domingo-2026-11-08-2/"
                        ]
 
+  describe "Auto: la app de todos (master)" $ do
+    it "si alguien contesta se usa; si su unidad está en marcha se espera; si no, se arranca" $
+      [ Auto.masterAction answers st
+      | answers <- [True, False]
+      , st <- [Nothing, Just "active", Just "activating", Just "reloading", Just "inactive", Just "failed"] ]
+        `shouldBe` replicate 6 Auto.UseRunning
+          <> [Auto.StartMaster, Auto.WaitStarting, Auto.WaitStarting, Auto.WaitStarting, Auto.StartMaster, Auto.StartMaster]
+
+    it "su unidad no es del automatismo: cancela no la para ni bloquea volver a lanzar" $
+      ("dashboardF1-auto-" `T.isPrefixOf` Auto.masterUnit, Auto.masterUnit)
+        `shouldBe` (False, "dashboardF1-master")
+
+    it "corre el código de ~/MOPER/dashboardF1, o el de DASHBOARDF1_MASTER si no va vacía" $
+      map (Auto.masterDir "/home/piloto") [Nothing, Just "", Just "/srv/dashboardF1"]
+        `shouldBe` ["/home/piloto/MOPER/dashboardF1", "/home/piloto/MOPER/dashboardF1", "/srv/dashboardF1"]
+
+    it "se arranca como en la guía del GP, desde su carpeta" $
+      Auto.masterRunArgs "/run/current-system/sw/bin/nix" "/home/piloto/MOPER/dashboardF1"
+        `shouldBe` [ "--user", "--unit=dashboardF1-master", "--description=master en :3000", "--property=KillSignal=SIGINT"
+                   , "--working-directory=/home/piloto/MOPER/dashboardF1", "--setenv=OPENF1_LOG=1", "--setenv=PORT=3000"
+                   , "--", "/run/current-system/sw/bin/nix", "run", ".#dev" ]
+
+    it "el log de cada día de Las Vegas va de T−90 a su último tope; la noche de la carrera, entera" $
+      ( map (Auto.dayLogWindow . Auto.gdPlan) (Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason)
+      , Auto.dayLogWindow []
+      )
+        `shouldBe` ( [ Just (novUtc 19 23 0, novUtc 20 10 0)
+                     , Just (novUtc 20 23 0, novUtc 21 10 0)
+                     , Just (novUtc 22 2 30, novUtc 22 10 0) ]
+                   , Nothing )
+
+    it "journalctl saca ese tramo, en UTC y con las líneas tal cual" $
+      Auto.journalArgs (novUtc 19 23 0, novUtc 20 10 0)
+        `shouldBe` [ "--user", "-u", "dashboardF1-master", "--since", "2026-11-19 23:00:00 UTC"
+                   , "--until", "2026-11-20 10:00:00 UTC", "--no-pager", "-o", "cat" ]
+
+    it "su línea en resumen.txt, que la vista no toma por una pieza" $
+      ( map (Auto.masterLine (novUtc 19 23 0)) [Auto.UseRunning, Auto.WaitStarting, Auto.StartMaster]
+      , Auto.expectedPending (map (Auto.masterLine (novUtc 19 23 0)) [Auto.StartMaster, Auto.UseRunning])
+      )
+        `shouldBe` ( [ "17:00 (23:00) usa      master en :3000 (ya contestaba)"
+                     , "17:00 (23:00) espera   master en :3000: dashboardF1-master está arrancando"
+                     , "17:00 (23:00) arranca  master en :3000 como dashboardF1-master" ]
+                   , [] )
+
   describe "Auto.sessionFinalised" $ do
     it "solo la sesión con ESE nombre y en Finalised, oído o deducido" $
       -- La P1 finalizada sigue en /api/live cuando arranca la grabación de la P2: si
