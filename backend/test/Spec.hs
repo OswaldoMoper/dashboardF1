@@ -4385,6 +4385,25 @@ main = hspec $ do
       forAll reachableLayout (moveKeepsHeld . snd)
     prop "cada apartada se mueve en un solo eje: conserva x y ancho, o y y alto" $
       forAll reachableLayout (pushedKeepOneAxis . snd)
+    prop "con el imán siempre y el gesto pegado, ninguna apartada crece en todo el recorrido" $
+      forAll (elements [raceOverviewFixture, strategyFixture]) $ \factory ->
+        forAll (choose (0, 6)) $ \n ->
+          forAll (vectorOf n arbitrary) (snappedWalkNoneGrows factory)
+    -- El control de la de arriba: con el gesto sin pegar, que la página no manda,
+    -- el mismo detector sí ve crecer una apartada; pegado, el mismo gesto no.
+    it "sin pegar, Lap Comparison crece de 50 a 52; pegado, nadie crece" $ do
+      let cs    = WidgetId "constructor-stats"
+          start =
+            [ rectNamed "live-timing"       LiveTiming       ( 0,  0, 120, 49)
+            , rectNamed "lap-comparison"    LapComparison    (60, 49,  60, 50)
+            , rectNamed "driver-stats"      HistoricalStats  ( 0, 90,  60, 30)
+            , rectNamed "constructor-stats" ConstructorStats (60, 99,  60, 21)
+            ]
+          moveTo x y = applyDrag gridDivisions start (MoveTo cs x y)
+      fmap (grownBesides cs start) (moveTo 52 7) `shouldBe` Just True
+      fmap (map wcH) (moveTo 52 7) `shouldBe` Just [40, 52, 30, 21]
+      fmap (grownBesides cs start) (moveTo (snapTo gridDivisions 52) (snapTo gridDivisions 7))
+        `shouldBe` Just False
 
   -- Un lienzo de 1200 × 600 px: 10 px por unidad en x y 5 en y, para que las
   -- cuentas salgan exactas en coma flotante.
@@ -6560,10 +6579,35 @@ dragKeepsLayoutValid :: [WidgetConfig] -> Int -> Bool -> Int -> Int -> Bool
 dragKeepsLayoutValid start i resize a b =
   maybe True (validAfter start) (applyDrag gridDivisions start (gestureOn start i resize a b))
 
+-- | Un recorrido desde @factory@ con el imán siempre puesto y cada gesto pegado a la
+-- rejilla, como lo pega 'Common.Carry.pushed': en ningún paso que se deja crece, a
+-- lo ancho o a lo alto, una tarjeta que no es la que se lleva. Los que no se dejan
+-- se saltan.
+snappedWalkNoneGrows :: [WidgetConfig] -> [(Int, Bool, Int, Int)] -> Bool
+snappedWalkNoneGrows = go
+  where
+    go _ [] = True
+    go l ((i, resize, a, b) : rest) =
+      let g = snapDrag (gestureOn l i resize a b)
+      in case applyDrag gridDivisions l g of
+           Nothing -> go l rest
+           Just l' -> not (grownBesides (dragged g) l l') && go l' rest
+    snapDrag (MoveTo w x y)   = MoveTo w (snapTo gridDivisions x) (snapTo gridDivisions y)
+    snapDrag (ResizeTo w x y) = ResizeTo w (snapTo gridDivisions x) (snapTo gridDivisions y)
+    dragged (MoveTo w _ _)   = w
+    dragged (ResizeTo w _ _) = w
+
+-- | Si alguna tarjeta de @old@ que no es @held@ es más ancha o más alta en @new@.
+grownBesides :: WidgetId -> [WidgetConfig] -> [WidgetConfig] -> Bool
+grownBesides held old new =
+  or [ wcW q > wcW p || wcH q > wcH p
+     | p <- old, q <- new, widgetId p == widgetId q, widgetId p /= held ]
+
 -- | Con el imán o sin él, cada tarjeta que no es la que se lleva se aparta una vez y
--- por un eje: conserva su x y su ancho, o su y y su alto. Que no crezca no es regla:
--- con el imán, si la cadena encoge, el redondeo a la rejilla y la del borde pueden
--- hacerla crecer.
+-- por un eje: conserva su x y su ancho, o su y y su alto. Que no crezca no es regla
+-- con los gestos de 'gestureOn', que no van pegados: con el imán, si la cadena
+-- encoge, el redondeo a la rejilla y la del borde pueden hacerla crecer. Con el gesto
+-- pegado, ninguna crece ('snappedWalkNoneGrows').
 pushedKeepOneAxis :: [WidgetConfig] -> Bool -> Int -> Bool -> Int -> Int -> Bool
 pushedKeepOneAxis start magnet i resize a b =
   case applyDrag (if magnet then gridDivisions else 0) start (gestureOn start i resize a b) of
@@ -6712,6 +6756,14 @@ raceOverviewFixture =
 -- 'raceOverviewFixture'. Es el caso límite del rectángulo: el lienzo entero.
 qualyFixture :: [WidgetConfig]
 qualyFixture = [rectNamed "qualy-live-timing" LiveTiming (0, 0, 120, 120)]
+
+-- | Copia de @Pages.Dashboard.strategy@, con la misma advertencia que
+-- 'raceOverviewFixture'.
+strategyFixture :: [WidgetConfig]
+strategyFixture =
+  [ rectNamed "strategy-live-timing" LiveTiming   ( 0, 0, 60, 120)
+  , rectNamed "tyre-strategy"        TyreStrategy (60, 0, 60, 120)
+  ]
 
 -- | El instante tal cual lo emite @\/api\/live@ en la cabecera @X-Data-Fetched-At@
 -- (2026-09-11 (b)): UTC, sin fracción de segundo. Es el mismo que produce
