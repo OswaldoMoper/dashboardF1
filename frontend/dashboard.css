@@ -1139,6 +1139,24 @@ body {
   display: contents;
 }
 
+/* Si la fila de tiempos (17,6 em medidos en Chromium) entraría en la gráfica aun
+   ocupando el hueco hasta ella (1 em), el desplegable de la vuelta baja a su línea,
+   a la derecha. */
+.comparison__body:not(.comparison__body--stacked) .comparison__control {
+  container-type: inline-size;
+}
+
+@container (width < 16.75em) {
+  .comparison__body:not(.comparison__body--stacked) .comparison__header {
+    grid-template-columns: auto auto;
+  }
+
+  .comparison__body:not(.comparison__body--stacked) .comparison__pick {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
+
 .comparison__body:not(.comparison__body--stacked) .comparison__header .comparison__vs {
   display: none;
 }

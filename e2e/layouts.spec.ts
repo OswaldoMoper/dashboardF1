@@ -608,6 +608,29 @@ test.describe('Lap Comparison y la cuenta de F1TV', () => {
     expect(account!.y + account!.height).toBeLessThanOrEqual(widget!.y + widget!.height);
   });
 
+  test('estrecha y en dos columnas, el desplegable de la vuelta no entra en la gráfica', async ({ page }) => {
+    const c = await card(page, { state: 'valid', until }, { 'X-Data-Origin': 'fresh', 'X-Data-Source': 'fastf1' });
+    await page.getByRole('button', { name: '✎ Editar layout' }).click();
+    const slot = page.locator('.canvas__layer').first().locator(':scope > .widget-slot').nth(1);
+    await slot.hover();
+    const grip = await slot.locator('.widget-slot__grip').boundingBox();
+    const before = await slot.boundingBox();
+    if (!grip || !before) throw new Error('no se ve la esquina');
+    // Hasta ~480 px de ancho: la tabla de mando, más estrecha que su fila de tiempos.
+    const x = grip.x + grip.width / 2;
+    const y = grip.y + grip.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - (before.width - 480), y, { steps: 12 });
+    await page.mouse.up();
+    await expect(c.locator('.comparison__body--stacked')).toHaveCount(0);
+    await expect.poll(async () => {
+      const plot = await c.locator('.comparison__plot').boundingBox();
+      const picks = await c.locator('.comparison__pick').evaluateAll((es) => es.map((e) => e.getBoundingClientRect().right));
+      return plot && picks.length > 0 ? Math.max(...picks) - plot.x : NaN;
+    }).toBeLessThanOrEqual(0);
+  });
+
   test('válida y con lo guardado: el aviso de guardado, sin comando', async ({ page }) => {
     const c = await card(page, { state: 'valid', until },
       { 'X-Data-Origin': 'cached', 'X-Data-Source': 'fastf1', 'X-Data-Fetched-At': '2026-11-07T20:15:00Z' });
