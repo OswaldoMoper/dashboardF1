@@ -14,6 +14,9 @@ Las dos últimas son la foto que el servicio habría recibido al conectarse en e
 instante, **con el plegado de aquí** (``plegar``), que puede no coincidir del todo con
 el del servidor.
 
+Las tres se escriben **transformadas** (``transformar``): la forma es la del feed, pero
+los tiempos, el reparto de los datos entre coches y los stints ya no son los de la sesión.
+
 Uso, desde la raíz del repositorio::
 
     nix develop .#telemetry -c python telemetry-service/tests/fotos.py <grabación> <nombre>
@@ -45,6 +48,112 @@ from feed import _LIVE_TOPICS
 
 # Cada cuántos mensajes de `TimingData` se mira si el instante es el más rico.
 CADA = 500
+
+# Lo que cambia `transformar`: el factor de los tiempos, cuántos puestos rota la parrilla
+# al repartir los datos entre coches, y a qué compuesto pasa cada uno.
+FACTOR = 1.0137
+ROTA = 5
+COMPUESTOS = {"SOFT": "MEDIUM", "MEDIUM": "HARD", "HARD": "SOFT"}
+
+_TIEMPO = re.compile(r"(\+?)(?:(\d+):)?(\d+)\.(\d{3})")
+# Los topics con una línea por coche, que son también los que llevan tiempos.
+_POR_COCHE = ("TimingData", "TimingStats", "TimingAppData")
+
+
+def _escala(texto: str) -> str:
+    """Un tiempo (``1:36.680``, ``29.268``, ``+5.089``) por ``FACTOR``, en su misma forma;
+    lo que no es un tiempo, tal cual."""
+    m = _TIEMPO.fullmatch(texto)
+    if not m:
+        return texto
+    signo, minutos, segundos, milis = m.groups()
+    ms = round(((int(minutos or 0) * 60 + int(segundos)) * 1000 + int(milis)) * FACTOR)
+    if minutos is None:
+        return f"{signo}{ms // 1000}.{ms % 1000:03d}"
+    return f"{signo}{ms // 60000}:{ms // 1000 % 60:02d}.{ms % 1000:03d}"
+
+
+def _tiempos(x: Any) -> Any:
+    if isinstance(x, dict):
+        return {k: _tiempos(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_tiempos(v) for v in x]
+    return _escala(x) if isinstance(x, str) else x
+
+
+def _reparto(foto: Dict[str, Any]) -> Dict[str, str]:
+    """Qué número recibe los datos de cada coche: la parrilla de ``DriverList``, por
+    número, rotada ``ROTA`` puestos."""
+    numeros = sorted((foto.get("DriverList") or {}).keys(), key=lambda n: (len(n), n))
+    numeros = [n for n in numeros if n.isdigit()]
+    if not numeros:
+        return {}
+    return {n: numeros[(i + ROTA) % len(numeros)] for i, n in enumerate(numeros)}
+
+
+def _reparte(foto: Dict[str, Any], destino: Dict[str, str]) -> None:
+    """Los datos del coche ``n`` pasan al número ``destino[n]``, y su línea en
+    ``DriverList`` con ellos; los nombres de cada número no cambian."""
+    for topic in _POR_COCHE:
+        lineas = (foto.get(topic) or {}).get("Lines")
+        if not isinstance(lineas, dict):
+            continue
+        nuevas = {}
+        for n, linea in lineas.items():
+            m = destino.get(n, n)
+            if isinstance(linea, dict) and "RacingNumber" in linea:
+                linea = {**linea, "RacingNumber": m}
+            nuevas[m] = linea
+        foto[topic]["Lines"] = nuevas
+    pilotos = foto.get("DriverList")
+    if isinstance(pilotos, dict):
+        lineas = {n: p.get("Line") for n, p in pilotos.items() if isinstance(p, dict) and "Line" in p}
+        for n, linea in lineas.items():
+            m = destino.get(n, n)
+            if isinstance(pilotos.get(m), dict):
+                pilotos[m] = {**pilotos[m], "Line": linea}
+
+
+def _cambia_stints(stints: Any) -> Any:
+    """Cada compuesto pasa a otro (``COMPUESTOS``) y la primera parada se retrasa una
+    vuelta si el stint siguiente tiene al menos dos: el total de vueltas no cambia, y la
+    edad de un juego que vuelve a pista sigue siendo la que llevaba al pararse."""
+    if not isinstance(stints, list) or not all(isinstance(s, dict) for s in stints):
+        return stints
+    try:
+        vueltas = [int(s["TotalLaps"]) - int(s["StartLaps"]) for s in stints]
+    except (KeyError, TypeError, ValueError):
+        return stints
+    if len(vueltas) >= 2 and vueltas[1] >= 2:
+        vueltas[0] += 1
+        vueltas[1] -= 1
+    nuevos, total = [], None
+    for s, v in zip(stints, vueltas):
+        edad = total if s.get("TyresNotChanged") == "1" and total is not None else int(s["StartLaps"])
+        total = edad + v
+        nuevos.append({
+            **s,
+            "Compound": COMPUESTOS.get(s.get("Compound"), s.get("Compound")),
+            "StartLaps": edad,
+            "TotalLaps": total,
+        })
+    return nuevos
+
+
+def transformar(foto: Dict[str, Any]) -> Dict[str, Any]:
+    """La foto con la forma del feed y otros datos: los tiempos por ``FACTOR``, los datos
+    de cada coche bajo otro número (``ROTA``) y los stints cambiados (``_cambia_stints``).
+    Los textos de control de carrera, los nombres y las horas no cambian. No es
+    idempotente: se aplica una vez, a una foto sacada de una grabación."""
+    foto = copy.deepcopy(foto)
+    _reparte(foto, _reparto(foto))
+    for topic in _POR_COCHE:
+        if topic in foto:
+            foto[topic] = _tiempos(foto[topic])
+    for linea in ((foto.get("TimingAppData") or {}).get("Lines") or {}).values():
+        if isinstance(linea, dict) and "Stints" in linea:
+            linea["Stints"] = _cambia_stints(linea["Stints"])
+    return foto
 
 
 def plegar(dst: Any, src: Any) -> Any:
@@ -138,7 +247,7 @@ def sacar(grabacion: Path, nombre: str) -> None:
     FOTOS.mkdir(exist_ok=True)
     for sufijo, foto in (("inicial", inicial), ("plegada", plegada), ("final", estado)):
         destino = FOTOS / f"{nombre}-{sufijo}.json"
-        destino.write_text(json.dumps(foto, ensure_ascii=False), encoding="utf-8")
+        destino.write_text(json.dumps(transformar(foto), ensure_ascii=False), encoding="utf-8")
         print(f"{destino.name}: {len(foto)} temas, {dict(formas(foto.get('TimingData')))}")
 
 

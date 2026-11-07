@@ -1,5 +1,5 @@
-"""``_feed_rows``: la salida guardada sobre fotos reales y las reglas de la fila como
-propiedades.
+"""``_feed_rows``: la salida guardada sobre fotos con la forma del feed y las reglas de la
+fila como propiedades.
 
 Las fotos y su salida esperada las escribe ``fotos.py``; un cambio intencionado de la
 salida se regenera con ``fotos.py --esperado`` y se revisa en el diff.
@@ -44,7 +44,7 @@ def test_cada_foto_tiene_su_salida_esperada():
 
 
 @pytest.mark.parametrize("foto", FOTOS, ids=[p.stem for p in FOTOS])
-def test_la_salida_de_una_foto_real_no_cambia(foto):
+def test_la_salida_de_una_foto_no_cambia(foto):
     esperada = json.loads((AQUI / "esperado" / foto.name).read_text(encoding="utf-8"))
     assert _feed_rows(json.loads(foto.read_text(encoding="utf-8"))) == esperada
 

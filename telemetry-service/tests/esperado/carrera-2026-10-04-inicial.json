@@ -1,0 +1,442 @@
+[
+ {
+  "ltPosition": 1,
+  "ltCar": "12",
+  "ltDriver": "ANT",
+  "ltTeam": "Mercedes",
+  "ltGap": "LEADER",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 2,
+  "ltCar": "87",
+  "ltDriver": "BEA",
+  "ltTeam": "Haas F1 Team",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 3,
+  "ltCar": "27",
+  "ltDriver": "HUL",
+  "ltTeam": "Audi",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 4,
+  "ltCar": "31",
+  "ltDriver": "OCO",
+  "ltTeam": "Haas F1 Team",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 5,
+  "ltCar": "11",
+  "ltDriver": "PER",
+  "ltTeam": "Cadillac",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 6,
+  "ltCar": "6",
+  "ltDriver": "HAD",
+  "ltTeam": "Red Bull Racing",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 7,
+  "ltCar": "3",
+  "ltDriver": "VER",
+  "ltTeam": "Red Bull Racing",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 8,
+  "ltCar": "16",
+  "ltDriver": "LEC",
+  "ltTeam": "Ferrari",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 9,
+  "ltCar": "18",
+  "ltDriver": "STR",
+  "ltTeam": "Aston Martin",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 10,
+  "ltCar": "14",
+  "ltDriver": "ALO",
+  "ltTeam": "Aston Martin",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 11,
+  "ltCar": "55",
+  "ltDriver": "SAI",
+  "ltTeam": "Williams",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 12,
+  "ltCar": "30",
+  "ltDriver": "LAW",
+  "ltTeam": "Racing Bulls",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 13,
+  "ltCar": "1",
+  "ltDriver": "NOR",
+  "ltTeam": "McLaren",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 14,
+  "ltCar": "41",
+  "ltDriver": "LIN",
+  "ltTeam": "Racing Bulls",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 15,
+  "ltCar": "44",
+  "ltDriver": "HAM",
+  "ltTeam": "Ferrari",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 16,
+  "ltCar": "10",
+  "ltDriver": "GAS",
+  "ltTeam": "Alpine",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 17,
+  "ltCar": "63",
+  "ltDriver": "RUS",
+  "ltTeam": "Mercedes",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 18,
+  "ltCar": "43",
+  "ltDriver": "COL",
+  "ltTeam": "Alpine",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 19,
+  "ltCar": "5",
+  "ltDriver": "BOR",
+  "ltTeam": "Audi",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 20,
+  "ltCar": "23",
+  "ltDriver": "ALB",
+  "ltTeam": "Williams",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 21,
+  "ltCar": "81",
+  "ltDriver": "PIA",
+  "ltTeam": "McLaren",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 22,
+  "ltCar": "77",
+  "ltDriver": "BOT",
+  "ltTeam": "Cadillac",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "-",
+  "ltLastSectors": [
+   "-",
+   "-",
+   "-"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "-",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ }
+]

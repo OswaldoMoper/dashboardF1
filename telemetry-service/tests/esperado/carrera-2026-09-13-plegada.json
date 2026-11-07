@@ -1,0 +1,442 @@
+[
+ {
+  "ltPosition": 1,
+  "ltCar": "23",
+  "ltDriver": "ALB",
+  "ltTeam": "Williams",
+  "ltGap": "LEADER",
+  "ltInterval": "-",
+  "ltLastLap": "1:37.396",
+  "ltLastSectors": [
+   "29.536",
+   "35.174",
+   "32.686"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:37.396",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 2,
+  "ltCar": "14",
+  "ltDriver": "ALO",
+  "ltTeam": "Aston Martin",
+  "ltGap": "+3.548",
+  "ltInterval": "+3.548",
+  "ltLastLap": "1:38.143",
+  "ltLastSectors": [
+   "29.947",
+   "35.145",
+   "33.052"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:38.086",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 3,
+  "ltCar": "12",
+  "ltDriver": "ANT",
+  "ltTeam": "Mercedes",
+  "ltGap": "+4.277",
+  "ltInterval": "+0.729",
+  "ltLastLap": "1:38.312",
+  "ltLastSectors": [
+   "29.777",
+   "35.514",
+   "33.020"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:38.005",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 4,
+  "ltCar": "30",
+  "ltDriver": "LAW",
+  "ltTeam": "Red Bull Racing",
+  "ltGap": "+28.508",
+  "ltInterval": "+24.200",
+  "ltLastLap": "1:38.975",
+  "ltLastSectors": [
+   "30.130",
+   "35.254",
+   "33.043"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:37.379",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 5,
+  "ltCar": "3",
+  "ltDriver": "VER",
+  "ltTeam": "Red Bull Racing",
+  "ltGap": "+29.639",
+  "ltInterval": "+1.130",
+  "ltLastLap": "1:37.809",
+  "ltLastSectors": [
+   "29.887",
+   "35.014",
+   "32.733"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:36.897",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 6,
+  "ltCar": "18",
+  "ltDriver": "STR",
+  "ltTeam": "Aston Martin",
+  "ltGap": "+80.344",
+  "ltInterval": "+50.685",
+  "ltLastLap": "1:40.903",
+  "ltLastSectors": [
+   "30.452",
+   "36.252",
+   "34.199"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:39.486",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 7,
+  "ltCar": "55",
+  "ltDriver": "SAI",
+  "ltTeam": "Williams",
+  "ltGap": "+81.063",
+  "ltInterval": "+0.824",
+  "ltLastLap": "1:39.775",
+  "ltLastSectors": [
+   "30.359",
+   "35.662",
+   "33.754"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:38.173",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 8,
+  "ltCar": "81",
+  "ltDriver": "PIA",
+  "ltTeam": "McLaren",
+  "ltGap": "+86.725",
+  "ltInterval": "+6.055",
+  "ltLastLap": "1:38.654",
+  "ltLastSectors": [
+   "30.021",
+   "35.441",
+   "33.193"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:38.654",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 9,
+  "ltCar": "10",
+  "ltDriver": "GAS",
+  "ltTeam": "Alpine",
+  "ltGap": "+89.610",
+  "ltInterval": "+2.914",
+  "ltLastLap": "1:38.858",
+  "ltLastSectors": [
+   "30.287",
+   "35.324",
+   "33.246"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:38.558",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 10,
+  "ltCar": "77",
+  "ltDriver": "BOT",
+  "ltTeam": "Cadillac",
+  "ltGap": "+94.420",
+  "ltInterval": "+4.834",
+  "ltLastLap": "1:39.986",
+  "ltLastSectors": [
+   "30.329",
+   "35.751",
+   "33.906"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:39.556",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 11,
+  "ltCar": "44",
+  "ltDriver": "HAM",
+  "ltTeam": "Ferrari",
+  "ltGap": "+95.017",
+  "ltInterval": "+0.597",
+  "ltLastLap": "1:39.529",
+  "ltLastSectors": [
+   "30.161",
+   "35.965",
+   "33.403"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:39.458",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 12,
+  "ltCar": "63",
+  "ltDriver": "RUS",
+  "ltTeam": "Mercedes",
+  "ltGap": "1 L",
+  "ltInterval": "+9.817",
+  "ltLastLap": "1:43.019",
+  "ltLastSectors": [
+   "30.549",
+   "38.786",
+   "33.684"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:39.463",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 13,
+  "ltCar": "16",
+  "ltDriver": "LEC",
+  "ltTeam": "Ferrari",
+  "ltGap": "1 L",
+  "ltInterval": "+12.744",
+  "ltLastLap": "1:39.533",
+  "ltLastSectors": [
+   "30.184",
+   "36.019",
+   "33.284"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:39.177",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 14,
+  "ltCar": "41",
+  "ltDriver": "LIN",
+  "ltTeam": "Racing Bulls",
+  "ltGap": "1 L",
+  "ltInterval": "+34.610",
+  "ltLastLap": "1:40.112",
+  "ltLastSectors": [
+   "30.350",
+   "36.171",
+   "33.390"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:40.079",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 15,
+  "ltCar": "43",
+  "ltDriver": "COL",
+  "ltTeam": "Alpine",
+  "ltGap": "1 L",
+  "ltInterval": "+13.085",
+  "ltLastLap": "1:40.981",
+  "ltLastSectors": [
+   "30.612",
+   "36.484",
+   "34.132"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:40.759",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 16,
+  "ltCar": "11",
+  "ltDriver": "PER",
+  "ltTeam": "Cadillac",
+  "ltGap": "1 L",
+  "ltInterval": "+16.296",
+  "ltLastLap": "1:42.464",
+  "ltLastSectors": [
+   "30.467",
+   "36.559",
+   "35.438"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:38.641",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 17,
+  "ltCar": "27",
+  "ltDriver": "HUL",
+  "ltTeam": "Audi",
+  "ltGap": "2 L",
+  "ltInterval": "+34.738",
+  "ltLastLap": "1:40.630",
+  "ltLastSectors": [
+   "31.343",
+   "36.108",
+   "33.618"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:40.359",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 18,
+  "ltCar": "5",
+  "ltDriver": "BOR",
+  "ltTeam": "Audi",
+  "ltGap": "3 L",
+  "ltInterval": "1 L",
+  "ltLastLap": "1:43.416",
+  "ltLastSectors": [
+   "31.371",
+   "41.050",
+   "34.675"
+  ],
+  "ltStatus": "Running",
+  "ltBestLap": "1:40.488",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 19,
+  "ltCar": "1",
+  "ltDriver": "NOR",
+  "ltTeam": "McLaren",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "1:49.085",
+  "ltLastSectors": [
+   "32.133",
+   "38.074",
+   "38.878"
+  ],
+  "ltStatus": "Dnf",
+  "ltBestLap": "1:41.568",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 20,
+  "ltCar": "22",
+  "ltDriver": "TSU",
+  "ltTeam": "Racing Bulls",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "1:59.126",
+  "ltLastSectors": [
+   "37.867",
+   "41.855",
+   "39.405"
+  ],
+  "ltStatus": "Dnf",
+  "ltBestLap": "1:42.501",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 21,
+  "ltCar": "31",
+  "ltDriver": "OCO",
+  "ltTeam": "Haas F1 Team",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "1:45.093",
+  "ltLastSectors": [
+   "32.017",
+   "37.757",
+   "35.064"
+  ],
+  "ltStatus": "Dnf",
+  "ltBestLap": "1:44.879",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ },
+ {
+  "ltPosition": 22,
+  "ltCar": "87",
+  "ltDriver": "BEA",
+  "ltTeam": "Haas F1 Team",
+  "ltGap": "-",
+  "ltInterval": "-",
+  "ltLastLap": "2:16.786",
+  "ltLastSectors": [
+   "35.811",
+   "46.991",
+   "53.984"
+  ],
+  "ltStatus": "Dnf",
+  "ltBestLap": "1:41.207",
+  "ltPartBestLap": "",
+  "ltPartBests": [],
+  "ltKnockedOut": false,
+  "ltCutoff": false
+ }
+]
