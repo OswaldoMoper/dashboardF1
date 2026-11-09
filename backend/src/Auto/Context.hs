@@ -19,6 +19,10 @@ module Auto.Context
   , scheduleEvery
   , stopUnit
   , stopTimer
+  , unitState
+  , lookAfterMaster
+  , waitForMaster
+  , journalToFile
   , openf1Slots
   , readGpState
   , writeGpState
@@ -33,7 +37,8 @@ module Auto.Context
 import           App                        (ScheduledSession)
 import           Auto.Helper                (Account, CalendarAnswer,
                                              Dispatch (..), GpState,
-                                             LiveReply (..), ObserverEnd (..),
+                                             LiveReply (..), MasterAction (..),
+                                             ObserverEnd (..),
                                              ObserverEvent (..), PageReply (..),
                                              Piece (..), ReaderAnswer (..),
                                              RecordingEnd (..),
@@ -46,8 +51,11 @@ import           Auto.Helper                (Account, CalendarAnswer,
                                              captureDue, captureName, checkLine,
                                              checksStopLine, checksSummary,
                                              inPause, instanceChange,
-                                             jolpicaSlots, liveTable,
-                                             logVerdict, manualVigiaDelay,
+                                             jolpicaSlots, journalArgs,
+                                             liveTable, logVerdict,
+                                             manualVigiaDelay, masterAction,
+                                             masterLogName, masterRunArgs,
+                                             masterUnit, masterUnitRunning,
                                              observerLine, observerStopLine,
                                              onCalendar, openf1Check, pageCheck,
                                              pageUrl, pauseFrom, pauseLine,
@@ -587,7 +595,7 @@ runChecks folder label tokenToday d = do
         [ ("OpenF1", openf1Check <$> openf1Status)
         , ("token F1TV", (\now -> tokenCheck now tokenToday (diTokenGp d)) <$> getCurrentTime <*> readTokenFile)
         , ("página", pageCheck asked <$> askPage asked)
-        , ("log", logVerdict <$> traverse (\f -> (,) f <$> readIfExists f) (diLog d))
+        , ("log", logVerdict <$> logSource)
         ]
   done <- getCurrentTime
   appendLine summary (maybe (checksStopLine done label) (checksSummary done label) results)
@@ -603,6 +611,16 @@ runChecks folder label tokenToday d = do
     readIfExists f = do
       exists <- doesFileExist f
       if exists then Just <$> readLines f else pure Nothing
+    -- El log que se juzga: si la unidad de master está en marcha y la orden trae el tramo
+    -- del día, el diario volcado a master.log en la carpeta; si no, el de --log.
+    logSource = do
+      running <- maybe (pure False) (const (masterUnitRunning <$> unitState masterUnit)) (diJournal d)
+      case (running, diJournal d) of
+        (True, Just window) -> do
+          let file = folder </> masterLogName
+          journalToFile window file
+          Just . (,) file <$> readIfExists file
+        _ -> traverse (\f -> (,) f <$> readIfExists f) (diLog d)
 
 -- | La página en la primera instancia que contesta @/@, por ese orden: @/@, @/all.js@
 -- (sin leer el cuerpo) y @\/api\/live@. 'Nothing' si no contesta ninguna.
@@ -733,6 +751,55 @@ stopUnit unit =
 -- | Para solo el temporizador de esa unidad: lo que corre su servicio acaba por sí mismo.
 stopTimer :: Text -> IO ()
 stopTimer unit = void (readProcessWithExitCode "systemctl" ["--user", "stop", T.unpack unit <> ".timer"] "")
+
+-- | El @ActiveState@ de esa unidad de @systemd --user@ («inactive» si no existe);
+-- 'Nothing' si systemctl no contesta.
+unitState :: Text -> IO (Maybe Text)
+unitState unit = do
+  (code, out, _) <-
+    readProcessWithExitCode "systemctl" ["--user", "show", T.unpack unit, "-p", "ActiveState", "--value"] ""
+  pure $ case code of
+    ExitSuccess -> Just (T.strip (T.pack out))
+    _           -> Nothing
+
+-- | Mira @master@ y hace lo que toque ('masterAction'): si nadie contesta en @:3000@ y su
+-- unidad no corre, la arranca con @systemd-run@ ('masterRunArgs', con ese @nix@ y desde esa
+-- carpeta). 'Left' si el arranque falla. No espera a que conteste: eso es 'waitForMaster'.
+lookAfterMaster :: FilePath -> FilePath -> IO (Either Text MasterAction)
+lookAfterMaster nix dir = do
+  answers <- isJust <$> askCalendar 3000
+  state <- unitState masterUnit
+  case masterAction answers state of
+    StartMaster -> do
+      (code, _, err) <- readProcessWithExitCode "systemd-run" (masterRunArgs nix dir) ""
+      pure $ case code of
+        ExitSuccess -> Right StartMaster
+        _           -> Left (T.strip (T.pack err))
+    action -> pure (Right action)
+
+-- | Espera a que alguien conteste en @:3000@: cada 'masterWaitStep' segundos pregunta, hasta
+-- tantas veces, y tras cada vez sin respuesta llama a eso con los segundos que lleva.
+-- 'False' si se agotan.
+waitForMaster :: Int -> Int -> (Int -> IO ()) -> IO Bool
+waitForMaster step tries report = go 1
+  where
+    go n
+      | n > tries = pure False
+      | otherwise = do
+          threadDelay (step * 1000000)
+          answers <- isJust <$> askCalendar 3000
+          if answers
+            then pure True
+            else report (n * step) >> go (n + 1)
+
+-- | Ese tramo del diario de 'masterUnit' ('journalArgs'), tal cual, a ese fichero, que se
+-- sustituye.
+journalToFile :: (UTCTime, UTCTime) -> FilePath -> IO ()
+journalToFile window file = do
+  out <- openFile file WriteMode
+  (_, _, _, ph) <- createProcess (proc "journalctl" (journalArgs window)) {std_out = UseHandle out}
+  void (waitForProcess ph)
+  hClose out
 
 -- | Las sesiones que OpenF1 da ahora (las que no han terminado), como las sirve @master@.
 -- 'Nothing' si no contesta (un 401, por ejemplo) o no trae ninguna.

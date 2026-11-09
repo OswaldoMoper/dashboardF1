@@ -159,6 +159,14 @@ module Auto.Helper
   , journalArgs
   , masterLogName
   , masterLine
+  , masterUnitRunning
+  , masterFailLine
+  , masterWaitStep
+  , masterWaitTries
+  , masterWatchLabel
+  , masterWatchUnit
+  , masterWatchLine
+  , folderInCourse
     -- * Lo que enseña el comando
   , dayHeader
   , dayTable
@@ -1197,6 +1205,7 @@ data Dispatch = Dispatch
   , diReader     :: Maybe FilePath
   , diPause      :: Maybe UTCTime
   , diScript     :: Maybe FilePath
+  , diJournal    :: Maybe (UTCTime, UTCTime)  -- ^ El tramo del diario de @master@ que es del día ('dayLogWindow').
   }
   deriving (Eq, Show)
 
@@ -1230,6 +1239,9 @@ dispatchFor tools port slots plan p =
         Memory      -> Just (toMemory tools)
         ManualVigia -> Just (toManualVigia tools)
         _           -> Nothing
+    , diJournal = case plPiece p of
+        Checks _ -> dayLogWindow plan
+        _        -> Nothing
     }
   where
     session = case plPiece p of
@@ -1266,6 +1278,7 @@ dispatchArgs d =
     <> maybe [] (\r -> ["--lector", T.pack r]) (diReader d)
     <> maybe [] (\t -> ["--pausa", isoText t]) (diPause d)
     <> maybe [] (\s -> ["--guion", T.pack s]) (diScript d)
+    <> maybe [] (\(from, to) -> ["--diario", isoText from, isoText to]) (diJournal d)
   where
     isoText = T.pack . formatTime defaultTimeLocale isoUtc
 
@@ -1283,6 +1296,7 @@ bareDispatch port = Dispatch
   , diReader = Nothing
   , diPause = Nothing
   , diScript = Nothing
+  , diJournal = Nothing
   }
 
 parseDispara :: [Text] -> Either Text Dispatch
@@ -1307,6 +1321,9 @@ parseDispara = go (bareDispatch 0) False
     go d hasPort ("--pausa" : t : rest)
       | Just start <- parseTimeM False defaultTimeLocale isoUtc (T.unpack t) = go d {diPause = Just start} hasPort rest
     go d hasPort ("--guion" : s : rest) = go d {diScript = Just (T.unpack s)} hasPort rest
+    go d hasPort ("--diario" : a : b : rest)
+      | Just from <- parseTimeM False defaultTimeLocale isoUtc (T.unpack a)
+      , Just to <- parseTimeM False defaultTimeLocale isoUtc (T.unpack b) = go d {diJournal = Just (from, to)} hasPort rest
     go _ _ (word : _) = Left ("dispara: no entiendo «" <> word <> "»")
 
 isoUtc :: String
@@ -1633,8 +1650,13 @@ data MasterAction
 masterAction :: Bool -> Maybe Text -> MasterAction
 masterAction answers unitState
   | answers = UseRunning
-  | unitState `elem` map Just ["active", "activating", "reloading"] = WaitStarting
+  | masterUnitRunning unitState = WaitStarting
   | otherwise = StartMaster
+
+-- | Si ese @ActiveState@ de 'masterUnit' es el de una unidad en marcha, conteste o no
+-- aún en @:3000@.
+masterUnitRunning :: Maybe Text -> Bool
+masterUnitRunning unitState = unitState `elem` map Just ["active", "activating", "reloading"]
 
 -- | Los argumentos de @systemd-run@ que arrancan @master@ como el de la guía del GP
 -- (@OPENF1_LOG=1 PORT=3000 dashboardF1-dev@), con ese @nix@, desde 'masterDir'. Su
@@ -1677,6 +1699,39 @@ masterLine t action = case action of
   UseRunning   -> eventLine t "usa" "master en :3000 (ya contestaba)"
   WaitStarting -> eventLine t "espera" ("master en :3000: " <> masterUnit <> " está arrancando")
   StartMaster  -> eventLine t "arranca" ("master en :3000 como " <> masterUnit)
+
+-- | La línea de @resumen.txt@ cuando @systemd-run@ no pudo arrancar @master@, con su error.
+masterFailLine :: UTCTime -> Text -> Text
+masterFailLine t err = eventLine t "falla" ("master en :3000 no arranca: " <> err)
+
+-- | Cada cuántos segundos se vuelve a preguntar a @:3000@ mientras @master@ arranca.
+masterWaitStep :: Int
+masterWaitStep = 30
+
+-- | Cuántas veces se pregunta antes de rendirse: 20 × 30 s, 10 minutos, lo que tarda
+-- @nix run .#dev@ cuando tiene que construir.
+masterWaitTries :: Int
+masterWaitTries = 20
+
+-- | La pieza que mira cada hora si @master@ contesta en @:3000@ y, si no, lo arranca
+-- ('masterAction'); en los dos modos, en la carpeta del primer día.
+masterWatchLabel :: Text
+masterWatchLabel = "master cada hora"
+
+-- | Su unidad, con el prefijo del automatismo: @cancela@ para la mirada, no a @master@.
+masterWatchUnit :: FilePath -> Text
+masterWatchUnit folder = T.pack folder <> "-master"
+
+-- | La línea de @resumen.txt@ que la programa, cada tantos minutos.
+masterWatchLine :: UTCTime -> Int -> Text
+masterWatchLine t every = eventLine t "programa" (masterWatchLabel <> " · cada " <> T.pack (show every) <> " min")
+
+-- | La carpeta en la que escribe la mirada horaria: la del día de México de ese instante;
+-- entre dos días, la del siguiente; pasado el último, la del último. 'Nothing' sin carpetas.
+folderInCourse :: UTCTime -> [(Day, FilePath)] -> Maybe FilePath
+folderInCourse now folders = case sortOn fst folders of
+  []     -> Nothing
+  sorted -> Just (maybe (snd (last sorted)) snd (find ((>= mexicoDay now) . fst) sorted))
 
 -- | La cabecera de la tabla: el día, el gran premio si se sabe y las horas.
 dayHeader :: Day -> Maybe Text -> Text
@@ -1839,12 +1894,14 @@ relecturaDefault = 60
 gpStateFile :: FilePath
 gpStateFile = "gp.json"
 
--- | Lo que la relectura necesita para comparar y volver a programar: las horas con que
--- está programado el GP, cómo se lanzó y la carpeta de cada día.
+-- | Lo que la relectura y la mirada horaria a @master@ necesitan: las horas con que está
+-- programado el GP, cómo se lanzó, con qué se arranca @master@ y la carpeta de cada día.
 data GpState = GpState
   { gsSlots      :: [Slot]
   , gsPort       :: Int
   , gsTools      :: Tools
+  , gsNix        :: FilePath  -- ^ El @nix@ con que se arranca @master@: el del @PATH@ de quien lanzó.
+  , gsMasterDir  :: FilePath  -- ^ Desde dónde ('masterDir').
   , gsLog        :: Maybe FilePath
   , gsCapSeconds :: Int
   , gsEnsayo     :: Bool
@@ -1862,6 +1919,8 @@ instance ToJSON GpState where
       , "lector" .= toReader (gsTools s)
       , "memoria" .= toMemory (gsTools s)
       , "vigia-manual" .= toManualVigia (gsTools s)
+      , "nix" .= gsNix s
+      , "master-dir" .= gsMasterDir s
       , "log" .= gsLog s
       , "tope" .= gsCapSeconds s
       , "ensayo" .= gsEnsayo s
@@ -1875,6 +1934,8 @@ instance FromJSON GpState where
       <$> (mapM (withObject "sesión" (\x -> Slot <$> x .: "nombre" <*> x .: "inicio")) =<< o .: "sesiones")
       <*> o .: "puerto"
       <*> (Tools <$> o .: "grabador" <*> o .: "lector" <*> o .: "memoria" <*> o .: "vigia-manual")
+      <*> o .: "nix"
+      <*> o .: "master-dir"
       <*> o .:? "log"
       <*> o .: "tope"
       <*> o .: "ensayo"

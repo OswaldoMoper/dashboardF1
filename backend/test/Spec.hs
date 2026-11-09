@@ -219,7 +219,8 @@ import           Data.Either                 (isLeft)
 import           Data.List                   (find, nub)
 import qualified Data.List.NonEmpty          as NE
 import qualified Data.Map.Strict             as Map
-import           Data.Maybe                  (fromMaybe, isJust, listToMaybe)
+import           Data.Maybe                  (fromMaybe, isJust, isNothing,
+                                              listToMaybe)
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
@@ -5616,6 +5617,55 @@ main = hspec $ do
                      , "17:00 (23:00) arranca  master en :3000 como dashboardF1-master" ]
                    , [] )
 
+    it "si systemd-run no la arranca, su línea lleva el error, y la vista no la toma por una pieza" $
+      ( Auto.masterFailLine (novUtc 19 23 0) "Failed to start transient service unit"
+      , Auto.expectedPending [Auto.masterFailLine (novUtc 19 23 0) "x"]
+      )
+        `shouldBe` ("17:00 (23:00) falla    master en :3000 no arranca: Failed to start transient service unit", [])
+
+    it "su unidad está en marcha mientras arranca, corre o recarga; parada, fallida o inexistente, no" $
+      map Auto.masterUnitRunning [Just "active", Just "activating", Just "reloading", Just "inactive", Just "failed", Just "deactivating", Nothing]
+        `shouldBe` [True, True, True, False, False, False, False]
+
+    it "se espera hasta 10 minutos, de 30 en 30 segundos" $
+      (Auto.masterWaitStep, Auto.masterWaitStep * Auto.masterWaitTries) `shouldBe` (30, 600)
+
+    it "solo las tandas llevan el tramo del diario del día, el de T−90 al último tope" $
+      let days = Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason
+          orders d = map (Auto.dispatchFor storeTools 3000 (Auto.gdSlots d) (Auto.gdPlan d)) (Auto.gdPlan d)
+       in ( [ (Auto.plPiece p, Auto.diJournal o) | d <- take 1 days, (p, o) <- zip (Auto.gdPlan d) (orders d), isJust (Auto.diJournal o) ]
+          , [ Auto.plPiece p | d <- days, (p, o) <- zip (Auto.gdPlan d) (orders d), isNothing (Auto.diJournal o), Auto.Checks Nothing == Auto.plPiece p ]
+          )
+            `shouldBe` ( [ (Auto.Checks Nothing, Just (novUtc 19 23 0, novUtc 20 10 0))
+                         , (Auto.Checks (Just "Practice 1"), Just (novUtc 19 23 0, novUtc 20 10 0))
+                         , (Auto.Checks (Just "Practice 2"), Just (novUtc 19 23 0, novUtc 20 10 0)) ]
+                       , [] )
+
+    it "la mirada horaria: su unidad es del automatismo, se programa como la relectura y se quita igual" $
+      let programmed = [Auto.masterWatchLine (novUtc 16 18 0) 60]
+       in ( Auto.masterWatchUnit "dashboardF1-auto-jueves-2026-11-19"
+          , programmed
+          , Auto.expectedPending programmed
+          , Auto.expectedPending (programmed <> [Auto.quitLine (novUtc 22 10 0) Auto.masterWatchLabel])
+          )
+            `shouldBe` ( "dashboardF1-auto-jueves-2026-11-19-master"
+                       , ["12:00 (18:00) programa master cada hora · cada 60 min"]
+                       , ["master cada hora"]
+                       , [] )
+
+    it "escribe en la carpeta del día de México en curso; entre días, en la del siguiente; después del último, en la suya" $
+      let thu = fromGregorian 2026 11 19
+          sat = fromGregorian 2026 11 21
+          folders = [(sat, "dashboardF1-auto-sabado-2026-11-21"), (thu, "dashboardF1-auto-jueves-2026-11-19")]
+       in map (`Auto.folderInCourse` folders) [novUtc 19 23 0, novUtc 20 10 0, novUtc 22 2 30, novUtc 23 0 0, novUtc 18 12 0]
+            <> [Auto.folderInCourse (novUtc 19 23 0) []]
+            `shouldBe` [ Just "dashboardF1-auto-jueves-2026-11-19"   -- jueves 17:00 de México
+                       , Just "dashboardF1-auto-sabado-2026-11-21"   -- viernes 04:00: el día siguiente con carpeta
+                       , Just "dashboardF1-auto-sabado-2026-11-21"   -- sábado 20:30
+                       , Just "dashboardF1-auto-sabado-2026-11-21"   -- domingo 18:00: pasado el último
+                       , Just "dashboardF1-auto-jueves-2026-11-19"   -- miércoles: el siguiente
+                       , Nothing ]
+
   -- Reprogramar, con la Q de Las Vegas leída el viernes 20 a las 19:00 de México (la P3 ya corre).
   describe "Auto: reprogramar" $ do
     let fri = fromGregorian 2026 11 20
@@ -5707,7 +5757,9 @@ main = hspec $ do
                    , "sabado" )
 
     it "gp.json se lee como se escribió" $
-      let st = Auto.GpState vegasSlots 3000 storeTools Nothing 21600 False (Just "/tmp/cal.json") folders
+      let st =
+            Auto.GpState vegasSlots 3000 storeTools "/run/current-system/sw/bin/nix" "/home/piloto/MOPER/dashboardF1"
+              Nothing 21600 False (Just "/tmp/cal.json") folders
        in eitherDecode (encode st) `shouldBe` Right st
 
     it "acaba con el último tope del GP; sin sesiones, ya acabó" $
@@ -5889,7 +5941,7 @@ main = hspec $ do
     it "el vigía mira la última sesión del día; el observador lleva el lector y su pausa; cada grabación, la suya y el grabador; todos, la instancia y su tope" $
       let plan = Auto.dayPlan Auto.capAfterStart (atUtc 23 16 0) austinSlots
        in map (Auto.dispatchArgs . Auto.dispatchFor storeTools 3001 austinSlots plan . (plan !!)) [0, 1, 2, 5]
-            `shouldBe` [ ["--puerto", "3001"]
+            `shouldBe` [ ["--puerto", "3001", "--diario", "2026-10-23T16:00:00Z", "2026-10-24T03:00:00Z"]
                        , [ "--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--sesion", "Practice 2"
                          , "--inicio", "2026-10-23T21:00:00Z" ]
                        , [ "--puerto", "3001", "--tope", "2026-10-24T03:00:00Z", "--lector", T.pack storeReader
@@ -6354,7 +6406,8 @@ main = hspec $ do
           , map (Auto.parseDispara . Auto.dispatchArgs) orders == map Right orders
           )
             `shouldBe` ( [ [ "--puerto", "3000", "--log", "/home/x/dev.txt"
-                           , "--fin-hoy", "2026-10-23T22:00:00Z", "--fin-gp", "2026-10-25T22:00:00Z" ] ]
+                           , "--fin-hoy", "2026-10-23T22:00:00Z", "--fin-gp", "2026-10-25T22:00:00Z"
+                           , "--diario", "2026-10-23T16:00:00Z", "2026-10-24T03:00:00Z" ] ]
                        , [ Just "/home/x/dev.txt", Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Just "/home/x/dev.txt"
                          , Nothing, Nothing, Just "/home/x/dev.txt" ]
                        , True
