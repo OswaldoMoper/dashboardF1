@@ -5603,6 +5603,37 @@ main = hspec $ do
                      , Just (novUtc 22 2 30, novUtc 22 10 0) ]
                    , Nothing )
 
+    it "en «ver», cada tanda juzga el diario desde la tanda anterior; la primera, las 24 h de antes" $
+      Auto.checksLogWindows (novUtc 16 18 0) (Auto.gpPlanFor Auto.Ver Auto.capAfterStart (novUtc 16 18 0) gpSeason)
+        `shouldBe` [ Just (novUtc 18 23 0, novUtc 19 23 0)
+                   , Just (novUtc 19 23 0, novUtc 20 23 0)
+                   , Just (novUtc 20 23 0, novUtc 22 2 30) ]
+
+    it "una tanda cuya hora ya pasó cuenta desde el lanzamiento, y la siguiente sigue donde acabó" $
+      take 2 (Auto.checksLogWindows (novUtc 20 0 0) (Auto.gpPlanFor Auto.Ver Auto.capAfterStart (novUtc 20 0 0) gpSeason))
+        `shouldBe` [ Just (novUtc 19 0 0, novUtc 20 0 0)
+                   , Just (novUtc 20 0 0, novUtc 20 23 0) ]
+
+    it "un día sin tanda de arranque no tiene tramo, y el siguiente vuelve a las 24 h de antes" $
+      let days = Auto.gpPlanFor Auto.Ver Auto.capAfterStart (novUtc 16 18 0) gpSeason
+          gutted = [d {Auto.gdPlan = if i == (1 :: Int) then [] else Auto.gdPlan d} | (i, d) <- zip [0 ..] days]
+       in Auto.checksLogWindows (novUtc 16 18 0) gutted
+            `shouldBe` [ Just (novUtc 18 23 0, novUtc 19 23 0)
+                       , Nothing
+                       , Just (novUtc 21 2 30, novUtc 22 2 30) ]
+
+    it "el tramo solo llega a la tanda que no trae el suyo; las demás piezas, igual" $
+      let own = Just (novUtc 19 23 0, novUtc 20 10 0)
+          given = Just (novUtc 18 23 0, novUtc 19 23 0)
+          checks = Auto.Planned (Auto.Checks Nothing) (novUtc 19 23 0) Nothing
+          vigia = Auto.Planned Auto.Vigia (novUtc 19 23 0) (Just (novUtc 20 10 0))
+          bare = Auto.dispatchFor storeTools 3000 [] [checks] checks
+       in ( Auto.diJournal (Auto.withJournal given checks bare)
+          , Auto.diJournal (Auto.withJournal given checks bare {Auto.diJournal = own})
+          , Auto.diJournal (Auto.withJournal given vigia bare)
+          )
+            `shouldBe` (given, own, Nothing)
+
     it "journalctl saca ese tramo, en UTC y con las líneas tal cual" $
       Auto.journalArgs (novUtc 19 23 0, novUtc 20 10 0)
         `shouldBe` [ "--user", "-u", "dashboardF1-master", "--since", "2026-11-19 23:00:00 UTC"

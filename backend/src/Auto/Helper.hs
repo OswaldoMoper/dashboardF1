@@ -118,6 +118,7 @@ module Auto.Helper
   , Tools (..)
   , dispatchFor
   , withChecks
+  , withJournal
   , watchedSlot
   , dispatchArgs
   , parseDispara
@@ -156,6 +157,7 @@ module Auto.Helper
   , masterAction
   , masterRunArgs
   , dayLogWindow
+  , checksLogWindows
   , journalArgs
   , masterLogName
   , masterLine
@@ -1260,6 +1262,13 @@ withChecks logFile need p d = case plPiece p of
   Checks _ -> d {diLog = logFile, diTokenToday = fst <$> need, diTokenGp = snd =<< need}
   _        -> d
 
+-- | A la orden de una tanda de comprobaciones que no trae tramo del diario de @master@,
+-- ese; las demás piezas y las tandas que ya traen el suyo, igual.
+withJournal :: Maybe (UTCTime, UTCTime) -> Planned -> Dispatch -> Dispatch
+withJournal window p d = case (plPiece p, diJournal d) of
+  (Checks _, Nothing) -> d {diJournal = window}
+  _                   -> d
+
 -- | La sesión que mira la pieza, con su hora; 'Nothing' si a la orden le falta alguna.
 watchedSlot :: Dispatch -> Maybe Slot
 watchedSlot d = Slot <$> diSession d <*> diStart d
@@ -1682,6 +1691,16 @@ dayLogWindow :: [Planned] -> Maybe (UTCTime, UTCTime)
 dayLogWindow plan = case (map plStart plan, mapMaybe plCap plan) of
   (starts@(_ : _), caps@(_ : _)) -> Just (minimum starts, maximum caps)
   _                              -> Nothing
+
+-- | El tramo del diario de @master@ que juzga la tanda de arranque de cada día cuando el
+-- día no tiene tope ('dayLogWindow' da 'Nothing'): desde la tanda del día anterior hasta
+-- la suya; la del primer día, las 24 h anteriores. Una tanda cuya hora ya pasó cuenta
+-- desde ese instante. 'Nothing' en un día sin tanda de arranque.
+checksLogWindows :: UTCTime -> [GpDay] -> [Maybe (UTCTime, UTCTime)]
+checksLogWindows now days = zipWith window (Nothing : tandas) tandas
+  where
+    tandas = map (fmap (max now . plStart) . find ((== Checks Nothing) . plPiece) . gdPlan) days
+    window before = fmap (\at -> (fromMaybe (addUTCTime (negate 86400) at) before, at))
 
 -- | Los argumentos de @journalctl@ que sacan ese tramo del diario de 'masterUnit', con
 -- las líneas tal cual las escribe @master@ (como su log a mano).

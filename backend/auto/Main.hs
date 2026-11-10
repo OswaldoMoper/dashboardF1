@@ -22,7 +22,7 @@ module Main (main) where
 import           Auto.Context
 import           Auto.Helper
 import           Control.Concurrent  (threadDelay)
-import           Control.Monad       (forM_, forever, unless, when)
+import           Control.Monad       (forM_, forever, join, unless, when)
 import           Data.List           (find, nub, sortOn)
 import           Data.Maybe          (fromMaybe, isJust, isNothing, listToMaybe,
                                       mapMaybe)
@@ -145,7 +145,7 @@ launch l = do
     appendLine (path </> "comprobaciones.txt")
       (checkLine now Falla "calendario" (why <> "; horas " <> (if source == "Jolpica" then "de Jolpica" else source)))
   mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now plan okAt planned)
-  programDay logFile need tools port path folder slots okAt planned planned
+  programDay logFile need Nothing tools port path folder slots okAt planned planned
   view folder
 
 -- | El @--log@ en absoluto; si no existe, lo dice y sale.
@@ -168,11 +168,12 @@ refuseIfBusy = do
 
 -- | Programa en systemd esas piezas de un día, en su carpeta, con el plan entero del día
 -- (de él sale la sesión que mira el vigía), y apunta cada una en su @resumen.txt@; la que
--- no se puede programar lo dice en la terminal.
+-- no se puede programar lo dice en la terminal. El tramo del diario de @master@ es para
+-- las tandas de un día sin tope ('withJournal').
 programDay ::
-  Maybe FilePath -> Maybe (UTCTime, Maybe UTCTime) -> Tools -> Int -> FilePath -> FilePath
+  Maybe FilePath -> Maybe (UTCTime, Maybe UTCTime) -> Maybe (UTCTime, UTCTime) -> Tools -> Int -> FilePath -> FilePath
     -> [Slot] -> UTCTime -> [Planned] -> [Planned] -> IO ()
-programDay logFile need tools port path folder slots okAt planned pieces = do
+programDay logFile need journal tools port path folder slots okAt planned pieces = do
   exe <- getExecutablePath
   workDir <- getCurrentDirectory
   forM_ pieces $ \p -> do
@@ -180,7 +181,7 @@ programDay logFile need tools port path folder slots okAt planned pieces = do
         at = if plStart p <= okAt then Nothing else Just (plStart p)
     done <-
       schedule exe workDir path (unitName folder piece) (pieceLabel piece)
-        (dispatchArgs (withChecks logFile need p (dispatchFor tools port slots planned p))) at
+        (dispatchArgs (withJournal journal p (withChecks logFile need p (dispatchFor tools port slots planned p)))) at
     case done of
       Right () -> appendLine (path </> "resumen.txt") (programLine okAt p)
       Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> pieceLabel piece <> ": " <> err)
@@ -254,6 +255,7 @@ launchGp mode l = do
     say ("El OK llegó a las " <> clockPair "%H:%M" okAt <> " y ya no queda nada por delante: no se programa nada.")
     exitSuccess
   let kept = [(gdDay seen, f) | (seen, f) <- shownDays, any ((== gdDay seen) . gdDay) planned]
+      journals = zip (map gdDay planned) (checksLogWindows okAt planned)
   forM_ (reverse shownDays) $ \(seen, folder) ->
     case find ((== gdDay seen) . gdDay) planned of
       Nothing -> say ("El OK llegó tarde: del " <> T.pack (showGregorian (gdDay seen)) <> " ya no queda nada, no se programa.")
@@ -265,7 +267,7 @@ launchGp mode l = do
         when (Just folder == fmap snd (listToMaybe kept)) $
           appendLine (path </> "resumen.txt") (masterLine now action)
         mapM_ (appendLine (path </> "resumen.txt")) (lateOkLines now (gdPlan seen) okAt (gdPlan d))
-        programDay logFile (tokenNeed entries (gdDay d) (gdSlots d)) tools port path folder
+        programDay logFile (tokenNeed entries (gdDay d) (gdSlots d)) (join (lookup (gdDay d) journals)) tools port path folder
           (gdSlots d) okAt (gdPlan d) (gdPlan d)
   forM_ (listToMaybe kept) $ \(_, first) -> do
     let path = base </> first
@@ -360,7 +362,7 @@ runRelectura path = do
       Schedule d p -> do
         let day = find ((== d) . gdDay) newDays
             daySlots = maybe [] gdSlots day
-        programDay (gsLog st) (tokenNeed [] d daySlots) (gsTools st) (gsPort st)
+        programDay (gsLog st) (tokenNeed [] d daySlots) Nothing (gsTools st) (gsPort st)
           (base </> folderOf d) (folderOf d) daySlots now (maybe [p] gdPlan day) [p]
     writeGpState (path </> gpStateFile) st {gsSlots = newSlots, gsFolders = folders}
 
