@@ -7011,6 +7011,14 @@ main = hspec $ do
                      ]
                    )
 
+    it "una pieza que se repite, mientras dispara, corre y no es AVISO; si no está de ningún modo, sí" $
+      let programmed = [Auto.masterWatchLine (atUtc 23 16 0) 60, Auto.relecturaLine (atUtc 23 16 0) 60]
+          expected = Auto.expectedPending programmed
+       in ( Auto.reconcile expected [("master cada hora", "corriendo"), ("relectura de horas", "pendiente · 11:00 (17:00)")]
+          , Auto.reconcile expected [("relectura de horas", "corriendo")]
+          )
+            `shouldBe` ([], ["AVISO  programado y no está en systemd: master cada hora"])
+
 -- * Propiedades
 
 -- | @points@\/@wins@ llegan de Ergast como enteros en cadena; es la forma que

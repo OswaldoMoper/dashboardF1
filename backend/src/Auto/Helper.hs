@@ -2145,13 +2145,15 @@ expectedPending = foldl step [] . mapMaybe eventParts
       "cancela"  -> []
       _          -> acc
 
--- | Los avisos cuando la carpeta y systemd no cuadran sobre lo pendiente.
+-- | Los avisos cuando la carpeta y systemd no cuadran sobre lo pendiente. Lo que corre no
+-- falta en systemd: una pieza que se repite está «corriendo» mientras dispara.
 reconcile :: [Text] -> [(Text, Text)] -> [Text]
 reconcile expected states =
-  map (aviso "programado y no está en systemd: ") (expected \\ pending)
+  map (aviso "programado y no está en systemd: ") (expected \\ (pending <> running))
     <> map (aviso "en systemd y no en la carpeta: ") (pending \\ expected)
   where
     pending = [label | (label, st) <- states, "pendiente" `T.isPrefixOf` st]
+    running = [label | (label, "corriendo") <- states]
     aviso why label = verdictWord Aviso <> "  " <> why <> label
 
 -- | La primera línea de @cancela@: «Se paran (viernes 23):».
