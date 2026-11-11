@@ -392,7 +392,8 @@
             done_pid=""
             status=0
             wait -n -p done_pid "$tpid" "$bpid" || status=$?
-            if [ "$done_pid" = "$tpid" ]; then
+            # A wait interrupted by the stop signal leaves done_pid unset.
+            if [ "''${done_pid:-}" = "$tpid" ]; then
               why="código $status"
               if [ "$status" -gt 128 ]; then
                 why="$why, señal $(kill -l $((status - 128)))"
