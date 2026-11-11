@@ -5594,6 +5594,9 @@ main = hspec $ do
                    , "--working-directory=/home/piloto/MOPER/dashboardF1", "--setenv=OPENF1_LOG=1", "--setenv=PORT=3000"
                    , "--", "/run/current-system/sw/bin/nix", "run", ".#dev" ]
 
+    it "antes de arrancarlo se le quita la marca de fallo a su unidad, por su nombre exacto" $
+      Auto.masterResetArgs `shouldBe` ["--user", "reset-failed", "dashboardF1-master.service"]
+
     it "el log de cada día de Las Vegas va de T−90 a su último tope; la noche de la carrera, entera" $
       ( map (Auto.dayLogWindow . Auto.gdPlan) (Auto.gpPlan Auto.capAfterStart (novUtc 16 18 0) gpSeason)
       , Auto.dayLogWindow []

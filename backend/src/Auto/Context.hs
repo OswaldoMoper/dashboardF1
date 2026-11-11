@@ -54,13 +54,13 @@ import           Auto.Helper                (Account, CalendarAnswer,
                                              jolpicaSlots, journalArgs,
                                              liveTable, logVerdict,
                                              manualVigiaDelay, masterAction,
-                                             masterLogName, masterRunArgs,
-                                             masterUnit, masterUnitRunning,
-                                             observerLine, observerStopLine,
-                                             onCalendar, openf1Check, pageCheck,
-                                             pageUrl, pauseFrom, pauseLine,
-                                             readCalendar, readerAnswer,
-                                             readerRelaunchLine,
+                                             masterLogName, masterResetArgs,
+                                             masterRunArgs, masterUnit,
+                                             masterUnitRunning, observerLine,
+                                             observerStopLine, onCalendar,
+                                             openf1Check, pageCheck, pageUrl,
+                                             pauseFrom, pauseLine, readCalendar,
+                                             readerAnswer, readerRelaunchLine,
                                              readerTimeoutSeconds, recorderArgs,
                                              recordingFile, recordingLog,
                                              recordingName, recordingStep,
@@ -764,13 +764,15 @@ unitState unit = do
 
 -- | Mira @master@ y hace lo que toque ('masterAction'): si nadie contesta en @:3000@ y su
 -- unidad no corre, la arranca con @systemd-run@ ('masterRunArgs', con ese @nix@ y desde esa
--- carpeta). 'Left' si el arranque falla. No espera a que conteste: eso es 'waitForMaster'.
+-- carpeta), aunque la unidad hubiera acabado en fallo. 'Left' si el arranque falla. No
+-- espera a que conteste: eso es 'waitForMaster'.
 lookAfterMaster :: FilePath -> FilePath -> IO (Either Text MasterAction)
 lookAfterMaster nix dir = do
   answers <- isJust <$> askCalendar 3000
   state <- unitState masterUnit
   case masterAction answers state of
     StartMaster -> do
+      void (readProcessWithExitCode "systemctl" masterResetArgs "")
       (code, _, err) <- readProcessWithExitCode "systemd-run" (masterRunArgs nix dir) ""
       pure $ case code of
         ExitSuccess -> Right StartMaster

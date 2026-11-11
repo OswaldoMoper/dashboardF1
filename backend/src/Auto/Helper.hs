@@ -156,6 +156,7 @@ module Auto.Helper
   , MasterAction (..)
   , masterAction
   , masterRunArgs
+  , masterResetArgs
   , dayLogWindow
   , checksLogWindows
   , journalArgs
@@ -1684,6 +1685,11 @@ masterRunArgs nix dir =
   , "run"
   , ".#dev"
   ]
+
+-- | Los argumentos de @systemctl@ que quitan a 'masterUnit' la marca de fallo. Con ella,
+-- @systemd-run@ rechaza el nombre; van antes de cada 'masterRunArgs'.
+masterResetArgs :: [String]
+masterResetArgs = ["--user", "reset-failed", T.unpack masterUnit <> ".service"]
 
 -- | El tramo del diario de @master@ que es de ese día: desde que arrancan sus piezas
 -- (T−90) hasta el último tope. 'Nothing' sin piezas.
