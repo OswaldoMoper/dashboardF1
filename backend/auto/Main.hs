@@ -293,6 +293,9 @@ launchGp mode l = do
         , gsEnsayo = laEnsayo l
         , gsCalendario = laCalendario l
         , gsFolders = kept
+        , gsMode = Just mode
+        , gsCancelled = False
+        , gsLaunched = Just okAt
         }
     program (masterWatchUnit first) masterWatchLabel watchEvery (masterWatchLine okAt watchEvery)
     when (mode == Desarrollo) $

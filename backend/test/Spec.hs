@@ -5790,11 +5790,78 @@ main = hspec $ do
                    , folders
                    , "sabado" )
 
-    it "gp.json se lee como se escribió" $
-      let st =
-            Auto.GpState vegasSlots 3000 storeTools "/run/current-system/sw/bin/nix" "/home/piloto/MOPER/dashboardF1"
-              Nothing 21600 False (Just "/tmp/cal.json") folders
-       in eitherDecode (encode st) `shouldBe` Right st
+    let launched = novUtc 19 18 0
+        st =
+          Auto.GpState
+            { Auto.gsSlots = vegasSlots
+            , Auto.gsPort = 3000
+            , Auto.gsTools = storeTools
+            , Auto.gsNix = "/run/current-system/sw/bin/nix"
+            , Auto.gsMasterDir = "/home/piloto/MOPER/dashboardF1"
+            , Auto.gsLog = Nothing
+            , Auto.gsCapSeconds = 21600
+            , Auto.gsEnsayo = False
+            , Auto.gsCalendario = Just "/tmp/cal.json"
+            , Auto.gsFolders = folders
+            , Auto.gsMode = Just Auto.Desarrollo
+            , Auto.gsCancelled = False
+            , Auto.gsLaunched = Just launched
+            }
+        -- El último tope de 'st': la carrera (domingo 22, 04:00 UTC) más seis horas.
+        lastCap = novUtc 22 10 0
+        friNight = novUtc 20 15 0
+
+    it "gp.json se lee como se escribió, también en «ver» y cancelado" $
+      let other = st {Auto.gsMode = Just Auto.Ver, Auto.gsCancelled = True}
+       in map (eitherDecode . encode) [st, other] `shouldBe` [Right st, Right other]
+
+    it "un gp.json de antes, sin modo, cancelado ni lanzado, se lee: sin modo, sin cancelar y sin hora" $
+      let old = case toJSON st of
+            Object o -> Object (foldr KM.delete o ["modo", "cancelado", "lanzado"])
+            v        -> v
+       in parseEither parseJSON old
+            `shouldBe` Right st {Auto.gsMode = Nothing, Auto.gsCancelled = False, Auto.gsLaunched = Nothing}
+
+    it "un modo que no se conoce es como no tenerlo" $
+      let unknown = case toJSON st of
+            Object o -> Object (KM.insert "modo" (String "otro") o)
+            v        -> v
+       in fmap Auto.gsMode (parseEither parseJSON unknown) `shouldBe` Right Nothing
+
+    it "vuelve el GP sin cancelar, con modo y con el tope por llegar; justo en el tope, ya no" $
+      ( Auto.liveGp friNight [st]
+      , Auto.liveGp (addUTCTime (-1) lastCap) [st]
+      , Auto.liveGp lastCap [st]
+      )
+        `shouldBe` (Just st, Just st, Nothing)
+
+    it "no vuelve el cancelado, ni el que no dice su modo, ni el que no tiene sesiones; sin ninguno, nada" $
+      ( Auto.liveGp friNight [st {Auto.gsCancelled = True}]
+      , Auto.liveGp friNight [st {Auto.gsMode = Nothing}]
+      , Auto.liveGp friNight [st {Auto.gsSlots = []}]
+      , Auto.liveGp friNight []
+      )
+        `shouldBe` (Nothing, Nothing, Nothing, Nothing)
+
+    it "entre varios vivos vuelve el lanzado más tarde, venga en el orden que venga; sin hora es el más viejo" $
+      let later = st {Auto.gsPort = 3001, Auto.gsLaunched = Just (addUTCTime 3600 launched)}
+          undated = st {Auto.gsPort = 3002, Auto.gsLaunched = Nothing}
+          cancelled = st {Auto.gsPort = 3003, Auto.gsCancelled = True, Auto.gsLaunched = Just (addUTCTime 7200 launched)}
+       in ( Auto.liveGp friNight [st, later, undated, cancelled]
+          , Auto.liveGp friNight [cancelled, undated, later, st]
+          , Auto.liveGp friNight [undated, st]
+          , Auto.liveGp friNight [undated]
+          )
+            `shouldBe` (Just later, Just later, Just st, Just undated)
+
+    it "un ensayo vivo vuelve como cualquier GP, con su tope de un cuarto de hora" $
+      let rehearsal =
+            st { Auto.gsSlots = [Auto.Slot "Practice 1" (novUtc 10 17 30)]
+               , Auto.gsCapSeconds = 900
+               , Auto.gsEnsayo = True
+               , Auto.gsMode = Just Auto.Ver }
+       in (Auto.liveGp (novUtc 10 17 44) [rehearsal], Auto.liveGp (novUtc 10 17 45) [rehearsal])
+            `shouldBe` (Just rehearsal, Nothing)
 
     it "acaba con el último tope del GP; sin sesiones, ya acabó" $
       (Auto.gpLastCap Auto.capAfterStart vegasSlots, Auto.gpLastCap Auto.capAfterStart [])

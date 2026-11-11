@@ -189,6 +189,7 @@ module Auto.Helper
   , gpStateFile
   , GpState (..)
   , gpLastCap
+  , liveGp
   , pendingKeys
   , folderFor
   , dayLabel
@@ -1932,8 +1933,16 @@ data GpState = GpState
   , gsEnsayo     :: Bool
   , gsCalendario :: Maybe FilePath
   , gsFolders    :: [(Day, FilePath)]
+  , gsMode       :: Maybe Mode     -- ^ 'Nothing': el fichero no lo dice.
+  , gsCancelled  :: Bool
+  , gsLaunched   :: Maybe UTCTime  -- ^ La hora del OK; 'Nothing': el fichero no la dice.
   }
   deriving (Eq, Show)
+
+-- | El modo como se escribe en @gp.json@.
+modeWord :: Mode -> Text
+modeWord Ver        = "ver"
+modeWord Desarrollo = "desarrollo"
 
 instance ToJSON GpState where
   toJSON s =
@@ -1951,8 +1960,13 @@ instance ToJSON GpState where
       , "ensayo" .= gsEnsayo s
       , "calendario" .= gsCalendario s
       , "carpetas" .= [object ["dia" .= d, "carpeta" .= f] | (d, f) <- gsFolders s]
+      , "modo" .= fmap modeWord (gsMode s)
+      , "cancelado" .= gsCancelled s
+      , "lanzado" .= gsLaunched s
       ]
 
+-- | Sin @modo@ (o con uno que no se conoce) no hay modo; sin @cancelado@, no se canceló;
+-- sin @lanzado@, no hay hora de lanzamiento.
 instance FromJSON GpState where
   parseJSON = withObject "gp.json" $ \o ->
     GpState
@@ -1966,12 +1980,29 @@ instance FromJSON GpState where
       <*> o .: "ensayo"
       <*> o .:? "calendario"
       <*> (mapM (withObject "carpeta" (\x -> (,) <$> x .: "dia" <*> x .: "carpeta")) =<< o .: "carpetas")
+      <*> ((>>= modeOf) <$> o .:? "modo")
+      <*> (fromMaybe False <$> o .:? "cancelado")
+      <*> o .:? "lanzado"
+    where
+      modeOf :: Text -> Maybe Mode
+      modeOf w = find ((== w) . modeWord) [Ver, Desarrollo]
 
 -- | Cuándo acaba el GP de esas sesiones con ese tope: el último inicio más el tope.
 gpLastCap :: NominalDiffTime -> [Slot] -> Maybe UTCTime
 gpLastCap cap slots = case map slotStart slots of
   [] -> Nothing
   xs -> Just (addUTCTime cap (maximum xs))
+
+-- | El GP que hay que relanzar a esa hora: de los no cancelados, con modo y con su último
+-- tope ('gpLastCap') aún por llegar, el de lanzamiento más reciente; uno sin hora de
+-- lanzamiento cuenta como el más viejo. 'Nothing' si no hay ninguno.
+liveGp :: UTCTime -> [GpState] -> Maybe GpState
+liveGp now = listToMaybe . reverse . sortOn gsLaunched . filter alive
+  where
+    alive s =
+      not (gsCancelled s)
+        && isJust (gsMode s)
+        && maybe False (now <) (gpLastCap (fromIntegral (gsCapSeconds s)) (gsSlots s))
 
 -- | Las piezas pendientes (temporizador esperando) de esas carpetas, con su día y su
 -- 'pieceSlug'. Una unidad es de la carpeta más larga que la empieza ('foldersWithUnits').
