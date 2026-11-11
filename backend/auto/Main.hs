@@ -315,7 +315,8 @@ programEvery path unit what minutes line = do
 -- ahora ('findTools'). Lo que ya empezó arranca en el acto. Deja 'returnLine' en el
 -- @resumen.txt@ de cada día que programa. Si @master@ no arranca o no contesta, lo apunta
 -- y programa igual. Sin calendario (ni el fichero del lanzamiento ni la instancia), la
--- cuenta del token se juzga solo con las horas de inicio ('tokenNeed'). Con algo ya programado, o sin GP que vuelva, lo dice y sale sin error.
+-- cuenta del token se juzga solo con las horas de inicio ('tokenNeed'). Con algo ya
+-- programado, o sin GP que vuelva, lo dice y sale sin error.
 arranque :: IO ()
 arranque = do
   busy <- either quit pure =<< autoUnits "dashboardF1-auto-*"
