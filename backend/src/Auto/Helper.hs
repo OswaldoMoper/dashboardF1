@@ -194,6 +194,9 @@ module Auto.Helper
   , gpAlive
   , returningLines
   , returningQuestion
+  , returnLine
+  , returnHeader
+  , returnDayLine
   , pendingKeys
   , folderFor
   , dayLabel
@@ -2030,15 +2033,39 @@ returningLines gps = header : map line gps
         <> (if length gps == 1 then "este GP volvería" else "estos GP volverían")
         <> " al encender el PC:"
     line (folder, s) =
-      "  " <> T.intercalate " · " ([T.pack folder] <> maybe [] (pure . modeWord) (gsMode s) <> maybe [] (pure . launched) (gsLaunched s))
-    launched t =
-      let day = mexicoDay t
-          (_, _, dom) = toGregorian day
-       in "lanzado " <> shortWeekday (dayOfWeek day) <> " " <> T.pack (show dom) <> " " <> clockPair "%H:%M" t
+      "  " <> T.intercalate " · " ([T.pack folder] <> maybe [] (pure . modeWord) (gsMode s) <> maybe [] (pure . launchedText) (gsLaunched s))
+
+-- | «lanzado jue 19 12:00 (18:00)»: el día de México y las dos horas.
+launchedText :: UTCTime -> Text
+launchedText t =
+  let day = mexicoDay t
+      (_, _, dom) = toGregorian day
+   in "lanzado " <> shortWeekday (dayOfWeek day) <> " " <> T.pack (show dom) <> " " <> clockPair "%H:%M" t
 
 -- | La pregunta de @cancela@ tras 'returningLines'.
 returningQuestion :: [a] -> Text
 returningQuestion gps = if length gps == 1 then "¿Cancelarlo? [s/N] " else "¿Cancelarlos? [s/N] "
+
+-- | La línea de @resumen.txt@ de cada día al que le queda algo cuando el GP vuelve tras un
+-- apagado: «vuelve   tras un apagado · lanzado jue 19 12:00 (18:00)».
+returnLine :: UTCTime -> GpState -> Text
+returnLine t s = eventLine t "vuelve" (T.intercalate " · " ("tras un apagado" : maybe [] (pure . launchedText) (gsLaunched s)))
+
+-- | Lo primero que dice @arranque@ cuando hay un GP que vuelve, con la carpeta de su
+-- @gp.json@: «Vuelve el GP de … (desarrollo), lanzado jue 19 12:00 (18:00).».
+returnHeader :: FilePath -> GpState -> Text
+returnHeader folder s =
+  "Vuelve el GP de " <> T.pack folder
+    <> maybe "" (\m -> " (" <> modeWord m <> ")") (gsMode s)
+    <> maybe "" ((", " <>) . launchedText) (gsLaunched s)
+    <> "."
+
+-- | Lo que dice @arranque@ de cada día que programa: «viernes 20: …-viernes-2026-11-20, 9 piezas».
+returnDayLine :: GpDay -> FilePath -> Text
+returnDayLine d folder =
+  dayAndDate (gdDay d) <> ": " <> T.pack folder <> ", " <> T.pack (show n) <> (if n == 1 then " pieza" else " piezas")
+  where
+    n = length (gdPlan d)
 
 -- | Las piezas pendientes (temporizador esperando) de esas carpetas, con su día y su
 -- 'pieceSlug'. Una unidad es de la carpeta más larga que la empieza ('foldersWithUnits').
@@ -2133,10 +2160,13 @@ cancelHeader days = "Se paran" <> dayPart <> ":"
   where
     dayPart
       | null days = ""
-      | otherwise = " (" <> T.intercalate ", " (map dayName days) <> ")"
-    dayName d =
-      let (_, _, dom) = toGregorian d
-       in T.toLower (weekdayDisplay (dayOfWeek d)) <> " " <> T.pack (show dom)
+      | otherwise = " (" <> T.intercalate ", " (map dayAndDate days) <> ")"
+
+-- | «viernes 23»: el día de la semana, en minúsculas, y el del mes.
+dayAndDate :: Day -> Text
+dayAndDate d =
+  let (_, _, dom) = toGregorian d
+   in T.toLower (weekdayDisplay (dayOfWeek d)) <> " " <> T.pack (show dom)
 
 -- | La carpeta del automatismo como se enseña: con @~@ si está dentro del home (el primer
 -- argumento) y, si no, entera; sin barra final.

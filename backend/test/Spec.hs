@@ -5886,6 +5886,28 @@ main = hspec $ do
                          , "  dashboardF1-auto-jueves-2026-11-19 · desarrollo · lanzado jue 19 12:00 (18:00)" ]
                        , "¿Cancelarlos? [s/N] " )
 
+    it "al volver tras un apagado, la línea del resumen y lo que dice el arranque" $
+      let back = novUtc 20 5 5
+          day = Auto.GpDay "viernes" fri [] [Auto.Planned Auto.Vigia back Nothing]
+       in ( Auto.returnLine back st
+          , Auto.returnLine back st {Auto.gsLaunched = Nothing}
+          , Auto.returnHeader "dashboardF1-auto-jueves-2026-11-19" st
+          , Auto.returnDayLine day "dashboardF1-auto-viernes-2026-11-20-2"
+          , Auto.returnDayLine day {Auto.gdPlan = replicate 9 (Auto.Planned Auto.Vigia back Nothing)} "dashboardF1-auto-viernes-2026-11-20-2"
+          )
+            `shouldBe` ( "23:05 (05:05) vuelve   tras un apagado · lanzado jue 19 12:00 (18:00)"
+                       , "23:05 (05:05) vuelve   tras un apagado"
+                       , "Vuelve el GP de dashboardF1-auto-jueves-2026-11-19 (desarrollo), lanzado jue 19 12:00 (18:00)."
+                       , "viernes 20: dashboardF1-auto-viernes-2026-11-20-2, 1 pieza"
+                       , "viernes 20: dashboardF1-auto-viernes-2026-11-20-2, 9 piezas" )
+
+    it "al volver a media sesión, el día en curso sigue en el plan y conserva su carpeta" $
+      let back = novUtc 20 5 5
+          days = Auto.gpPlanFor Auto.Desarrollo Auto.capAfterStart back vegasSlots
+          kept = foldl (\fs d -> Auto.folderFor (Auto.gdLabel d) [] fs (Auto.gdDay d)) folders days
+       in (map Auto.gdDay days, take 2 kept)
+            `shouldBe` ([thu, fri, fromGregorian 2026 11 21], folders)
+
     it "acaba con el último tope del GP; sin sesiones, ya acabó" $
       (Auto.gpLastCap Auto.capAfterStart vegasSlots, Auto.gpLastCap Auto.capAfterStart [])
         `shouldBe` (Just (novUtc 22 10 0), Nothing)

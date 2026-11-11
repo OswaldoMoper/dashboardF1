@@ -14,6 +14,8 @@
 -- Tras el OK se queda enseñando la vista (Ctrl+C sale sin cancelar).
 -- * @dashboardF1-auto estado@ — vuelve a enseñar la vista de la última carpeta.
 -- * @dashboardF1-auto cancela@ — enseña lo que queda en systemd y, con el OK, lo para.
+-- * @dashboardF1-auto arranque@ — tras un apagado, vuelve a programar sin preguntar el GP
+--   que se lanzó y no acabó ni se canceló; para un servicio, no para una terminal.
 -- * @dashboardF1-auto dispara \<carpeta\> \<pieza\>@ — lo que corre cada temporizador.
 --
 -- Las carpetas del día van en @DASHBOARDF1_CARPETA@, o en @~\/MOPER@ sin ella ('mainFolder').
@@ -51,6 +53,7 @@ main = do
   case args of
     ["estado"]                        -> estado
     ["cancela"]                       -> cancela
+    ["arranque"]                      -> arranque
     "dispara" : folder : label : rest -> dispara (T.unpack folder) label rest
     _                                 -> either quit start (parseLaunch args)
 
@@ -274,13 +277,7 @@ launchGp mode l = do
         every = fromMaybe relecturaDefault (laRelectura l)
         -- La mirada a master, cada hora; en un ensayo, al paso de la relectura, para verla repetir.
         watchEvery = if laEnsayo l then every else relecturaDefault
-        program unit what minutes line = do
-          exe <- getExecutablePath
-          workDir <- getCurrentDirectory
-          done <- scheduleEvery exe workDir path unit what [] (fromIntegral (minutes * 60))
-          case done of
-            Right () -> appendLine (path </> "resumen.txt") line
-            Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> what <> ": " <> err)
+        program = programEvery path
     writeGpState (path </> gpStateFile)
       GpState
         { gsSlots = concatMap gdSlots planned
@@ -301,6 +298,71 @@ launchGp mode l = do
     when (mode == Desarrollo) $
       program (relecturaUnit first) relecturaLabel every (relecturaLine okAt every)
   maybe (pure ()) (view . snd) (listToMaybe kept)
+
+-- | Programa en systemd una pieza que se repite cada tantos minutos desde esa carpeta, y
+-- la apunta en su @resumen.txt@ con esa línea; si no se puede, lo dice en la terminal.
+programEvery :: FilePath -> Text -> Text -> Int -> Text -> IO ()
+programEvery path unit what minutes line = do
+  exe <- getExecutablePath
+  workDir <- getCurrentDirectory
+  done <- scheduleEvery exe workDir path unit what [] (fromIntegral (minutes * 60))
+  case done of
+    Right () -> appendLine (path </> "resumen.txt") line
+    Left err -> TIO.hPutStrLn stderr ("no se pudo programar " <> what <> ": " <> err)
+
+-- | Tras un apagado: vuelve a programar, sin preguntar, el GP que vuelve ('liveGp'), con
+-- las horas, el modo, el puerto y las carpetas de su @gp.json@, y las herramientas de
+-- ahora ('findTools'). Lo que ya empezó arranca en el acto. Deja 'returnLine' en el
+-- @resumen.txt@ de cada día que programa. Si @master@ no arranca o no contesta, lo apunta
+-- y programa igual. Con algo ya programado, o sin GP que vuelva, lo dice y sale sin error.
+arranque :: IO ()
+arranque = do
+  busy <- either quit pure =<< autoUnits "dashboardF1-auto-*"
+  unless (null busy) $ say "Ya hay algo programado: no se relanza nada." >> exitSuccess
+  now <- getCurrentTime
+  gps <- gpStates
+  case [(f, s, m) | (f, s) <- gps, Just s == liveGp now (map snd gps), Just m <- [gsMode s]] of
+    [] -> say "No hay ningún GP que volver a lanzar."
+    (first, st, mode) : _ -> do
+      say (returnHeader first st)
+      base <- mainFolder
+      tools <- findTools (modeLauncher mode)
+      looked <- lookAfterMaster (gsNix st) (gsMasterDir st)
+      masterNote <- case looked of
+        Left err -> pure (masterFailLine now err)
+        Right UseRunning -> pure (masterLine now UseRunning)
+        Right action -> do
+          say (masterLine now action)
+          up <- waitForMaster masterWaitStep masterWaitTries (\s -> say ("  master en :3000 aún no contesta (" <> T.pack (show s) <> " s)"))
+          failed <- getCurrentTime
+          pure $
+            if up
+              then masterLine now action
+              else masterFailLine failed ("no contesta tras " <> T.pack (show (masterWaitStep * masterWaitTries `div` 60)) <> " min")
+      say masterNote
+      okAt <- getCurrentTime
+      existing <- listDirectory base
+      let planned = gpPlanFor mode (fromIntegral (gsCapSeconds st)) okAt (gsSlots st)
+          label d = if gsEnsayo st then "ensayo" else gdLabel d
+          folders = foldl (\fs d -> folderFor (label d) existing fs (gdDay d)) (gsFolders st) planned
+          days = [(d, folder) | d <- planned, Just folder <- [lookup (gdDay d) folders]]
+          journals = zip (map gdDay planned) (checksLogWindows okAt planned)
+          path = base </> first
+          noteIn = maybe first snd (listToMaybe days)
+      mapM_ (say . uncurry returnDayLine) days
+      -- Del último día al primero: la última carpeta escrita es la del primero que queda.
+      forM_ (reverse days) $ \(d, folder) -> do
+        let dayPath = base </> folder
+        createDirectoryIfMissing True dayPath
+        appendLine (dayPath </> "resumen.txt") (returnLine okAt st)
+        when (folder == noteIn) $ appendLine (dayPath </> "resumen.txt") masterNote
+        programDay (gsLog st) (tokenNeed [] (gdDay d) (gdSlots d)) (join (lookup (gdDay d) journals)) tools (gsPort st)
+          dayPath folder (gdSlots d) okAt (gdPlan d) (gdPlan d)
+      when (null days) $ appendLine (path </> "resumen.txt") masterNote
+      writeGpState (path </> gpStateFile) st {gsTools = tools, gsFolders = folders}
+      programEvery path (masterWatchUnit first) masterWatchLabel relecturaDefault (masterWatchLine okAt relecturaDefault)
+      when (mode == Desarrollo) $
+        programEvery path (relecturaUnit first) relecturaLabel relecturaDefault (relecturaLine okAt relecturaDefault)
 
 -- | La mirada horaria a @master@ ('masterWatchLabel'), desde la carpeta del primer día:
 -- tras el último tope del GP para su temporizador; si no, mira @master@
