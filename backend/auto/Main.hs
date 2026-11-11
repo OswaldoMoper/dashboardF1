@@ -314,7 +314,8 @@ programEvery path unit what minutes line = do
 -- las horas, el modo, el puerto y las carpetas de su @gp.json@, y las herramientas de
 -- ahora ('findTools'). Lo que ya empezó arranca en el acto. Deja 'returnLine' en el
 -- @resumen.txt@ de cada día que programa. Si @master@ no arranca o no contesta, lo apunta
--- y programa igual. Con algo ya programado, o sin GP que vuelva, lo dice y sale sin error.
+-- y programa igual. Sin calendario (ni el fichero del lanzamiento ni la instancia), la
+-- cuenta del token se juzga solo con las horas de inicio ('tokenNeed'). Con algo ya programado, o sin GP que vuelva, lo dice y sale sin error.
 arranque :: IO ()
 arranque = do
   busy <- either quit pure =<< autoUnits "dashboardF1-auto-*"
@@ -340,6 +341,15 @@ arranque = do
               then masterLine now action
               else masterFailLine failed ("no contesta tras " <> T.pack (show (masterWaitStep * masterWaitTries `div` 60)) <> " min")
       say masterNote
+      -- El calendario, para la cuenta del token: el fichero del lanzamiento o la instancia.
+      asked <- case gsCalendario st of
+        Just file -> do
+          exists <- doesFileExist file
+          if exists then Just <$> calendarFromFile file else pure Nothing
+        Nothing -> askCalendar (gsPort st)
+      let entries = case asked of
+            Just (Calendar es) -> es
+            _                  -> []
       okAt <- getCurrentTime
       existing <- listDirectory base
       let planned = gpPlanFor mode (fromIntegral (gsCapSeconds st)) okAt (gsSlots st)
@@ -356,7 +366,7 @@ arranque = do
         createDirectoryIfMissing True dayPath
         appendLine (dayPath </> "resumen.txt") (returnLine okAt st)
         when (folder == noteIn) $ appendLine (dayPath </> "resumen.txt") masterNote
-        programDay (gsLog st) (tokenNeed [] (gdDay d) (gdSlots d)) (join (lookup (gdDay d) journals)) tools (gsPort st)
+        programDay (gsLog st) (tokenNeed entries (gdDay d) (gdSlots d)) (join (lookup (gdDay d) journals)) tools (gsPort st)
           dayPath folder (gdSlots d) okAt (gdPlan d) (gdPlan d)
       when (null days) $ appendLine (path </> "resumen.txt") masterNote
       writeGpState (path </> gpStateFile) st {gsTools = tools, gsFolders = folders}
