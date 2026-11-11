@@ -19,6 +19,49 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
+      # Runs once per user session and stays active, so a rebuild does not run it again.
+      flake.nixosModules.default = { config, lib, pkgs, ... }:
+        let
+          cfg = config.services.dashboardF1-arranque;
+        in
+        {
+          options.services.dashboardF1-arranque = {
+            enable = lib.mkEnableOption "scheduling again, when the user session starts, the GP that was launched and neither finished nor was cancelled";
+            user = lib.mkOption {
+              type = lib.types.str;
+              description = "User whose session runs the service; it does nothing in any other.";
+            };
+            directory = lib.mkOption {
+              type = lib.types.str;
+              description = "Clone of the repository: the working directory of the service and of what it schedules.";
+            };
+            pinned = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Run the copy this flake pins instead of `nix run .#auto` from the clone.";
+            };
+          };
+
+          config = lib.mkIf cfg.enable {
+            systemd.user.services.dashboardF1-arranque = {
+              description = "dashboardF1: el GP que vuelve tras un apagado";
+              wantedBy = [ "default.target" ];
+              unitConfig.ConditionUser = cfg.user;
+              restartIfChanged = false;
+              path = [ config.nix.package pkgs.git ];
+              serviceConfig = {
+                Type = "oneshot";
+                RemainAfterExit = true;
+                WorkingDirectory = cfg.directory;
+                ExecStart =
+                  if cfg.pinned
+                  then "${inputs.self.apps.${pkgs.stdenv.hostPlatform.system}.auto.program} arranque"
+                  else "${config.nix.package}/bin/nix run .#auto -- arranque";
+              };
+            };
+          };
+        };
+
       perSystem = { pkgs, self', system, ... }:
       let
         # Node 22 for the GHCJS toolchain and the microservice comes from the main nixpkgs.
