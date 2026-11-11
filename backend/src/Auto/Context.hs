@@ -23,7 +23,7 @@ module Auto.Context
   , lookAfterMaster
   , waitForMaster
   , journalToFile
-  , openf1Slots
+  , openf1Calendar
   , readGpState
   , writeGpState
   , gpStates
@@ -69,11 +69,10 @@ import           Auto.Helper                (Account, CalendarAnswer,
                                              recordingStopLine,
                                              recordingsBefore, reopenLine,
                                              scriptArgs, scriptLog, scriptStep,
-                                             scriptStopLine, slotsFromCalendar,
-                                             slotsOn, startLine, tokenCheck,
-                                             unitName, vigiaDone, vigiaGone,
-                                             vigiaJsonName, vigiaLine,
-                                             vigiaReading, vigiaStep,
+                                             scriptStopLine, slotsOn, startLine,
+                                             tokenCheck, unitName, vigiaDone,
+                                             vigiaGone, vigiaJsonName,
+                                             vigiaLine, vigiaReading, vigiaStep,
                                              vigiaStopLine)
 import           Common.Origin              (fetchedAtHeader, originHeader,
                                              sourceHeader)
@@ -104,7 +103,7 @@ import           Data.Time.Clock            (NominalDiffTime, UTCTime,
 import           Handler.FastF1.Manager     (readTokenFile)
 import           Handler.Historical.Manager (fetchSeasonSchedule)
 import           Handler.Live.Context       (fetchSchedule)
-import           Handler.Live.Helper        (calendarEntries)
+import           Handler.Live.Helper        (CalendarEntry, calendarEntries)
 import           Handler.OpenF1.Manager     (latestSession, openf1Base)
 import qualified Network.HTTP.Client        as HC
 import qualified Network.HTTP.Req           as R
@@ -811,12 +810,12 @@ journalToFile window file = do
 
 -- | Las sesiones que OpenF1 da ahora (las que no han terminado), como las sirve @master@.
 -- 'Nothing' si no contesta (un 401, por ejemplo) o no trae ninguna.
-openf1Slots :: IO (Maybe [Slot])
-openf1Slots = do
+openf1Calendar :: IO (Maybe [CalendarEntry])
+openf1Calendar = do
   cfg <- loadConfig
   now <- getCurrentTime
   result <- trySync (fetchSchedule cfg now) :: IO (Either SomeException ([ScheduledSession], Map Int Text))
-  pure (either (const Nothing) (nonEmpty . slotsFromCalendar . calendarEntries . fst) result)
+  pure (either (const Nothing) (nonEmpty . calendarEntries . fst) result)
 
 -- | El 'GpState' de ese fichero; 'Left' con el motivo si no existe o no se entiende.
 readGpState :: FilePath -> IO (Either Text GpState)

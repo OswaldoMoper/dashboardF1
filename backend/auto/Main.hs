@@ -410,14 +410,14 @@ runRelectura path = do
     appendLine (path </> "resumen.txt") (quitLine now relecturaLabel)
     stopTimer (relecturaUnit (takeFileName path))
     exitSuccess
-  fresh <- case gsCalendario st of
+  entries <- case gsCalendario st of
     Just file -> do
       answer <- calendarFromFile file
       pure (case answer of
-        Calendar es | not (null es) -> Just (slotsFromCalendar es)
+        Calendar es | not (null es) -> Just es
         _                           -> Nothing)
-    Nothing -> openf1Slots
-  let moves = slotMoves (gsSlots st) fresh
+    Nothing -> openf1Calendar
+  let moves = slotMoves (gsSlots st) (slotsFromCalendar <$> entries)
   unless (null moves) $ do
     timers <- either (const []) id <$> autoTimers "dashboardF1-auto-*"
     existing <- listDirectory base
@@ -438,7 +438,7 @@ runRelectura path = do
       Schedule d p -> do
         let day = find ((== d) . gdDay) newDays
             daySlots = maybe [] gdSlots day
-        programDay (gsLog st) (tokenNeed [] d daySlots) Nothing (gsTools st) (gsPort st)
+        programDay (gsLog st) (tokenNeed (fromMaybe [] entries) d daySlots) Nothing (gsTools st) (gsPort st)
           (base </> folderOf d) (folderOf d) daySlots now (maybe [p] gdPlan day) [p]
     writeGpState (path </> gpStateFile) st {gsSlots = newSlots, gsFolders = folders}
 
