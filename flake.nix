@@ -403,7 +403,9 @@
               wait "''${pids[@]}" 2>/dev/null || true
               rm -f "$sock"
             }
-            trap cleanup EXIT INT TERM
+            trap cleanup EXIT
+            # A stop while the microservice is still loading ends clean, as one after it does.
+            trap 'cleanup; exit 0' INT TERM
 
             # The socket opens only after the microservice's startup load.
             waited=0
