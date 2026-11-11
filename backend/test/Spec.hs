@@ -5806,6 +5806,7 @@ main = hspec $ do
             , Auto.gsMode = Just Auto.Desarrollo
             , Auto.gsCancelled = False
             , Auto.gsLaunched = Just launched
+            , Auto.gsRelectura = Just 5
             }
         -- El último tope de 'st': la carrera (domingo 22, 04:00 UTC) más seis horas.
         lastCap = novUtc 22 10 0
@@ -5815,12 +5816,17 @@ main = hspec $ do
       let other = st {Auto.gsMode = Just Auto.Ver, Auto.gsCancelled = True}
        in map (eitherDecode . encode) [st, other] `shouldBe` [Right st, Right other]
 
-    it "un gp.json de antes, sin modo, cancelado ni lanzado, se lee: sin modo, sin cancelar y sin hora" $
+    it "un gp.json de antes, sin modo, cancelado, lanzado ni relectura, se lee: sin modo, sin cancelar, sin hora y sin minutos" $
       let old = case toJSON st of
-            Object o -> Object (foldr KM.delete o ["modo", "cancelado", "lanzado"])
+            Object o -> Object (foldr KM.delete o ["modo", "cancelado", "lanzado", "relectura"])
             v        -> v
        in parseEither parseJSON old
-            `shouldBe` Right st {Auto.gsMode = Nothing, Auto.gsCancelled = False, Auto.gsLaunched = Nothing}
+            `shouldBe` Right st
+              {Auto.gsMode = Nothing, Auto.gsCancelled = False, Auto.gsLaunched = Nothing, Auto.gsRelectura = Nothing}
+
+    it "la mirada y la relectura se repiten cada hora; con --relectura, la relectura a su paso y la mirada solo en un ensayo" $
+      [Auto.repeatMinutes e r | e <- [False, True], r <- [Nothing, Just 5]]
+        `shouldBe` [(60, 60), (60, 5), (60, 60), (5, 5)]
 
     it "un modo que no se conoce es como no tenerlo" $
       let unknown = case toJSON st of

@@ -274,9 +274,7 @@ launchGp mode l = do
           (gdSlots d) okAt (gdPlan d) (gdPlan d)
   forM_ (listToMaybe kept) $ \(_, first) -> do
     let path = base </> first
-        every = fromMaybe relecturaDefault (laRelectura l)
-        -- La mirada a master, cada hora; en un ensayo, al paso de la relectura, para verla repetir.
-        watchEvery = if laEnsayo l then every else relecturaDefault
+        (watchEvery, every) = repeatMinutes (laEnsayo l) (laRelectura l)
         program = programEvery path
     writeGpState (path </> gpStateFile)
       GpState
@@ -293,6 +291,7 @@ launchGp mode l = do
         , gsMode = Just mode
         , gsCancelled = False
         , gsLaunched = Just okAt
+        , gsRelectura = laRelectura l
         }
     program (masterWatchUnit first) masterWatchLabel watchEvery (masterWatchLine okAt watchEvery)
     when (mode == Desarrollo) $
@@ -371,9 +370,10 @@ arranque = do
           dayPath folder (gdSlots d) okAt (gdPlan d) (gdPlan d)
       when (null days) $ appendLine (path </> "resumen.txt") masterNote
       writeGpState (path </> gpStateFile) st {gsTools = tools, gsFolders = folders}
-      programEvery path (masterWatchUnit first) masterWatchLabel relecturaDefault (masterWatchLine okAt relecturaDefault)
+      let (watchEvery, every) = repeatMinutes (gsEnsayo st) (gsRelectura st)
+      programEvery path (masterWatchUnit first) masterWatchLabel watchEvery (masterWatchLine okAt watchEvery)
       when (mode == Desarrollo) $
-        programEvery path (relecturaUnit first) relecturaLabel relecturaDefault (relecturaLine okAt relecturaDefault)
+        programEvery path (relecturaUnit first) relecturaLabel every (relecturaLine okAt every)
 
 -- | La mirada horaria a @master@ ('masterWatchLabel'), desde la carpeta del primer día:
 -- tras el último tope del GP para su temporizador; si no, mira @master@

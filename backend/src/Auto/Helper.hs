@@ -187,6 +187,7 @@ module Auto.Helper
   , relecturaUnit
   , relecturaLine
   , relecturaDefault
+  , repeatMinutes
   , gpStateFile
   , GpState (..)
   , gpLastCap
@@ -1932,6 +1933,14 @@ relecturaLine t every = eventLine t "programa" (relecturaLabel <> " · cada " <>
 relecturaDefault :: Int
 relecturaDefault = 60
 
+-- | Cada cuántos minutos se repiten la mirada a @master@ y la relectura, con si es un
+-- ensayo y los minutos de @--relectura@: la relectura, a esos minutos o cada hora; la
+-- mirada, cada hora salvo en un ensayo, que va al paso de la relectura.
+repeatMinutes :: Bool -> Maybe Int -> (Int, Int)
+repeatMinutes ensayo asked = (if ensayo then every else relecturaDefault, every)
+  where
+    every = fromMaybe relecturaDefault asked
+
 -- | El fichero de la carpeta del primer día con lo que la relectura necesita.
 gpStateFile :: FilePath
 gpStateFile = "gp.json"
@@ -1952,6 +1961,7 @@ data GpState = GpState
   , gsMode       :: Maybe Mode     -- ^ 'Nothing': el fichero no lo dice.
   , gsCancelled  :: Bool
   , gsLaunched   :: Maybe UTCTime  -- ^ La hora del OK; 'Nothing': el fichero no la dice.
+  , gsRelectura  :: Maybe Int      -- ^ Los minutos de @--relectura@; 'Nothing': sin ella.
   }
   deriving (Eq, Show)
 
@@ -1979,10 +1989,11 @@ instance ToJSON GpState where
       , "modo" .= fmap modeWord (gsMode s)
       , "cancelado" .= gsCancelled s
       , "lanzado" .= gsLaunched s
+      , "relectura" .= gsRelectura s
       ]
 
 -- | Sin @modo@ (o con uno que no se conoce) no hay modo; sin @cancelado@, no se canceló;
--- sin @lanzado@, no hay hora de lanzamiento.
+-- sin @lanzado@, no hay hora de lanzamiento; sin @relectura@, se lanzó sin ella.
 instance FromJSON GpState where
   parseJSON = withObject "gp.json" $ \o ->
     GpState
@@ -1999,6 +2010,7 @@ instance FromJSON GpState where
       <*> ((>>= modeOf) <$> o .:? "modo")
       <*> (fromMaybe False <$> o .:? "cancelado")
       <*> o .:? "lanzado"
+      <*> o .:? "relectura"
     where
       modeOf :: Text -> Maybe Mode
       modeOf w = find ((== w) . modeWord) [Ver, Desarrollo]
