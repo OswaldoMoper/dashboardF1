@@ -26,6 +26,7 @@ module Auto.Context
   , openf1Slots
   , readGpState
   , writeGpState
+  , gpStates
   , stopUnits
   , mainFolder
   , autoFolders
@@ -50,9 +51,9 @@ import           Auto.Helper                (Account, CalendarAnswer,
                                              VigiaWatch (..), askOrder,
                                              captureDue, captureName, checkLine,
                                              checksStopLine, checksSummary,
-                                             inPause, instanceChange,
-                                             jolpicaSlots, journalArgs,
-                                             liveTable, logVerdict,
+                                             gpStateFile, inPause,
+                                             instanceChange, jolpicaSlots,
+                                             journalArgs, liveTable, logVerdict,
                                              manualVigiaDelay, masterAction,
                                              masterLogName, masterResetArgs,
                                              masterRunArgs, masterUnit,
@@ -822,6 +823,14 @@ readGpState file = do
 
 writeGpState :: FilePath -> GpState -> IO ()
 writeGpState file = BL.writeFile file . encode
+
+-- | Los @gp.json@ de las carpetas del automatismo ('autoFolders'), cada uno con su
+-- carpeta, por nombre; los que no se entienden no salen.
+gpStates :: IO [(FilePath, GpState)]
+gpStates = do
+  base <- mainFolder
+  folders <- sortOn id <$> autoFolders
+  concat <$> mapM (\f -> either (const []) (\s -> [(f, s)]) <$> readGpState (base </> f </> gpStateFile)) folders
 
 -- | Para todo lo que casa con el prefijo y limpia lo que había fallado. Primero los
 -- temporizadores y después los servicios: al revés, parar un servicio descarga su

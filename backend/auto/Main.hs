@@ -442,12 +442,27 @@ existingBase = do
     quit ("No existe " <> shown <> ": créala, o pon otra carpeta en DASHBOARDF1_CARPETA.")
   pure found
 
+-- | Con el OK, para lo programado y marca cancelado cada GP que volvería ('gpAlive'). Sin
+-- nada programado, enseña esos GP ('returningLines') y, con el OK, los marca.
 cancela :: IO ()
 cancela = do
   units <- either quit pure =<< autoUnits "dashboardF1-auto-*"
   timers <- either quit pure =<< autoTimers "dashboardF1-auto-*"
+  base <- mainFolder
   let states = unitStates units timers
-  when (null units) $ say "No hay nada programado." >> exitSuccess
+      returning at = filter (gpAlive at . snd) <$> gpStates
+      mark = mapM_ (\(f, st) -> writeGpState (base </> f </> gpStateFile) st {gsCancelled = True})
+  when (null units) $ do
+    gps <- returning =<< getCurrentTime
+    when (null gps) $ say "No hay nada programado." >> exitSuccess
+    mapM_ say (returningLines gps)
+    sure <- confirm (returningQuestion gps)
+    unless sure $ say "No se cancela nada." >> exitSuccess
+    at <- getCurrentTime
+    mapM_ (\(f, _) -> appendLine (base </> f </> "resumen.txt") (cancelLine at)) gps
+    mark gps
+    say "Cancelado."
+    exitSuccess
   folders <- sortOn (\f -> (folderDay f, f)) <$> autoFolders
   let pending = foldersWithUnits folders (map urUnit units)
   say (cancelHeader (nub (mapMaybe folderDay pending)))
@@ -455,10 +470,11 @@ cancela = do
   ok <- confirm "¿Cancelar? [s/N] "
   unless ok $ say "No se cancela nada." >> exitSuccess
   now <- getCurrentTime
-  base <- mainFolder
   -- Antes de parar: lo que corre escribe su «para … (cancelado)» al pararse.
   mapM_ (\f -> appendLine (base </> f </> "resumen.txt") (cancelLine now)) pending
   stopUnits "dashboardF1-auto-"
+  -- Después de parar: la relectura reescribe @gp.json@ mientras corre.
+  mark =<< returning now
   say "Cancelado."
 
 -- | El grabador del store que pone @nix run .#auto@ en @DASHBOARDF1_RECORD@; sin ella, el

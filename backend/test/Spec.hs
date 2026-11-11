@@ -5863,6 +5863,29 @@ main = hspec $ do
        in (Auto.liveGp (novUtc 10 17 44) [rehearsal], Auto.liveGp (novUtc 10 17 45) [rehearsal])
             `shouldBe` (Just rehearsal, Nothing)
 
+    it "puede volver hasta su tope el que no se canceló y dice su modo" $
+      ( map (`Auto.gpAlive` st) [friNight, addUTCTime (-1) lastCap, lastCap]
+      , map (Auto.gpAlive friNight) [st {Auto.gsCancelled = True}, st {Auto.gsMode = Nothing}]
+      )
+        `shouldBe` ([True, True, False], [False, False])
+
+    it "cancela, sin nada programado, enseña el GP que volvería: carpeta, modo y cuándo se lanzó" $
+      let first = "dashboardF1-auto-jueves-2026-11-19"
+          second = "dashboardF1-auto-ensayo-2026-11-10"
+          rehearsal = st {Auto.gsMode = Just Auto.Ver, Auto.gsLaunched = Nothing}
+       in ( Auto.returningLines [(first, st)]
+          , Auto.returningQuestion [(first, st)]
+          , Auto.returningLines [(second, rehearsal), (first, st)]
+          , Auto.returningQuestion [(second, rehearsal), (first, st)]
+          )
+            `shouldBe` ( [ "No hay nada programado, pero este GP volvería al encender el PC:"
+                         , "  dashboardF1-auto-jueves-2026-11-19 · desarrollo · lanzado jue 19 12:00 (18:00)" ]
+                       , "¿Cancelarlo? [s/N] "
+                       , [ "No hay nada programado, pero estos GP volverían al encender el PC:"
+                         , "  dashboardF1-auto-ensayo-2026-11-10 · ver"
+                         , "  dashboardF1-auto-jueves-2026-11-19 · desarrollo · lanzado jue 19 12:00 (18:00)" ]
+                       , "¿Cancelarlos? [s/N] " )
+
     it "acaba con el último tope del GP; sin sesiones, ya acabó" $
       (Auto.gpLastCap Auto.capAfterStart vegasSlots, Auto.gpLastCap Auto.capAfterStart [])
         `shouldBe` (Just (novUtc 22 10 0), Nothing)

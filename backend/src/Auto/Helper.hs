@@ -190,6 +190,9 @@ module Auto.Helper
   , GpState (..)
   , gpLastCap
   , liveGp
+  , gpAlive
+  , returningLines
+  , returningQuestion
   , pendingKeys
   , folderFor
   , dayLabel
@@ -474,14 +477,16 @@ moveLine t m =
   eventLine t "reprograma" (sessionLabel (mvSession m) <> " · " <> dayClock (mvFrom m) <> " → " <> dayClock (mvTo m))
   where
     dayClock x = shortWeekday (dayOfWeek (mexicoDay x)) <> " " <> mexicoHour x
-    shortWeekday d = case d of
-      Monday    -> "lun"
-      Tuesday   -> "mar"
-      Wednesday -> "mié"
-      Thursday  -> "jue"
-      Friday    -> "vie"
-      Saturday  -> "sáb"
-      Sunday    -> "dom"
+
+shortWeekday :: DayOfWeek -> Text
+shortWeekday d = case d of
+  Monday    -> "lun"
+  Tuesday   -> "mar"
+  Wednesday -> "mié"
+  Thursday  -> "jue"
+  Friday    -> "vie"
+  Saturday  -> "sáb"
+  Sunday    -> "dom"
 
 -- | Cuánto después del inicio previsto de la P1 empieza la foto del reloj, y cuánto dura:
 -- de 11:30 a 12:00–12:15, la ventana en que la pestaña se cierra a mano.
@@ -1997,12 +2002,35 @@ gpLastCap cap slots = case map slotStart slots of
 -- tope ('gpLastCap') aún por llegar, el de lanzamiento más reciente; uno sin hora de
 -- lanzamiento cuenta como el más viejo. 'Nothing' si no hay ninguno.
 liveGp :: UTCTime -> [GpState] -> Maybe GpState
-liveGp now = listToMaybe . reverse . sortOn gsLaunched . filter alive
+liveGp now = listToMaybe . reverse . sortOn gsLaunched . filter (gpAlive now)
+
+-- | Si ese GP puede volver a esa hora: no cancelado, con modo y con su último tope
+-- ('gpLastCap') aún por llegar.
+gpAlive :: UTCTime -> GpState -> Bool
+gpAlive now s =
+  not (gsCancelled s)
+    && isJust (gsMode s)
+    && maybe False (now <) (gpLastCap (fromIntegral (gsCapSeconds s)) (gsSlots s))
+
+-- | Lo que enseña @cancela@ cuando no hay nada programado pero esos GP, cada uno con la
+-- carpeta de su @gp.json@, volverían: la cabecera y una línea por GP.
+returningLines :: [(FilePath, GpState)] -> [Text]
+returningLines gps = header : map line gps
   where
-    alive s =
-      not (gsCancelled s)
-        && isJust (gsMode s)
-        && maybe False (now <) (gpLastCap (fromIntegral (gsCapSeconds s)) (gsSlots s))
+    header =
+      "No hay nada programado, pero "
+        <> (if length gps == 1 then "este GP volvería" else "estos GP volverían")
+        <> " al encender el PC:"
+    line (folder, s) =
+      "  " <> T.intercalate " · " ([T.pack folder] <> maybe [] (pure . modeWord) (gsMode s) <> maybe [] (pure . launched) (gsLaunched s))
+    launched t =
+      let day = mexicoDay t
+          (_, _, dom) = toGregorian day
+       in "lanzado " <> shortWeekday (dayOfWeek day) <> " " <> T.pack (show dom) <> " " <> clockPair "%H:%M" t
+
+-- | La pregunta de @cancela@ tras 'returningLines'.
+returningQuestion :: [a] -> Text
+returningQuestion gps = if length gps == 1 then "¿Cancelarlo? [s/N] " else "¿Cancelarlos? [s/N] "
 
 -- | Las piezas pendientes (temporizador esperando) de esas carpetas, con su día y su
 -- 'pieceSlug'. Una unidad es de la carpeta más larga que la empieza ('foldersWithUnits').
