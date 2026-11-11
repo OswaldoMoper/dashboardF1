@@ -102,6 +102,7 @@ module Auto.Helper
   , recordingStallAfter
   , maxRelaunches
   , recordingFile
+  , recordingsBefore
   , recordingLog
   , recorderArgs
   , RecordingEnd (..)
@@ -1084,6 +1085,12 @@ recordingFile :: Account -> Text -> Int -> FilePath
 recordingFile account session n =
   recordingStem account session <> (if n <= 1 then "" else "-" <> show n) <> ".txt"
 
+-- | Cuántas veces de esa grabación hay ya entre esos nombres de fichero: el número más
+-- alto con fichero, o 0. La siguiente vez es esa más una, para no escribir sobre ninguna.
+recordingsBefore :: Account -> Text -> [FilePath] -> Int
+recordingsBefore account session existing =
+  maximum (0 : [n | n <- [1 .. length existing], recordingFile account session n `elem` existing])
+
 -- | Donde va lo que imprime @dashboardF1-record@: uno por grabación, para todas las veces.
 recordingLog :: Account -> Text -> FilePath
 recordingLog account session = recordingStem account session <> ".log"
@@ -1115,7 +1122,8 @@ recordingStallAfter = 60
 -- | La vez en curso de una grabación, vista en un minuto.
 data RecordingRun = RecordingRun
   { rrAlive    :: Bool                      -- ^ Si @dashboardF1-record@ sigue vivo.
-  , rrRuns     :: Int                       -- ^ La vez en curso (desde 1), que es también las que cuentan.
+  , rrRuns     :: Int                       -- ^ La vez en curso: el número de su fichero ('recordingFile').
+  , rrSkipped  :: Int                       -- ^ Las veces que ya había en la carpeta ('recordingsBefore'): no cuentan.
   , rrRetries  :: Int                       -- ^ Los intentos sin conectar que la precedieron.
   , rrLaunched :: UTCTime
   , rrFile     :: Maybe (Integer, UTCTime)  -- ^ El tamaño y la última escritura de su fichero.
@@ -1147,7 +1155,7 @@ recordingStep now cap slot table run
   | sessionFinalised now slot table = StopRecording RecFinalised
   | maybe False (now >=) cap = StopRecording RecCapped
   | ended && empty = Relaunch (rrRuns run) Unconnected
-  | ended && rrRuns run > maxRelaunches = StopRecording RecGaveUp
+  | ended && rrRuns run - rrSkipped run > maxRelaunches = StopRecording RecGaveUp
   | ended = Relaunch (rrRuns run + 1) (if rrAlive run then Stalled lastWrite else Cut)
   | not empty && rrRetries run > 0 = Connected
   | otherwise = KeepRecording

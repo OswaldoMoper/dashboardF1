@@ -66,7 +66,8 @@ import           Auto.Helper                (Account, CalendarAnswer,
                                              recordingFile, recordingLog,
                                              recordingName, recordingStep,
                                              recordingStepLine,
-                                             recordingStopLine, reopenLine,
+                                             recordingStopLine,
+                                             recordingsBefore, reopenLine,
                                              scriptArgs, scriptLog, scriptStep,
                                              scriptStopLine, slotsFromCalendar,
                                              slotsOn, startLine, tokenCheck,
@@ -279,16 +280,19 @@ waitNextMinute start = do
 -- @\/api\/live@ como el vigía y su fichero ('recordingStep'). Con el Finalised o el tope le
 -- manda SIGINT, como Ctrl+C, y espera a que cierre; si salió solo o su fichero dejó de
 -- crecer, lo para y lo relanza a @-2@, @-3@… (la vez que no conectó, en el mismo número).
+-- Empieza en el número siguiente al de las veces que ya hay en la carpeta
+-- ('recordingsBefore'): no escribe sobre ninguna.
 -- Con SIGINT (lo que manda @cancela@ a toda la unidad) espera al grabador y dice que la
 -- cancelaron. Cada paso deja su línea en @resumen.txt@.
 runRecording :: FilePath -> Text -> Account -> Slot -> FilePath -> Dispatch -> IO ()
 runRecording folder label account slot recorder d = do
   start <- getCurrentTime
   appendLine summary (startLine start label)
-  current <- newIORef =<< launchRecorder 1
+  skipped <- recordingsBefore account session <$> listDirectory folder
+  current <- newIORef =<< launchRecorder (skipped + 1)
   (end, runs) <-
     handleJust cancelled (\e -> pure (e, 0))
-      (watch start current (launched 1 0 start) (Just (diPort d)))
+      (watch start current (launched skipped (skipped + 1) 0 start) (Just (diPort d)))
   readIORef current >>= mapM_ (\ph -> do
     alive <- isNothing <$> getProcessExitCode ph
     when alive (stopRecorder (end /= RecCancelled) ph))
@@ -334,10 +338,11 @@ runRecording folder label account slot recorder d = do
           writeIORef current =<< launchRecorder n
           relaunched <- getCurrentTime
           let retries = if why == Unconnected then rrRetries seen + 1 else 0
-          watch start current (launched n retries relaunched) port
-        StopRecording end -> pure (end, rrRuns seen)
-    launched n retries at =
-      RecordingRun {rrAlive = True, rrRuns = n, rrRetries = retries, rrLaunched = at, rrFile = Nothing}
+          watch start current (launched (rrSkipped seen) n retries relaunched) port
+        StopRecording end -> pure (end, rrRuns seen - rrSkipped seen)
+    launched skipped n retries at =
+      RecordingRun
+        {rrAlive = True, rrRuns = n, rrSkipped = skipped, rrRetries = retries, rrLaunched = at, rrFile = Nothing}
 
 -- | Para al grabador: SIGINT a su grupo, como Ctrl+C (sin él si ya se lo mandó
 -- @cancela@), y si en 30 s no ha salido, SIGTERM.

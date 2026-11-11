@@ -6160,6 +6160,18 @@ main = hspec $ do
       )
         `shouldBe` (Auto.StopRecording Auto.RecCapped, [Auto.Relaunch 6 Auto.Cut, Auto.StopRecording Auto.RecGaveUp])
 
+    it "con veces de antes en la carpeta, la grabación sigue en el número siguiente al más alto" $
+      ( Auto.recordingsBefore Auto.WithoutAccount "Qualifying" ["resumen.txt", "grabacion-q.log", "grabacion-q-cuenta.txt", "grabacion-p3.txt"]
+      , Auto.recordingsBefore Auto.WithoutAccount "Qualifying" ["grabacion-q.txt", "resumen.txt"]
+      , Auto.recordingsBefore Auto.WithoutAccount "Qualifying" ["grabacion-q-3.txt", "grabacion-q.txt", "vigia.txt", "grabacion-q.log"]
+      , Auto.recordingsBefore Auto.WithAccount "Qualifying" ["grabacion-q.txt", "grabacion-q-cuenta.txt", "grabacion-q-cuenta-2.txt"]
+      )
+        `shouldBe` (0, 1, 3, 2)
+
+    it "las veces de antes no gastan relanzamientos: con dos en la carpeta, deja de relanzar tras la 8" $
+      map (\runs -> Auto.recordingStep (atUtc 23 18 30) Nothing practice1Slot Nothing ((writing False runs (atUtc 23 18 30)) {Auto.rrSkipped = 2})) [6, 7, 8]
+        `shouldBe` [Auto.Relaunch 7 Auto.Cut, Auto.Relaunch 8 Auto.Cut, Auto.StopRecording Auto.RecGaveUp]
+
     it "un fichero que no crece 1 min desde la hora de su sesión: relanza; antes de esa hora, no" $
       let step now = Auto.recordingStep now Nothing practice1Slot Nothing
           snapshot = writing True 1 (atUtc 23 16 46)
@@ -8870,6 +8882,7 @@ writing alive runs at =
   Auto.RecordingRun
     { Auto.rrAlive = alive
     , Auto.rrRuns = runs
+    , Auto.rrSkipped = 0
     , Auto.rrRetries = 0
     , Auto.rrLaunched = atUtc 23 16 45
     , Auto.rrFile = Just (101025, at)
