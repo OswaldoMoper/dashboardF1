@@ -64,7 +64,7 @@
 
       perSystem = { pkgs, self', system, ... }:
       let
-        # Node 22 for the GHCJS toolchain and the microservice comes from the main nixpkgs.
+        # Node 22 for the GHCJS toolchain comes from the main nixpkgs.
         reflexPkgs = import inputs.nixpkgs-reflex {
           inherit system;
           overlays = [
@@ -91,7 +91,7 @@
         });
 
         # ── Microservicio FastF1 ──
-        python = reflexPkgs.python3;
+        python = (import inputs.nixpkgs-reflex { inherit system; }).python3;
 
         pypiWheel = { pname, version, hash, deps, extra ? { } }:
           python.pkgs.buildPythonPackage ({
