@@ -48,6 +48,7 @@ module Main (main) where
 
 import           App                         (ScheduledSession (..),
                                               emptySectorMemory)
+import           Auto.Context                (pieceProcess)
 import qualified Auto.Helper                 as Auto
 import           Common.Account              (Foot (..), Notice (..),
                                               Stamp (..), accountFoot,
@@ -146,7 +147,9 @@ import           Common.Shown                (Arrivals, Indicator (..),
                                               fetchedAtLabel, indicatorClass,
                                               indicatorFrom, indicatorTooltip,
                                               keepLast, keptNothing, landed,
-                                              liveRefreshSeconds, pollIdle,
+                                              liveRefreshSeconds,
+                                              liveRequestTimeoutSeconds,
+                                              nextRequest, pollIdle,
                                               pollStep, readDelay,
                                               recordArrival, shownAge)
 import           Common.Traces               (Channel (..), TraceLayout (..),
@@ -206,6 +209,7 @@ import           Common.TyreStrategy         (SetBar (..), SetRow (..),
                                               setStyle, stintScale,
                                               stintTitle, tyreSets)
 import           Config                      (openF1Log, telemetrySocket)
+import           Control.Exception           (bracket, evaluate)
 import           Data.Aeson                  (FromJSON (..), Value (..),
                                               decodeStrictText, eitherDecode,
                                               eitherDecodeStrict, encode,
@@ -216,7 +220,7 @@ import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import qualified Data.ByteString.Lazy        as LBS
 import           Data.Either                 (isLeft)
-import           Data.List                   (find, nub)
+import           Data.List                   (find, isPrefixOf, nub)
 import qualified Data.List.NonEmpty          as NE
 import qualified Data.Map.Strict             as Map
 import           Data.Maybe                  (fromMaybe, isJust, isNothing,
@@ -284,6 +288,7 @@ import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints,
 import qualified Network.HTTP.Client         as Client
 import           Network.HTTP.Req            (HttpException (..),
                                               queryParamToList)
+import qualified Network.Socket              as Socket
 import           Outcome                     (Rejection (..), rejectionFor)
 import           Provenance                  (FetchedAtHeaderName,
                                               OriginHeaderName,
@@ -293,6 +298,10 @@ import           Provenance                  (FetchedAtHeaderName,
                                               withProvenance)
 import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
+import           System.IO                   (hGetContents)
+import           System.Process              (CreateProcess (..),
+                                              StdStream (..), createProcess,
+                                              proc, waitForProcess)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck       (prop)
 import           Test.QuickCheck             (Gen, NonNegative (..), Positive (..),
@@ -4850,7 +4859,7 @@ main = hspec $ do
   -- que es ciego.
   describe "Common.Shown (refresco)" $ do
     it "arranca sin nada en vuelo, nada que enseñar y ningún fallo" $
-      (pollIdle :: Poll Int) `shouldBe` Poll False Nothing False
+      (pollIdle :: Poll Int) `shouldBe` pollOf False Nothing False
 
     it "arranca pudiendo pedir" $
       canRequest (pollIdle :: Poll Int) `shouldBe` True
@@ -4859,24 +4868,49 @@ main = hspec $ do
       canRequest (pollStep Sent (pollIdle :: Poll Int)) `shouldBe` False
 
     it "pedir no toca lo enseñado ni el fallo" $
-      pollStep Sent (Poll False (Just (1 :: Int)) True)
-        `shouldBe` Poll True (Just 1) True
+      pollStep Sent (pollOf False (Just (1 :: Int)) True)
+        `shouldBe` (pollOf True (Just 1) True) {pollSent = 1}
+
+    it "cada petición lleva el número siguiente" $
+      map nextRequest (scanl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 Nothing, Sent])
+        `shouldBe` [1, 2, 2, 3]
+
+    it "el tope de una petición queda por encima de los 30 s del backend" $
+      liveRequestTimeoutSeconds `shouldSatisfy` (> 30)
+
+    it "la respuesta de una petición dada por perdida no cambia nada" $ do
+      let lost = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 Nothing]
+      pollStep (Arrived 1 (Just 7)) lost `shouldBe` lost
+
+    it "ni pisa a la petición siguiente, que sigue en vuelo" $ do
+      let again = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 Nothing, Sent]
+      pollStep (Arrived 1 (Just 7)) again `shouldBe` again
+      canRequest (pollStep (Arrived 1 (Just 7)) again) `shouldBe` False
+
+    it "la respuesta de la siguiente sí entra y limpia el fallo" $ do
+      let again = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 Nothing, Sent]
+      pollStep (Arrived 2 (Just 8)) again
+        `shouldBe` again {pollInFlight = False, pollShown = Just 8, pollLastFailed = False}
+
+    it "dar por perdida una que ya contestó no cambia nada" $ do
+      let done = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 (Just 5)]
+      pollStep (Arrived 1 Nothing) done `shouldBe` done
 
     it "una respuesta buena sustituye lo enseñado y libera el reloj" $
-      pollStep (Arrived (Just (2 :: Int))) (Poll True (Just 1) False)
-        `shouldBe` Poll False (Just 2) False
+      pollStep (Arrived 0 (Just (2 :: Int))) (pollOf True (Just 1) False)
+        `shouldBe` pollOf False (Just 2) False
 
     it "un fallo conserva lo enseñado, lo marca y libera el reloj" $
-      pollStep (Arrived Nothing) (Poll True (Just (1 :: Int)) False)
-        `shouldBe` Poll False (Just 1) True
+      pollStep (Arrived 0 Nothing) (pollOf True (Just (1 :: Int)) False)
+        `shouldBe` pollOf False (Just 1) True
 
     it "un fallo sin nada enseñado queda vacío con fallo, que es el «Error al cargar»" $
-      pollStep (Arrived Nothing) (Poll True (Nothing :: Maybe Int) False)
-        `shouldBe` Poll False Nothing True
+      pollStep (Arrived 0 Nothing) (pollOf True (Nothing :: Maybe Int) False)
+        `shouldBe` pollOf False Nothing True
 
     it "una respuesta buena tras un fallo limpia el fallo" $
-      pollStep (Arrived (Just (3 :: Int))) (Poll True (Just 1) True)
-        `shouldBe` Poll False (Just 3) False
+      pollStep (Arrived 0 (Just (3 :: Int))) (pollOf True (Just 1) True)
+        `shouldBe` pollOf False (Just 3) False
 
   -- El retraso contra el spoiler: qué se enseña con N segundos de retraso, qué se
   -- guarda, y cómo se lee lo tecleado. Los segundos cuentan desde que se abrió la
@@ -4908,24 +4942,24 @@ main = hspec $ do
         `shouldBe` [Just (fromMaybe 'c' (delayedShown n 30 arrivals)) | n <- [1 .. 40]]
 
     it "sin retraso, el refresco tal cual" $
-      delayedPoll succ 0 30 arrivals (Poll False (Just 'c') False)
-        `shouldBe` Poll False (Just 'c') False
+      delayedPoll succ 0 30 arrivals (pollOf False (Just 'c') False)
+        `shouldBe` pollOf False (Just 'c') False
 
     it "con retraso, lo enseñado se retrasa y el fallo se ve al momento" $
-      delayedPoll succ 15 30 arrivals (Poll True (Just 'c') True)
-        `shouldBe` Poll True (Just 'b') True
+      delayedPoll succ 15 30 arrivals (pollOf True (Just 'c') True)
+        `shouldBe` pollOf True (Just 'b') True
 
     it "mientras espera, enseña lo último que llegó pasado por lo que se puede ver" $ do
-      delayedPoll succ 41 30 arrivals (Poll False (Just 'c') False)
-        `shouldBe` Poll False (Just 'd') False
-      delayedPoll succ 41 5 [] (Poll True (Nothing :: Maybe Char) False)
-        `shouldBe` Poll True Nothing False
+      delayedPoll succ 41 30 arrivals (pollOf False (Just 'c') False)
+        `shouldBe` pollOf False (Just 'd') False
+      delayedPoll succ 41 5 [] (pollOf True (Nothing :: Maybe Char) False)
+        `shouldBe` pollOf True Nothing False
 
     it "una llegada es un refresco que volvió bien; el envío y el fallo no lo son" $ do
-      landed (Poll False (Just 'c') False) `shouldBe` Just 'c'
-      landed (Poll True (Just 'c') False) `shouldBe` Nothing
-      landed (Poll False (Just 'c') True) `shouldBe` Nothing
-      landed (Poll False Nothing False :: Poll Char) `shouldBe` Nothing
+      landed (pollOf False (Just 'c') False) `shouldBe` Just 'c'
+      landed (pollOf True (Just 'c') False) `shouldBe` Nothing
+      landed (pollOf False (Just 'c') True) `shouldBe` Nothing
+      landed (pollOf False Nothing False :: Poll Char) `shouldBe` Nothing
 
     it "la dirección da el retraso en segundos o en m:ss, con los dos puntos escapados o no" $
       map delayFromUrl
@@ -5107,7 +5141,7 @@ main = hspec $ do
   describe "Common.Shown (indicador)" $ do
     it "recoge la procedencia, la fuente, el instante y el fallo de lo que se está enseñando" $
       indicatorFrom True True
-        (Poll False (Just (Sourced (Just Cached) (Just OpenF1) (Just fetchedAtIso) [1 :: Int])) True)
+        (pollOf False (Just (Sourced (Just Cached) (Just OpenF1) (Just fetchedAtIso) [1 :: Int])) True)
         `shouldBe` Indicator True (Just Cached) (Just OpenF1) (Just fetchedAtIso) True True True
 
     it "antes de la primera respuesta no hay nada que enseñar ni procedencia" $
@@ -6958,6 +6992,27 @@ main = hspec $ do
           ["/home/piloto/MOPER", "/home/piloto", "/home/pilotos/MOPER", "/datos/f1", "/datos/f1/"]
         `shouldBe` ["~/MOPER", "~", "/home/pilotos/MOPER", "/datos/f1", "/datos/f1"]
 
+  describe "Auto.Context.pieceProcess" $ do
+    -- Los sockets que ve abiertos un hijo lanzado con ese proceso mientras la suite tiene
+    -- uno suyo abierto.
+    let listFds = "for f in /proc/$$/fd/*; do readlink \"$f\"; done"
+        socketsSeen spec =
+          bracket (Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol) Socket.close $ \_ -> do
+            (_, out, _, ph) <- createProcess spec {std_out = CreatePipe}
+            fds <- maybe (pure "") hGetContents out
+            n <- evaluate (length (filter ("socket:" `isPrefixOf`) (lines fds)))
+            n <$ waitForProcess ph
+    it "el hijo no hereda un socket abierto en quien lo lanza" $
+      socketsSeen (pieceProcess "sh" ["-c", listFds]) `shouldReturn` 0
+    it "control: lanzado sin ella, sí lo hereda" $
+      socketsSeen (proc "sh" ["-c", listFds]) >>= (`shouldSatisfy` (>= 1))
+    it "y le llega la salida que se le da" $ do
+      (_, out, _, ph) <- createProcess (pieceProcess "sh" ["-c", "echo hola"]) {std_out = CreatePipe}
+      said <- maybe (pure "") hGetContents out
+      _ <- evaluate (length said)
+      _ <- waitForProcess ph
+      said `shouldBe` "hola\n"
+
   describe "Auto: la carpeta contra systemd" $ do
     it "lo de systemd, por descripción (salida real de list-units): pendiente con su hora, corriendo, falló" $
       Auto.unitStates
@@ -7029,6 +7084,11 @@ main = hspec $ do
 
 -- | @points@\/@wins@ llegan de Ergast como enteros en cadena; es la forma que
 -- 'parseNum' tiene que recuperar sin excepción.
+-- Un refresco con ninguna petición enviada todavía, por nombre de campo.
+pollOf :: Bool -> Maybe a -> Bool -> Poll a
+pollOf inFlight shown failed =
+  pollIdle {pollInFlight = inFlight, pollShown = shown, pollLastFailed = failed}
+
 roundTripsInt :: Int -> Property
 roundTripsInt n = parseNum (T.pack (show n)) === Just (fromIntegral n)
 

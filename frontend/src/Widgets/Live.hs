@@ -16,14 +16,15 @@
 -- lo que se ve y aun así se nota: lo dice el indicador, no el cuerpo.
 module Widgets.Live where
 
-import           Client        (fetchJsonSourced)
+import           Client        (fetchJsonSourcedNumbered)
 import           Common.Origin (Sourced (..))
 import           Common.Route  (livePath)
 import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
                                 canRequest, delayNote, delayWait, delayedPoll,
                                 indicatorClass, indicatorFrom, indicatorTooltip,
-                                landed, liveRefreshSeconds, pollIdle, pollStep,
-                                recordArrival, shownAge)
+                                landed, liveRefreshSeconds,
+                                liveRequestTimeoutSeconds, nextRequest, pollIdle,
+                                pollStep, recordArrival, shownAge)
 import           Common.Types  (LiveTable (..), SessionInfo (..),
                                 SessionState (..), StateReading (..),
                                 sessionInProgress, waitingTable)
@@ -68,7 +69,9 @@ indicatorOf p = indicatorFrom (sessionInProgress state) (state == Just SessionFi
 -- __Se refresca solo cada 'liveRefreshSeconds'__ (2026-09-11 (c)), con un reloj que
 -- __salta el tic__ si la petición anterior no ha vuelto: nunca hay dos en vuelo, y
 -- una respuesta vieja no puede pisar a una nueva. __Al volver a verse la pestaña__
--- se pide en el momento, con la misma regla: si hay una en vuelo, no. Cuándo pedir y qué conservar si
+-- se pide en el momento, con la misma regla: si hay una en vuelo, no. __Una petición sin
+-- respuesta en 'liveRequestTimeoutSeconds' se da por perdida__: cuenta como fallo, el tic
+-- siguiente pide, y si contesta después no cambia nada. Cuándo pedir y qué conservar si
 -- falla es 'Common.Shown', pura y con suite; aquí solo se cablea al reloj y a la
 -- petición. La URL es relativa ('Common.Route.livePath'), o sea misma-origen: el
 -- backend sirve el bundle y la API en el mismo puerto.
@@ -83,8 +86,12 @@ livePoll = mdo
   tick <- tickLossyFromPostBuildTime (fromIntegral liveRefreshSeconds)
   back <- tabShown
   let sent = leftmost [pb, gate (canRequest <$> current poll) (leftmost [() <$ tick, back])]
-  resp <- fetchJsonSourced (livePath <$ sent)
-  poll <- foldDyn pollStep pollIdle (leftmost [Sent <$ sent, Arrived <$> resp])
+  let numbered = attachWith (\p _ -> (nextRequest p, livePath)) (current poll) sent
+  resp <- fetchJsonSourcedNumbered numbered
+  lost <- delay (fromIntegral liveRequestTimeoutSeconds) (fst <$> numbered)
+  poll <-
+    foldDyn pollStep pollIdle $
+      leftmost [Sent <$ sent, uncurry Arrived <$> resp, (`Arrived` Nothing) <$> lost]
   pure poll
 
 -- | Cada vez que la pestaña vuelve a verse (@visibilitychange@ con el documento ya no

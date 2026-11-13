@@ -70,3 +70,14 @@ fetchJsonSourced urls = do
   pure (ffor resp $ \r -> sourcedFrom (headerOf r) <$> decodeXhr r)
   where
     headerOf r name = Map.lookup (CI.mk name) (_xhrResponse_headers r)
+
+-- | Como 'fetchJsonSourced', con cada URL numerada: la respuesta llega con el número
+-- de su petición.
+fetchJsonSourcedNumbered
+  :: (MonadWidget t m, FromJSON a)
+  => Event t (Int, Text) -> m (Event t (Int, Maybe (Sourced a)))
+fetchJsonSourcedNumbered urls = do
+  resp <- performRequestsAsync (fmap getReqSourced <$> urls)
+  pure (ffor resp $ fmap $ \r -> sourcedFrom (headerOf r) <$> decodeXhr r)
+  where
+    headerOf r name = Map.lookup (CI.mk name) (_xhrResponse_headers r)

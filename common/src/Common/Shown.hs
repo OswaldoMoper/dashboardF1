@@ -47,7 +47,9 @@ module Common.Shown
   , pollIdle
   , pollStep
   , canRequest
+  , nextRequest
   , liveRefreshSeconds
+  , liveRequestTimeoutSeconds
   , Kept (..)
   , keptNothing
   , keepLast
@@ -89,18 +91,21 @@ data Poll a = Poll
     -- ^ Lo último que llegó bien; 'Nothing' hasta la primera respuesta buena.
   , pollLastFailed :: Bool
     -- ^ La última respuesta fue un fallo. __No borra 'pollShown'.__
+  , pollSent       :: Int
+    -- ^ Cuántas peticiones se han enviado: el número de la última.
   }
   deriving stock (Eq, Show)
 
--- | Lo que le pasa al dato: se pide, o llega la respuesta ('Nothing' si falló).
+-- | Lo que le pasa al dato: se pide, o la petición de ese número acaba, con su respuesta
+-- o con 'Nothing' si falló o se dio por perdida.
 data PollEvent a
   = Sent
-  | Arrived (Maybe a)
+  | Arrived Int (Maybe a)
   deriving stock (Eq, Show)
 
 -- | Antes de la primera petición: nada en vuelo, nada que enseñar, ningún fallo.
 pollIdle :: Poll a
-pollIdle = Poll {pollInFlight = False, pollShown = Nothing, pollLastFailed = False}
+pollIdle = Poll {pollInFlight = False, pollShown = Nothing, pollLastFailed = False, pollSent = 0}
 
 -- | El estado tras un evento.
 --
@@ -109,13 +114,21 @@ pollIdle = Poll {pollInFlight = False, pollShown = Nothing, pollLastFailed = Fal
 -- peor que enseñar los anteriores sabiendo que lo son — que 'pollLastFailed' lo
 -- sepa es lo que evita que conservarlos equivalga a mentir. Es el mismo criterio
 -- que el @step@ de 'Widgets.Comparison'.
+--
+-- __Solo cuenta el final de la petición que está en vuelo__: el de otra —una que ya
+-- acabó, o una que se dio por perdida y contesta tarde— no cambia nada.
 pollStep :: PollEvent a -> Poll a -> Poll a
 pollStep Sent p =
-  p {pollInFlight = True}
-pollStep (Arrived (Just x)) p =
-  p {pollInFlight = False, pollShown = Just x, pollLastFailed = False}
-pollStep (Arrived Nothing) p =
-  p {pollInFlight = False, pollLastFailed = True}
+  p {pollInFlight = True, pollSent = nextRequest p}
+pollStep (Arrived n answer) p
+  | not (pollInFlight p) || n /= pollSent p = p
+  | otherwise = case answer of
+      Just x  -> p {pollInFlight = False, pollShown = Just x, pollLastFailed = False}
+      Nothing -> p {pollInFlight = False, pollLastFailed = True}
+
+-- | El número que llevará la próxima petición.
+nextRequest :: Poll a -> Int
+nextRequest p = pollSent p + 1
 
 -- | Si un tic del reloj puede lanzar otra petición: solo sin ninguna en vuelo.
 canRequest :: Poll a -> Bool
@@ -133,6 +146,11 @@ canRequest = not . pollInFlight
 -- @time@; el widget lo convierte con 'fromIntegral'.
 liveRefreshSeconds :: Int
 liveRefreshSeconds = 10
+
+-- | Cuántos segundos se espera la respuesta de una petición de Live Timing antes de
+-- darla por perdida. Por encima de los 30 s a los que el backend contesta con lo guardado.
+liveRequestTimeoutSeconds :: Int
+liveRequestTimeoutSeconds = 35
 
 -- | Lo último que se supo de algo que la respuesta a veces no trae, y si es de
 -- ahora o de antes.

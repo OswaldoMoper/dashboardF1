@@ -9,6 +9,7 @@ module Auto.Context
   , runObserver
   , runScript
   , runRecording
+  , pieceProcess
   , runChecks
   , jolpicaDay
   , jolpicaSeason
@@ -273,6 +274,11 @@ waitNextMinute start = do
       next = addUTCTime (fromInteger ticks * vigiaPeriod) start
   threadDelay (ceiling (realToFrac (diffUTCTime next now) * 1000000 :: Double))
 
+-- | Lo que lanza una pieza y dura con ella: en su propio grupo, y sin más descriptores
+-- de la pieza que la entrada, la salida y el error que se le den.
+pieceProcess :: FilePath -> [String] -> CreateProcess
+pieceProcess exe args = (proc exe args) {create_group = True, close_fds = True}
+
 -- | La grabación de esa sesión con esa cuenta: lanza @dashboardF1-record@ (ese ejecutable,
 -- sin la variable @F1TV@ y con @--f1tv@ solo con cuenta; 'recorderArgs') a su fichero
 -- ('recordingFile') con su salida en su @.log@, y cada minuto mira
@@ -309,10 +315,9 @@ runRecording folder label account slot recorder d = do
               logHandle <- openFile (folder </> recordingLog account session) AppendMode
               (_, _, _, ph) <-
                 createProcess
-                  (proc recorder (recorderArgs account (folder </> recordingFile account session n)))
+                  (pieceProcess recorder (recorderArgs account (folder </> recordingFile account session n)))
                     { std_out = UseHandle logHandle
                     , std_err = UseHandle logHandle
-                    , create_group = True
                     , env = Just withoutAccount
                     }
               pure ph
@@ -400,10 +405,9 @@ runScript folder label piece script d = do
               logHandle <- openFile (folder </> scriptLog piece) AppendMode
               (_, _, _, ph) <-
                 createProcess
-                  (proc script (scriptArgs piece (diPort d) folder))
+                  (pieceProcess script (scriptArgs piece (diPort d) folder))
                     { std_out = UseHandle logHandle
                     , std_err = UseHandle logHandle
-                    , create_group = True
                     }
               pure ph
           )
@@ -446,11 +450,10 @@ runObserver folder label readerExe d = do
       logHandle <- openFile (folder </> "observador.log") AppendMode
       (hin, hout, _, ph) <-
         createProcess
-          (proc readerExe [])
+          (pieceProcess readerExe [])
             { std_in = CreatePipe
             , std_out = CreatePipe
             , std_err = UseHandle logHandle
-            , create_group = True
             }
       case (hin, hout) of
         (Just i, Just o) -> do
