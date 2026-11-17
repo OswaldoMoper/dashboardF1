@@ -22,10 +22,14 @@ executable frontend
         Client
         Pages.Dashboard
         Widgets.Comparison
+        Widgets.Comparison.Helper
         Widgets.Historical
         Widgets.Live
+        Widgets.Live.Helper
         Widgets.LiveTiming
+        Widgets.LiveTiming.Helper
         Widgets.TyreStrategy
+        Widgets.TyreStrategy.Helper
     build-depends:
         base        >= 4.14 && < 5
       , aeson
@@ -42,3 +46,28 @@ executable frontend
 
     if arch(javascript)
         ghc-options: -optl-sEXPORTED_RUNTIME_METHODS=HEAP8,HEAPU8
+
+    -- Con GHC nativo no se construye: Reflex no se compila para el PC.
+    if !arch(javascript)
+        buildable: False
+
+-- Los módulos Helper, sin Reflex, con GHC nativo.
+test-suite frontend-test
+    type:             exitcode-stdio-1.0
+    default-language: Haskell2010
+    default-extensions:
+        OverloadedStrings
+    hs-source-dirs:   src test
+    main-is:          Spec.hs
+    other-modules:
+        Widgets.Comparison.Helper
+        Widgets.Live.Helper
+        Widgets.LiveTiming.Helper
+        Widgets.TyreStrategy.Helper
+    build-depends:
+        base        >= 4.14 && < 5
+      , QuickCheck
+      , common
+      , hspec
+      , text
+    ghc-options: -Wall

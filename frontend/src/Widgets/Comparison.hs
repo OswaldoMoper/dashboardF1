@@ -144,15 +144,11 @@ import qualified GHCJS.DOM.Types               as DOM (Element (..),
                                                        liftJSM, uncheckedCastTo)
 import qualified Language.Javascript.JSaddle   as JS
 import           Reflex.Dom
-import           Widgets.Live                  (LiveView (..), indicatorOf,
-                                                liveBadge)
-
--- | Estado del fetch de @\/api\/comparison@. 'Failed' (no 'Error') para no
--- chocar con nombres de @base@\/@Prelude@, mismo criterio que los otros widgets.
-data CState
-  = Loading
-  | Failed
-  | Loaded LapComparison
+import           Widgets.Comparison.Helper     (CState (..), Refresh (..),
+                                                refreshOf, shownComparison,
+                                                step)
+import           Widgets.Live                  (LiveView (..), liveBadge)
+import           Widgets.Live.Helper           (indicatorOf)
 
 -- | Comparación de la vuelta rápida de dos coches: la tabla de mando (selectores y
 -- los dos pilotos con su tiempo), la gráfica del delta acumulado y la leyenda al
@@ -661,49 +657,6 @@ controlAttrs l =
   Map.fromList $
     ("class", "comparison__control")
       : [("style", "width: " <> formatFixed 1 (clControl l) <> "px") | not (clStacked l)]
-
--- | Cómo avanza el estado con cada respuesta. __Es la pieza que impide el
--- parpadeo__, y por eso el widget usa 'foldDyn' y no el 'holdDyn' de los otros
--- cuatro: el estado depende del anterior.
---
--- Con @holdDyn (maybe Failed Loaded)@ cada clic habría llevado el widget a
--- 'Failed' o directamente a repintar desde cero, borrando el gráfico que se
--- estaba mirando justo cuando se pide el siguiente. Aquí el estado __solo
--- avanza__: una recarga fallida conserva lo mostrado, y 'Failed' queda para el
--- único caso en que no hay nada que conservar — que no llegara nunca nada.
---
--- 'CState' no gana un cuarto constructor de \"recargando\": el estado de la
--- __petición__ vive aparte, en 'Refresh', justamente para que no se mezcle con
--- el de los __datos__. Meterlos en el mismo tipo obligaría a que cada
--- combinación fuera un constructor.
-step :: Maybe LapComparison -> CState -> CState
-step (Just c) _          = Loaded c
-step Nothing  (Loaded c) = Loaded c
-step Nothing  _          = Failed
-
--- | La comparación que el gráfico está pintando, si hay alguna. Es lo que
--- 'carSelector' necesita para marcar el par activo, y sale del __estado__ y no
--- de la respuesta a propósito ('comparisonWidget'): tras una recarga fallida
--- 'step' conserva el gráfico anterior, y los selectores tienen que seguir
--- señalando ése y no quedarse en blanco.
-shownComparison :: CState -> Maybe LapComparison
-shownComparison (Loaded c) = Just c
-shownComparison _          = Nothing
-
--- | Qué le pasó a la última petición, al margen de los datos que se muestran.
---
--- Existe por una consecuencia directa de 'step': al conservar lo anterior ante
--- una recarga fallida, el fallo __no se vería en ninguna parte__. 'LastFailed'
--- es lo que impide que el widget enseñe datos viejos como si fueran los que se
--- acaban de pedir.
-data Refresh
-  = Idle        -- ^ Nada en vuelo y lo último que llegó, llegó bien.
-  | InFlight
-  | LastFailed  -- ^ La recarga falló; se conserva lo anterior.
-
--- | La respuesta traducida a estado de petición.
-refreshOf :: Maybe LapComparison -> Refresh
-refreshOf = maybe LastFailed (const Idle)
 
 -- | El aviso de la petición, __encima__ de la curva y no en su lugar:
 -- sustituirlo sería volver a la pantalla en blanco que 'step' evita. Flota en el

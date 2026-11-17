@@ -13,45 +13,19 @@ module Widgets.TyreStrategy
   , tyreStrategyWidget
   ) where
 
-import           Common.Origin       (Source (..), Sourced (..))
-import           Common.Shown        (Poll (..), delayWaitLabel)
-import           Common.Types        (LiveTable (..))
-import           Common.TyreStrategy (SetBar (..), SetRow (..), barNotches,
-                                      compoundLegend, gridLines, lapTicks,
-                                      leftStyle,
-                                      noStintsNotice, notOutYet, rowLabel,
-                                      scaleLabel, setRows, setStyle, stintScale)
-import           Control.Monad       (forM_)
-import           Data.Text           (Text)
-import qualified Data.Text           as T
+import           Common.Shown                (delayWaitLabel)
+import           Common.TyreStrategy         (SetBar (..), SetRow (..),
+                                              barNotches, compoundLegend,
+                                              gridLines, lapTicks, leftStyle,
+                                              noStintsNotice, notOutYet,
+                                              rowLabel, scaleLabel, setStyle)
+import           Control.Monad               (forM_)
+import           Data.Text                   (Text)
+import qualified Data.Text                   as T
 import           Reflex.Dom
-import           Widgets.Live        (LiveView (..), indicatorOf, liveBadge)
-
--- | Qué enseña la tarjeta.
-data TyreState
-  = Loading
-  | Failed
-  | Waiting Text
-    -- ^ Con retraso, mientras nada es tan viejo: el aviso de la espera.
-  | NoStints
-    -- ^ La tabla no sale del feed.
-  | Loaded Int [SetRow]
-    -- ^ La escala ('Common.TyreStrategy.stintScale') y las filas.
-  deriving (Eq)
-
--- | Lo que se enseña a partir del estado del refresco, como
--- 'Widgets.LiveTiming.liveStateOf'.
-tyreStateOf :: Poll (Sourced LiveTable) -> TyreState
-tyreStateOf p =
-  case pollShown p of
-    Just shown
-      | srcSource shown /= Just Feed -> NoStints
-      | otherwise                    -> loaded (srcValue shown)
-    Nothing
-      | pollLastFailed p -> Failed
-      | otherwise        -> Loading
-  where
-    loaded t = Loaded (stintScale (liveSession t) (liveStints t)) (setRows t)
+import           Widgets.Live                (LiveView (..), liveBadge)
+import           Widgets.Live.Helper         (indicatorOf)
+import           Widgets.TyreStrategy.Helper (TyreState (..), tyreStateOf)
 
 -- | La tarjeta, alimentada por el directo que le pasa quien la monta.
 tyreStrategyWidget :: MonadWidget t m => LiveView t -> m ()

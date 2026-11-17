@@ -11,7 +11,7 @@
 -- sirvan a la vez varios consumidores sin solaparse entre ellos.
 --
 -- __Lo que se enseña y de dónde salió son dos cosas.__ El indicador sale de
--- 'indicatorOf', que cruza la procedencia, el último refresco y si hay sesión
+-- 'Widgets.Live.Helper.indicatorOf', que cruza la procedencia, el último refresco y si hay sesión
 -- rodando; lo que pinta cada tarjeta lo decide ella. Por eso un fallo puntual no borra
 -- lo que se ve y aun así se nota: lo dice el indicador, no el cuerpo.
 module Widgets.Live where
@@ -21,47 +21,16 @@ import           Common.Origin (Sourced (..))
 import           Common.Route  (livePath)
 import           Common.Shown  (Indicator, Poll (..), PollEvent (..),
                                 canRequest, delayNote, delayWait, delayedPoll,
-                                indicatorClass, indicatorFrom, indicatorTooltip,
-                                landed, liveRefreshSeconds,
-                                liveRequestTimeoutSeconds, nextRequest, pollIdle,
-                                pollStep, recordArrival, shownAge)
-import           Common.Types  (LiveTable (..), SessionInfo (..),
-                                SessionState (..), StateReading (..),
-                                sessionInProgress, waitingTable)
+                                indicatorClass, indicatorTooltip, landed,
+                                liveRefreshSeconds, liveRequestTimeoutSeconds,
+                                nextRequest, pollIdle, pollStep, recordArrival,
+                                shownAge)
+import           Common.Types  (LiveTable (..), waitingTable)
 import qualified GHCJS.DOM          as DOM (currentDocumentUnchecked)
 import qualified GHCJS.DOM.Document as DOM (getHidden, visibilitychange)
 import qualified GHCJS.DOM.EventM   as DOM (on)
 import qualified GHCJS.DOM.Types    as DOM (Document (..), liftJSM)
 import           Reflex.Dom
-
--- | De qué sesión son las filas que se están enseñando, si se sabe.
---
--- Los dos 'Nothing' que atraviesa significan cosas distintas y aquí se juntan a
--- propósito: no haber recibido nada todavía y haber recibido una tabla que no
--- nombra su sesión se ven igual en la banda, porque en los dos casos no hay sesión
--- que enseñar. Es el contrapunto de 'Widgets.LiveTiming.liveStateOf', que se queda
--- con las filas y descarta esto.
-sessionOf :: Poll (Sourced LiveTable) -> Maybe SessionInfo
-sessionOf p = liveSession . srcValue =<< pollShown p
-
--- | En qué punto está esa sesión, si alguien lo dijo o el calendario lo permitió
--- deducir. Atraviesa los mismos dos 'Nothing' que 'sessionOf' y uno más —el de la
--- sesión que no trae estado—, y los tres se pintan igual porque los tres son «no se
--- sabe».
-stateOf :: Poll (Sourced LiveTable) -> Maybe StateReading
-stateOf p = siState =<< sessionOf p
-
--- | El indicador de la cabecera a partir de lo que ya hay en la mano: la
--- procedencia y el último intento salen del refresco, y si hay carrera sale de la
--- sesión que la tabla trae al lado.
---
--- __Es este módulo quien lo junta y no 'Common.Shown'__, que no conoce el
--- dominio: allí la sesión rodando y la finalizada entran como 'Bool' y aquí es
--- donde está el 'Common.Types.LiveTable' del que sacarlas.
-indicatorOf :: Poll (Sourced LiveTable) -> Indicator
-indicatorOf p = indicatorFrom (sessionInProgress state) (state == Just SessionFinalised) p
-  where
-    state = srState <$> stateOf p
 
 -- | El refresco de @\/api\/live@: lo monta la página __una vez__ y lo reparte entre
 -- quienes lo pintan.
@@ -131,7 +100,7 @@ delayedLive delay poll = do
   where
     waiting s = s {srcValue = waitingTable (srcValue s)}
 
--- | El @● Live@ de una cabecera: el retraso y el indicador ('indicatorOf').
+-- | El @● Live@ de una cabecera: el retraso y el indicador ('Widgets.Live.Helper.indicatorOf').
 --
 -- __El texto es siempre @Live@__ (2026-09-11 (d)) y lo que cambia es el punto: un
 -- texto que cambiara de palabra se leería sin mirar el color, pero también se movería

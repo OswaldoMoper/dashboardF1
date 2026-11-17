@@ -12,7 +12,7 @@
 --
 -- __Lo que se enseña y de dónde salió son dos cosas, y las pintan dos sitios.__ La
 -- tabla sale de 'liveStateOf', que mira solo si hay filas; el indicador @● Live@
--- de la cabecera sale de 'Widgets.Live.indicatorOf'. Por eso un fallo puntual no
+-- de la cabecera sale de 'Widgets.Live.Helper.indicatorOf'. Por eso un fallo puntual no
 -- borra la tabla —la conserva desde el 2026-09-11 (c)— y aun así se ve: lo dice el
 -- indicador, no el cuerpo.
 --
@@ -21,60 +21,26 @@
 -- (@nth-child@) cambiaría de columna al cerrar otra.
 module Widgets.LiveTiming where
 
-import           Common.Columns (LiveColumn (..), canClose, liveColumnClass,
-                                 liveColumnLabel, menuColumns, shownColumns,
-                                 toggleColumn)
-import           Common.Origin  (Sourced (..))
-import           Common.Shown   (Poll (..), delayWaitLabel)
-import           Common.Types   (DriverStatus (..), LiveTable (..),
-                                 LiveTimingRow (..), RowBreak (..),
-                                 bestLapMarks, cutOffLabel, overCutOff,
-                                 rowBreaks, statusLabel)
-import           Control.Monad  (forM_)
-import           Data.List      (zip4)
-import           Data.Maybe     (fromMaybe)
-import           Data.Set       (Set)
-import qualified Data.Set       as Set
-import           Data.Text      (Text)
-import qualified Data.Text      as T
+import           Common.Columns            (LiveColumn (..), canClose,
+                                            liveColumnClass, liveColumnLabel,
+                                            menuColumns, shownColumns,
+                                            toggleColumn)
+import           Common.Shown              (delayWaitLabel)
+import           Common.Types              (DriverStatus (..),
+                                            LiveTimingRow (..), RowBreak (..),
+                                            bestLapMarks, cutOffLabel,
+                                            statusLabel)
+import           Control.Monad             (forM_)
+import           Data.List                 (zip4)
+import           Data.Maybe                (fromMaybe)
+import           Data.Set                  (Set)
+import qualified Data.Set                  as Set
+import           Data.Text                 (Text)
+import qualified Data.Text                 as T
 import           Reflex.Dom
-import           Widgets.Live   (LiveView (..), indicatorOf, liveBadge,
-                                 sessionOf)
-
--- | Qué enseña la tarjeta. 'Failed' (no 'Error') para no chocar con
--- nombres de @base@\/@Prelude@.
-data LiveState
-  = Loading
-  | Failed
-  | Loaded [LiveTimingRow] [Maybe RowBreak] [Bool]
-    -- ^ Las filas, la raya que va encima de cada una ('Common.Types.rowBreaks') y
-    -- si va fuera del 107 % ('Common.Types.overCutOff').
-  | Waiting Text
-    -- ^ Con retraso, mientras nada es tan viejo: el aviso de la espera.
-  deriving (Eq)
-
--- | Lo que se enseña a partir del estado del refresco.
---
--- __Deja fuera a propósito si hay una petición en vuelo.__ Si entrara, la tabla se
--- volvería a montar al pedir y otra vez al llegar la respuesta —dos veces cada
--- diez segundos— aunque el dato no hubiera cambiado. Con 'holdUniqDyn' encima, se
--- monta solo cuando cambia lo que se ve.
---
--- __Se queda con las filas y, de la sesión, solo con sus rayas y el 107 %__
--- ('Common.Types.rowBreaks', 'Common.Types.overCutOff'): de la sesión se encarga la banda de la página
--- ('Pages.Dashboard.sessionBand'), y meterla entera aquí haría remontar la tabla
--- cada vez que avanzara el reloj.
-liveStateOf :: Poll (Sourced LiveTable) -> LiveState
-liveStateOf p =
-  case pollShown p of
-    Just shown           -> loaded (srcValue shown)
-    Nothing
-      | pollLastFailed p -> Failed
-      | otherwise        -> Loading
-  where
-    loaded t =
-      Loaded (liveRows t) (rowBreaks (liveSession t) (liveRows t))
-        (overCutOff (liveSession t) (liveRows t))
+import           Widgets.Live              (LiveView (..), liveBadge)
+import           Widgets.Live.Helper       (indicatorOf, sessionOf)
+import           Widgets.LiveTiming.Helper (LiveState (..), liveStateOf)
 
 -- | Tabla de live timing, alimentada por el directo que le pasa quien la monta.
 liveTimingWidget :: MonadWidget t m => LiveView t -> m ()

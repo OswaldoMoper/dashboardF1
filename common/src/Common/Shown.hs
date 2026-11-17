@@ -217,7 +217,7 @@ data Indicator = Indicator
 --
 -- __Si la sesión rueda, y si está finalizada, entran por argumento y no se sacan del
 -- 'Poll'__, que es lo que mantiene esto genérico en @a@ y sin conocer el dominio:
--- quien llama tiene la tabla y sabe proyectarla ('Widgets.Live.stateOf'), y
+-- quien llama tiene la tabla y sabe proyectarla ('Widgets.Live.Helper.stateOf'), y
 -- aquí solo se decide qué pintar con la respuesta. Primero la que rueda, después la
 -- finalizada.
 indicatorFrom :: Bool -> Bool -> Poll (Sourced a) -> Indicator

@@ -94,7 +94,8 @@ import           Widgets.Comparison            (comparisonWidget)
 import           Widgets.Historical            (constructorStatsWidget,
                                                 driverStatsWidget)
 import           Widgets.Live                  (LiveView (..), delayedLive,
-                                                livePoll, sessionOf)
+                                                livePoll)
+import           Widgets.Live.Helper           (sessionOf)
 import           Widgets.LiveTiming            (liveTimingWidget)
 import           Widgets.TyreStrategy          (tyreStrategyWidget)
 

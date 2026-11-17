@@ -79,6 +79,45 @@ CACHE_DIR = os.environ.get("FASTF1_CACHE", ".fastf1-cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 fastf1.Cache.configure(cache_dir=CACHE_DIR)
 
+# Lo más que espera, en segundos, una petición de FastF1 a la red (2026-11-13 (v)).
+NET_TIMEOUT = 30.0
+
+
+def _with_timeout(session: Any, timeout: float) -> None:
+    """Pone ``timeout`` a toda petición de ``session`` que no traiga uno propio; la que
+    lo trae lo conserva. Cambia ``session`` en su sitio."""
+    send = session.request
+
+    def request(method: str, url: str, *args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("timeout", timeout)
+        return send(method, url, *args, **kwargs)
+
+    session.request = request
+
+
+def _fastf1_sessions() -> List[Any]:
+    """Las sesiones de ``requests`` por las que FastF1 sale a la red: la que no guarda
+    y, con la caché configurada, la que guarda."""
+    cache = fastf1.Cache
+    return [s for s in (cache._requests_session, cache._requests_session_cached) if s is not None]
+
+
+def _close_idle(session: Any) -> None:
+    """Cierra las conexiones que ``session`` guarda abiertas; la petición siguiente abre
+    una nueva. ``session`` sigue sirviendo."""
+    for adapter in session.adapters.values():
+        adapter.close()
+
+
+def _fresh_connections() -> None:
+    """Cierra las conexiones abiertas de FastF1 (``_close_idle``)."""
+    for session in _fastf1_sessions():
+        _close_idle(session)
+
+
+for _session in _fastf1_sessions():
+    _with_timeout(_session, NET_TIMEOUT)
+
 
 # ── Arranque ──────────────────────────────────────────────────────────────────
 
@@ -249,12 +288,14 @@ def _resolve_session(session_key: str) -> Any:
 
     Carga una sesión a la vez (``_load_lock``); una sesión ya en memoria y con
     datos no espera. Una vacía, o con la telemetría incompleta, se sirve como está
-    hasta que toca volver a pedirla (``_empty``, ``_incomplete``).
+    hasta que toca volver a pedirla (``_empty``, ``_incomplete``). Cada vez que coge
+    el cerrojo, lo que pida a la red va por conexiones nuevas (``_fresh_connections``).
     """
     cached = _sessions.get(session_key)
     if cached is not None and id(cached) not in _empty and id(cached) not in _incomplete:
         return cached
     with _load_lock:
+        _fresh_connections()
         cached = _memo_get(session_key)
         if cached is None:
             key = _race_key(session_key)

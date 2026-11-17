@@ -530,19 +530,100 @@
           '';
         };
 
+        # Ends with one block of totals, also written to dist-newstyle/dashboardF1-test.txt.
         packages.test = pkgs.writeShellApplication {
           name = "dashboardF1-test";
-          runtimeInputs = [ self'.packages.pytest self'.packages.hspec e2eLauncher ];
+          runtimeInputs = [
+            self'.packages.pytest self'.packages.hspec e2eLauncher
+            pkgs.coreutils pkgs.gawk pkgs.git pkgs.gnugrep pkgs.gnused
+          ];
           text = ''
-            if ! dashboardF1-pytest; then
+            ${guardRoot}
+            summary=dist-newstyle/dashboardF1-test.txt
+            logs="$(mktemp -d)"
+            trap 'rm -rf "$logs"' EXIT
+            mkdir -p dist-newstyle
+
+            commit="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+            if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+              commit="$commit, con cambios sin commitear"
+            fi
+            started="$(date '+%Y-%m-%d %H:%M %Z')"
+            echo "dashboardF1-test en curso desde $started ($commit)" > "$summary"
+
+            # Through tee the tools stop seeing a terminal; keep their colours.
+            export HSPEC_OPTIONS=--color PYTEST_ADDOPTS=--color=yes FORCE_COLOR=1
+
+            run() {
+              name="$1"
+              shift
+              "$@" 2>&1 | tee "$logs/$name"
+            }
+
+            plain() {
+              sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$1"
+            }
+
+            pytestTotals() {
+              if [ ! -f "$logs/pytest" ]; then echo "pytest         no se corrió"; return; fi
+              total="$(plain "$logs/pytest" \
+                | grep -E '^=+ .*[0-9]+ (passed|failed|error).* in [0-9.]+s' | tail -n 1 \
+                | sed -E 's/^=+ //; s/ =+$//' || true)"
+              [ -n "$total" ] || total="sin total: mira la terminal"
+              echo "pytest         $total"
+              plain "$logs/pytest" | grep -E '^(FAILED|ERROR) ' | sed 's/^/    /' || true
+            }
+
+            hspecTotals() {
+              if [ ! -f "$logs/hspec" ]; then echo "hspec          no se corrió"; return; fi
+              lines="$(plain "$logs/hspec" | awk '
+                /^  [0-9]+\) / { sub(/^  [0-9]+\) /, ""); fails[++n] = $0; next }
+                /^[0-9]+ examples?, [0-9]+ failures?/ { total = $0; next }
+                /^Test suite [^ ]+: (PASS|FAIL)/ && total != "" {
+                  name = $3; sub(/:$/, "", name)
+                  printf "%-14s %s\n", name, total
+                  for (i = 1; i <= n; i++) print "    " fails[i]
+                  n = 0; total = ""
+                }')"
+              [ -n "$lines" ] || lines="hspec          sin total: mira la terminal"
+              echo "$lines"
+            }
+
+            e2eTotals() {
+              if [ ! -f "$logs/e2e" ]; then echo "e2e            no se corrió"; return; fi
+              total="$(plain "$logs/e2e" \
+                | grep -E '^ +[0-9]+ (passed|failed|flaky|skipped|did not run|interrupted)' \
+                | sed -E 's/^ +//' | paste -sd '|' | sed 's/|/ · /g' || true)"
+              [ -n "$total" ] || total="sin total: mira la terminal"
+              echo "e2e            $total"
+              plain "$logs/e2e" | awk '
+                /^ +[0-9]+ [a-z]/ { kind = $2 }
+                /^    \[/ { sub(/^ +/, ""); sub(/ ─+$/, ""); print "    " kind ": " $0 }'
+            }
+
+            result=VERDE
+            if ! run pytest dashboardF1-pytest; then
+              result="ROJO en pytest"
               echo "dashboardF1-pytest falló; mientras lo revisas puedes correr dashboardF1-hspec y dashboardF1-e2e" >&2
-              exit 1
-            fi
-            if ! dashboardF1-hspec "$@"; then
+            elif ! run hspec dashboardF1-hspec "$@"; then
+              result="ROJO en hspec"
               echo "dashboardF1-hspec falló; mientras lo revisas puedes correr dashboardF1-e2e" >&2
-              exit 1
+            elif ! run e2e dashboardF1-e2e; then
+              result="ROJO en e2e"
             fi
-            exec dashboardF1-e2e
+
+            {
+              echo "── Resumen de dashboardF1-test ($commit · $started) ──"
+              echo "carpeta        $(pwd)"
+              pytestTotals
+              hspecTotals
+              e2eTotals
+              echo "resultado      $result"
+            } > "$summary"
+            echo
+            cat "$summary"
+            echo "(también en $summary)"
+            [ "$result" = VERDE ]
           '';
         };
 
