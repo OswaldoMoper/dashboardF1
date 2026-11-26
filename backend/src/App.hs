@@ -10,9 +10,9 @@
 module App where
 
 import           Common.Origin           (Source)
+import           Common.Session          (SeasonRace, SessionKey)
 import           Common.Types            (DriverEntry, HistoricalStat,
-                                          LapComparison, LiveTable,
-                                          TyreStint)
+                                          LapComparison, LiveTable)
 import           Config                  (Config)
 import           Control.Concurrent.MVar (MVar, newMVar)
 import           Control.Concurrent.STM  (TVar, newTVarIO)
@@ -20,6 +20,7 @@ import           Data.Map.Strict         (Map)
 import qualified Data.Map.Strict         as Map
 import           Data.Text               (Text)
 import           Data.Time.Clock         (UTCTime)
+import           Sync                    (Flights, newFlights)
 
 -- | Una sesión del calendario, con lo que el backend necesita de ella.
 --
@@ -78,6 +79,17 @@ data SectorMemory = SectorMemory
 emptySectorMemory :: SectorMemory
 emptySectorMemory = SectorMemory Nothing Map.empty
 
+-- | Una sesión pasada cuya tabla dio OpenF1 mientras FastF1 no contestaba: se guarda a
+-- medias, y la siguiente vez solo se pregunta a FastF1
+-- ('Handler.Live.Helper.settlePending'). Los pilotos, con el tipo de aquí, son los que
+-- arman sus stints cuando conteste.
+data PastPending = PastPending
+  { ppAt      :: UTCTime
+  , ppTable   :: LiveTable
+  , ppDrivers :: [DriverEntry]
+  }
+  deriving (Eq, Show)
+
 data Env = Env
   { envConfig          :: Config
   , envLiveCache       :: TVar (Maybe (UTCTime, Source, LiveTable))
@@ -107,11 +119,28 @@ data Env = Env
     -- llevado un paso más: lo guardado tiene que poder decir __de qué sesión__
     -- era. Lo único que caduca de ella es el reloj, y de pararlo se encarga
     -- 'Handler.Live.Helper.freezeClock' al servir.
-  , envTyreCache       :: TVar (Maybe (UTCTime, [TyreStint]))
-    -- ^ Última respuesta buena de @/api/tyre-strategy@ (respaldo si OpenF1 falla),
-    -- con la hora en que llegó: la que sale en @X-Data-Fetched-At@ al servirla.
-  , envHistoricalCache :: TVar (Maybe [HistoricalStat])
-    -- ^ Última respuesta buena de @/api/historical@ (respaldo si Jolpica falla).
+  , envPastCache       :: TVar (Map SessionKey (UTCTime, Source, LiveTable))
+    -- ^ La tabla de @/api/live?session=@ __por clave__, con su fuente y su hora: solo
+    -- la que salió entera ('Handler.Live.Helper.pastStints'), que ya no cambia.
+  , envPastPending     :: TVar (Map SessionKey PastPending)
+    -- ^ Las de @/api/live?session=@ guardadas a medias, por clave: de OpenF1, a la
+    -- espera de que FastF1 conteste. Una clave sale de aquí al guardarse entera.
+  , envHistoricalCache :: TVar (Maybe (UTCTime, [HistoricalStat]))
+    -- ^ Última respuesta buena de @/api/historical@ y cuándo llegó: se sirve sin volver a
+    -- Jolpica mientras es reciente ('Handler.Historical.Helper.keptToday') y, si Jolpica
+    -- falla, aunque no lo sea.
+  , envStandingsCache  :: TVar (Map (Int, Int) (UTCTime, [HistoricalStat]))
+    -- ^ Las clasificaciones de @/api/historical?session=@ __por (año, ronda)__ y cuándo
+    -- llegaron: la de una ronda ya corrida no cambia, así que se sirve de aquí sin volver a
+    -- Jolpica; la vacía, mientras es reciente ('Handler.Historical.Helper.keptStandings').
+  , envHistoricalFlights :: Flights (Maybe (Int, Int)) [HistoricalStat]
+    -- ^ Las peticiones a @/api/historical@ en marcha: 'Nothing' sin @?session=@, y si no
+    -- (año, ronda). Las que llegan a la vez con la misma clave salen a Jolpica una sola
+    -- vez y reciben el mismo resultado, también su fallo ('Sync.joinFlight').
+  , envSeasonCache     :: TVar (Maybe (UTCTime, Bool, [SeasonRace]))
+    -- ^ Última temporada buena de @/api/season@, cuándo llegó y si sus nombres son los de
+    -- FastF1 (si no, los de Jolpica): se sirve sin volver a Jolpica mientras es reciente
+    -- ('Handler.Season.Context.seasonFreshFor') y, si Jolpica falla, aunque no lo sea.
   , envComparisonCache :: TVar (Map (Text, Text, Int) (UTCTime, LapComparison))
     -- ^ Última respuesta buena de @/api/comparison@ __por clave__ @(sesión,
     -- coches, muestras)@ ya resuelta (respaldo si el microservicio FastF1 no
@@ -205,8 +234,12 @@ data Env = Env
 mkEnv :: Config -> IO Env
 mkEnv cfg = do
   liveCache <- newTVarIO Nothing
-  tyreCache <- newTVarIO Nothing
+  pastCache <- newTVarIO Map.empty
+  pastPending <- newTVarIO Map.empty
   historicalCache <- newTVarIO Nothing
+  standingsCache <- newTVarIO Map.empty
+  historicalFlights <- newFlights
+  seasonCache <- newTVarIO Nothing
   comparisonCache <- newTVarIO Map.empty
   feedWindow <- newTVarIO (FeedWindow [] Nothing)
   meetingNames <- newTVarIO Map.empty
@@ -219,8 +252,12 @@ mkEnv cfg = do
     Env
       { envConfig          = cfg
       , envLiveCache       = liveCache
-      , envTyreCache       = tyreCache
+      , envPastCache       = pastCache
+      , envPastPending     = pastPending
       , envHistoricalCache = historicalCache
+      , envStandingsCache  = standingsCache
+      , envHistoricalFlights = historicalFlights
+      , envSeasonCache     = seasonCache
       , envComparisonCache = comparisonCache
       , envFeedWindow      = feedWindow
       , envMeetingNames    = meetingNames

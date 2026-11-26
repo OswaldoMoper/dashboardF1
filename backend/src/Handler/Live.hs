@@ -5,7 +5,7 @@
 -- 'Handler.Live.Manager'), el mapeo puro ('Handler.Live.Helper') y la cache STM del
 -- 'Env'.
 --
--- __Responde con cabeceras propias__, como 'Handler.TyreStrategy': de dónde salió el
+-- __Responde con cabeceras propias__: de dónde salió el
 -- dato ('Provenance'), que son dos preguntas —qué peldaño de la escalera y qué
 -- fuente— y que el @Context@ conoce en cada una.
 --
@@ -17,16 +17,18 @@ module Handler.Live where
 import           App                    (Env)
 import           Common.Types           (LiveTable)
 import           Control.Monad.IO.Class (liftIO)
+import           Data.Text              (Text)
 import qualified Handler.Live.Context   as Context
 import           Handler.Live.Helper    (CalendarEntry)
+import           Outcome                (serve)
 import           Provenance             (WithProvenance, withProvenance)
 import           Servant                (Handler)
 
 -- | La respuesta de @\/api\/live@: la tabla con su sesión, más las tres cabeceras.
 type LiveResponse = WithProvenance LiveTable
 
-liveHandler :: Env -> Handler LiveResponse
-liveHandler env = withProvenance <$> liftIO (Context.getLiveTiming env)
+liveHandler :: Env -> Maybe Text -> Handler LiveResponse
+liveHandler env session = withProvenance <$> (liftIO (Context.getLive env session) >>= serve)
 
 calendarHandler :: Env -> Handler [CalendarEntry]
 calendarHandler env = liftIO (Context.getCalendar env)

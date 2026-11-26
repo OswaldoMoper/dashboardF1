@@ -58,6 +58,7 @@ Variable de entorno: ``FASTF1_CACHE`` (default ``.fastf1-cache``).
 from __future__ import annotations
 
 import ctypes
+import itertools
 import os
 import sys
 import threading
@@ -69,10 +70,13 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 import fastf1
 import platformdirs
 from fastapi import FastAPI, HTTPException
+from fastf1.ergast import Ergast
 from fastf1.exceptions import DataNotLoadedError
 
 from convert import _num, _text
 from feed import _LIVE_TOPICS, _feed_live
+from results import session_results, session_summary
+from stints import complete, cut, session_stints
 
 CACHE_DIR = os.environ.get("FASTF1_CACHE", ".fastf1-cache")
 
@@ -200,7 +204,17 @@ app = FastAPI(title="telemetry-service", version="0.1.0", lifespan=_lifespan)
 # clave `AÑO-RONDA-R` apuntan al mismo objeto: una sola copia, se pida como se
 # pida. Consecuencia aceptada: `latest` se congela mientras el proceso viva —
 # reiniciar `uvicorn` para volver a resolverlo—, salvo si cargó vacía (`_empty`).
+# Guarda la de `latest` y como mucho `MEMO_MAX` más (`_drop_overflow`).
 _sessions: Dict[str, Any] = {}
+
+# Cuántas sesiones guarda el memo además de la de `latest`, que nunca sale. Al cargar
+# una que pasa del tope, sale la que lleva más rato sin pedirse.
+MEMO_MAX = 4
+
+# Cuándo se pidió por última vez cada sesión del memo, por `id`: un número de `_tick`,
+# que crece con cada petición.
+_used: Dict[int, int] = {}
+_tick = itertools.count()
 
 # Las sesiones del memo que cargaron vacías (`_is_empty`), por `id`: cuándo y con qué
 # token (`_token_stamp`). Se vuelven a pedir al pasar `EMPTY_RETRY` o al cambiar el
@@ -290,12 +304,16 @@ def _resolve_session(session_key: str) -> Any:
     datos no espera. Una vacía, o con la telemetría incompleta, se sirve como está
     hasta que toca volver a pedirla (``_empty``, ``_incomplete``). Cada vez que coge
     el cerrojo, lo que pida a la red va por conexiones nuevas (``_fresh_connections``).
+    Tras cargar una nueva, el memo se recorta a ``MEMO_MAX`` (``_drop_overflow``); una
+    carga que falla no suelta ninguna.
     """
     cached = _sessions.get(session_key)
     if cached is not None and id(cached) not in _empty and id(cached) not in _incomplete:
+        _used[id(cached)] = next(_tick)
         return cached
     with _load_lock:
         _fresh_connections()
+        loaded = False
         cached = _memo_get(session_key)
         if cached is None:
             key = _race_key(session_key)
@@ -309,9 +327,41 @@ def _resolve_session(session_key: str) -> Any:
                     _empty[id(cached)] = (time.monotonic(), stamp)
                 else:
                     _mark_if_incomplete(key, cached, stamp)
-                _give_back()
+                loaded = True
             _sessions[session_key] = cached
+        _used[id(cached)] = next(_tick)
+        if loaded:
+            _drop_overflow()
+            _give_back()
         return cached
+
+
+def overflow(used: Dict[int, int], keep: Optional[int], limit: int) -> List[int]:
+    """Las sesiones que salen del memo, por ``id``: las de número más bajo en ``used``
+    hasta dejar ``limit``, sin contar ni soltar nunca ``keep``. Sin nada que soltar, la
+    lista vacía."""
+    rest = sorted((tick, ident) for ident, tick in used.items() if ident != keep)
+    return [ident for _, ident in rest[: max(0, len(rest) - limit)]]
+
+
+def _drop_overflow() -> None:
+    """Suelta del memo, con todas sus claves y sus marcas, las sesiones que pasan de
+    ``MEMO_MAX`` (``overflow``); la de ``latest`` se queda. Solo se llama con
+    ``_load_lock``."""
+    held = {id(v): v for v in _sessions.values()}
+    for ident in [i for i in list(_used) if i not in held]:
+        _used.pop(ident, None)
+    latest = _sessions.get("latest")
+    used = {ident: _used.get(ident, -1) for ident in held}
+    drop = overflow(used, None if latest is None else id(latest), MEMO_MAX)
+    for ident in drop:
+        keys = [k for k, v in _sessions.items() if id(v) == ident]
+        for k in keys:
+            del _sessions[k]
+        _empty.pop(ident, None)
+        _incomplete.pop(ident, None)
+        _used.pop(ident, None)
+        _say(f"memo lleno (más de {MEMO_MAX} además de latest): sale {', '.join(keys)}")
 
 
 def _memo_get(session_key: str) -> Any:
@@ -333,6 +383,7 @@ def _memo_get(session_key: str) -> Any:
     keys = [k for k, v in _sessions.items() if v is cached]
     for k in keys:
         del _sessions[k]
+    _used.pop(id(cached), None)
     if empty:
         del _empty[id(cached)]
     else:
@@ -795,6 +846,8 @@ def comparison(session_key: str, drivers: str, samples: int = 0) -> Dict[str, An
     (``ceFrontiers``) y su traza (``ceTrace``); con 0 no se toca la telemetría. Si
     además la telemetría de la sesión está incompleta (``_incomplete``), lleva
     ``lcTelemetry``: su cobertura, de 0 a 1, y la hora UTC a la que se vuelve a pedir.
+    Si la sesión no llegó entera, lleva ``lcCut`` (``_session_cut``): la vuelta en que
+    acaba y, si su resultado trae más, cuántas tuvo.
 
     ``drivers`` fuera de 1 a 5 coches (``all`` incluido) o ``samples`` que no sea 0
     o de 60 a 250 de 5 en 5 son un **400**. Un coche sin vuelta **no** es un error:
@@ -830,6 +883,9 @@ def comparison(session_key: str, drivers: str, samples: int = 0) -> Dict[str, An
             "coverage": round(gap[2], 4),
             "retryAt": gap[3].strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+    cut_at = _session_cut(session)
+    if cut_at is not None:
+        reply["lcCut"] = cut_at
     return reply
 
 
@@ -977,6 +1033,176 @@ def laps(session_key: str, driver: str = "all") -> List[Dict[str, Any]]:
         for _, row in picked.iterrows():
             entries.append(_lap_entry(label, number, row))
     return entries
+
+
+# ── Clasificación ─────────────────────────────────────────────────────────────
+
+
+def _results_rows(session: Any) -> List[Dict[str, Any]]:
+    """Lo que ``results.session_results`` necesita de cada piloto de
+    ``session.results``, con su mejor vuelta y sus vueltas de ``session.laps``."""
+    try:
+        laps = session.laps
+        best = laps.groupby("DriverNumber")["LapTime"].min()
+        counts = laps.groupby("DriverNumber").size()
+    except Exception:
+        best, counts = {}, {}
+    rows = []
+    for _, r in session.results.iterrows():
+        number = str(r["DriverNumber"])
+        laps_done = _num(r.get("Laps"))
+        rows.append({
+            "number": number,
+            "position": r.get("Position"),
+            "classified": _text(r.get("ClassifiedPosition")),
+            "time": _seconds(r.get("Time")),
+            "laps": None if laps_done is None else int(laps_done),
+            "q": [_seconds(r.get(part)) for part in ("Q1", "Q2", "Q3")],
+            "best": _seconds(best.get(number)),
+            "lap_count": int(counts.get(number, 0)),
+        })
+    return rows
+
+
+@app.get("/fastf1/results/{session_key}")
+def results(session_key: str) -> List[Dict[str, Any]]:
+    """La clasificación de la sesión con la forma de OpenF1 ``/session_result``:
+    ``position``, ``driver_number``, ``number_of_laps``, ``dnf``, ``dns``, ``dsq``,
+    ``duration`` y ``gap_to_leader``. Qué significa cada una según la sesión, en
+    ``results.py``.
+
+    Una sesión sin clasificación devuelve ``[]``, **no un error**, igual que los
+    demás.
+    """
+    session = _resolve_session(session_key)
+    try:
+        rows = _results_rows(session)
+    except Exception:
+        return []
+    return session_results(_text(getattr(session, "name", "")), rows)
+
+
+@app.get("/fastf1/session/{session_key}")
+def session_names(session_key: str) -> Dict[str, Any]:
+    """De qué sesión se habla: ``meeting`` (el nombre del gran premio de FastF1),
+    ``name`` y ``finished`` (``results.session_summary``). Una sesión aún no corrida
+    contesta igual, con ``finished`` en ``false``; una que no existe, 404.
+    """
+    session = _resolve_session(session_key)
+    try:
+        event_name = session.event["EventName"]
+    except Exception:
+        event_name = ""
+    return session_summary(event_name, getattr(session, "name", ""), _statuses(session))
+
+
+@app.get("/fastf1/schedule/{year}")
+def schedule(year: int) -> List[Dict[str, Any]]:
+    """El calendario de FastF1 de ese año, sin los test (``_schedule_rounds``). Si FastF1
+    no lo da, 503."""
+    try:
+        events = fastf1.get_event_schedule(year, include_testing=False)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"sin calendario de {year}: {exc}") from exc
+    return _schedule_rounds(events)
+
+
+def _schedule_rounds(events: Any) -> List[Dict[str, Any]]:
+    """``round`` y ``name`` (``EventName``) de cada gran premio, en su orden; sin los que
+    no traen ronda o nombre."""
+    rounds = []
+    for _, event in events.iterrows():
+        number, name = _num(event.get("RoundNumber")), _text(event.get("EventName"))
+        if number is not None and number > 0 and name:
+            rounds.append({"round": int(number), "name": name})
+    return rounds
+
+
+@app.get("/fastf1/circuits/{year}")
+def circuits(year: int) -> List[Dict[str, Any]]:
+    """El circuito de cada gran premio de ese año, por la interfaz Ergast de FastF1, que
+    pregunta a Jolpica y guarda en su caché (``_circuit_rounds``). Si no lo da, 503."""
+    try:
+        races = Ergast().get_race_schedule(season=year)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"sin circuitos de {year}: {exc}") from exc
+    return _circuit_rounds(races)
+
+
+def _circuit_rounds(races: Any) -> List[Dict[str, Any]]:
+    """``round``, ``circuit`` (``circuitId``) y ``name`` (``raceName``, vacío si no lo trae)
+    de cada gran premio, en su orden; sin los que no traen ronda o circuito."""
+    rounds = []
+    for _, race in races.iterrows():
+        number, circuit = _num(race.get("round")), _text(race.get("circuitId"))
+        if number is not None and number > 0 and circuit:
+            rounds.append({"round": int(number), "circuit": circuit, "name": _text(race.get("raceName"))})
+    return rounds
+
+
+# ── Stints ────────────────────────────────────────────────────────────────────
+
+
+def _stint_laps(session: Any) -> List[Dict[str, Any]]:
+    """Lo que ``stints.session_stints`` necesita de cada vuelta de ``session.laps``; sin
+    vueltas, ``[]``."""
+    try:
+        laps = session.laps
+    except DataNotLoadedError:
+        return []
+    return [
+        {
+            "number": str(r["DriverNumber"]),
+            "lap": r.get("LapNumber"),
+            "stint": r.get("Stint"),
+            "compound": r.get("Compound"),
+            "tyre_life": r.get("TyreLife"),
+        }
+        for _, r in laps.iterrows()
+    ]
+
+
+def _statuses(session: Any) -> List[str]:
+    """Los estados por los que pasó la sesión, en orden; sin ese dato, ``[]``."""
+    try:
+        return [str(s) for s in session.session_status["Status"]]
+    except Exception:
+        return []
+
+
+def _result_laps(session: Any) -> Optional[int]:
+    """Las vueltas del primero del resultado (las más de ``Laps``); ``None`` si el
+    resultado no las trae, como en una Q o unas libres."""
+    try:
+        laps = [n for n in (_num(x) for x in session.results["Laps"]) if n is not None]
+    except Exception:
+        return None
+    return int(max(laps)) if laps else None
+
+
+def _last_lap(found: List[Dict[str, Any]]) -> Optional[int]:
+    """La última vuelta de los stints de ``session_stints``; sin ninguno, ``None``."""
+    return max((s["lap_end"] for s in found), default=None)
+
+
+def _session_cut(session: Any) -> Optional[Dict[str, Any]]:
+    """Dónde acaba la sesión si no llegó entera (``stints.cut``), con la misma última
+    vuelta que ``/fastf1/stints``; entera o sin vueltas, ``None``."""
+    last_lap = _last_lap(session_stints(_stint_laps(session)))
+    return cut(_statuses(session), last_lap, _result_laps(session))
+
+
+@app.get("/fastf1/stints/{session_key}")
+def stints(session_key: str) -> Dict[str, Any]:
+    """Los stints de la sesión con la forma de OpenF1 ``/stints``, en ``stints``, y en
+    ``complete`` si la sesión llegó entera (``stints.complete``). Una sesión sin vueltas
+    da ``{"complete": false, "stints": []}``, **no un error**."""
+    session = _resolve_session(session_key)
+    found = session_stints(_stint_laps(session))
+    return {
+        "complete": complete(_statuses(session), _last_lap(found), _result_laps(session)),
+        "stints": found,
+    }
 
 
 # --- Feed de timing en vivo ---------------------------------------------------

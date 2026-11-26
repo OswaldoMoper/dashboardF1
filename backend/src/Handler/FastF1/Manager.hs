@@ -12,13 +12,16 @@ module Handler.FastF1.Manager
   , fastf1Port
   , fastf1Timeout
   , fastf1Options
+  , fastf1OptionsWithin
   , readTokenFile
   ) where
 
 import           Config                (Config (..))
 import           Control.Exception     (SomeException, bracketOnError)
 import qualified Data.ByteString       as BS
-import           Handler.FastF1.Helper (TokenFile (..), tokenFile)
+import           Data.Text             (Text)
+import           Handler.FastF1.Helper (TokenFile (..), sessionTimeout,
+                                        tokenFile)
 import qualified Network.HTTP.Client   as HC
 import           Network.HTTP.Req
 import qualified Network.Socket        as NS
@@ -74,22 +77,25 @@ fastf1Port = port
 --   la carga entera —de disco, o de la red si nunca se bajó— y puede pasar del
 --   techo. Con un techo corto esa llamada degrada al dummy.
 --
--- El default (@TELEMETRY_TIMEOUT@, 5 s) sirve al primero. Del segundo se ocupa
--- @dashboardF1-dev@, que carga la última carrera antes de arrancar el backend;
--- otra sesión, o el servicio lanzado de otra forma, sigue pidiendo subir el techo
--- por entorno o pedirle antes la sesión al microservicio.
+-- El default (@TELEMETRY_TIMEOUT@, 5 s) sirve al primero con @latest@, que
+-- @dashboardF1-dev@ carga antes de arrancar el backend. Una sesión elegida espera más
+-- ('Handler.FastF1.Helper.sessionTimeout').
 fastf1Timeout :: Int -> Option 'Http
 fastf1Timeout seconds = responseTimeout (seconds * 1000000)
 
--- | Puerto y techo de duración juntos, ya resueltos desde la 'Config'. Los clientes
--- añaden las suyas con @\<\>@ (por ejemplo el @drivers@ de comparación).
+-- | Puerto y techo de duración juntos para la sesión dada, ya resueltos desde la
+-- 'Config' ('Handler.FastF1.Helper.sessionTimeout'). Los clientes añaden las suyas con
+-- @\<\>@ (por ejemplo el @drivers@ de comparación).
 --
 -- __Lo usan los clientes que comparten el techo, no todos.__
 -- 'Handler.Feed.Manager' compone el puerto con un techo propio, porque una foto del
 -- feed cuesta ~17 s y el default de aquí la leería como fallo.
-fastf1Options :: Config -> Option 'Http
-fastf1Options cfg =
-  fastf1Port (cfgTelemetryPort cfg) <> fastf1Timeout (cfgTelemetryTimeout cfg)
+fastf1Options :: Config -> Text -> Option 'Http
+fastf1Options cfg key = fastf1OptionsWithin cfg (sessionTimeout (cfgTelemetryTimeout cfg) key)
+
+-- | 'fastf1Options' con el techo dado, en segundos, en vez del de la sesión.
+fastf1OptionsWithin :: Config -> Int -> Option 'Http
+fastf1OptionsWithin cfg seconds = fastf1Port (cfgTelemetryPort cfg) <> fastf1Timeout seconds
 
 -- | Lo que hay en @~\/.local\/share\/fastf1\/f1auth_token.json@, donde FastF1 guarda el token.
 readTokenFile :: IO TokenFile

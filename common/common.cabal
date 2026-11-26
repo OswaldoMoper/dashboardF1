@@ -22,17 +22,22 @@ library
     hs-source-dirs:   src
     exposed-modules:
         Common.Account
+        Common.Blend
         Common.Carry
         Common.Chart
         Common.Columns
         Common.Comparison
         Common.ComparisonCard
+        Common.FixedLayouts
         Common.Format
+        Common.Group
         Common.Layout
         Common.Origin
+        Common.Pilots
         Common.Push
         Common.Route
         Common.Saved
+        Common.Session
         Common.Shown
         Common.Traces
         Common.TyreStrategy

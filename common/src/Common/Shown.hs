@@ -44,12 +44,15 @@
 module Common.Shown
   ( Poll (..)
   , PollEvent (..)
+  , Fetched (..)
+  , fetchedEvent
   , pollIdle
   , pollStep
   , canRequest
   , nextRequest
   , liveRefreshSeconds
   , liveRequestTimeoutSeconds
+  , historicalRetrySeconds
   , Kept (..)
   , keptNothing
   , keepLast
@@ -69,19 +72,25 @@ module Common.Shown
   , delayedPoll
   , landed
   , delayFromUrl
+  , delayOnOpen
+  , delayQuery
+  , delayKey
   , delayWait
   , delayWaitLabel
   , delayNote
   ) where
 
-import           Common.Format (ClockForm (..), formatClock, formatCountdown)
-import           Common.Origin (Origin (..), Source (..), Sourced (..),
-                                originNotice, sourceName)
-import           Data.Char     (isDigit)
-import           Data.List     (find)
-import           Data.Maybe    (fromMaybe, isJust, listToMaybe)
-import           Data.Text     (Text)
-import qualified Data.Text     as T
+import           Common.Format       (ClockForm (..), formatClock,
+                                      formatCountdown)
+import           Common.Origin       (Origin (..), Source (..), Sourced (..),
+                                      originNotice, sourceName)
+import           Common.Route        (queryParamSet, urlParam)
+import           Control.Applicative ((<|>))
+import           Data.Char           (isDigit)
+import           Data.List           (find)
+import           Data.Maybe          (fromMaybe, isJust, listToMaybe)
+import           Data.Text           (Text)
+import qualified Data.Text           as T
 
 -- | Estado de un dato que se pide periódicamente.
 data Poll a = Poll
@@ -91,21 +100,46 @@ data Poll a = Poll
     -- ^ Lo último que llegó bien; 'Nothing' hasta la primera respuesta buena.
   , pollLastFailed :: Bool
     -- ^ La última respuesta fue un fallo. __No borra 'pollShown'.__
+  , pollNotFound   :: Bool
+    -- ^ Una petición acabó en @404@ (lo pedido no existe) y ninguna ha llegado bien
+    -- después. Los demás fallos no lo cambian.
   , pollSent       :: Int
     -- ^ Cuántas peticiones se han enviado: el número de la última.
   }
   deriving stock (Eq, Show)
 
--- | Lo que le pasa al dato: se pide, o la petición de ese número acaba, con su respuesta
--- o con 'Nothing' si falló o se dio por perdida.
+-- | Lo que le pasa al dato: se pide, o la petición de ese número acaba, con su respuesta,
+-- con 'Nothing' si falló o se dio por perdida, o con un @404@ ('Missing'). 'Restarted' es
+-- pedir otra cosa (otra sesión): se olvida lo enseñado y se pide al momento.
 data PollEvent a
   = Sent
+  | Restarted
   | Arrived Int (Maybe a)
+  | Missing Int
   deriving stock (Eq, Show)
+
+-- | Cómo acabó una petición: con su valor, con un @404@ o sin valor (cualquier otro fallo).
+data Fetched a
+  = Got a
+  | Absent
+  | NotFetched
+  deriving stock (Eq, Show)
+
+instance Functor Fetched where
+  fmap f (Got x)    = Got (f x)
+  fmap _ Absent     = Absent
+  fmap _ NotFetched = NotFetched
+
+-- | El evento del final de la petición de ese número.
+fetchedEvent :: Int -> Fetched a -> PollEvent a
+fetchedEvent n (Got x)    = Arrived n (Just x)
+fetchedEvent n Absent     = Missing n
+fetchedEvent n NotFetched = Arrived n Nothing
 
 -- | Antes de la primera petición: nada en vuelo, nada que enseñar, ningún fallo.
 pollIdle :: Poll a
-pollIdle = Poll {pollInFlight = False, pollShown = Nothing, pollLastFailed = False, pollSent = 0}
+pollIdle =
+  Poll {pollInFlight = False, pollShown = Nothing, pollLastFailed = False, pollNotFound = False, pollSent = 0}
 
 -- | El estado tras un evento.
 --
@@ -120,11 +154,16 @@ pollIdle = Poll {pollInFlight = False, pollShown = Nothing, pollLastFailed = Fal
 pollStep :: PollEvent a -> Poll a -> Poll a
 pollStep Sent p =
   p {pollInFlight = True, pollSent = nextRequest p}
+pollStep Restarted p =
+  pollIdle {pollInFlight = True, pollSent = nextRequest p}
 pollStep (Arrived n answer) p
   | not (pollInFlight p) || n /= pollSent p = p
   | otherwise = case answer of
-      Just x  -> p {pollInFlight = False, pollShown = Just x, pollLastFailed = False}
+      Just x  -> p {pollInFlight = False, pollShown = Just x, pollLastFailed = False, pollNotFound = False}
       Nothing -> p {pollInFlight = False, pollLastFailed = True}
+pollStep (Missing n) p
+  | not (pollInFlight p) || n /= pollSent p = p
+  | otherwise = p {pollInFlight = False, pollLastFailed = True, pollNotFound = True}
 
 -- | El número que llevará la próxima petición.
 nextRequest :: Poll a -> Int
@@ -151,6 +190,11 @@ liveRefreshSeconds = 10
 -- darla por perdida. Por encima de los 30 s a los que el backend contesta con lo guardado.
 liveRequestTimeoutSeconds :: Int
 liveRequestTimeoutSeconds = 35
+
+-- | Cuántos segundos después de una respuesta fallida de @\/api\/historical@ se vuelve a
+-- pedir, para la misma sesión, mientras siga fallando (2026-11-18 (d)).
+historicalRetrySeconds :: Int
+historicalRetrySeconds = 30
 
 -- | Lo último que se supo de algo que la respuesta a veces no trae, y si es de
 -- ahora o de antes.
@@ -210,6 +254,10 @@ data Indicator = Indicator
   , indFinalised :: Bool
     -- ^ Consta que la sesión de lo que se ve está finalizada. Solo cambia el
     -- tooltip de lo guardado del feed.
+  , indPast      :: Bool
+    -- ^ Lo que se ve es una sesión elegida que ya se corrió. Solo cambia el tooltip,
+    -- y 'indicatorFrom' lo deja en 'False': lo pone quien conoce la sesión
+    -- ('Widgets.Live.Helper.indicatorOf').
   }
   deriving stock (Eq, Show)
 
@@ -229,6 +277,7 @@ indicatorFrom running finalised p = Indicator
   , indFailed    = pollLastFailed p
   , indRunning   = running
   , indFinalised = finalised
+  , indPast      = False
   }
 
 -- | Clase de la etiqueta, bloque y modificador.
@@ -297,6 +346,8 @@ indicatorTooltip i = maybe body (\s -> sourceName s <> " · " <> body) (indSourc
   where
     body =
       case (indOrigin i, indFailed i) of
+        (Just origin, False)
+          | indPast i && origin `elem` [Fresh, Recent] -> pastNotice
         (Just Fresh, False) | indRunning i -> liveNotice
                             | otherwise    -> idleNotice
         (Just Fresh, True)  -> retryFailedNotice
@@ -304,6 +355,9 @@ indicatorTooltip i = maybe body (\s -> sourceName s <> " · " <> body) (indSourc
           | indFinalised i && indSource i == Just Feed ->
               withFailure failed finalisedNotice
         (origin, failed)    -> withFailure failed (noticeOf origin)
+
+    -- Una sesión elegida ya corrida: no se refresca porque no va a cambiar (2026-11-18 (k)).
+    pastNotice = withHour "Sesión terminada: no cambia"
 
     -- La otra punta: el feed ya dio la sesión por finalizada, y quien no publica
     -- todavía es OpenF1, no el feed.
@@ -451,11 +505,24 @@ landed p
 -- | El retraso que trae la dirección de la página en @?retraso=@, con 'readDelay';
 -- los dos puntos pueden venir escritos @%3A@. 'Nothing' si no lo trae o no vale.
 delayFromUrl :: Text -> Maybe Int
-delayFromUrl url = readDelay . unescape =<< lookup "retraso" params
+delayFromUrl url = readDelay . unescape =<< urlParam "retraso" url
   where
-    query    = T.takeWhile (/= '#') (T.drop 1 (T.dropWhile (/= '?') url))
-    params   = [(k, T.drop 1 v) | pair <- T.splitOn "&" query, let (k, v) = T.breakOn "=" pair]
     unescape = T.replace "%3A" ":" . T.replace "%3a" ":"
+
+-- | El retraso con el que abre la página: el de la dirección ('delayFromUrl'); si no
+-- trae uno que valga, el guardado en el navegador; si tampoco, 'delayDefaultSeconds'.
+delayOnOpen :: Text -> Maybe Text -> Int
+delayOnOpen url saved = fromMaybe delayDefaultSeconds (delayFromUrl url <|> (readDelay =<< saved))
+
+-- | La query @search@ con @retraso=@ en @m:ss@, como lo enseña el campo; los demás
+-- parámetros se quedan en su orden ('queryParamSet'). Lo lee 'delayFromUrl'.
+delayQuery :: Int -> Text -> Text
+delayQuery n = queryParamSet "retraso" (Just (formatClock ClockCompact n))
+
+-- | Dónde guarda el navegador el último retraso aplicado en el campo, en @m:ss@. Es uno
+-- para todas las pestañas.
+delayKey :: Text
+delayKey = "dashboardF1.retraso"
 
 -- | Cuántos segundos faltan para que haya algo que enseñar con @n@ de retraso.
 -- 'Nothing' si ya lo hay o si no hay retraso; sin ninguna llegada, cuenta como si

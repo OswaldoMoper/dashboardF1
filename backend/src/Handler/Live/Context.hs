@@ -43,47 +43,70 @@
 -- llegó__.
 module Handler.Live.Context where
 
-import           App                     (Env (..), FeedWindow (..),
-                                          ScheduledSession (..))
-import           Common.Origin           (Origin (..), Source (..))
-import           Common.Types            (DriverStatus (..), LiveTable (..),
-                                          LiveTimingRow (..), SessionInfo,
-                                          UpNext (..), emptyLiveRow)
-import           Config                  (Config)
-import           Control.Concurrent      (threadDelay)
-import           Control.Concurrent.MVar (withMVar)
-import           Control.Concurrent.STM  (atomically, modifyTVar', readTVar,
-                                          readTVarIO, writeTVar)
-import           Control.Exception       (SomeException, displayException, try)
-import           Control.Monad           (forever, void, when)
-import           Data.List               (nub)
-import           Data.Map.Strict         (Map)
-import qualified Data.Map.Strict         as Map
-import           Data.Maybe              (listToMaybe)
-import           Data.Text               (Text)
-import qualified Data.Text               as T
-import qualified Data.Text.IO            as TIO
-import           Data.Time.Calendar      (toGregorian)
-import           Data.Time.Clock         (UTCTime, getCurrentTime, utctDay)
-import           Handler.Feed.Helper     (FeedLive (..))
-import qualified Handler.Feed.Manager    as Feed
-import           Handler.Live.Helper     (CalendarEntry, ClockVerdict (..),
-                                          FeedVerdict (..), Of1Interval,
-                                          Of1Meeting (..), Of1Session (..),
-                                          assembleRows, calendarEntries,
-                                          clockVerdict, closesFeedWindow,
-                                          feedVerdict, feedWindowOpen,
-                                          fetchFailure, finaliseBox,
-                                          freezeClock, inheritFinalised,
-                                          meetingNames, openf1ClockPeriod,
-                                          openf1Session, rememberSectors,
-                                          schedule, servedFromBox, stillRecent,
-                                          upNext, withLapSectors)
-import qualified Handler.Live.Manager    as Manager
-import qualified Handler.OpenF1.Manager  as OpenF1
-import           Outcome                 (httpStatusOf)
-import           Provenance              (Provenanced (..))
-import           System.IO               (stderr)
+import           App                         (Env (..), FeedWindow (..),
+                                              PastPending (..),
+                                              ScheduledSession (..))
+import           Common.Origin               (Origin (..), Source (..))
+import           Common.Session              (SessionKey (..), latestStartedKey,
+                                              renderSessionKey)
+import           Common.Types                (DriverStatus (..), LiveTable (..),
+                                              LiveTimingRow (..), SessionInfo,
+                                              TyreStint, UpNext (..),
+                                              emptyLiveRow)
+import           Config                      (Config)
+import           Control.Concurrent          (threadDelay)
+import           Control.Concurrent.MVar     (withMVar)
+import           Control.Concurrent.STM      (atomically, modifyTVar', readTVar,
+                                              readTVarIO, writeTVar)
+import           Control.Exception           (SomeException, displayException,
+                                              throwIO, try)
+import           Control.Monad               (forever, void, when)
+import           Data.List                   (nub)
+import           Data.Map.Strict             (Map)
+import qualified Data.Map.Strict             as Map
+import           Data.Maybe                  (fromMaybe, listToMaybe, mapMaybe)
+import           Data.Text                   (Text)
+import qualified Data.Text                   as T
+import qualified Data.Text.IO                as TIO
+import           Data.Time.Calendar          (toGregorian)
+import           Data.Time.Clock             (UTCTime, getCurrentTime, utctDay)
+import           Data.Time.Clock.POSIX       (utcTimeToPOSIXSeconds)
+import qualified Handler.Drivers.Manager     as Drivers
+import           Handler.Feed.Helper         (FeedLive (..))
+import qualified Handler.Feed.Manager        as Feed
+import qualified Handler.Historical.Manager  as Historical
+import           Handler.Live.Helper         (CalendarEntry, ClockVerdict (..),
+                                              FastF1Stints, FeedVerdict (..),
+                                              Of1Interval, Of1Listed (..),
+                                              Of1Meeting (..), Of1Session (..),
+                                              PastKeep (..), PendingStep (..),
+                                              assembleRows, calendarEntries,
+                                              clockVerdict, closesFeedWindow,
+                                              fastf1Lap, fastf1Session,
+                                              feedVerdict, feedWindowOpen,
+                                              fetchFailure, finaliseBox,
+                                              freezeClock, inheritFinalised,
+                                              matchSession, meetingNames,
+                                              needsOpenF1Stints,
+                                              openf1ClockPeriod, openf1Session,
+                                              orderedPositions, pastKeep,
+                                              pastStints, rawDriverOf1,
+                                              rememberSectors, schedule,
+                                              servedFromBox, settlePending,
+                                              stillRecent, upNext,
+                                              withLapSectors)
+import qualified Handler.Live.Manager        as Manager
+import           Handler.OpenF1.Helper       (Of1Driver, Of1Stint,
+                                              assembleStints)
+import qualified Handler.OpenF1.Manager      as OpenF1
+import           Handler.Query.Helper        (sessionKeyParam)
+import           Handler.Season.Context      (getSeasonForKey)
+import           Handler.Season.Helper       (readJolpica)
+import           Network.HTTP.Req            (Option, Scheme (..))
+import           Outcome                     (Outcome (..), classify,
+                                              httpStatusOf)
+import           Provenance                  (Provenanced (..))
+import           System.IO                   (stderr)
 
 -- | La tabla de live timing con su procedencia.
 type LiveResult = Provenanced LiveTable
@@ -120,6 +143,154 @@ getLiveTiming env = do
         either (const (fromCache env)) (fromFeed env) feed
       else fromOpenF1 env
   withUpNext env result
+
+-- | @\/api\/live@ con su @?session=@: sin él, 'getLiveTiming'; con una clave, la sesión
+-- pasada ('getPastTiming'); vacío, @latest@ o lo que no es una clave, el rechazo de
+-- 'Handler.Query.Helper.sessionKeyParam'.
+getLive :: Env -> Maybe Text -> IO (Outcome LiveResult)
+getLive env param = case sessionKeyParam param of
+  Left rejection   -> pure (Refused rejection)
+  Right Nothing    -> Served <$> getLiveTiming env
+  Right (Just key) -> getPastTiming env key
+
+-- | La tabla de una sesión pasada: de lo guardado si alguna vez salió entera
+-- ('Common.Origin.Recent'); si se guardó a medias, preguntando solo a FastF1
+-- ('settlePast'); y si no, de OpenF1 ('pastFromOpenF1') y, si OpenF1 no la da, de
+-- FastF1 ('pastFromFastF1'). Una sesión que el microservicio no resuelve se rechaza con
+-- su @404@ ('Outcome.classify'); si tampoco FastF1 contesta, el dato de ejemplo.
+--
+-- No toca la escalera del directo: ni su caja ni 'envLiveAsked'.
+getPastTiming :: Env -> SessionKey -> IO (Outcome LiveResult)
+getPastTiming env key = do
+  kept <- Map.lookup key <$> readTVarIO (envPastCache env)
+  pending <- Map.lookup key <$> readTVarIO (envPastPending env)
+  result <- case (kept, pending) of
+    (Just k, _)        -> pure (Served (servePast k))
+    (Nothing, Just p)  -> settlePast env key p
+    (Nothing, Nothing) -> askPast env key
+  case result of
+    Served r  -> Served <$> withUpNext env r
+    Refused r -> pure (Refused r)
+  where
+    servePast (at, source, table) = Provenanced Recent (Just source) (Just at) table
+
+-- | Una sesión guardada a medias (2026-11-18 (n)): solo se pregunta a FastF1. Sin
+-- contestar, lo guardado ('Common.Origin.Recent', con su hora); con la tabla ya entera,
+-- se guarda y deja de estar a medias; cortada y sin stints de OpenF1, se pide todo.
+settlePast :: Env -> SessionKey -> PastPending -> IO (Outcome LiveResult)
+settlePast env key p = do
+  fast <- attempt "los stints de FastF1" (Manager.fetchFastF1Stints (envConfig env) (renderSessionKey key))
+  case settlePending fast p of
+    StillPending -> pure (Served (Provenanced Recent (Just OpenF1) (Just (ppAt p)) (ppTable p)))
+    Settled table -> do
+      now <- getCurrentTime
+      atomically $ do
+        modifyTVar' (envPastCache env) (Map.insert key (now, OpenF1, table))
+        modifyTVar' (envPastPending env) (Map.delete key)
+      pure (Served (Provenanced Fresh (Just OpenF1) Nothing table))
+    Dropped -> atomically (modifyTVar' (envPastPending env) (Map.delete key)) >> askPast env key
+
+askPast :: Env -> SessionKey -> IO (Outcome LiveResult)
+askPast env key = do
+  open <- tryAny (pastFromOpenF1 env key)
+  case open of
+    Right (Just (table, kept)) -> Served <$> keepOpenF1 table kept
+    Right Nothing              -> fromFastF1
+    Left e                     -> noteFailure what e >> fromFastF1
+  where
+    what = "la sesión " <> renderSessionKey key
+
+    fromFastF1 = do
+      fast <- tryAny (pastFromFastF1 env key)
+      case fast of
+        Right found -> Served <$> keep FastF1 found
+        Left e | Just rejection <- classify e -> pure (Refused rejection)
+               | otherwise -> Served sample <$ noteFailure what e
+
+    keep source (table, whole) = do
+      now <- getCurrentTime
+      when whole $
+        atomically $ modifyTVar' (envPastCache env) (Map.insert key (now, source, table))
+      pure (Provenanced Fresh (Just source) Nothing table)
+
+    keepOpenF1 table kept = case kept of
+      KeepWhole -> keep OpenF1 (table, True)
+      KeepNone  -> keep OpenF1 (table, False)
+      KeepPending drivers -> do
+        now <- getCurrentTime
+        atomically $ modifyTVar' (envPastPending env) (Map.insert key (PastPending now table drivers))
+        pure (Provenanced Fresh (Just OpenF1) Nothing table)
+
+-- | Una sesión pasada de FastF1, por el microservicio (2026-11-14 (c)): de qué sesión
+-- habla, su clasificación (la posición, por el orden), sus vueltas, su parrilla y sus
+-- stints ('pastStintsOf', sin OpenF1), y si salió entera. Sin intervalos: los huecos
+-- salen de la clasificación ('Handler.Live.Helper.classificationGaps').
+--
+-- Una sesión aún no corrida da la tabla sin filas con su nombre, y no se guarda
+-- (2026-11-14 (f)); una que no existe lanza el @404@ del microservicio.
+pastFromFastF1 :: Env -> SessionKey -> IO (LiveTable, Bool)
+pastFromFastF1 env key = do
+  let cfg = envConfig env
+      rendered = renderSessionKey key
+  info    <- Manager.fetchFastF1Session cfg rendered
+  results <- Manager.fetchFastF1Results cfg rendered
+  grid    <- Drivers.fetchDrivers cfg rendered
+  laps    <- Manager.fetchFastF1Laps cfg rendered
+  (stints, whole) <- uncurry pastStints <$> pastStintsOf Manager.fetchFastF1Stints cfg key Nothing
+  let drivers = mapMaybe rawDriverOf1 grid
+      rows = assembleRows drivers (orderedPositions results) [] (mapMaybe fastf1Lap laps) results
+      table = LiveTable (Just (fastf1Session key info)) rows (assembleStints drivers stints) NextUnknown
+  pure (table, whole && not (null rows))
+
+-- | Una sesión pasada de OpenF1: su @session_key@ ('matchSession', con el calendario de
+-- Jolpica de su año), sus filas y sus stints, y qué se guarda de ella ('pastKeep').
+-- 'Nothing' si la sesión no casa o no tiene filas.
+pastFromOpenF1 :: Env -> SessionKey -> IO (Maybe (LiveTable, PastKeep))
+pastFromOpenF1 env key = do
+  let cfg = envConfig env
+  races <-
+    either (throwIO . userError) pure . readJolpica
+      =<< Historical.fetchSeasonOf cfg (skYear key)
+  listed <- Manager.fetchYearSessions cfg (toInteger (skYear key))
+  case matchSession key races listed of
+    Nothing    -> pure Nothing
+    Just found -> do
+      let session = OpenF1.sessionKey (lsKey found)
+      drivers <- OpenF1.fetchDriversOf cfg session
+      rows <- fetchRowsOf cfg session drivers
+      if null rows
+        then pure Nothing
+        else do
+          now <- getCurrentTime
+          grandPrix <-
+            attempt "el nombre del gran premio" (grandPrixName env (osMeeting (lsSession found)))
+          answers <- pastStintsOf Manager.fetchFastF1Stints cfg key (Just session)
+          let info = openf1Session now (lsSession found) (fromMaybe "" grandPrix)
+              stints = fst (uncurry pastStints answers)
+          pure (Just ( LiveTable (Just info) rows (assembleStints drivers stints) NextUnknown
+                     , uncurry (pastKeep drivers) answers ))
+
+-- | Lo que contestan sobre los stints de una sesión pasada ('Nothing', no contestó o no se
+-- preguntó): FastF1 primero, con @fromFastF1@ (de él sale el techo:
+-- 'Manager.fetchFastF1Stints' o 'Manager.fetchLatestStints'), y OpenF1 solo si hace falta
+-- ('needsOpenF1Stints') y hay sesión de OpenF1 que preguntar. La elección es de
+-- 'pastStints'.
+pastStintsOf :: (Config -> Text -> IO FastF1Stints) -> Config -> SessionKey -> Maybe (Option 'Https)
+             -> IO (Maybe FastF1Stints, Maybe [Of1Stint])
+pastStintsOf fromFastF1 cfg key session = do
+  fast <- attempt "los stints de FastF1" (fromFastF1 cfg (renderSessionKey key))
+  open <- case session of
+    Just s | needsOpenF1Stints fast -> attempt "los stints de OpenF1" (Manager.fetchStints cfg s)
+    _                               -> pure Nothing
+  pure (fast, open)
+
+-- | Un fetch que no tumba nada: 'Nothing' si no sale, y la línea de 'noteFailure'.
+attempt :: Text -> IO a -> IO (Maybe a)
+attempt what action =
+  either (\e -> Nothing <$ noteFailure what e) (pure . Just) =<< tryAny action
+
+tryAny :: IO a -> IO (Either SomeException a)
+tryAny = try
 
 -- | El calendario que la instancia tiene guardado, sin salir a la red.
 --
@@ -408,20 +579,38 @@ tick env = do
 -- __El instante se toma una vez y sirve para las dos cosas__, igual que en
 -- 'fromFeed': deducir el estado de la sesión y sellar la cache. Tomarlo dos veces
 -- dejaría guardado un estado que habla de un momento distinto al de su sello.
+--
+-- __Con la tabla van los stints de la última sesión__ ('latestStints'): como los de
+-- una sesión elegida, de FastF1 y de OpenF1 solo si FastF1 viene cortado.
 askOpenF1 :: Env -> IO LiveResult
 askOpenF1 env = do
   result <-
-    try (fetchRows (envConfig env)) :: IO (Either SomeException [LiveTimingRow])
+    try (fetchRows (envConfig env)) :: IO (Either SomeException ([Of1Driver], [LiveTimingRow]))
   case result of
-    Right rows | not (null rows) -> do
+    Right (drivers, rows) | not (null rows) -> do
       now <- getCurrentTime
       session <- fetchSessionOrNothing env now
       kept <- readTVarIO (envLiveCache env)
       let keptSession = (\(_, _, table) -> liveSession table) =<< kept
           heard = inheritFinalised keptSession <$> session
-      serveFresh env now OpenF1 (LiveTable heard rows [] NextUnknown)
+      stints <- latestStints env now drivers heard
+      serveFresh env now OpenF1 (LiveTable heard rows stints NextUnknown)
     Right _                      -> fromCache env
     Left e                       -> noteFailure "las filas" e >> fromCache env
+
+-- | Los stints de la última sesión para la tabla de OpenF1 (2026-11-17 (d)): la sesión,
+-- del calendario ('Common.Session.latestStartedKey', con 'getSeasonForKey', que no espera
+-- los nombres de FastF1); los stints, como los de una sesión elegida ('pastStintsOf'), pero
+-- con el techo corto de FastF1 ('Manager.fetchLatestStints'). Ninguno si la sesión no casa
+-- con la tabla.
+latestStints :: Env -> UTCTime -> [Of1Driver] -> Maybe SessionInfo -> IO [TyreStint]
+latestStints env now drivers info = do
+  races <- getSeasonForKey env
+  case latestStartedKey (floor (utcTimeToPOSIXSeconds now)) races info of
+    Nothing  -> pure []
+    Just key ->
+      assembleStints drivers . fst . uncurry pastStints
+        <$> pastStintsOf Manager.fetchLatestStints (envConfig env) key (Just OpenF1.latestSession)
 
 -- | Sirve lo que acaba de llegar y refresca la cache con su fuente.
 --
@@ -448,9 +637,13 @@ fromCache env = do
     fromEntry (fetchedAt, source, table) =
       Provenanced Cached (Just source) (Just fetchedAt) (frozen table)
     frozen table = table { liveSession = freezeClock <$> liveSession table }
-    sample = Provenanced Sample Nothing Nothing (LiveTable Nothing dummy [] NextUnknown)
 
--- | Fetch de los 5 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@.
+-- | El dato de ejemplo, sin fuente ni sesión porque no salió de ninguna.
+sample :: LiveResult
+sample = Provenanced Sample Nothing Nothing (LiveTable Nothing dummy [] NextUnknown)
+
+-- | Fetch de los 5 endpoints de OpenF1 y ensamblado puro a @[LiveTimingRow]@, con la
+-- parrilla que se pidió para ello.
 --
 -- Recibe la 'Config' —y no el 'Env'— porque lo único que necesita de ella es el
 -- techo de duración de los GET ('Handler.PublicApi.Manager'); la cache la maneja el
@@ -466,13 +659,19 @@ fromCache env = do
 -- Las marcas de @\/session_result@ tienen además su propio degradado en el default
 -- de 'Handler.Live.Helper.Of1Result': un piloto ausente de la respuesta entra como
 -- @Running@.
-fetchRows :: Config -> IO [LiveTimingRow]
+fetchRows :: Config -> IO ([Of1Driver], [LiveTimingRow])
 fetchRows cfg = do
-  drivers   <- OpenF1.fetchDrivers cfg
-  positions <- Manager.fetchPositions cfg
-  intervals <- fetchIntervalsOrEmpty cfg
-  laps      <- Manager.fetchLaps cfg
-  results   <- Manager.fetchResults cfg
+  drivers <- OpenF1.fetchDrivers cfg
+  (,) drivers <$> fetchRowsOf cfg OpenF1.latestSession drivers
+
+-- | Los otros cuatro GET de 'fetchRows' y el ensamblado, para la sesión que diga la
+-- opción y con la parrilla ya pedida.
+fetchRowsOf :: Config -> Option 'Https -> [Of1Driver] -> IO [LiveTimingRow]
+fetchRowsOf cfg session drivers = do
+  positions <- Manager.fetchPositions cfg session
+  intervals <- fetchIntervalsOrEmpty cfg session
+  laps      <- Manager.fetchLaps cfg session
+  results   <- Manager.fetchResults cfg session
   pure (assembleRows drivers positions intervals laps results)
 
 -- | Lo que nombra la sesión, con su propio @try@: «no se sabe» si no sale, en vez de
@@ -565,10 +764,10 @@ grandPrixName env key = do
 -- __Es el único @try@ de este módulo que calla__, y por lo mismo que no es un fallo:
 -- hablaría en cada refresco de cuatro sesiones de cada cinco para contar lo previsto,
 -- y un log que avisa siempre deja de leerse.
-fetchIntervalsOrEmpty :: Config -> IO [Of1Interval]
-fetchIntervalsOrEmpty cfg = do
+fetchIntervalsOrEmpty :: Config -> Option 'Https -> IO [Of1Interval]
+fetchIntervalsOrEmpty cfg session = do
   result <-
-    try (Manager.fetchIntervals cfg) :: IO (Either SomeException [Of1Interval])
+    try (Manager.fetchIntervals cfg session) :: IO (Either SomeException [Of1Interval])
   pure (either (const []) id result)
 
 -- | Top 3 estático (respaldo cuando aún no hay respuesta real de ninguna fuente).

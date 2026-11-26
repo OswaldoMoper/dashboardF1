@@ -40,5 +40,5 @@ fetchDrivers cfg sessionKey = runFastF1 cfg $ do
       (driversBase (cfgTelemetryHost cfg) /: sessionKey)
       NoReqBody
       jsonResponse
-      (fastf1Options cfg)
+      (fastf1Options cfg sessionKey)
   pure (responseBody res)

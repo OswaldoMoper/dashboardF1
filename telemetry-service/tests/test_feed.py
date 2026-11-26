@@ -1,22 +1,15 @@
-"""``_feed_rows``: la salida guardada sobre fotos con la forma del feed y las reglas de la
-fila como propiedades.
-
-Las fotos y su salida esperada las escribe ``fotos.py``; un cambio intencionado de la
-salida se regenera con ``fotos.py --esperado`` y se revisa en el diff.
+"""``_feed_rows``: las reglas de la fila como propiedades, sobre fotos con la forma del feed
+y campos sueltos o mal formados. Las fotos completas y coherentes, en ``test_generadas.py``.
 """
 
 import json
 import math
-from pathlib import Path
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from feed import _LIVE_TOPICS, _feed_live, _feed_rows, _feed_session, _feed_stints
-
-AQUI = Path(__file__).resolve().parent
-FOTOS = sorted((AQUI / "fotos").glob("*.json"))
+from feed import _LIVE_TOPICS, _feed_rows, _feed_session
 
 # Las claves de `Common.Types.LiveTimingRow`.
 CLAVES = {
@@ -35,18 +28,6 @@ CLAVES = {
     "ltKnockedOut",
     "ltCutoff",
 }
-
-
-def test_cada_foto_tiene_su_salida_esperada():
-    esperadas = sorted(p.name for p in (AQUI / "esperado").glob("*.json"))
-    assert FOTOS, "no hay fotos"
-    assert [p.name for p in FOTOS] == esperadas
-
-
-@pytest.mark.parametrize("foto", FOTOS, ids=[p.stem for p in FOTOS])
-def test_la_salida_de_una_foto_no_cambia(foto):
-    esperada = json.loads((AQUI / "esperado" / foto.name).read_text(encoding="utf-8"))
-    assert _feed_rows(json.loads(foto.read_text(encoding="utf-8"))) == esperada
 
 
 # ── Propiedades ───────────────────────────────────────────────────────────────
@@ -157,6 +138,35 @@ def test_solo_retirado_o_parado_es_abandono_y_eliminado_no(foto):
         assert fila["ltKnockedOut"] == bool(linea.get("KnockedOut"))
 
 
+tipos = st.sampled_from(["Practice", "Qualifying", "Race", "", "Otro"])
+
+
+@given(fotos, tipos)
+def test_en_libres_y_clasificacion_parado_no_es_abandono(foto, tipo):
+    lineas = foto["TimingData"]["Lines"]
+    for fila in _feed_rows({**foto, "DriverList": {}, "SessionInfo": {"Type": tipo}}):
+        linea = lineas[fila["ltDriver"]]
+        cuenta_parado = tipo not in ("Practice", "Qualifying")
+        abandono = bool(linea.get("Retired") or (cuenta_parado and linea.get("Stopped")))
+        assert (fila["ltStatus"] == "Dnf") == abandono
+
+
+def test_el_12_parado_en_la_q_de_baku_sigue_en_pista_y_en_carrera_abandona():
+    # El #12 de la Q del 2026-09-25: `Stopped` 13 min y después corrió la Q2.
+    foto = {
+        "DriverList": {"12": {"Tla": "ANT"}},
+        "TimingData": {"Lines": {"12": {"Position": "5", "Stopped": True, "Retired": False}}},
+    }
+
+    def estado(tipo):
+        return _feed_rows({**foto, "SessionInfo": {"Type": tipo}})[0]["ltStatus"]
+
+    assert estado("Qualifying") == "Running"
+    assert estado("Practice") == "Running"
+    assert estado("Race") == "Dnf"
+    assert _feed_rows(foto)[0]["ltStatus"] == "Dnf"
+
+
 @given(fotos)
 def test_los_sectores_de_la_ultima_son_los_previousvalue_de_sus_tres_sectores(foto):
     lineas = foto["TimingData"]["Lines"]
@@ -169,19 +179,6 @@ def test_los_sectores_de_la_ultima_son_los_previousvalue_de_sus_tres_sectores(fo
             sectores = {str(i): s for i, s in enumerate(sectores)}
         esperado = [(sectores.get(str(i)) or {}).get("PreviousValue", "").strip() or "-" for i in range(3)]
         assert fila["ltLastSectors"] == esperado
-
-
-# ── La respuesta del directo ──────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("foto", FOTOS, ids=[p.stem for p in FOTOS])
-def test_la_respuesta_del_directo_es_la_sesion_las_filas_y_los_stints_de_la_misma_foto(foto):
-    snapshot = json.loads(foto.read_text(encoding="utf-8"))
-    assert _feed_live(snapshot) == {
-        "session": _feed_session(snapshot),
-        "rows": _feed_rows(snapshot),
-        "stints": _feed_stints(snapshot),
-    }
 
 
 # ── El topic SessionStatus ────────────────────────────────────────────────────

@@ -23,8 +23,17 @@ module Common.Comparison
     -- * Lo que pinta el par de hoy
   , Pair (..)
   , pairWith
+  , Layer (..)
+  , Curve (..)
+  , curvesOf
+  , curveKey
+  , curvesWith
+  , axisValues
+  , axisBlowUp
+  , frontSeries
   , lapShown
   , missingReference
+  , noneHasLap
   , noLapFor
     -- * La vuelta del directo
   , LapChoice (..)
@@ -40,7 +49,19 @@ module Common.Comparison
   , liveMissingReference
   , liveNoLapFor
   , endedNotice
-  , keepChosen
+    -- * Los coches elegidos
+  , maxCars
+  , pickReference
+  , addCar
+  , removeCar
+  , keepCars
+  , GroupPick (..)
+  , Added (..)
+  , WithGroups (..)
+  , withGroups
+  , addedCars
+  , addedLaps
+  , lapAgainst
   , leadingPair
     -- * El mando de la vuelta
   , lapChoiceKey
@@ -65,21 +86,23 @@ module Common.Comparison
   , deltaFormula
   ) where
 
-import           Common.Origin (Source (..))
-import           Common.Types  (ComparisonEntry (..), DriverEntry (..),
-                                LapComparison (..), LiveTimingRow (..),
-                                SessionInfo (..), SessionState (..),
-                                StateReading (..), lapSeconds, partLabel,
-                                sessionIsLive)
-import           Control.Monad (join)
-import           Data.Aeson    (FromJSON (..), ToJSON (..), Value (String),
-                                withText)
-import           Data.List     (find, minimumBy, sortOn)
-import           Data.Maybe    (fromMaybe, isJust, isNothing, listToMaybe)
-import           Data.Ord      (comparing)
-import           Data.Text     (Text)
-import qualified Data.Text     as T
-import           Text.Read     (readMaybe)
+import           Common.Chart   (axisRange)
+import           Common.Origin  (Source (..))
+import           Common.Session (SessionKey, renderSessionKey)
+import           Common.Types   (ComparisonEntry (..), DriverEntry (..),
+                                 LapComparison (..), LiveTimingRow (..),
+                                 SessionInfo (..), SessionState (..),
+                                 StateReading (..), lapSeconds, partLabel,
+                                 sessionIsLive)
+import           Control.Monad  (join)
+import           Data.Aeson     (FromJSON (..), ToJSON (..), Value (String),
+                                 withText)
+import           Data.List      (find, minimumBy, nub, sortOn)
+import           Data.Maybe     (fromMaybe, isJust, isNothing, listToMaybe)
+import           Data.Ord       (comparing)
+import           Data.Text      (Text)
+import qualified Data.Text      as T
+import           Text.Read      (readMaybe)
 
 -- | Los tres tiempos de sector de una vuelta, en segundos.
 type Sectors = (Double, Double, Double)
@@ -230,6 +253,104 @@ pairWith baseline c =
               else Pair ref other dOther
     _ -> Nothing
 
+-- | Cómo se pinta una curva cuando se comparan de 3 a 5 coches (2026-11-21 (l)).
+data Layer
+  = Faint
+    -- ^ A 2 px y al 35 %.
+  | Behind
+    -- ^ La base: entera, detrás de la del frente.
+  | Front
+    -- ^ La elegida, con su pareja; de ella son la fila de fronteras y la banda.
+  deriving stock (Eq, Show)
+
+-- | Un coche de la comparación, su Δ contra la base ('deltasAgainst') y cómo se pinta, y la
+-- sesión de un grupo de la que es la vuelta, si no es de la que se ve.
+data Curve = Curve
+  { cvEntry :: ComparisonEntry
+  , cvDelta :: [Double]
+  , cvLayer :: Layer
+  , cvFrom  :: Maybe SessionKey
+  }
+  deriving stock (Eq, Show)
+
+-- | Lo que distingue a una curva para llevarla al frente: sus siglas y, si es de otra
+-- sesión, su clave (@«LEC · 2026-21-FP3»@).
+curveKey :: Curve -> Text
+curveKey cv = ceDriver (cvEntry cv) <> maybe "" ((" · " <>) . renderSessionKey) (cvFrom cv)
+
+-- | Los coches de la comparación con la base elegida, en el orden en que se pintan
+-- (2026-11-21 (l)): primero los tenues, en su orden; después la base, y al final el del frente:
+-- el de siglas @front@ si es uno de los comparados y, si no, el primero tras la base. Con dos
+-- coches, la base y el frente, como el par. La base es la de 'baseIndex'; sin ella, la
+-- referencia, y las Δ vacías. Sin coches, ninguno.
+curvesOf :: Baseline -> Maybe Text -> LapComparison -> [Curve]
+curvesOf baseline front c = case zip3 [0 :: Int ..] entries deltas of
+  [] -> []
+  xs ->
+    let others = [x | x@(i, _, _) <- xs, i /= base]
+        chosen = case [i | (i, e, _) <- others, Just (ceDriver e) == front] of
+          i : _ -> Just i
+          []    -> (\(i, _, _) -> i) <$> listToMaybe others
+        layer i
+          | i == base        = Behind
+          | Just i == chosen = Front
+          | otherwise        = Faint
+        curve (i, e, d) = Curve e d (layer i) Nothing
+     in sortOn (layerOrder . cvLayer) (map curve xs)
+  where
+    entries = lcEntries c
+    sectors = map ceSectors entries
+    deltas  = deltasAgainst baseline sectors
+    base    = fromMaybe 0 (baseIndex baseline sectors)
+
+-- | El orden de pintado: los tenues, la base y el del frente.
+layerOrder :: Layer -> Int
+layerOrder Faint  = 0
+layerOrder Behind = 1
+layerOrder Front  = 2
+
+-- | 'curvesOf' con detrás las vueltas de otras sesiones que suman los grupos (2026-11-21 (u),
+-- (af)), cada una tenue y con su Δ contra la misma base ('lapAgainst'). Va al frente la de
+-- clave @front@ ('curveKey'), sea de la sesión que se ve o de otra; si es de otra, la de la
+-- sesión que se ve pasa a tenue. En el orden en que se pintan.
+curvesWith :: Baseline -> Maybe Text -> LapComparison -> [(SessionKey, ComparisonEntry)] -> [Curve]
+curvesWith baseline front c laps = sortOn (layerOrder . cvLayer) (map demote here <> others)
+  where
+    here   = curvesOf baseline front c
+    others =
+      [ if Just (curveKey cv) == front then cv {cvLayer = Front} else cv
+      | (k, e) <- laps
+      , let cv = Curve e (lapAgainst baseline c e) Faint (Just k) ]
+    lapAtFront = any ((== Front) . cvLayer) others
+    demote cv
+      | lapAtFront && cvLayer cv == Front = cv {cvLayer = Faint}
+      | otherwise                         = cv
+
+-- | Los valores con los que se escala el eje vertical del tipo 1 (2026-11-23 (h)): los de todas
+-- las curvas, salvo que las de otras sesiones multipliquen el alto del eje por más de
+-- 'axisBlowUp'; entonces, solo los de la sesión que se ve, y lo demás se corta en el borde.
+-- Sin curvas de la sesión que se ve, los de todas.
+axisValues :: [Curve] -> [Double]
+axisValues curves
+  | null here                                         = everything
+  | extent everything > axisBlowUp * extent ownValues = ownValues
+  | otherwise                                         = everything
+  where
+    here       = [cv | cv <- curves, isNothing (cvFrom cv)]
+    ownValues  = concatMap cvDelta here
+    everything = concatMap cvDelta curves
+    extent xs  = let (lo, hi) = axisRange xs in hi - lo
+
+-- | Cuántas veces puede crecer el alto del eje por las vueltas de otras sesiones antes de
+-- cortarlas (2026-11-23 (h)).
+axisBlowUp :: Double
+axisBlowUp = 3
+
+-- | La Δ del coche al frente ('curvesOf'), la de la fila de fronteras y la banda; @[]@
+-- sin coche al frente o si a él o a la base les faltan los sectores.
+frontSeries :: Baseline -> Maybe Text -> LapComparison -> [Double]
+frontSeries baseline front = maybe [] cvDelta . find ((== Front) . cvLayer) . curvesOf baseline front
+
 -- | El tiempo de vuelta de un coche como se pinta: @«sin vuelta»@ si no tiene sus
 -- tres sectores.
 lapShown :: ComparisonEntry -> Text
@@ -237,15 +358,24 @@ lapShown e
   | isNothing (ceSectors e) = "sin vuelta"
   | otherwise               = ceLap e
 
--- | El aviso que sustituye a la gráfica cuando la Δ va contra la referencia y la
--- referencia no tiene vuelta; 'Nothing' en cualquier otro caso. Contra el más rápido
--- no hay aviso: la base es el más rápido de los que tienen vuelta.
+-- | El aviso que sustituye a la gráfica: con cualquier base, si hay coches y ninguno
+-- tiene vuelta; contra la referencia, también si es ella la que no la tiene. 'Nothing'
+-- en cualquier otro caso: contra el más rápido, la base es el más rápido de los que
+-- tienen vuelta.
 missingReference :: Baseline -> LapComparison -> Maybe Text
+missingReference _ c
+  | noneHasLap c = Just "Ninguno de los elegidos tiene vuelta en esta sesión: elige otro piloto."
 missingReference AgainstFastest _ = Nothing
 missingReference AgainstReference c =
   case lcEntries c of
     (ref : _) | isNothing (ceSectors ref) -> Just (noLapNote ref <> ": elige otra referencia.")
     _ -> Nothing
+
+-- | Si hay coches y ninguno tiene vuelta (sus tres sectores). Sin coches, 'False'.
+noneHasLap :: LapComparison -> Bool
+noneHasLap c = case lcEntries c of
+  es@(_ : _) -> all (isNothing . ceSectors) es
+  []         -> False
 
 -- | @«LEC no tiene vuelta en esta sesión»@: el aviso de un coche sin vuelta.
 noLapNote :: ComparisonEntry -> Text
@@ -403,15 +533,109 @@ leadingPair rows =
   where
     numbered r = isJust (readMaybe (T.unpack (ltCar r)) :: Maybe Int)
 
--- | Los dos coches elegidos (referencia y otro) en una lista de números nueva: el que
--- está se queda; el que no, pasa al primero de la lista que no sea el otro.
-keepChosen :: [Text] -> (Text, Text) -> (Maybe Text, Maybe Text)
-keepChosen cars (r, o) = (r', pick o (maybe [] pure r'))
+-- | Cuántos coches se comparan como mucho, la referencia incluida (2026-09-29 (b)).
+maxCars :: Int
+maxCars = 5
+
+-- | La referencia nueva en la lista elegida (la referencia primero): si ya estaba entre
+-- los demás, la vieja ocupa su sitio; si no, la vieja sale. Con la lista vacía, sola.
+pickReference :: Text -> [Text] -> [Text]
+pickReference new [] = [new]
+pickReference new (ref : others)
+  | new == ref = ref : others
+  | otherwise  = new : map (\c -> if c == new then ref else c) others
+
+-- | Un coche más, al final; nada si ya está o si ya hay 'maxCars'.
+addCar :: Text -> [Text] -> [Text]
+addCar car cars
+  | car `elem` cars || length cars >= maxCars = cars
+  | otherwise                                 = cars <> [car]
+
+-- | Fuera un coche que no sea la referencia; nada si es ella o si quedaría sola.
+removeCar :: Text -> [Text] -> [Text]
+removeCar car (ref : others)
+  | car /= ref && any (/= car) others = ref : filter (/= car) others
+removeCar _ cars = cars
+
+-- | Los coches elegidos en una lista de números nueva, en su orden: el que está se queda;
+-- el que no, pasa al primero de la lista que no esté elegido, y si no queda ninguno,
+-- sale.
+keepCars :: [Text] -> [Text] -> [Text]
+keepCars cars chosen = go [] chosen
   where
-    r' = pick r [o]
-    pick c avoid
-      | c `elem` cars = Just c
-      | otherwise     = find (`notElem` avoid) cars
+    go acc [] = reverse acc
+    go acc (c : cs)
+      | c `elem` cars = go (c : acc) cs
+      | otherwise = case find (`notElem` (acc <> chosen)) cars of
+          Just x  -> go (x : acc) cs
+          Nothing -> go acc cs
+
+-- | Lo que suma a Lap Comparison un grupo de la tarjeta: sus pilotos, por siglas, y la
+-- sesión que suma, ya resuelta ('Common.Group.addedSessions'), si la hay.
+data GroupPick = GroupPick
+  { gpDrivers :: [Text]
+  , gpSession :: Maybe SessionKey
+  }
+  deriving stock (Eq, Show)
+
+-- | Un hueco de la comparación que añade un grupo.
+data Added
+  = AddedCar Text Text
+    -- ^ Un coche de la sesión que se ve: su número y sus siglas.
+  | AddedLap SessionKey Text
+    -- ^ La vuelta de un piloto, por siglas, en la sesión de un grupo.
+  deriving stock (Eq, Show)
+
+-- | Lo que se compara cuando la tarjeta está en grupos (2026-11-20 (l), (p), (u);
+-- 2026-11-21 (u), (al)).
+data WithGroups = WithGroups
+  { wgCars    :: [Text]
+    -- ^ Los números que se piden de la sesión que se ve: los de la tarjeta, la referencia
+    -- primero, y detrás los coches que añaden los grupos.
+  , wgAdded   :: [Added]
+    -- ^ Lo que añaden los grupos y cabe, en su orden.
+  , wgLeftOut :: [Added]
+    -- ^ Lo que añaden los grupos y no cabe.
+  }
+  deriving stock (Eq, Show)
+
+-- | Los coches de la tarjeta con lo que suman sus grupos, en el orden de los grupos y,
+-- dentro de cada uno, primero sus pilotos y después su sesión: cada piloto del grupo que no
+-- está ya en la tarjeta (un piloto que no está en la parrilla no cuenta), y con sesión, la
+-- vuelta en ella de cada piloto del grupo o, si no tiene pilotos, la de la referencia. Los de
+-- la tarjeta no se caen nunca; lo de los grupos entra hasta 'maxCars' y lo demás no cabe.
+-- Sin coches de la tarjeta no se añade nada.
+withGroups :: [DriverEntry] -> [Text] -> [GroupPick] -> WithGroups
+withGroups _ [] _ = WithGroups [] [] []
+withGroups grid own@(ref : _) picks =
+  WithGroups (own <> [n | AddedCar n _ <- fits]) fits rest
+  where
+    byCode c   = find ((== c) . deCode) grid
+    refCode    = deCode <$> find ((== ref) . deNumber) grid
+    slots      = nub (concatMap slotsOf picks)
+    slotsOf (GroupPick ds s) =
+      [AddedCar (deNumber d) (deCode d) | c <- ds, Just d <- [byCode c], deNumber d `notElem` own]
+        <> maybe [] (\k -> [AddedLap k c | c <- if null ds then maybe [] pure refCode else ds]) s
+    (fits, rest) = splitAt (max 0 (maxCars - length own)) slots
+
+-- | Los números de los coches que añaden los grupos ('wgAdded').
+addedCars :: WithGroups -> [Text]
+addedCars g = [n | AddedCar n _ <- wgAdded g]
+
+-- | Las vueltas de otras sesiones que añaden los grupos, juntas por sesión y en su orden:
+-- una petición por sesión.
+addedLaps :: WithGroups -> [(SessionKey, [Text])]
+addedLaps g = [(k, [c | AddedLap k' c <- wgAdded g, k' == k]) | k <- nub [k | AddedLap k _ <- wgAdded g]]
+
+-- | La Δ de una vuelta de otra sesión contra la base de la comparación que se ve ('baseIndex'):
+-- @[]@ si a ella o a la base les faltan los sectores.
+lapAgainst :: Baseline -> LapComparison -> ComparisonEntry -> [Double]
+lapAgainst baseline c e =
+  case (ceSectors e, join (listToMaybe . flip drop sectors =<< baseIndex baseline sectors)) of
+    (Just s, Just b) -> zipWith (-) (frontierTimes s) (frontierTimes b)
+    _                -> []
+  where
+    sectors = map ceSectors (lcEntries c)
 
 -- | Cómo se guarda una vuelta: @fastest@, @last@ o @part-2@.
 lapChoiceKey :: LapChoice -> Text
@@ -472,10 +696,11 @@ data LapPick = LapPick
   }
   deriving stock (Eq, Show)
 
--- | Los desplegables cortos de los dos pilotos, con la regla y la excepción de cada
--- uno ('lapFor'). Con FastF1 ('Nothing'), los dos en «rápida» y apagados.
+-- | Los desplegables cortos de los pilotos, con la regla y la excepción de cada uno
+-- ('lapFor'): en directo, los de los dos que se comparan; con FastF1 ('Nothing'),
+-- 'maxCars', todos en «rápida» y apagados.
 lapPicks :: Maybe (Maybe SessionInfo) -> LapChoice -> (Maybe LapChoice, Maybe LapChoice) -> [LapPick]
-lapPicks Nothing _ _ = replicate 2 (LapPick [(c, lapChoiceShort Nothing c) | c <- [FastestLap, LastLap]] FastestLap False False)
+lapPicks Nothing _ _ = replicate maxCars (LapPick [(c, lapChoiceShort Nothing c) | c <- [FastestLap, LastLap]] FastestLap False False)
 lapPicks (Just s) rule (a, b) = map pick [a, b]
   where
     offered  = lapChoicesOffered s
@@ -484,7 +709,7 @@ lapPicks (Just s) rule (a, b) = map pick [a, b]
     pick exc = let v = lapFor offered rule exc in LapPick options v (v /= shown) True
 
 -- | El tipo de gráfica de Lap Comparison, elegido en el título.
-data ChartType = SectorDelta | LapSpeedTrace | TelemetryTraces | LapDeltaBars
+data ChartType = SectorDelta | TelemetryTraces | LapDeltaBars
   deriving stock (Eq, Show, Enum, Bounded)
 
 -- | Los tipos en el orden del desplegable.
@@ -498,21 +723,18 @@ defaultChartType = SectorDelta
 -- | El nombre del tipo en el desplegable.
 chartTypeLabel :: ChartType -> Text
 chartTypeLabel SectorDelta     = "Delta por sectores"
-chartTypeLabel LapSpeedTrace   = "Lap Speed Trace"
 chartTypeLabel TelemetryTraces = "Telemetría comparativa"
 chartTypeLabel LapDeltaBars    = "Lap Delta"
 
 -- | Si el tipo ya se puede elegir; los demás salen en gris en el desplegable.
 chartTypeReady :: ChartType -> Bool
 chartTypeReady SectorDelta     = True
-chartTypeReady LapSpeedTrace   = True
 chartTypeReady TelemetryTraces = True
 chartTypeReady _               = False
 
 -- | El @value@ de cada opción del desplegable.
 chartTypeKey :: ChartType -> Text
 chartTypeKey SectorDelta     = "sector-delta"
-chartTypeKey LapSpeedTrace   = "lap-speed-trace"
 chartTypeKey TelemetryTraces = "telemetry"
 chartTypeKey LapDeltaBars    = "lap-delta"
 
@@ -522,7 +744,7 @@ chartTypeFromKey k = lookup k [(chartTypeKey t, t) | t <- chartTypesInOrder]
 
 -- | Si el tipo pinta trazas y pide muestras al servidor.
 chartTypeTraces :: ChartType -> Bool
-chartTypeTraces = (`elem` [LapSpeedTrace, TelemetryTraces, LapDeltaBars])
+chartTypeTraces = (`elem` [TelemetryTraces, LapDeltaBars])
 
 -- | El @value@ de cada opción del desplegable del eje.
 axisKey :: Axis -> Text

@@ -294,6 +294,12 @@ body {
   background: var(--c-bg);
 }
 
+/* La sesión elegida que no existe: en gris, como el aviso de las tarjetas. */
+.session-band__missing {
+  color: var(--c-muted);
+  font-style: italic;
+}
+
 /* En qué punto está la sesión. Es un `button` siempre, y no solo cuando hay algo
    que aclarar, para que el DOM no se re-monte al cambiar el estado: lo que decide
    si responde al dedo es el modificador. */
@@ -399,6 +405,161 @@ body {
   margin-left: auto;
   color: var(--c-muted);
   white-space: nowrap;
+  /* Cuando no cabe, cede con «…» a la vez que el selector (2026-11-17 (m)). */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* El aviso del directo, en el sitio de la cuenta atrás (2026-11-13 (l)): el texto cede con
+   «…» como ella y «Volver» no cede nunca. El punto, quieto: solo parpadea la luz de las
+   tarjetas (2026-09-12). */
+.session-band__live {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.session-band__live[hidden] {
+  display: none;
+}
+
+.session-band__live-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text);
+}
+
+.session-band__live-dot {
+  color: var(--c-accent);
+}
+
+.session-band__back {
+  flex: none;
+}
+
+/* El selector: el título de la banda como botón y, debajo, su lista. */
+.session-band__picker {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.session-band__pick {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px var(--sp-2);
+  font: inherit;
+  color: var(--c-text);
+  background: none;
+  border: 1px solid var(--c-accent);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.session-band__panel {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  left: 0;
+  z-index: 30;
+  width: max-content;
+  /* Dentro de la barra pegajosa la página no desliza: el panel cabe en la ventana y
+     desliza él. */
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 50%);
+}
+
+.session-band__season,
+.session-band__legend {
+  margin: 0 0 var(--sp-2);
+  color: var(--c-muted);
+}
+
+.session-band__legend {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-xs);
+}
+
+.session-band__now {
+  margin-bottom: var(--sp-1);
+}
+
+.session-band__race {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.session-band__race-name {
+  flex: none;
+  width: 14rem;
+}
+
+.session-band__race--chosen .session-band__race-name {
+  color: var(--c-accent);
+}
+
+.session-band__now,
+.session-band__code,
+.session-band__back {
+  min-width: 2.25rem;
+  padding: 1px var(--sp-2);
+  font: inherit;
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.session-band__code--chosen {
+  color: #fff;
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+}
+
+.session-band__code:disabled {
+  color: var(--c-muted);
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* En el móvil, el nombre encima de sus botones (2026-11-17 (o)). */
+@media (max-width: 32rem) {
+  /* El panel se mide desde la banda, de lado a lado, y no desde el botón. */
+  .session-band__picker {
+    position: static;
+  }
+
+  .session-band__panel {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+
+  .session-band__race {
+    flex-wrap: wrap;
+  }
+
+  .session-band__race-name {
+    width: 100%;
+  }
 }
 
 /* El mando de aspecto se queda en el extremo, detrás de la próxima sesión. Ya no
@@ -449,11 +610,15 @@ body {
    (2026-09-03 c) necesita su control aquí.
 
    El `margin-bottom` es el que tenía el `h2`: se mueve al envoltorio porque
-   ahora es él quien está en el flujo de la tarjeta. */
+   ahora es él quien está en el flujo de la tarjeta.
+
+   El título va `--sp-4` más adentro que el resto de la tarjeta; en edición, ⠿ y
+   ⇄ se quedan en el borde del contenido (2026-11-24 (k)). */
 .widget__head {
   display: flex;
   align-items: baseline;
   gap: var(--sp-2);
+  padding: 0 var(--sp-4);
   margin-bottom: var(--sp-3);
 }
 
@@ -574,6 +739,93 @@ body {
   color: var(--c-fastest);
 }
 
+/* La sesión de la que sale la Best Lap, sin tono (2026-11-20 (n)): la que se ve, tenue; otra,
+   con contorno. No hereda la negrita ni el morado de la cifra. */
+.live-timing__from {
+  display: inline-block;
+  min-width: 2.4em;
+  margin-left: var(--sp-2);
+  padding: 0 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  -webkit-text-stroke: 0;
+  text-align: center;
+  color: var(--c-muted);
+}
+
+.live-timing__from--other {
+  border-color: currentColor;
+  color: var(--c-text);
+}
+
+/* La Best Lap, centrada siempre (2026-11-21 (ag)). Con las sesiones que suman los grupos, una cifra
+   por sesión (2026-11-21 (z), (ah)): una debajo de otra, cada una con su etiqueta; lado a lado si la
+   tabla cabe así ('Widgets.LiveTiming.sideFits'), con las etiquetas en la cabecera, una sobre cada
+   columna (ag). La más rápida de otra sesión, en su morado al 75 % ((aa), (ag)). */
+.live-timing th.live-timing__best,
+.live-timing td.live-timing__best {
+  text-align: center;
+}
+
+.live-timing__fig {
+  display: block;
+  white-space: nowrap;
+}
+
+.live-timing__fig--none,
+.live-timing__heads {
+  display: none;
+}
+
+.live-timing__fig--other-fastest {
+  color: color-mix(in srgb, var(--c-fastest) 75%, transparent);
+}
+
+.live-timing--side .live-timing__heads {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.live-timing--side .live-timing__fig,
+.live-timing--side .live-timing__head {
+  display: inline-block;
+  min-width: 8ch;
+  text-align: center;
+}
+
+.live-timing--side .live-timing__fig + .live-timing__fig,
+.live-timing--side .live-timing__head + .live-timing__head {
+  margin-left: var(--sp-3);
+}
+
+.live-timing--side td .live-timing__from,
+.live-timing--side .live-timing__head .live-timing__from {
+  margin-left: 0;
+}
+
+.live-timing--side td .live-timing__from {
+  display: none;
+}
+
+.live-timing__box {
+  position: relative;
+}
+
+.live-timing--probe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* Estado: la celda lleva la sigla; la fila, un modificador único para las tres
    marcas —la sigla ya las distingue—. */
 .live-timing td.live-timing__state {
@@ -590,6 +842,11 @@ body {
 .live-timing__columns {
   position: relative;
   margin-left: auto;
+}
+
+/* Sin tabla, el botón conserva su sitio sin verse (2026-11-17 (g)). */
+.live-timing__columns--hidden {
+  visibility: hidden;
 }
 
 .widget--live-timing .widget__badge {
@@ -766,8 +1023,8 @@ body {
   margin-bottom: var(--sp-2);
 }
 
-/* Los botones de layout a la izquierda y el retraso del directo a la derecha, en
-   la misma fila; en una pantalla estrecha el campo baja a la siguiente. */
+/* Los botones de layout a la izquierda y la mezcla y el retraso del directo a la
+   derecha, en la misma fila; en una pantalla estrecha los campos bajan a la siguiente. */
 .dashboard-header__controls {
   display: flex;
   flex-wrap: wrap;
@@ -776,6 +1033,14 @@ body {
   gap: var(--sp-2);
 }
 
+.dashboard-header__options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--sp-4);
+}
+
+.blend-field,
 .delay-field {
   display: flex;
   align-items: center;
@@ -799,6 +1064,12 @@ body {
 .delay-field__input:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 1px;
+}
+
+/* Con una sesión elegida el retraso no se aplica: el campo, atenuado y editable. */
+.delay-field--idle .delay-field__label,
+.delay-field--idle .delay-field__input {
+  opacity: 0.45;
 }
 
 /* Los switchers comparten botón (`switcher__btn`), porque comparten aspecto: una
@@ -853,6 +1124,7 @@ body {
 
 .canvas--editing .widget__head > h2::before {
   content: "⠿ ";
+  margin: 0 var(--sp-4) 0 calc(var(--sp-4) * -1);
   color: var(--c-muted);
 }
 
@@ -1060,6 +1332,10 @@ body {
   gap: var(--sp-4);
 }
 
+.comparison__body[hidden] {
+  display: none;
+}
+
 .comparison__body--control-right {
   flex-direction: row-reverse;
 }
@@ -1121,6 +1397,64 @@ body {
   grid-column: 3;
   justify-self: start;
   margin-left: var(--sp-2);
+}
+
+/* Los demás coches, como etiquetas bajo la referencia y «+ ▾» al final; en columna, a
+   todo el ancho de la tabla de mando. */
+.car-selector__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.comparison__body:not(.comparison__body--stacked) .car-selector__pair > .car-selector__tags {
+  grid-column: 1 / -1;
+  justify-self: start;
+  /* No más anchas que la tabla de mando, que tiene su ancho fijado: si no caben, saltan de línea.
+     El porcentaje no sirve aquí: la rejilla crece con ellas. */
+  max-width: 100cqw;
+}
+
+.comparison__body:not(.comparison__body--stacked) .comparison__control {
+  container-type: inline-size;
+}
+
+.car-selector__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 1px var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+}
+
+.car-selector__tag--nolap {
+  color: var(--c-warn);
+  border-color: var(--c-warn);
+}
+
+.car-selector__tag-x {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--c-muted);
+  cursor: pointer;
+}
+
+.car-selector__tag-x:hover {
+  color: var(--c-text);
+}
+
+.car-selector__add {
+  padding: 1px var(--sp-1);
+  border-style: dashed;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
 }
 
 /* En columna, los dos pilotos en dos columnas —piloto y coche, tiempo— para que los
@@ -1259,6 +1593,16 @@ body {
   z-index: 2;
 }
 
+/* Sin gráfica, el mismo recuadro va en el flujo, encima del estado (2026-11-25 (k)). */
+.comparison__plot > .status.comparison__notice {
+  display: block;
+  line-height: 1.5;
+}
+
+.comparison__cut:not(:first-child) {
+  margin-top: var(--sp-1);
+}
+
 .comparison__notice code {
   font-family: var(--font-mono);
   padding: 0 var(--sp-1);
@@ -1309,6 +1653,7 @@ body {
 
 .comparison__header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--sp-4);
   margin-bottom: var(--sp-3);
@@ -1564,11 +1909,15 @@ body {
 /* ── Las trazas (tipo 3) ─────────────────────────────────────────────────── */
 
 /* El título no se parte; los mandos bajan a una segunda línea cuando no caben, y
-   «⇄» se queda arriba a la derecha (2026-10-02). */
+   «⇄» se queda arriba a la derecha (2026-10-02). Su hueco solo existe en edición,
+   que es cuando se ve (2026-11-24 (k)). */
 .widget--comparison .widget__head {
   position: relative;
   flex-wrap: wrap;
   row-gap: var(--sp-1);
+}
+
+.canvas--editing .widget--comparison .widget__head {
   padding-right: 2.75rem;
 }
 
@@ -1583,8 +1932,11 @@ body {
 }
 
 /* Los mandos del título, solo en los tipos con trazas. */
+/* Si no caben, bajan de línea: en una tarjeta estrecha «Gráficas ▾» se saldría del título. */
 .comparison__trace-controls {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   align-items: center;
   gap: var(--sp-2);
 }
@@ -1617,6 +1969,13 @@ body {
 .comparison__check input {
   margin: 0;
   accent-color: var(--c-accent);
+}
+
+/* «Gráficas ▾» lleva el botón y el panel de «Columnas ▾» (2026-11-23 (m)); el panel
+   flota debajo de este contenedor. */
+.comparison__charts {
+  position: relative;
+  display: inline-block;
 }
 
 .comparison__traces {
@@ -1693,17 +2052,21 @@ body {
   pointer-events: none;
 }
 
-.comparison__trace-label--ref,
-.comparison__key--trace-ref {
+.comparison__trace-label--ref {
   color: #e10600;
 }
 
-.comparison__trace-label--other,
-.comparison__key--trace-other {
+.comparison__trace-label--other {
   color: var(--c-text);
 }
 
-.comparison__key--trace-other,
+/* La muestra de cada curva, a la altura del texto; la segunda y siguientes, separadas
+   de lo de antes. */
+.comparison__swatch {
+  vertical-align: middle;
+}
+
+.comparison__keys .comparison__swatch:not(:first-child),
 .comparison__formula {
   margin-left: var(--sp-4);
 }
@@ -1716,6 +2079,184 @@ body {
   color: var(--c-muted);
 }
 
+/* ── El acomodo de una sola gráfica que no es la velocidad ──────────────── */
+
+/* Sin acomodo, el envoltorio del cuerpo y de la leyenda no tiene caja. */
+.comparison__main {
+  display: contents;
+}
+
+/* Con él, una rejilla con las zonas que pone el widget (`chartFirstAreas`): la gráfica
+   arriba, que se queda lo que crece; la leyenda debajo; un renglón por piloto con su
+   vuelta al lado; los ajustes y la nota. Las cajas de en medio no cuentan, así que cada
+   pieza cae en su zona. Los dos desplegables de los ajustes miden lo mismo y la
+   etiqueta de «Δ contra» también: con esos anchos se centran en pareja. */
+.comparison__main--first {
+  --first-select: 8.25rem;
+  --first-label: 4rem;
+  --first-height: 2rem;
+  --first-gap: var(--sp-2);
+  flex: 1 0 auto;
+  display: grid;
+  grid-template-rows: 1fr;
+  grid-auto-rows: auto;
+  align-items: center;
+  row-gap: var(--sp-1);
+  container: first / inline-size;
+}
+
+/* A la derecha (F2): la tabla centrada en la mitad izquierda y los ajustes en la otra. */
+.comparison__main--side {
+  grid-template-columns: minmax(0, 1fr) max-content max-content minmax(0, 1fr) 50%;
+}
+
+/* Debajo (D2): la tabla centrada; los pilotos ceden ancho si no cabe. */
+.comparison__main--below {
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content) max-content minmax(0, 1fr);
+}
+
+.comparison__main--first > .comparison__body:not([hidden]),
+.comparison__main--first .comparison__control,
+.comparison__main--first .car-selector,
+.comparison__main--first .car-selector__pair,
+.comparison__main--first .car-selector__tags,
+.comparison__main--first .comparison__header,
+.comparison__main--first > .comparison__legend:not([hidden]) {
+  display: contents;
+}
+
+.comparison__main--first .car-selector__vs,
+.comparison__main--first .comparison__vs {
+  display: none;
+}
+
+.comparison__main--first .comparison__plot {
+  grid-area: chart;
+  align-self: stretch;
+}
+
+.comparison__main--first .comparison__keys {
+  grid-area: legend;
+  justify-self: center;
+  margin-bottom: var(--sp-2);
+}
+
+.comparison__main--first .comparison__note,
+.comparison__main--first > .status {
+  grid-area: note;
+}
+
+/* Los pilotos, todos del ancho de su columna; si la columna cede, el nombre se corta. */
+.comparison__main--first .car-selector__pair > select,
+.comparison__main--first .car-selector__tag,
+.comparison__main--first .car-selector__add {
+  justify-self: stretch;
+  box-sizing: border-box;
+  min-width: 0;
+  height: var(--first-height);
+}
+
+.comparison__main--first .car-selector__pair > select { grid-area: p0; }
+.comparison__main--first .car-selector__tag:nth-child(1) { grid-area: p1; }
+.comparison__main--first .car-selector__tag:nth-child(2) { grid-area: p2; }
+.comparison__main--first .car-selector__tag:nth-child(3) { grid-area: p3; }
+.comparison__main--first .car-selector__tag:nth-child(4) { grid-area: p4; }
+.comparison__main--first .car-selector__add { grid-area: add; }
+
+.comparison__main--first .car-selector__tag {
+  justify-content: space-between;
+}
+
+.comparison__main--first .car-selector__tag-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comparison__main--first .comparison__lap:nth-of-type(1) { grid-area: l0; }
+.comparison__main--first .comparison__lap:nth-of-type(2) { grid-area: l1; }
+.comparison__main--first .comparison__lap:nth-of-type(3) { grid-area: l2; }
+.comparison__main--first .comparison__lap:nth-of-type(4) { grid-area: l3; }
+.comparison__main--first .comparison__lap:nth-of-type(5) { grid-area: l4; }
+
+/* Cada vuelta a la derecha de su columna: los tiempos quedan uno bajo otro aunque el hueco
+   de cada uno mida distinto. */
+.comparison__main--first .comparison__lap {
+  justify-content: flex-end;
+  margin-left: var(--sp-3);
+}
+
+/* Las siglas y el número ya van en su piloto: su sitio queda como hueco, y se va cuando
+   la tabla no cabe. */
+.comparison__main--first .comparison__who {
+  visibility: hidden;
+}
+
+@container first (width < 35rem) {
+  .comparison__main--first .comparison__who {
+    display: none;
+  }
+}
+
+.comparison__main--first .comparison__against,
+.comparison__main--first .comparison__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--first-gap);
+  height: var(--first-height);
+}
+
+.comparison__main--first .comparison__against {
+  font-size: var(--fs-sm);
+  color: var(--c-text);
+}
+
+.comparison__main--first .comparison__against-label {
+  width: var(--first-label);
+  text-align: right;
+}
+
+.comparison__main--first .comparison__baseline,
+.comparison__main--first .comparison__modes {
+  box-sizing: border-box;
+  width: var(--first-select);
+  height: var(--first-height);
+}
+
+/* A la derecha, en lista: a media altura de los pilotos y los desplegables uno sobre
+   otro. */
+.comparison__main--side .comparison__against,
+.comparison__main--side .comparison__actions {
+  grid-area: list;
+  justify-self: center;
+}
+
+.comparison__main--side .comparison__against {
+  margin-bottom: calc(var(--first-height) + var(--sp-2));
+}
+
+.comparison__main--side .comparison__actions {
+  margin-top: calc(var(--first-height) + var(--sp-2));
+  margin-left: calc(var(--first-label) + var(--first-gap));
+}
+
+/* Debajo, en un renglón: el modo y después «Δ contra», centrados en pareja. */
+.comparison__main--below .comparison__against,
+.comparison__main--below .comparison__actions {
+  grid-area: adj;
+  justify-self: center;
+  margin-top: var(--sp-2);
+}
+
+.comparison__main--below .comparison__actions {
+  margin-right: calc(var(--first-label) + var(--first-gap) + var(--first-select) + var(--sp-4));
+}
+
+.comparison__main--below .comparison__against {
+  margin-left: calc(var(--first-select) + var(--sp-4));
+}
+
 .comparison__key {
   font-weight: 600;
 }
@@ -1724,9 +2265,31 @@ body {
   color: #888888;
 }
 
-.comparison__key--delta {
+/* Cada curva de la leyenda se pulsa para llevarla al frente. */
+.comparison__key-curve {
   margin-left: var(--sp-4);
-  color: #e10600;
+  cursor: pointer;
+}
+
+/* El piloto de un grupo que no cabe, al final de la leyenda. */
+.comparison__left-out {
+  margin-left: var(--sp-2);
+  color: var(--c-muted);
+  font-style: italic;
+}
+
+/* La cifra de una vuelta de otra sesión que se sale del eje, en el borde por donde sale; por
+   encima del aviso de la cuenta, que ocupa la misma franja. */
+.comparison__edge {
+  z-index: 3;
+  color: var(--c-muted);
+  pointer-events: none;
+}
+
+/* La fila de tiempo de un coche que añade un grupo, tenue; en columna la fila es
+   `display: contents`, así que se atenúan sus celdas. */
+.comparison__lap--group > * {
+  opacity: 0.6;
 }
 
 /* ── Tyre Strategy ──────────────────────────────────────────────────────── */
@@ -1763,12 +2326,15 @@ body {
   font-size: var(--fs-sm);
 }
 
+/* La fila entra en el relleno de la tarjeta lo que ocupa el borde del destaque, y lo de dentro
+   queda 8 px más adentro que el borde (2026-11-21 (s)). */
 .tyre-strategy__row,
 .tyre-strategy__axis {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-2) 0;
+  margin-left: calc(-1 * var(--sp-2));
+  padding: var(--sp-2) 0 var(--sp-2) calc(var(--sp-2) + 8px);
   border-bottom: 1px solid var(--c-surface-2);
 }
 
@@ -1806,9 +2372,10 @@ body {
   background: var(--c-muted);
 }
 
+/* El nombre lleva delante la pastilla del piloto: 16 px y 6 de margen (2026-11-21 (d)). */
 .tyre-strategy__label {
   flex: none;
-  width: 7ch;
+  width: calc(7ch + 22px);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -2057,7 +2624,354 @@ body {
     padding: var(--sp-3);
   }
 
+  /* La barra deshace el padding de `.app`, que aquí es otro. */
+  .session-band--bar {
+    margin: 0 calc(var(--sp-3) * -1);
+    padding: 0 var(--sp-3);
+  }
+
+  /* El botón y el hueco que le abre la barra plegada, con el mismo padding. */
+  .header-toggle {
+    top: var(--sp-3);
+    right: var(--sp-3);
+  }
+
+  .session-band--bar.session-band--header-hidden {
+    padding-right: calc(var(--sp-3) + var(--btn-w) + var(--sp-2) * 2);
+  }
+
+  .session-band--bar.session-band--header-hidden::after {
+    right: calc(var(--sp-3) - var(--sp-2));
+  }
+
   .dashboard-header > h1 {
     font-size: var(--fs-lg);
   }
+}
+
+/* La fila de grupos de una tarjeta, bajo su cabecera y solo en «Editar layout»
+   (2026-11-20 (o), 2026-11-21 (i)). */
+.group-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) 0 6px var(--sp-4);
+  margin-bottom: var(--sp-2);
+  border-bottom: 1px dashed var(--c-border);
+  font-size: var(--fs-xs);
+  color: var(--c-text);
+}
+
+.group-row[hidden] {
+  display: none;
+}
+
+:where(.group-row, .group-pop) button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+  padding: 1px 6px 1px 4px;
+  background: var(--c-surface-2);
+}
+
+.group-chip__open,
+.group-chip__out {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 4px;
+  background: none;
+  border: 0;
+}
+
+.group-chip__out {
+  color: var(--c-muted);
+}
+
+.group-chip__out:hover {
+  color: var(--c-text);
+}
+
+.group-add {
+  padding: 2px 9px;
+  background: var(--c-surface-2);
+  border: 1px dashed var(--c-muted);
+  border-radius: var(--r-sm);
+}
+
+/* La pareja de un piloto: la tinta del equipo y la del casco. */
+.group-pill {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 8px;
+  margin-right: 6px;
+  overflow: hidden;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.group-pill > span {
+  flex: 1;
+}
+
+/* La sesión de un grupo que no destaca a nadie, sin tono (2026-11-20 (n), (o)). */
+.group-session-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--c-muted);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* Sacar y borrar preguntan en la propia fila, que ocupa entera. */
+.group-ask {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.group-ask__text {
+  flex: 1;
+}
+
+/* Lo que se abre desde la fila va fijo sobre la ventana: la tarjeta lo recortaría. */
+.group-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.group-pop {
+  position: fixed;
+  z-index: 50;
+  box-sizing: border-box;
+  overflow: auto;
+  color: var(--c-text);
+  font-size: var(--fs-sm);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.group-menu {
+  min-width: 260px;
+  padding: 6px 0;
+}
+
+.group-menu__caption {
+  margin: 0;
+  padding: var(--sp-1) 14px 6px;
+  color: var(--c-muted);
+  font-size: var(--fs-xs);
+}
+
+.group-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 7px 14px;
+  text-align: left;
+  background: none;
+  border: 0;
+}
+
+.group-menu__item:hover {
+  background: var(--c-surface-2);
+}
+
+.group-menu__note {
+  margin-left: auto;
+  padding-left: var(--sp-3);
+  color: var(--c-muted);
+  font-size: var(--fs-xs);
+}
+
+.group-menu__box {
+  width: 1em;
+  color: var(--c-muted);
+}
+
+.group-menu__sep {
+  margin: var(--sp-1) 0;
+  border-top: 1px solid var(--c-border);
+}
+
+.group-form {
+  width: 340px;
+  padding: var(--sp-3) 14px;
+}
+
+.group-form h4 {
+  margin: 0 0 10px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.group-form__label {
+  display: block;
+  margin: 10px 0 var(--sp-1);
+  color: var(--c-muted);
+  font-size: var(--fs-xs);
+}
+
+.group-form__team {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin: 1px 0;
+}
+
+.group-form__team-name {
+  width: 88px;
+  color: var(--c-muted);
+  font-size: 11px;
+}
+
+/* Un piloto que se enciende: compañeros juntos, cada uno con su pareja (2026-11-21 (f)). */
+.group-tag {
+  display: inline-flex;
+  align-items: center;
+  margin: 2px 3px 2px 0;
+  padding: 3px 9px;
+  color: var(--c-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+}
+
+.group-tag--on {
+  color: var(--c-text);
+  background: var(--c-surface-3);
+  border-color: var(--c-text);
+}
+
+.group-form__sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+.group-form__season {
+  align-self: flex-start;
+  min-width: 14em;
+}
+
+.group-code {
+  padding: 3px 8px;
+  font-size: var(--fs-xs);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+
+.group-code--on {
+  background: var(--c-surface-3);
+  border-color: var(--c-text);
+}
+
+.group-code:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.group-form__hint {
+  margin-top: 3px;
+  color: var(--c-muted);
+  font-size: 11px;
+}
+
+.group-form__name {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 5px var(--sp-2);
+  color: var(--c-text);
+  font: inherit;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+
+.group-form__buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: 14px;
+}
+
+.group-form__delete {
+  margin-right: auto;
+}
+
+.group-btn {
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-xs);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+}
+
+.group-btn--yes {
+  border-color: var(--c-text);
+}
+
+.group-btn--primary {
+  color: var(--c-bg);
+  background: var(--c-text);
+  border-color: var(--c-text);
+}
+
+.group-btn--danger {
+  color: var(--c-error);
+  border-color: var(--c-error);
+}
+
+.group-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Fuera de la edición, los grupos de la tarjeta junto a su título: un punto por piloto,
+   juntos los de cada grupo y con un hueco entre grupos (2026-11-21 (j)). */
+.group-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: center;
+}
+
+.group-dots__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.group-dots .group-session-tag {
+  margin-right: 0;
+}
+
+.group-dot {
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.group-dot > span {
+  flex: 1;
 }

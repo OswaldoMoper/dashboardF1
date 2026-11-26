@@ -45,6 +45,7 @@ module Common.Chart
   , axisRange
   , axisTicks
   , axisPoints
+  , axisPointsAmong
   , axisPolyline
   , axisZeroY
   ) where
@@ -223,6 +224,12 @@ axisTicks xs
 -- casa con las marcas de 'axisTicks'. Misma X que 'deltaPoints'.
 axisPoints :: [Double] -> [(Double, Double)]
 axisPoints xs = pointsIn (axisRange xs) xs
+
+-- | 'axisPoints' de una de varias series pintadas en el mismo lienzo: la Y sale del
+-- 'axisRange' de todos sus valores juntos, el de 'axisTicks' y 'axisZeroY' sobre
+-- @concat series@.
+axisPointsAmong :: [[Double]] -> [Double] -> [(Double, Double)]
+axisPointsAmong series xs = pointsIn (axisRange (concat series)) xs
 
 -- | Atributo @points@ de 'axisPoints', con el formato de 'deltaPolyline'.
 axisPolyline :: [Double] -> Text

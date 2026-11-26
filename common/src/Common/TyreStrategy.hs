@@ -18,10 +18,12 @@ module Common.TyreStrategy
   , scaleLabel
   , lapTicks
   , gridLines
+  , carriesStints
   , noStintsNotice
   , notOutYet
   ) where
 
+import           Common.Origin      (Source (..))
 import           Common.Types       (LapProgress (..), LiveTable (..),
                                      LiveTimingRow (..), SessionInfo (..),
                                      TyreStint (..))
@@ -208,9 +210,16 @@ lapTicks scale = [ (lap, fromIntegral lap / fromIntegral scale) | lap <- [0, ste
 gridLines :: Int -> [Double]
 gridLines scale = [ x | (lap, x) <- lapTicks scale, lap > 0, lap < scale ]
 
--- | El aviso cuando la tabla no sale del feed, que es lo único que trae stints.
+-- | Si la tabla trae stints: la de una sesión elegida (@chosen@), siempre; la del directo,
+-- cuando sale del feed o cuando los trae, que fuera de él son los de la última sesión
+-- (2026-11-17 (d)).
+carriesStints :: Bool -> Maybe Source -> [TyreStint] -> Bool
+carriesStints chosen source stints = chosen || source == Just Feed || not (null stints)
+
+-- | El aviso cuando la tabla no trae stints ('carriesStints'), que solo pasa fuera del directo,
+-- con la tabla de la última sesión (2026-11-18 (g)).
 noStintsNotice :: Text
-noStintsNotice = "Sin stints: salen del directo"
+noStintsNotice = "Sin stints de la última sesión"
 
 -- | Lo que dice la fila de un coche que aún no tiene stints.
 notOutYet :: Text

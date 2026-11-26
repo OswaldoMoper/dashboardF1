@@ -14,6 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 from fastf1.exceptions import DataNotLoadedError
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +59,7 @@ def memo(main, monkeypatch):
         return Sesion(estado.formas.pop(0))
 
     monkeypatch.setattr(main, "_sessions", {})
+    monkeypatch.setattr(main, "_used", {})
     monkeypatch.setattr(main, "_empty", {})
     monkeypatch.setattr(main, "_incomplete", {})
     monkeypatch.setattr(main, "_renew", set())
@@ -196,3 +199,90 @@ def test_una_vacia_no_borra_nada_ni_se_carga_sin_la_cache_http(main, memo):
     main._resolve_session("2026-19-R")
     assert memo.renovadas == [False, False]
     assert memo.borradas == []
+
+
+# ── El tope del memo ──────────────────────────────────────────────────────────
+
+CARRERAS = ["2026-11-R", "2026-12-R", "2026-13-R", "2026-14-R", "2026-15-R", "2026-16-R"]
+
+
+def test_sale_la_de_numero_mas_bajo_y_nunca_la_que_se_guarda(main):
+    assert main.overflow({10: 1, 20: 5, 30: 3}, keep=None, limit=2) == [10]
+    assert main.overflow({10: 1, 20: 5, 30: 3}, keep=10, limit=1) == [30]
+    assert main.overflow({10: 1, 20: 5}, keep=None, limit=2) == []
+    assert main.overflow({}, keep=None, limit=0) == []
+
+
+@given(st.dictionaries(st.integers(0, 50), st.integers(0, 1000), max_size=12),
+       st.integers(0, 6), st.booleans())
+def test_tras_soltar_quedan_el_tope_y_las_mas_recientes(main, used, limit, con_keep):
+    keep = min(used) if used and con_keep else None
+    drop = main.overflow(used, keep=keep, limit=limit)
+    rest = [i for i in used if i != keep and i not in drop]
+    assert keep not in drop
+    assert len(rest) == min(limit, len([i for i in used if i != keep]))
+    assert all(used[d] <= used[r] for d in drop for r in rest)
+
+
+def test_con_cuatro_ademas_de_latest_no_sale_ninguna(main, memo):
+    memo.formas = ["con datos"] * 5
+    main._resolve_session("latest")
+    for clave in CARRERAS[:main.MEMO_MAX]:
+        main._resolve_session(clave)
+    assert set(main._sessions) == {"latest", "2026-19-R", *CARRERAS[:main.MEMO_MAX]}
+
+
+def test_la_quinta_echa_a_la_que_lleva_mas_rato_sin_pedirse(main, memo):
+    memo.formas = ["con datos"] * 6
+    main._resolve_session("latest")
+    for clave in CARRERAS[:4]:
+        main._resolve_session(clave)
+    main._resolve_session(CARRERAS[0])
+    main._resolve_session(CARRERAS[4])
+    assert CARRERAS[1] not in main._sessions
+    assert CARRERAS[0] in main._sessions
+    assert len({id(v) for v in main._sessions.values()}) == main.MEMO_MAX + 1
+
+
+def test_latest_no_sale_aunque_sea_la_que_lleva_mas_rato_sin_pedirse(main, memo):
+    memo.formas = ["con datos"] * 7
+    primera = main._resolve_session("latest")
+    for clave in CARRERAS:
+        main._resolve_session(clave)
+    assert main._resolve_session("latest") is primera
+    assert main._resolve_session("2026-19-R") is primera
+    assert memo.cargas.count("2026-19-R") == 1
+
+
+def test_una_que_salio_se_vuelve_a_cargar_al_pedirla(main, memo):
+    memo.formas = ["con datos"] * 7
+    main._resolve_session("latest")
+    for clave in CARRERAS[:5]:
+        main._resolve_session(clave)
+    main._resolve_session(CARRERAS[0])
+    assert memo.cargas.count(CARRERAS[0]) == 2
+
+
+def test_una_vacia_que_sale_no_deja_su_marca(main, memo):
+    memo.formas = ["sin cargar"] + ["con datos"] * 5
+    vacia = main._resolve_session(CARRERAS[0])
+    for clave in CARRERAS[1:6]:
+        main._resolve_session(clave)
+    assert CARRERAS[0] not in main._sessions
+    assert id(vacia) not in main._empty
+    assert set(main._used) == {id(v) for v in main._sessions.values()}
+
+
+def test_una_carga_que_falla_no_suelta_ninguna(main, memo, monkeypatch):
+    memo.formas = ["con datos"] * 5
+    for clave in CARRERAS[:5]:
+        main._resolve_session(clave)
+    antes = dict(main._sessions)
+
+    def falla(key, renew=False):
+        raise RuntimeError("sin red")
+
+    monkeypatch.setattr(main, "_load_session", falla)
+    with pytest.raises(RuntimeError):
+        main._resolve_session(CARRERAS[5])
+    assert main._sessions == antes

@@ -20,10 +20,15 @@ executable frontend
     other-modules:
         App
         Client
+        Client.Helper
         Pages.Dashboard
+        Pages.Dashboard.Helper
+        Widgets.Card
         Widgets.Comparison
         Widgets.Comparison.Helper
+        Widgets.Groups
         Widgets.Historical
+        Widgets.Historical.Helper
         Widgets.Live
         Widgets.Live.Helper
         Widgets.LiveTiming
@@ -60,14 +65,19 @@ test-suite frontend-test
     hs-source-dirs:   src test
     main-is:          Spec.hs
     other-modules:
+        Client.Helper
+        Pages.Dashboard.Helper
         Widgets.Comparison.Helper
+        Widgets.Historical.Helper
         Widgets.Live.Helper
         Widgets.LiveTiming.Helper
         Widgets.TyreStrategy.Helper
     build-depends:
         base        >= 4.14 && < 5
       , QuickCheck
+      , aeson
       , common
+      , containers
       , hspec
       , text
     ghc-options: -Wall

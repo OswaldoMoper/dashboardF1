@@ -22,7 +22,8 @@ module Handler.PublicApi.Manager
   ) where
 
 import           Config           (Config (..))
-import           Control.Retry    (constantDelay, limitRetries)
+import           Control.Retry    (RetryPolicyM (..), constantDelay)
+import           Data.IORef       (atomicModifyIORef', newIORef)
 import           Network.HTTP.Req
 
 -- | Reintentos __además__ del primer intento: 2, o sea __3 intentos__ en total
@@ -42,8 +43,11 @@ import           Network.HTTP.Req
 publicApiRetries :: Int
 publicApiRetries = 2
 
--- | 'HttpConfig' de los dos clientes públicos: 'defaultHttpConfig' con
--- 'publicApiRetries' reintentos en vez de 5 (2026-08-19).
+-- | 'HttpConfig' de __una__ petición a un cliente público: 'defaultHttpConfig' con
+-- 'publicApiRetries' reintentos en vez de 5 (2026-08-19), __contados entre los dos
+-- bucles de @req@__ —el de los status y el de los techos vencidos—, que sin el
+-- contador compartido multiplicaban hasta 9 intentos. Cada llamada trae su contador:
+-- se pide una por petición y no se reutiliza.
 --
 -- El techo total de un GET es __intentos × techo por intento__, y @req@ solo deja
 -- fijar el segundo ('publicApiTimeout'); por eso este módulo exporta las dos piezas.
@@ -55,11 +59,13 @@ publicApiRetries = 2
 -- un techo entero__.
 --
 -- No cambia qué excepciones atrapa el @try@ de cada @Context@: solo llegan antes.
-publicApiConfig :: HttpConfig
-publicApiConfig =
-  defaultHttpConfig
-    { httpConfigRetryPolicy = constantDelay 50000 <> limitRetries publicApiRetries
-    }
+publicApiConfig :: IO HttpConfig
+publicApiConfig = do
+  used <- newIORef (0 :: Int)
+  let shared = RetryPolicyM $ \_ -> do
+        n <- atomicModifyIORef' used (\k -> (k + 1, k))
+        pure (if n < publicApiRetries then Just 0 else Nothing)
+  pure defaultHttpConfig {httpConfigRetryPolicy = shared <> constantDelay 50000}
 
 -- | Techo de duración de __un__ intento, en segundos (@req@ lo toma en
 -- microsegundos). Monomorfizada a @'Https'@ para que el esquema case con el de las
@@ -68,9 +74,8 @@ publicApiConfig =
 --
 -- Es configurable (@PUBLIC_API_TIMEOUT@, 5 s por defecto) para poder aflojarlo sin
 -- recompilar el día que una de las dos APIs vaya lenta. El default sale del camino
--- feliz medido —@\/api\/live@ 0.48–3.4 s, @\/api\/historical@ 0.43–2.0 s,
--- @\/api\/tyre-strategy@ 0.15–0.31 s—, así que deja 1.6× de margen sobre el peor
--- caso bueno visto.
+-- feliz medido —@\/api\/live@ 0.48–3.4 s, @\/api\/historical@ 0.43–2.0 s—, así que
+-- deja 1.6× de margen sobre el peor caso bueno visto.
 --
 -- __Bajarlo de más es el error simétrico al de los 180 s, y es peor__: convierte
 -- una red lenta pero __viva__ en un degradado al dummy, o sea sirve dato falso en

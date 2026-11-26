@@ -11,8 +11,11 @@ module Common.Traces
     Channel (..)
   , channelsInOrder
   , traceChannels
+  , toggleChannel
   , TraceRows (..)
   , channelLabel
+  , channelName
+  , channelKey
   , channelHeight
   , channelTop
   , channelValue
@@ -36,6 +39,7 @@ module Common.Traces
   , xPercent
     -- * La curva
   , tracePoints
+  , traceVertices
     -- * Los rótulos
   , channelCaption
   , axisEndLabel
@@ -51,6 +55,8 @@ import           Common.Comparison (Axis (..), ChartType (..), LapGeometry (..),
                                     axisXs)
 import           Common.Format     (formatFixed)
 import           Common.Types      (ComparisonEntry (..), TracePoint (..))
+import           Data.Aeson        (FromJSON (..), ToJSON (..), Value (String),
+                                    withText)
 import           Data.List         (intercalate)
 import           Data.Maybe        (fromMaybe)
 import           Data.Text         (Text)
@@ -65,13 +71,20 @@ data Channel = Speed | Throttle | Brake
 channelsInOrder :: [Channel]
 channelsInOrder = [minBound .. maxBound]
 
--- | Los canales que pinta cada tipo, de arriba abajo: el 2 solo la velocidad y el 3
--- los tres (2026-10-06 (e)). El 1 no pinta trazas, y el 4 no tiene canales hasta que
--- se decida si sus barras son las trazas.
-traceChannels :: ChartType -> [Channel]
-traceChannels LapSpeedTrace   = [Speed]
-traceChannels TelemetryTraces = channelsInOrder
-traceChannels _               = []
+-- | Los canales que pinta un tipo con los elegidos en «Gráficas ▾», de arriba abajo:
+-- «Telemetría comparativa», los elegidos; el 1 no pinta trazas, y Lap Delta no tiene
+-- canales hasta que se decida si sus barras son las trazas.
+traceChannels :: ChartType -> [Channel] -> [Channel]
+traceChannels TelemetryTraces chosen = [c | c <- channelsInOrder, c `elem` chosen]
+traceChannels _ _                    = []
+
+-- | Marca o desmarca un canal en «Gráficas ▾», en el orden de arriba abajo. El último
+-- marcado no se desmarca.
+toggleChannel :: Channel -> [Channel] -> [Channel]
+toggleChannel c chosen
+  | c `notElem` chosen = [x | x <- channelsInOrder, x == c || x `elem` chosen]
+  | all (== c) chosen  = chosen
+  | otherwise          = filter (/= c) chosen
 
 -- | El rótulo de cada fila.
 channelLabel :: Channel -> Text
@@ -79,17 +92,39 @@ channelLabel Speed    = "km/h"
 channelLabel Throttle = "Acelerador %"
 channelLabel Brake    = "Freno"
 
+-- | El nombre de cada canal en «Gráficas ▾».
+channelName :: Channel -> Text
+channelName Speed    = "Velocidad"
+channelName Throttle = "Acelerador"
+channelName Brake    = "Freno"
+
+-- | Cómo se guarda un canal.
+channelKey :: Channel -> Text
+channelKey Speed    = "speed"
+channelKey Throttle = "throttle"
+channelKey Brake    = "brake"
+
+-- | Se guarda por su 'channelKey'; otro texto no se lee.
+instance ToJSON Channel where
+  toJSON = String . channelKey
+
+instance FromJSON Channel where
+  parseJSON = withText "Channel" $ \k ->
+    maybe (fail "Channel: no es un canal") pure (lookup k [(channelKey c, c) | c <- channelsInOrder])
+
 -- | Las filas que se pintan, de arriba abajo.
 newtype TraceRows = TraceRows { trChannels :: [Channel] }
   deriving stock (Eq, Show)
 
--- | El alto mínimo de una fila, en px: la velocidad 150 si va sola y 100 con otra
--- (2026-10-06 (e)). Con los rótulos, el tipo 3 cabe en 55 u de Race Overview a
--- 1912 × 914 (2026-10-06 (d)). Lo que la tarjeta crece lo reparte 'traceLayout'.
+-- | El alto mínimo de una fila, en px: la velocidad 150 si va sola, 100 con otra
+-- (2026-10-06 (e)) y 75 con las otras dos (2026-11-24), para que las tres quepan en una
+-- tarjeta de ~340 px; el acelerador 50 y el freno 20, solos o no (2026-11-23 (m)). Lo
+-- que la tarjeta crece lo reparte 'traceLayout'.
 channelHeight :: TraceRows -> Channel -> Double
 channelHeight r Speed
-  | trChannels r == [Speed] = 150
-  | otherwise               = 100
+  | trChannels r == [Speed]   = 150
+  | length (trChannels r) > 2 = 75
+  | otherwise                 = 100
 channelHeight _ Throttle = 50
 channelHeight _ Brake    = 20
 
@@ -143,16 +178,18 @@ data TraceLayout = TraceLayout
   deriving stock (Eq, Show)
 
 -- | Los trozos de esas filas. Sin crecer suman 'tracesHeight'. Los pesos
--- (2026-10-09 (h)): la velocidad sola se queda todo lo que crece; con más filas,
--- cada una pesa su alto, así que guardan la proporción, y cada aire la mitad del
--- suyo, así que crece la mitad que ellas.
+-- (2026-10-09 (h), 2026-11-23 (m)): una fila sola se queda todo lo que crece; con
+-- más, cada una pesa su alto con otra fila (la velocidad 100 también con las tres,
+-- 2026-11-24), y cada aire la mitad del suyo, así que crece la mitad que ellas.
 traceLayout :: TraceRows -> TraceLayout
 traceLayout r =
   TraceLayout (air tracesTop) (intercalate [air tracesGap] (map (pure . row) chs)) (air tracesBottom)
   where
     chs   = trChannels r
-    alone = chs == [Speed]
-    row ch = let h = channelHeight r ch in TracePiece (Just ch) h (if alone then 1 else h)
+    alone = length chs == 1
+    row ch = TracePiece (Just ch) (channelHeight r ch) (if alone then 1 else weight ch)
+    weight Speed = 100
+    weight ch    = channelHeight r ch
     air h  = TracePiece Nothing h (if alone then 0 else h / 2)
 
 -- | Un trozo que agrupa otros: suma sus mínimos y sus pesos, así que repartir dentro
@@ -239,22 +276,28 @@ xPercent xMax x
   | otherwise = 0
 
 -- | El atributo @points@ de la curva de un coche en un canal de esas filas, con su
--- rango y la X mayor de los que se pintan. El freno va en escalones: cada muestra
--- repite antes el valor de la anterior. Vacío si las X y las muestras no casan.
+-- rango y la X mayor de los que se pintan: 'traceVertices' con un decimal.
 tracePoints
   :: TraceRows -> Channel -> (Double, Double) -> Double -> [Double] -> [TracePoint] -> Text
-tracePoints r ch (lo, hi) xMax xs ps
-  | length xs /= length ps || null xs = ""
-  | otherwise = T.unwords (concat (zipWith3 point xs ys (Nothing : map Just ys)))
+tracePoints r ch range xMax xs ps =
+  T.unwords [formatFixed 1 x <> "," <> formatFixed 1 y | (x, y) <- traceVertices r ch range xMax xs ps]
+
+-- | Los vértices de la curva de un coche en un canal, en unidades del dibujo entero
+-- ('tracesWidth' de ancho). El freno va en escalones: cada muestra repite antes el valor
+-- de la anterior. Vacía si las X y las muestras no casan.
+traceVertices
+  :: TraceRows -> Channel -> (Double, Double) -> Double -> [Double] -> [TracePoint] -> [(Double, Double)]
+traceVertices r ch (lo, hi) xMax xs ps
+  | length xs /= length ps || null xs = []
+  | otherwise = concat (zipWith3 point xs ys (Nothing : map Just ys))
   where
     ys = map (y . channelValue ch) ps
     y v
       | hi > lo   = channelTop r ch + channelHeight r ch * (1 - (v - lo) / (hi - lo))
       | otherwise = channelTop r ch + channelHeight r ch
     x v = tracesWidth * xPercent xMax v / 100
-    pair a b = formatFixed 1 a <> "," <> formatFixed 1 b
-    point xv yv (Just prev) | ch == Brake = [pair (x xv) prev, pair (x xv) yv]
-    point xv yv _                         = [pair (x xv) yv]
+    point xv yv (Just prev) | ch == Brake = [(x xv, prev), (x xv, yv)]
+    point xv yv _                         = [(x xv, yv)]
 
 -- | El rótulo de una fila con su rango: la velocidad dice hasta dónde llega,
 -- @«km/h (0–300)»@; las otras dos, solo su nombre.

@@ -90,3 +90,29 @@ test('tras un error de red, el directo pide en el tic siguiente', async ({ page 
   await expect.poll(() => seen.length, { timeout: 20_000 }).toBeGreaterThanOrEqual(3);
   expect(seen[2] - seen[1], 'en el tic siguiente').toBeLessThan(15_000);
 });
+
+// Con el diferido (41 s, como el de por defecto; `retraso=41` separa estas peticiones de las de
+// `openDashboard`), un 500 desde la primera petición se dice como sin diferido; de control,
+// cuando llega la primera buena las dos tarjetas pasan a la espera.
+test('con el diferido, un fallo desde la carga se dice al momento; al llegar la primera buena, la espera', async ({ page }) => {
+  test.setTimeout(60_000);
+  let failing = true;
+  await openDashboard(page);
+  await page.route(live, (route) => {
+    if (!failing || !route.request().frame().url().includes('retraso=41')) return route.fallback();
+    return route.fulfill({ status: 500, contentType: 'text/plain', body: 'boom' });
+  });
+  await page.goto('/?retraso=41');
+  const notices = async () => {
+    const timing = await page.locator('.widget--live-timing p.status').allTextContents();
+    const tyre = await page.locator('.widget--tyre-strategy p.status').allTextContents();
+    return timing.length && tyre.length ? [...new Set([...timing, ...tyre])] : [];
+  };
+  await expect.poll(notices, { timeout: 15_000 }).toEqual(['Error al cargar /api/live']);
+  failing = false;
+  const waiting = /^En espera · diferido 0:41 · empieza en \d+ s$/;
+  await expect.poll(async () => {
+    const shown = await notices();
+    return shown.length > 0 && shown.every((t) => waiting.test(t));
+  }, { timeout: 20_000 }).toBe(true);
+});

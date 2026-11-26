@@ -28,17 +28,29 @@ module Handler.Historical.Helper
   , assembleStats
   , assembleConstructorStats
   , parseNum
+    -- * Qué ronda se pide
+  , StandingsAt (..)
+  , resolveStandings
+    -- * Qué se sirve de lo guardado
+  , historicalFreshFor
+  , keptToday
+  , keptStandings
+  , servedToday
   ) where
 
-import           Common.Types        (HistoricalStat (..), StatEntity (..))
-import           Control.Applicative ((<|>))
-import           Data.Aeson          (FromJSON (..), Object, withObject, (.!=),
-                                      (.:), (.:?))
-import           Data.Aeson.Types    (Parser)
-import           Data.Maybe          (fromMaybe, mapMaybe)
-import           Data.Text           (Text)
-import qualified Data.Text           as T
-import           Text.Read           (readMaybe)
+import           Common.Session       (SessionCode (..), SessionKey (..))
+import           Common.Types         (HistoricalStat (..), StatEntity (..))
+import           Control.Applicative  ((<|>))
+import           Data.Aeson           (FromJSON (..), Object, withObject, (.!=),
+                                       (.:), (.:?))
+import           Data.Aeson.Types     (Parser)
+import           Data.Maybe           (fromMaybe, mapMaybe)
+import           Data.Text            (Text)
+import qualified Data.Text            as T
+import           Data.Time.Clock      (NominalDiffTime, UTCTime, diffUTCTime)
+import           Handler.Query.Helper (sessionKeyParam)
+import           Outcome              (Rejection)
+import           Text.Read            (readMaybe)
 
 -- | Raíz de la respuesta: @{ "MRData": … }@.
 newtype Root = Root { rootMRData :: MRData }
@@ -86,7 +98,7 @@ instance FromJSON StandingsList where
 -- piloto y sus puntos intactos. Con @.:@ el decode entero fallaba y, como
 -- 'Handler.Historical.Context.fetchStats' hace los dos GET dentro de un solo @try@,
 -- un campo ausente en cualquiera de las dos respuestas arrastraba el refresco
--- completo a cache\/dummy. El defecto es @\"\"@ y no @\"0\"@ porque declarar cero
+-- completo a lo guardado o al error. El defecto es @\"\"@ y no @\"0\"@ porque declarar cero
 -- victorias sería __inventar un dato__ que Jolpica no publicó.
 data DriverStanding = DriverStanding
   { dsPoints   :: Text
@@ -125,7 +137,7 @@ data JolpicaDriver = JolpicaDriver
 
 -- | @code@ es __opcional con fallback al apellido__: Jolpica no publica acrónimo
 -- para todo piloto (históricos y suplentes suelen carecer de él) y con @.:@ un solo
--- piloto sin @code@ tumbaba la lista completa hacia cache\/dummy — los dos GET del
+-- piloto sin @code@ tumbaba la lista completa hacia lo guardado o el error — los dos GET del
 -- 'Handler.Historical.Context' viven en un mismo @try@, así que el fallo no se
 -- quedaba en su propia entidad. El apellido es el sustituto natural: es la etiqueta
 -- que el widget ya muestra en los modos @Family@\/@Full@, así que la fila sigue
@@ -235,3 +247,51 @@ parseNum = readMaybe . T.unpack
 -- sin puesto en vez de inventarle uno.
 parsePosition :: Text -> Maybe Int
 parsePosition = readMaybe . T.unpack
+
+-- | De qué momento es la clasificación que se pide.
+data StandingsAt
+  = StandingsToday          -- ^ Sin @?session=@: la temporada a hoy (@current@).
+  | StandingsAfter Int Int  -- ^ Tras esa ronda de ese año; la 0 es antes de la primera.
+  deriving (Eq, Ord, Show)
+
+-- | El @?session=@ de @\/api\/historical@: la carrera, tras su ronda; cualquier otra
+-- sesión, tras la anterior (2026-11-13 (k)). Vacío, @latest@ o lo que no es una clave,
+-- 'BadRequest'.
+resolveStandings :: Maybe Text -> Either Rejection StandingsAt
+resolveStandings param = maybe StandingsToday after <$> sessionKeyParam param
+  where
+    after (SessionKey year rnd Race) = StandingsAfter year rnd
+    after (SessionKey year rnd _)    = StandingsAfter year (rnd - 1)
+
+-- | Cuánto se sirve lo guardado sin volver a Jolpica: los diez minutos de su
+-- @cache-control: max-age=600@ (2026-11-18 (b)).
+historicalFreshFor :: NominalDiffTime
+historicalFreshFor = 600
+
+-- | La clasificación a hoy guardada a las @at@, si a las @now@ aún se sirve sin volver a
+-- Jolpica: mientras tenga menos de 'historicalFreshFor'.
+keptToday :: UTCTime -> Maybe (UTCTime, [a]) -> Maybe [a]
+keptToday now kept = case kept of
+  Just (at, rows) | fresh now at -> Just rows
+  _                              -> Nothing
+
+-- | La clasificación de una ronda guardada a las @at@, si a las @now@ se sirve sin volver a
+-- Jolpica: con filas, siempre, porque la de una ronda corrida ya no cambia; sin filas (una
+-- ronda aún sin correr), mientras tenga menos de 'historicalFreshFor'.
+keptStandings :: UTCTime -> (UTCTime, [a]) -> Maybe [a]
+keptStandings now (at, rows)
+  | not (null rows) || fresh now at = Just rows
+  | otherwise                       = Nothing
+
+fresh :: UTCTime -> UTCTime -> Bool
+fresh now at = diffUTCTime now at < historicalFreshFor
+
+-- | Lo que se sirve de la clasificación a hoy con lo que contestó Jolpica y lo guardado,
+-- cuando lo guardado ya no es reciente: con filas, las de Jolpica; vacía, lo guardado o, sin
+-- nada, la lista vacía, que es la verdad antes de la primera ronda; si Jolpica falló, lo
+-- guardado o, sin nada, el fallo, y no un ejemplo inventado (2026-11-18 (c)).
+servedToday :: Maybe (t, [a]) -> Either e [a] -> Either e [a]
+servedToday kept answer = case answer of
+  Right rows | not (null rows) -> Right rows
+  Right rows                   -> Right (maybe rows snd kept)
+  Left e                       -> maybe (Left e) (Right . snd) kept

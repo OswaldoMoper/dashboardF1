@@ -37,6 +37,7 @@ library
         Sync
         Handler.FastF1.Helper
         Handler.FastF1.Manager
+        Handler.PublicApi.Helper
         Handler.PublicApi.Manager
         Handler.Feed.Helper
         Handler.Feed.Manager
@@ -50,6 +51,11 @@ library
         Handler.Historical.Context
         Handler.Historical.Helper
         Handler.Historical.Manager
+        Handler.Query.Helper
+        Handler.Season
+        Handler.Season.Context
+        Handler.Season.Helper
+        Handler.Season.Manager
         Handler.Comparison
         Handler.Comparison.Context
         Handler.Comparison.Helper
@@ -58,10 +64,6 @@ library
         Handler.Drivers.Context
         Handler.Drivers.Helper
         Handler.Drivers.Manager
-        Handler.TyreStrategy
-        Handler.TyreStrategy.Context
-        Handler.TyreStrategy.Helper
-        Handler.TyreStrategy.Manager
         Handler.F1TV
         Handler.F1TV.Context
     build-depends:

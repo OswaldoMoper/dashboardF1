@@ -1,15 +1,12 @@
-"""``_feed_stints``: una foto de carrera con sus stints contados, un trozo de grabación con un
-stint sin vueltas completadas, y las reglas de la cuenta como propiedades."""
+"""``_feed_stints``: trozos de grabación con un stint sin vueltas completadas y con un coche
+que suma de más, y las reglas de la cuenta como propiedades."""
 
 import json
-from pathlib import Path
 
 from hypothesis import given
 from hypothesis import strategies as st
 
 import feed
-
-AQUI = Path(__file__).resolve().parent
 
 CLAVES = {
     "tsDriver",
@@ -26,15 +23,6 @@ CLAVES = {
 
 def tramos(stints, coche):
     return [(s["tsCompound"], s["tsStartLap"], s["tsEndLap"]) for s in stints if s["tsCar"] == coche]
-
-
-def test_la_carrera_del_13_de_septiembre_da_sus_stints():
-    # La foto transformada (`fotos.transformar`): 47 stints, y el coche 1 con tres.
-    foto = json.loads((AQUI / "fotos" / "carrera-2026-09-13-final.json").read_text(encoding="utf-8"))
-    stints = feed._feed_stints(foto)
-    assert len(stints) == 47
-    assert tramos(stints, "1") == [("SOFT", 1, 24), ("HARD", 25, 31), ("SOFT", 32, 43)]
-    assert {s["tsDriver"] for s in stints if s["tsCar"] == "1"} == {"NOR"}
 
 
 def test_el_stint_sin_vueltas_completadas_sale_y_acaba_antes_de_empezar():

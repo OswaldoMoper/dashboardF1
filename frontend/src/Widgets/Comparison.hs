@@ -10,10 +10,11 @@
 -- ('Loading' \/ 'Failed' \/ 'Loaded') y sin datos dummy locales, igual que
 -- 'Widgets.LiveTiming' e 'Widgets.Historical'.
 --
--- __Es el primer widget del repo que pinta una serie y no una tabla.__ Pinta el
--- par de los dos primeros coches de 'Common.Types.LapComparison' (el primero es la
--- referencia) con la base que elige «Δ contra»: la serie es la Δ del coche que no es
--- la base ('Common.Comparison.pairWith').
+-- __Es el primer widget del repo que pinta una serie y no una tabla.__ El tipo 1 pinta
+-- los coches de 'Common.Types.LapComparison' (el primero es la referencia) con la base
+-- que elige «Δ contra»: una curva por coche que no es la base, una al frente y las
+-- demás tenues, y detrás lo que suman los grupos ('Common.Comparison.curvesWith'). Las trazas y el directo pintan el par de
+-- los dos primeros ('Common.Comparison.pairWith').
 -- Los tiempos vienen __ya formateados__ desde el microservicio (2026-07-31).
 --
 -- __El gráfico es SVG a mano, sin librería.__ El escalado vive en 'Common.Chart',
@@ -50,88 +51,103 @@
 -- @backend-test@ (2026-08-06).
 module Widgets.Comparison where
 
-import           Client                        (fetchJson, fetchJsonSourced)
+import           Client                        (fetchJson, fetchJsonSourcedWith,
+                                                fetchJsonWith, stillFor)
 import           Common.Account                (Foot (..), Notice (..),
                                                 accountFoot, cardNotice,
-                                                loginCommand, retryDue)
+                                                cutNotice, loginCommand,
+                                                noLapsNotice)
+import           Common.Blend                  (Blend, Mark (..), Overlay (..),
+                                                Point, blendOverlay, lineWidth,
+                                                pointsAttr, toPixels)
 import           Common.Chart                  (SectorPace (..),
-                                                SectorSpan (..), axisPolyline,
-                                                axisTicks, axisZeroY,
-                                                chartHeight, chartWidth,
-                                                frontierCells, frontierCellsAt,
-                                                sectorSpans)
+                                                SectorSpan (..),
+                                                axisPointsAmong, axisTicks,
+                                                axisZeroY, chartHeight,
+                                                chartWidth, frontierCells,
+                                                frontierCellsAt, sectorSpans)
 import           Common.Comparison             (Axis, Baseline (..),
-                                                ChartType (..), LapChoice (..),
-                                                LapPick (..), LiveCard (..),
+                                                ChartType (..), Curve (..),
+                                                LapChoice (..), LapPick (..),
+                                                Layer (..), LiveCard (..),
                                                 LiveEntry (..), Pair (..),
+                                                WithGroups (..), addCar,
+                                                addedCars, addedLaps,
                                                 axesInOrder, axisFromKey,
                                                 axisKey, axisLabel, axisNotice,
-                                                baselineFromKey, baselineKey,
-                                                baselineLabel, baselineRole,
-                                                baselinesInOrder,
+                                                axisValues, baselineFromKey,
+                                                baselineKey, baselineLabel,
+                                                baselineRole, baselinesInOrder,
                                                 chartTypeFromKey, chartTypeKey,
                                                 chartTypeLabel, chartTypeReady,
                                                 chartTypeTraces,
-                                                chartTypesInOrder, defaultAxis,
+                                                chartTypesInOrder, curveKey,
+                                                curvesWith, defaultAxis,
                                                 defaultChartType, deltaFormula,
-                                                endedNotice, keepChosen,
+                                                endedNotice, keepCars,
                                                 lapButtons, lapChoiceFromKey,
-                                                lapChoiceKey, lapChoicesOffered,
-                                                lapFor, lapPicks, lapShown,
-                                                leadingPair, liveCardRows,
-                                                liveCardStep, liveComparison,
-                                                liveDrivers, liveLapLines,
-                                                liveMissingReference,
-                                                liveNoLapFor, missingReference,
-                                                noLapFor, pairWith)
+                                                lapChoiceKey, lapPicks,
+                                                lapShown, leadingPair,
+                                                liveCardRows, liveCardStep,
+                                                liveLapLines,
+                                                liveMissingReference, maxCars,
+                                                missingReference, noneHasLap,
+                                                pairWith, pickReference, removeCar,
+                                                withGroups)
 import           Common.ComparisonCard         (CardControl (..),
-                                                CardLayout (..), ChartMode,
+                                                CardLayout (..), ChartFirst (..),
+                                                ChartMode, chartFirstAreas,
+                                                chartFirstFor, stackedLayout,
                                                 Side (..), axisColumnWidth,
                                                 cardLayout, curveInset,
                                                 insideAxisLabels, modeEnabled,
                                                 modeFromKey, modeKey,
                                                 modeOption, modesInOrder,
-                                                otherSide, rowHeight, rowTitle,
-                                                shownMode, showsNames,
-                                                showsValues, tracesInset,
-                                                valueHeight, valuesFitMeasured,
-                                                vsBeside)
-import           Common.Format                 (formatFixed)
-import           Common.Origin                 (Source, Sourced (..))
-import           Common.Route                  (comparisonPathFor, driversParam,
+                                                otherSide, rowTitle, shownMode,
+                                                showsNames, showsValues,
+                                                tracesInset, valueHeight,
+                                                valuesFitMeasured, vsBeside)
+import           Common.Format                 (formatDelta, formatFixed)
+import           Common.Origin                 (Sourced (..))
+import           Common.Pilots                 (Inks (..), inksOr)
+import           Common.Route                  (comparisonPathFor,
+                                                driverCodesParam,
+                                                driversListParam,
                                                 driversPathFor, f1tvPath)
-import           Common.Shown                  (Poll (..))
+import           Common.Session                (SessionKey, notFoundNotice,
+                                                notRunNotice, sessionQuery)
+import           Common.Shown                  (Fetched (..))
 import           Common.Traces                 (Channel, TraceLayout (..),
                                                 TracePiece (..), TraceRows (..),
                                                 axisEnd, axisEndLabel,
                                                 boundaryXs, channelCaption,
-                                                channelHeight, channelRange,
-                                                channelTop, channelsSpan,
+                                                channelHeight, channelName,
+                                                channelRange, channelTop,
+                                                channelsInOrder, channelsSpan,
                                                 frontierXs, pieceFlex,
                                                 readSamples, samplesMax,
                                                 samplesMin, samplesStart,
                                                 samplesStep, spanPiece,
-                                                traceChannels, traceLayout,
-                                                tracePoints, traceXs,
-                                                tracesHeight, tracesWidth,
-                                                xPercent)
+                                                toggleChannel, traceChannels,
+                                                traceLayout, traceVertices,
+                                                traceXs, tracesWidth, xPercent)
 import           Common.Types                  (ComparisonEntry (..),
                                                 DriverEntry (..),
                                                 LapComparison (..),
-                                                LiveTable (..), LiveTimingRow,
-                                                SessionInfo, TelemetryGap (..))
-import           Control.Monad                 (forM, forM_, guard, unless,
-                                                when)
+                                                TelemetryGap (..))
+import           Control.Monad                 (forM, forM_, join, unless, when)
 import           Control.Monad.IO.Class        (liftIO)
 import           Data.List                     (find)
 import           Data.Map                      (Map)
 import qualified Data.Map                      as Map
-import           Data.Maybe                    (fromMaybe, isJust, listToMaybe)
+import           Data.Maybe                    (fromMaybe, isJust, isNothing,
+                                                listToMaybe)
 import           Data.Text                     (Text)
 import qualified Data.Text                     as T
 import           Data.Time.Clock.POSIX         (utcTimeToPOSIXSeconds)
+import           Data.Unique                   (hashUnique, newUnique)
 import qualified GHCJS.DOM                     as DOM (currentWindowUnchecked)
-import qualified GHCJS.DOM.DOMRectReadOnly     as DOM (getHeight)
+import qualified GHCJS.DOM.DOMRectReadOnly     as DOM (getHeight, getWidth)
 import qualified GHCJS.DOM.Element             as DOM (getBoundingClientRect,
                                                        getClientHeight)
 import qualified GHCJS.DOM.EventM              as DOM (on)
@@ -144,9 +160,19 @@ import qualified GHCJS.DOM.Types               as DOM (Element (..),
                                                        liftJSM, uncheckedCastTo)
 import qualified Language.Javascript.JSaddle   as JS
 import           Reflex.Dom
-import           Widgets.Comparison.Helper     (CState (..), Refresh (..),
-                                                refreshOf, shownComparison,
-                                                step)
+import           Widgets.Card                  (CardExtras (..))
+import           Widgets.Comparison.Helper     (CState (..), Item (..),
+                                                Refresh (..), View (..),
+                                                canvasDrawn, carAt, driverLabel,
+                                                dueGap, edgeNotes, gridFor,
+                                                groupLaps, indexedGrid,
+                                                leftOutLabel, liveEntriesFor,
+                                                liveFor, liveInput, markedRule,
+                                                noLapNote, notRunOf, positionOf,
+                                                refreshOf, rowHeightNow,
+                                                rowItems, seriesOf,
+                                                shownComparison, shownGap,
+                                                shownItemsOf, shownState, step)
 import           Widgets.Live                  (LiveView (..), liveBadge)
 import           Widgets.Live.Helper           (indicatorOf)
 
@@ -156,7 +182,9 @@ import           Widgets.Live.Helper           (indicatorOf)
 --
 -- La tarjeta se reparte según su ancho medido ('Common.ComparisonCard.cardLayout'):
 -- dos columnas, con la tabla de mando en el lado que elige «⇄», o apilada. Hasta la
--- primera medida se pinta apilada.
+-- primera medida se pinta apilada. Con una sola gráfica que no es la velocidad
+-- ('Common.ComparisonCard.chartFirstFor'), apilada y en la rejilla del acomodo
+-- ('mainAttrs'), con los tiempos de todos los elegidos.
 --
 -- El eje vertical va siempre. El desplegable de modos elige qué lleva la fila de
 -- fronteras y enseña el modo que se ve ('Common.ComparisonCard.shownMode'); la
@@ -187,104 +215,157 @@ import           Widgets.Live.Helper           (indicatorOf)
 -- ('Common.Account'). Con trazas y la telemetría incompleta, el aviso lo dice, y la
 -- comparación se vuelve a pedir una vez, el primer minuto después de su hora ('dueGap').
 --
--- El lado de la tabla de mando, la banda y el modo elegido arrancan en @start@, y
--- @put@ los pone como trae ('Common.ComparisonCard.CardControl'). Devuelve cada
--- cambio de cualquiera de los tres, también el de @put@.
+-- El lado de la tabla de mando, la banda, el modo elegido, la regla de la vuelta y las
+-- gráficas de las trazas arrancan en @start@, y @put@ los pone como trae
+-- ('Common.ComparisonCard.CardControl'). Devuelve cada cambio de cualquiera de ellos,
+-- también el de @put@. Las curvas se mezclan con
+-- @blend@, la que se elige en ☰. De lo que quien la monta le pone dentro
+-- ('Widgets.Card.CardExtras') usa lo que va junto al título y bajo la cabecera, y lo que
+-- devuelve esto último va junto a esos cambios.
 comparisonWidget :: MonadWidget t m
-                 => LiveView t -> Event t () -> CardControl -> Event t CardControl -> m (Event t CardControl)
-comparisonWidget live revealed start put = mdo
-  (root, (card, (userMode, state, view, side, band, rule))) <-
+                 => Dynamic t Blend -> Dynamic t (Maybe SessionKey) -> LiveView t -> Event t () -> CardControl
+                 -> Event t CardControl -> CardExtras t m a -> m (Event t CardControl, a)
+comparisonWidget blend session live revealed start put extras = mdo
+  (root, (card, (userMode, state, view, side, band, rule, shownCharts, out))) <-
     elClass' "div" "widget widget--comparison" $ elClass' "div" "comparison__card" $ mdo
-      (swap, ty, (axis, frontiers, samples), ruleClicks) <- divClass "widget__head" $ do
+      (swap, ty, (axis, frontiers, samples, charts), ruleClicks) <- divClass "widget__head" $ do
         el "h2" $ text "Lap Comparison"
+        cardBeside extras
         t  <- typeSelect
         rc <- ruleButtons buttons marked
-        tc <- traceControls t
+        tc <- traceControls t (ccCharts start) (ccCharts <$> put)
         elDynAttr "span" (badgeAttrs <$> (liveFor <$> liveCard <*> t)) $
-          liveBadge (lvDelay live) (indicatorOf <$> lvPoll live)
+          liveBadge (lvDelay live) (indicatorOf <$> (isJust <$> session) <*> lvPoll live)
         s  <- swapButton (clStacked <$> layout)
         pure (s, t, tc, rc)
+      underOut <- cardUnder extras
       side    <- foldDyn ($) (ccSide start) (leftmost [const . ccSide <$> put, otherSide <$ swap])
       pb      <- getPostBuild
-      gridRsp <- fetchJson (driversPathFor Nothing <$ pb)
-      fastGrid <- holdDyn [] (fromMaybe [] <$> gridRsp)
+      gridRsp <- fetchJsonWith ((\s -> (s, driversPathFor (sessionQuery s))) <$> leftmost [newSession, tag (current session) pb])
+      fastGrid <- holdDyn [] (leftmost [[] <$ newSession, fromMaybe [] <$> stillFor (current session) gridRsp])
       grid    <- holdUniqDyn (gridFor <$> liveData <*> fastGrid)
-      ((((picked, livePicked), cars, chosenE), pickE), rowClicks) <- elDynAttr "div" (bodyAttrs <$> side <*> layout) $ do
-        r <- elDynAttr "div" (controlAttrs <$> layout) $ do
-          r' <- carSelector grid (shownComparison <$> stFast) (noLapNote <$> liveEntries <*> st)
-                  (isJust <$> liveData) ((leadingPair . snd =<<) <$> liveData) (vsNextTo <$> layout)
-                  (modeSelect (ccMode start) fits shown)
-          p  <- switchHold never =<< dyn (controlState <$> liveEntries <*> picks <*> st)
-          pure (r', p)
-        clicks <- divClass "comparison__plot" $
-          switchHold never =<< dyn
-            ( plotView (dyn_ (overlayFor <$> liveCard <*> liveEntries <*> refresh <*> st) >> dyn_ (noticeView <$> notice))
-                <$> ((\c s -> RowMode c s band) <$> chosen <*> shown) <*> layout
-                <*> (otherSide <$> side) <*> v <*> liveEntries <*> st )
-        pure (r, clicks)
+      (((((userCars, livePicked), chosenCars, chosenE), pickE), rowClicks), (b, frontPick)) <-
+        elDynAttr "div" (mainAttrs <$> chartFirst <*> chosenCars <*> lapRows) $ do
+          inside <- elDynAttr "div" (hiddenIf <$> notRun <*> (bodyAttrs <$> side <*> layout)) $ do
+            r <- elDynAttr "div" (controlAttrs <$> layout) $ do
+              r' <- carSelector grid (shownComparison <$> stFast) (addedCars <$> current groupsNow) (noLapNote <$> liveEntries <*> st)
+                      (isJust <$> liveData) ((leadingPair . snd =<<) <$> liveData) (vsNextTo <$> layout) (isJust <$> chartFirst)
+                      (modeSelect (ccMode start) fits shown)
+              p  <- switchHold never =<< dyn (controlState <$> liveEntries <*> picks <*> lapRows <*> st)
+              pure (r', p)
+            clicks <- divClass "comparison__plot" $
+              switchHold never =<< dyn
+                ( plotView (dyn_ (overlayFor <$> liveCard <*> liveEntries <*> refresh <*> st) >> dyn_ (noticeView <$> notice <*> cut))
+                           (\none status -> dyn_ (insteadView status none <$> noLaps <*> notice <*> cut))
+                    <$> ((\c s -> RowMode c s band) <$> chosen <*> shown) <*> layout
+                    <*> (otherSide <$> side) <*> v <*> liveEntries <*> otherLaps <*> blend <*> st )
+            pure (r, clicks)
+          dyn_ (notRunView <$> notRun)
+          lg <- legendRow blend ty axis notRun front ((,,,) <$> groupsNow <*> shownItems <*> otherLaps <*> viewed) st
+          pure (inside, lg)
       band    <- foldDyn ($) (ccBand start) (leftmost [const . ccBand <$> put, not <$ rowClicks])
-      b       <- legendRow ty axis st
+      front   <- holdDyn Nothing (Just <$> frontPick)
+      cars    <- holdUniqDyn (firstTwo <$> chosenCars)
+      groupPicks <- holdUniqDyn (cardPicks extras)
+      viewed  <- holdUniqDyn (fst <$> cardSessions extras)
+      lapsWanted <- holdUniqDyn (addedLaps <$> groupsNow)
+      fastLaps <- fmap join . holdDyn (constDyn []) =<< dyn (fetchLaps <$> lapsWanted)
       dyn_ (footView <$> foot)
       wanted  <- holdUniqDyn ((\t n -> if chartTypeTraces t then n else 0) <$> ty <*> samples)
-      drivers <- holdDyn Nothing (Just <$> leftmost [picked, livePicked])
-      let v       = View <$> ty <*> b <*> axis <*> frontiers
+      drivers <- holdDyn Nothing (leftmost [Nothing <$ newSession, Just <$> leftmost [carsAsk, livePicked]])
+      let groupsNow = withGroups <$> grid <*> chosenCars <*> groupPicks
+          -- Las vueltas de otras sesiones, solo con FastF1: el directo sigue con dos.
+          otherLaps = (\l ls -> if isJust l then [] else ls) <$> liveEntries <*> fastLaps
+          shownItems = shownItemsOf <$> viewed <*> groupsNow <*> otherLaps <*> st
+          lapRows    = rowItems <$> ty <*> (isJust <$> chartFirst) <*> shownItems
+          askFor    = driversListParam . wgCars
+          offline   = isNothing <$> current liveData
+          -- Se pide lo que elige el usuario y, cuando cambian los grupos, la parrilla o lo
+          -- pintado, lo que falta para que lo pintado sea la tarjeta más sus grupos. Nunca
+          -- otra vez lo último pedido, que corta el bucle cuando la respuesta es el ejemplo,
+          -- ni sin nada pintado: tras cambiar de sesión manda su petición.
+          userAsk   = attachWithMaybe (\(gr, h) cs -> askFor (withGroups gr cs h)) ((,) <$> current grid <*> current groupPicks) userCars
+          shownAsk  = (driversListParam . map ceCar . lcEntries =<<) . shownComparison <$> stFast
+          regrouped = tagPromptlyDyn ((,) <$> (askFor <$> groupsNow) <*> shownAsk)
+                        (leftmost [() <$ updated groupPicks, () <$ updated grid, () <$ updated stFast])
+          syncAsk   = gate offline $
+                        attachWithMaybe (\lastAsk (want, have) -> if isJust have && want /= have && want /= lastAsk then want else Nothing)
+                          (current drivers) regrouped
+          carsAsk   = leftmost [userAsk, syncAsk]
+          v       = View <$> ty <*> b <*> axis <*> frontiers <*> front <*> charts
+          -- Cada petición va con la sesión para la que sale: la de otra se tira al volver.
           request = leftmost
-            [ comparisonPathFor Nothing Nothing <$> tag (current wanted) pb
-            , attachWith (\n d -> comparisonPathFor Nothing (Just d) n) (current wanted) picked
-            , attachWith (comparisonPathFor Nothing) (current drivers) (ffilter (> 0) (updated wanted))
-            , attachWith (\(d, n) _ -> comparisonPathFor Nothing d n) ((,) <$> current drivers <*> current wanted) again
+            [ attachWith (\n s -> (s, pathFor s Nothing n)) (current wanted) newSession
+            , (\(s, n) -> (s, pathFor s Nothing n)) <$> tag ((,) <$> current session <*> current wanted) pb
+            , attachWith (\(s, n) d -> (s, pathFor s (Just d) n)) ((,) <$> current session <*> current wanted) carsAsk
+            , attachWith (\(s, d) n -> (s, pathFor s d n)) ((,) <$> current session <*> current drivers) (ffilter (> 0) (updated wanted))
+            , attachWith (\(s, d, n) _ -> (s, pathFor s d n)) ((,,) <$> current session <*> current drivers <*> current wanted) again
             ]
+          pathFor s  = comparisonPathFor (sessionQuery s)
+          newSession = updated session
           liveData     = liveCardRows <$> (liveFor <$> liveCard <*> ty)
           shownSession = fmap fst <$> liveData
           marked       = markedRule <$> shownSession <*> rule
           picks        = lapPicks <$> shownSession <*> rule <*> excs
           st           = shownState <$> liveEntries <*> stFast
+      notRun      <- holdUniqDyn (notRunOf . isJust <$> session <*> lvWait live <*> lvPoll live)
       buttons     <- holdUniqDyn (lapButtons <$> shownSession)
       liveEntries <- holdUniqDyn (liveEntriesFor <$> liveData <*> cars <*> rule <*> excs)
       rule        <- holdDyn (ccLap start) (leftmost [ccLap <$> put, ruleClicks])
       excs        <- foldDyn ($) (Nothing, Nothing) $ leftmost
-                       [ const (Nothing, Nothing) <$ leftmost [() <$ ruleClicks, () <$ put]
+                       [ const (Nothing, Nothing) <$ leftmost [() <$ ruleClicks, () <$ put, () <$ newSession]
                        , attachWith clearChanged (current cars) (updated cars)
                        , attachWith setPick (current marked) pickE
                        ]
-      resp    <- fetchJsonSourced request
+      resp    <- stillFor (current session) <$> fetchJsonSourcedWith request
       let fast = fmap srcValue <$> resp
       refresh <- holdDyn InFlight (leftmost [InFlight <$ request, refreshOf <$> fast])
-      stFast  <- foldDyn step Loading fast
-      shownAt <- holdDyn (Nothing, Nothing) ((\s -> (srcOrigin s, srcFetchedAt s)) <$> fmapMaybe id resp)
+      stFast  <- foldDyn ($) Loading (leftmost [const Loading <$ newSession, step <$> fast])
+      shownAt <- holdDyn (Nothing, Nothing) $
+                   leftmost [(Nothing, Nothing) <$ newSession, (\s -> (srcOrigin s, srcFetchedAt s)) <$> fmapMaybe got resp]
       minute  <- tickLossyFromPostBuildTime 60
       asked   <- fetchJson (f1tvPath <$ leftmost [() <$ request, () <$ minute])
       account <- holdDyn Nothing asked
       zone    <- browserZone
-      tried   <- holdDyn Nothing (Just . tgRetryAt <$> again)
+      tried   <- holdDyn Nothing (leftmost [Nothing <$ newSession, Just . tgRetryAt <$> again])
       let onLive = isJust <$> liveData
           foot   = accountFoot zone <$> onLive <*> account
           gap    = shownGap <$> ty <*> stFast
-          again  = attachWithMaybe dueGap ((,) <$> current gap <*> current tried) minute
+          again  = attachWithMaybe dueGap ((,) <$> current gap <*> current tried) (tickMinute <$> minute)
           notice = (\l a (o, at) g -> cardNotice zone l a o at g) <$> onLive <*> account <*> shownAt <*> gap
-      pure (chosenE, st, v, side, band, rule)
+          noLaps = noLapsNotice zone <$> onLive <*> account
+          cut    = cutNotice <$> onLive <*> ((lcCut =<<) . shownComparison <$> stFast)
+      pure (chosenE, st, v, side, band, rule, charts, underOut)
   liveIn   <- holdUniqDyn (liveInput <$> lvWait live <*> lvPoll live)
   first    <- sample (current liveIn)
   liveCard <- holdUniqDyn
-                =<< foldDyn (\(src, s, r) -> liveCardStep src s r) (maybe Offline (\(src, s, r) -> liveCardStep src s r Offline) first)
-                      (fmapMaybe id (updated liveIn))
+                =<< foldDyn ($) (maybe Offline (\(src, s, r) -> liveCardStep src s r Offline) first)
+                      (leftmost [ const Offline <$ updated session
+                                , (\(src, s, r) -> liveCardStep src s r) <$> fmapMaybe id (updated liveIn) ])
   size    <- cardSize root card (current ((,) <$> rowNow <*> drawn)) changed
   stacked <- holdUniqDyn (clStacked <$> layout)
   chosen  <- holdDyn (ccMode start) (leftmost [ccMode <$> put, userMode])
   shown   <- holdUniqDyn (shownMode <$> fits <*> chosen)
-  let layout   = cardLayout . maybe 0 fst <$> size
+  chartFirst <- holdUniqDyn (chartFirstFor <$> inner <*> (traceChannels <$> (vType <$> view) <*> (vCharts <$> view)))
+  let inner    = maybe 0 fst <$> size
+      -- Con el acomodo, apilada a cualquier ancho.
+      layout   = (\w f -> maybe (cardLayout w) (const (stackedLayout w)) f) <$> inner <*> chartFirst
       fits     = maybe True snd <$> size
       rowNow   = rowHeightNow <$> shown <*> view <*> state
       drawn    = canvasDrawn <$> view <*> state
       changed  = leftmost
                    [ () <$ updated shown, () <$ updated state, () <$ updated view
                    , () <$ updated stacked, revealed ]
-  pure (updated (control <$> side <*> band <*> chosen <*> rule))
+  pure (updated (control <$> side <*> band <*> chosen <*> rule <*> shownCharts), out)
   where
-    control s b m l = CardControl {ccSide = s, ccBand = b, ccMode = m, ccLap = l}
-    controlState :: MonadWidget t m => Maybe [LiveEntry] -> [LapPick] -> CState -> m (Event t (Int, LapChoice))
-    controlState les ps (Loaded c) = lapHeader les ps c
-    controlState _ _ _             = pure never
+    control s b m l cs = CardControl {ccSide = s, ccBand = b, ccMode = m, ccLap = l, ccCharts = cs}
+    -- El directo sigue con dos: la referencia y el primero de los demás.
+    firstTwo cs = (listToMaybe cs, listToMaybe (drop 1 cs))
+    controlState :: MonadWidget t m => Maybe [LiveEntry] -> [LapPick] -> [Item] -> CState -> m (Event t (Int, LapChoice))
+    controlState les ps items (Loaded _) = lapHeader les ps items
+    controlState _ _ _ _                 = pure never
+    got (Got x) = Just x
+    got _       = Nothing
     -- Un piloto que cambia pierde su excepción.
     clearChanged (r0, o0) (r1, o1) (a, b) = (if r0 == r1 then a else Nothing, if o0 == o1 then b else Nothing)
     -- La que coincide con la regla no es excepción.
@@ -292,18 +373,42 @@ comparisonWidget live revealed start put = mdo
       let e = if c == r then Nothing else Just c
        in if i == 0 then (e, b) else (a, e)
 
--- | La fuente, la sesión y las filas del directo que se enseña, para 'liveCardStep';
--- 'Nothing' mientras se espera el retraso o antes de la primera respuesta buena.
-liveInput :: Maybe Int -> Poll (Sourced LiveTable) -> Maybe (Maybe Source, Maybe SessionInfo, [LiveTimingRow])
-liveInput (Just _) _ = Nothing
-liveInput Nothing p =
-  (\s -> (srcSource s, liveSession (srcValue s), liveRows (srcValue s))) <$> pollShown p
+-- | La vuelta de los pilotos de cada sesión que suman los grupos, una petición por sesión y
+-- por siglas ('Common.Comparison.addedLaps'), en cuanto se monta; da las que llegan
+-- ('groupLaps'), en su orden.
+fetchLaps :: MonadWidget t m => [(SessionKey, [Text])] -> m (Dynamic t [(SessionKey, ComparisonEntry)])
+fetchLaps ls = do
+  pb  <- getPostBuild
+  got <- forM ls $ \(k, codes) -> case driverCodesParam codes of
+    Nothing -> pure (constDyn [])
+    Just d  -> do
+      r <- fetchJsonSourcedWith (((), comparisonPathFor (sessionQuery (Just k)) (Just d) 0) <$ pb)
+      holdDyn [] (groupLaps k codes . snd <$> r)
+  pure (concat <$> sequence got)
 
--- | El directo de la tarjeta con el tipo elegido: solo el tipo 1 va en directo; los
--- demás pintan FastF1 ('Offline').
-liveFor :: LiveCard -> ChartType -> LiveCard
-liveFor c SectorDelta = c
-liveFor _ _           = Offline
+notRunView :: DomBuilder t m => Bool -> m ()
+notRunView True  = elClass "p" "status status--empty" $ text notRunNotice
+notRunView False = blank
+
+-- | Los atributos con @hidden@ añadido si se cumple.
+hiddenIf :: Bool -> Map Text Text -> Map Text Text
+hiddenIf True  = Map.insert "hidden" ""
+hiddenIf False = id
+
+-- | El envoltorio del cuerpo y de la leyenda: sin acomodo la hoja de estilos lo deja
+-- sin caja; con él es la rejilla, con las zonas de 'chartFirstAreas' para los coches
+-- elegidos —«+» mientras quepa otro— y las filas de tiempo.
+mainAttrs :: Maybe ChartFirst -> [Text] -> [Item] -> Map Text Text
+mainAttrs Nothing _ _ = "class" =: "comparison__main"
+mainAttrs (Just f) cars items =
+  ("class" =: ("comparison__main comparison__main--first " <> modifier f))
+    <> ("style" =: ("grid-template-areas: " <> T.unwords (map quoted areas)))
+  where
+    n      = length cars
+    areas  = chartFirstAreas f n (n < maxCars) (length items)
+    quoted r = "\"" <> r <> "\""
+    modifier FirstSide    = "comparison__main--side"
+    modifier FirstStacked = "comparison__main--below"
 
 -- | El envoltorio del «Live»: a la vista mientras se sigue o se congela el directo;
 -- oculto sin soltar su sitio al acabar la sesión; fuera con FastF1.
@@ -311,28 +416,6 @@ badgeAttrs :: LiveCard -> Map Text Text
 badgeAttrs Offline     = "class" =: "comparison__live" <> "hidden" =: ""
 badgeAttrs (Ended _ _) = "class" =: "comparison__live" <> "style" =: "visibility: hidden"
 badgeAttrs _           = "class" =: "comparison__live"
-
--- | Los pilotos de los desplegables: los del directo por número, o la parrilla de FastF1.
-gridFor :: Maybe (Maybe SessionInfo, [LiveTimingRow]) -> [DriverEntry] -> [DriverEntry]
-gridFor (Just (_, rows)) _ = liveDrivers rows
-gridFor Nothing grid       = grid
-
--- | La comparación del directo de los dos coches elegidos, cada uno con su vuelta: la
--- regla o su excepción ('Common.Comparison.lapFor').
-liveEntriesFor
-  :: Maybe (Maybe SessionInfo, [LiveTimingRow]) -> (Maybe Text, Maybe Text) -> LapChoice
-  -> (Maybe LapChoice, Maybe LapChoice) -> Maybe [LiveEntry]
-liveEntriesFor (Just (s, rows)) (Just r, Just o) rule (a, b) =
-  Just (liveComparison s rows [(r, lapFor offered rule a), (o, lapFor offered rule b)])
-  where
-    offered = lapChoicesOffered s
-liveEntriesFor _ _ _ _ = Nothing
-
--- | La regla marcada en la cabecera: con FastF1, la más rápida; en directo, la regla si
--- se ofrece ('Common.Comparison.lapFor').
-markedRule :: Maybe (Maybe SessionInfo) -> LapChoice -> LapChoice
-markedRule Nothing _     = FastestLap
-markedRule (Just s) rule = lapFor (lapChoicesOffered s) rule Nothing
 
 -- | «Vuelta [más rápida | última | Q1…]»: un botón por vuelta ('Common.Comparison.lapButtons'),
 -- marcado el de @marked@; los apagados dicen «solo en directo». Devuelve la pulsada.
@@ -350,53 +433,39 @@ ruleButtons buttons marked = divClass "comparison__rule" $ do
         <> ("class" =: ("switcher__btn" <> if c == m then " comparison__rule-btn--on" else ""))
         <> (if enabled then mempty else "disabled" =: "disabled" <> "title" =: "solo en directo")
 
--- | Lo que se pinta: la comparación del directo si la hay, o lo último de FastF1.
-shownState :: Maybe [LiveEntry] -> CState -> CState
-shownState (Just es) _ =
-  Loaded MkLapComparison
-    {lcEntries = map leEntry es, lcSamples = 0, lcNotice = "", lcTelemetry = Nothing}
-shownState Nothing s   = s
-
--- | Lo que falta de la telemetría de lo que se enseña de FastF1, solo en los modos con
--- trazas: los demás no la usan.
-shownGap :: ChartType -> CState -> Maybe TelemetryGap
-shownGap t s
-  | chartTypeTraces t = lcTelemetry =<< shownComparison s
-  | otherwise         = Nothing
-
--- | Si con el minuto de @tick@ toca volver a pedir la comparación por lo que falta de
--- su telemetría ('Common.Account.retryDue'), y no se pidió ya por esa misma hora.
-dueGap :: (Maybe TelemetryGap, Maybe Text) -> TickInfo -> Maybe TelemetryGap
-dueGap (gap, done) tick = do
-  g <- gap
-  guard (Just (tgRetryAt g) /= done && retryDue minute g)
-  pure g
-  where
-    minute = floor (utcTimeToPOSIXSeconds (_tickInfo_lastUTC tick) / 60)
-
--- | El tooltip de un desplegable cuyo coche sale sin barras, en directo o con FastF1.
-noLapNote :: Maybe [LiveEntry] -> CState -> Text -> Maybe Text
-noLapNote (Just es) _ car = liveNoLapFor car es
-noLapNote Nothing s car   = noLapFor car =<< shownComparison s
+-- | El minuto (desde 1970, UTC) de un tic, el que lee 'Widgets.Comparison.Helper.dueGap'.
+tickMinute :: TickInfo -> Int
+tickMinute tick = floor (utcTimeToPOSIXSeconds (_tickInfo_lastUTC tick) / 60)
 
 -- | La zona del navegador en los minutos de @getTimezoneOffset@, leída una vez al
 -- montar: el @time@ del backend JavaScript de GHC no la sabe leer.
 browserZone :: MonadWidget t m => m Int
 browserZone = round <$> DOM.liftJSM (JS.eval ("new Date().getTimezoneOffset()" :: Text) >>= JS.valToNumber)
 
--- | El aviso de la cuenta o de la procedencia, arriba del lienzo ('Common.Account.accountNotice').
-noticeView :: MonadWidget t m => Maybe Notice -> m ()
-noticeView Nothing = blank
-noticeView (Just n) =
+-- | El aviso de la cuenta o de la procedencia, arriba del lienzo ('Common.Account.cardNotice'),
+-- y debajo, en el mismo recuadro, la línea del archivo cortado ('Common.Account.cutNotice').
+noticeView :: MonadWidget t m => Maybe Notice -> Maybe Text -> m ()
+noticeView Nothing Nothing = blank
+noticeView notice cut =
   elClass "div" "status status--stale comparison__notice" $ do
-    el "div" $ text (noticeText n)
-    when (noticeLogin n) $ el "div" $ do
-      text "Inicia sesión en una terminal con "
-      el "code" $ text loginCommand
-      text " "
-      (b, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "comparison__copy") $ text "Copiar"
-      performEvent_ (DOM.liftJSM (() <$ JS.eval (copyScript loginCommand)) <$ domEvent Click b)
-      text "."
+    forM_ notice $ \n -> do
+      el "div" $ text (noticeText n)
+      when (noticeLogin n) $ el "div" $ do
+        text "Inicia sesión en una terminal con "
+        el "code" $ text loginCommand
+        text " "
+        (b, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "comparison__copy") $ text "Copiar"
+        performEvent_ (DOM.liftJSM (() <$ JS.eval (copyScript loginCommand)) <$ domEvent Click b)
+        text "."
+    forM_ cut $ elClass "div" "comparison__cut" . text
+
+-- | Lo que va en lugar de la gráfica, fuera del lienzo: el aviso de la tarjeta
+-- ('noticeView') encima del estado; si ninguno de los elegidos tiene vuelta y hay aviso
+-- de la cuenta ('Common.Account.noLapsNotice'), solo ese, sin el estado (2026-11-25 (k)).
+insteadView :: MonadWidget t m => m () -> Bool -> Maybe Notice -> Maybe Notice -> Maybe Text -> m ()
+insteadView status none noLaps notice cut = case noLaps of
+  Just n | none -> noticeView (Just n) cut
+  _             -> noticeView notice cut >> status
 
 -- | Copia un texto sin comillas ni barras al portapapeles. Fuera de un contexto seguro
 -- (la página abierta por la IP de la red y no por @localhost@) el navegador no da
@@ -420,67 +489,39 @@ overlayFor (Ended _ _) (Just _) _ _ = elClass "p" "status status--stale" $ text 
 overlayFor _ (Just _) _ _           = blank
 overlayFor _ Nothing r s            = banner (r, s)
 
--- | Lo que el usuario eligió para pintar la comparación: el tipo, la base de la Δ, el
--- eje de las trazas y si van sus fronteras.
-data View = View
-  { vType      :: ChartType
-  , vBase      :: Baseline
-  , vAxis      :: Axis
-  , vFrontiers :: Bool
-  }
-  deriving Eq
-
--- | El alto de la fila de fronteras pintada: el de su modo si hay fronteras que
--- nombrar, 0 si no hay fila.
-rowHeightNow :: ChartMode -> View -> CState -> Double
-rowHeightNow m v (Loaded c) | not (null (frontierCells (seriesOf (vBase v) c))) = rowHeight m
-rowHeightNow _ _ _          = 0
-
--- | El alto sin crecer del lienzo pintado: el de las trazas ('Common.Traces.tracesHeight')
--- o el de la gráfica del tipo 1 ('Common.Chart.chartHeight'). 'Nothing' sin comparación,
--- o con trazas que no se pintan (el aviso de la referencia sin vuelta en su lugar).
--- Con un aviso en lugar de la gráfica del tipo 1 no hay lienzo que medir.
-canvasDrawn :: View -> CState -> Maybe Double
-canvasDrawn v (Loaded c)
-  | not (chartTypeTraces (vType v)) = Just chartHeight
-  | Nothing <- missingReference (vBase v) c
-  , _ : _ : _ <- lcEntries c = Just (tracesHeight (TraceRows (traceChannels (vType v))))
-canvasDrawn _ _ = Nothing
-
--- | La serie que se pinta con una base: la Δ del coche que no es la base
--- ('Common.Comparison.pairWith'), o @[]@.
-seriesOf :: Baseline -> LapComparison -> [Double]
-seriesOf b = maybe [] pairDelta . pairWith b
-
 -- | La fila de la leyenda: «Δ contra [Referencia ▾]» y la leyenda como un bloque,
 -- repartidos con @space-evenly@ (2026-10-01 (g)), y la base elegida. El desplegable
 -- va fuera del 'dyn_', que lo devolvería a «Referencia» en cada respuesta; la fila
 -- se esconde mientras no hay comparación.
 --
 -- En los tipos con trazas, debajo va siempre el aviso de su eje
--- ('Common.Comparison.axisNotice', 2026-09-30 (a)).
+-- ('Common.Comparison.axisNotice', 2026-09-30 (a)). Devuelve también las siglas de
+-- la curva que se pulsa en la leyenda del tipo 1, la que va al frente ('Common.Comparison.curveKey').
 legendRow
   :: MonadWidget t m
-  => Dynamic t ChartType -> Dynamic t Axis -> Dynamic t CState -> m (Dynamic t Baseline)
-legendRow ty axis st = do
-  b <- elDynAttr "div" (attrs <$> st) $ do
+  => Dynamic t Blend -> Dynamic t ChartType -> Dynamic t Axis -> Dynamic t Bool -> Dynamic t (Maybe Text)
+  -> Dynamic t (WithGroups, [Item], [(SessionKey, ComparisonEntry)], Maybe SessionKey) -> Dynamic t CState
+  -> m (Dynamic t Baseline, Event t Text)
+legendRow blend ty axis notRun front groups st = do
+  (b, picked) <- elDynAttr "div" (hiddenIf <$> notRun <*> (attrs <$> st)) $ do
     b' <- elClass "span" "comparison__against" $ do
-      text "Δ contra "
+      elClass "span" "comparison__against-label" $ text "Δ contra "
       baselineSelect
-    elClass "span" "comparison__keys" $ dyn_ (legendState <$> ty <*> b' <*> st)
-    pure b'
-  dyn_ (note <$> ty <*> axis <*> st)
-  pure b
+    p <- elClass "span" "comparison__keys" $
+      switchHold never =<< dyn (legendState <$> blend <*> ty <*> b' <*> front <*> groups <*> st)
+    pure (b', p)
+  dyn_ (note <$> ty <*> axis <*> notRun <*> st)
+  pure (b, picked)
   where
     attrs (Loaded _) = "class" =: "comparison__legend"
     attrs _          = ("class" =: "comparison__legend") <> ("hidden" =: "")
-    legendState t b (Loaded c)
-      | chartTypeTraces t = traceLegend b c
-      | otherwise         = legend b c
-    legendState _ _ _ = blank
-    note t a (Loaded _)
+    legendState bl t b f (g, items, laps, viewed) (Loaded c)
+      | chartTypeTraces t = never <$ traceLegend bl b c
+      | otherwise         = legend bl b f g items laps viewed c
+    legendState _ _ _ _ _ _ = pure never
+    note t a False (Loaded _)
       | chartTypeTraces t = elClass "p" "comparison__note" $ text (axisNotice a)
-    note _ _ _ = blank
+    note _ _ _ _ = blank
 
 -- | El desplegable del tipo de gráfica, en el título y nativo: los cuatro tipos,
 -- con los que aún no existen en gris ('Common.Comparison.chartTypeReady'), y el
@@ -499,17 +540,19 @@ typeSelect = do
       ("value" =: chartTypeKey ty) <> if chartTypeReady ty then mempty else "disabled" =: "disabled"
 
 -- | Los mandos de las trazas, en el título y solo en los tipos que las pintan
--- (2026-09-30 (a)): el eje, las muestras y las fronteras. Abren en Tiempo, 100 y
--- con fronteras. Van siempre montados —escondidos en los otros tipos— para que no
--- vuelvan a su valor inicial al cambiar de tipo.
+-- (2026-09-30 (a)): el eje, las muestras, las fronteras y «Gráficas ▾» ('chartsMenu').
+-- Abren en Tiempo, 100, con fronteras y con las gráficas de @charts@. Van siempre
+-- montados —escondidos en los otros tipos— para que no vuelvan a su valor inicial al
+-- cambiar de tipo.
 --
--- Devuelve el eje, si van las fronteras y las muestras que se piden: mientras se
+-- Devuelve el eje, si van las fronteras, las muestras que se piden —mientras se
 -- arrastra el deslizable, como mucho una vez cada 200 ms y la última al soltar
--- (2026-10-01 (e)); el número de al lado cambia al momento.
+-- (2026-10-01 (e)); el número de al lado cambia al momento— y las gráficas marcadas.
 traceControls
   :: MonadWidget t m
-  => Dynamic t ChartType -> m (Dynamic t Axis, Dynamic t Bool, Dynamic t Int)
-traceControls ty =
+  => Dynamic t ChartType -> [Channel] -> Event t [Channel]
+  -> m (Dynamic t Axis, Dynamic t Bool, Dynamic t Int, Dynamic t [Channel])
+traceControls ty charts putCharts =
   elDynAttr "span" (attrs <$> ty) $ do
     let axisCfg = def
           & selectElementConfig_initialValue .~ axisKey defaultAxis
@@ -537,14 +580,54 @@ traceControls ty =
           & initialAttributes .~ ("type" =: "checkbox")
       text "Fronteras"
       pure b
+    chosen  <- chartsMenu ty charts putCharts
     samples <- holdDyn samplesStart picked
     pure ( fromMaybe defaultAxis . axisFromKey <$> _selectElement_value axisSel
          , _inputElement_checked box
-         , samples )
+         , samples
+         , chosen )
   where
     attrs t
       | chartTypeTraces t = "class" =: "comparison__trace-controls"
       | otherwise         = ("class" =: "comparison__trace-controls") <> ("hidden" =: "")
+
+-- | «Gráficas ▾» (2026-11-23 (m)): un botón que abre, flotando, una casilla por gráfica,
+-- como «Columnas ▾» de Live Timing y con su aspecto. Abre con @start@ y vuelve a lo que
+-- traiga @put@. La última marcada se apaga, para que no se desmarque
+-- ('Common.Traces.toggleChannel'). Se cierra con el botón, pulsando fuera o al cambiar
+-- de tipo. Devuelve las marcadas, de arriba abajo.
+chartsMenu
+  :: MonadWidget t m => Dynamic t ChartType -> [Channel] -> Event t [Channel] -> m (Dynamic t [Channel])
+chartsMenu ty start put = elClass "span" "comparison__charts" $ mdo
+  (btn, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "live-timing__columns-btn") $
+    text "Gráficas ▾"
+  backdrop <- dyn (layer <$> open)
+  outside  <- switchHold never backdrop
+  open     <- foldDyn ($) False $
+    leftmost [not <$ domEvent Click btn, const False <$ outside, const False <$ updated ty]
+  clicks   <- elDynAttr "div" (panelAttrs <$> open) $
+    leftmost <$> mapM (box chosen) channelsInOrder
+  chosen   <- foldDyn ($) start (leftmost [const <$> put, toggleChannel <$> clicks])
+  pure chosen
+  where
+    layer True = do
+      (e, _) <- elClass' "div" "live-timing__backdrop" blank
+      pure (domEvent Click e)
+    layer False = pure never
+    panelAttrs True  = "class" =: "live-timing__columns-panel"
+    panelAttrs False = "class" =: "live-timing__columns-panel" <> "hidden" =: ""
+    locked :: [Channel] -> Channel -> Maybe Text
+    locked cs c = if cs == [c] then Just "disabled" else Nothing
+    box chosenNow c = elClass "label" "live-timing__column" $ do
+      input <- inputElement $
+        def
+          & inputElementConfig_initialChecked .~ (c `elem` start)
+          & inputElementConfig_setChecked .~ ((c `elem`) <$> put)
+          & initialAttributes .~ ("type" =: "checkbox" <> maybe mempty ("disabled" =:) (locked start c))
+          & inputElementConfig_elementConfig . elementConfig_modifyAttributes
+              .~ ((\cs -> "disabled" =: locked cs c) <$> updated chosenNow)
+      text (channelName c)
+      pure (c <$ _inputElement_checkedChange input)
 
 -- | El desplegable «Δ contra», nativo; abre en «Referencia».
 baselineSelect :: MonadWidget t m => m (Dynamic t Baseline)
@@ -676,173 +759,123 @@ refreshLine LastFailed =
   elClass "p" "status status--stale" $
     text "No se pudo recargar: se muestra la comparación anterior"
 
--- | Los dos selectores de coche, y el valor de @?drivers=@ que sale de elegir uno;
--- la URL la compone 'comparisonWidget' con las muestras del tipo. Se aplica al
--- momento: al intercambiar los dos se pasa por la pareja repetida.
+-- | Los coches que se comparan, de 1 a 5 (decisión 10 de
+-- @docs/GapGraficasComparacion.md@ §6): la referencia en su desplegable y los demás
+-- como etiquetas con su ✕ ('carTags') y «+ ▾» para añadir otro ('addSelect'). Devuelve
+-- la lista que sale de cada cambio del usuario —con ella y los grupos compone la URL
+-- 'comparisonWidget'— y la lista elegida, la referencia primero. Elegir de referencia a
+-- uno de los demás los intercambia ('Common.Comparison.pickReference').
 --
--- __Dos controles separados y no uno solo con @\"16,1\"@:__ así la cardinalidad
--- es estructural —la tarjeta pinta un par—. El primero es la referencia, y va
--- primero en el query. Es lo único que sobrevive intacto del par de @\<input\>@ que
--- había aquí hasta el 2026-08-07.
---
--- __Las posiciones iniciales, 1 y 0, no son la selección de verdad:__ son lo que
--- se ve durante el instante que va del arranque a la primera respuesta. El par
--- que el gráfico pinta lo marca el prefill, y tiene que ser así porque
--- @Handler.Comparison.Helper.defaultDrivers@ son los coches @16@ y @1@ y sus
--- posiciones dependen de la parrilla: en el dummy son la 1 y la 0 y en la parrilla
--- real la __3__ y la 0.
+-- __La posición inicial del desplegable, 1, no es la selección de verdad:__ es lo que
+-- se ve durante el instante que va del arranque a la primera respuesta. La lista que el
+-- gráfico pinta la marca el prefill, y tiene que ser así porque
+-- @Handler.Comparison.Helper.defaultDrivers@ son los coches @16@ y @1@ y su posición
+-- depende de la parrilla.
 --
 -- El segundo argumento es la comparación de FastF1, de la que sale el prefill; el
--- tercero, el tooltip de un coche sin barras; el cuarto, si la tarjeta va con el
--- directo; el quinto, P1 y P2 del directo; el sexto, si el «VS» va a la derecha del
--- primer desplegable ('vsNextTo'). El último se pinta debajo, y su resultado se
--- devuelve con los coches.
+-- tercero, los números que añaden los grupos ('Common.Comparison.addedCars'), que el
+-- prefill no toma como elegidos; el cuarto, el tooltip de un coche sin barras; el
+-- quinto, si la tarjeta va con el directo; el sexto, P1 y P2 del directo; el séptimo, si
+-- el «VS» va a la derecha del desplegable ('vsNextTo'); el octavo, si los demás llevan
+-- número y equipo ('carTags'). El último se pinta debajo, y su
+-- resultado se devuelve con los coches.
 --
--- __Cuando cambia la lista, siguen los mismos coches__ ('Common.Comparison.keepChosen'):
+-- __Cuando cambia la parrilla, siguen los mismos coches__ ('Common.Comparison.keepCars'):
 -- el que no está pasa al primero libre. __En directo no hay prefill ni petición__: lo
 -- elegido se pinta al momento y sale por el segundo evento, también al entrar en
--- directo. __Si se abre ya en directo__ —sin comparación de FastF1 todavía—,
--- el par es P1 contra P2.
+-- directo. __Si se abre ya en directo__ —sin comparación de FastF1 todavía—, la lista
+-- es P1 contra P2.
 carSelector
   :: MonadWidget t m
   => Dynamic t [DriverEntry]
   -> Dynamic t (Maybe LapComparison)
+  -> Behavior t [Text]
   -> Dynamic t (Text -> Maybe Text)
   -> Dynamic t Bool
   -> Dynamic t (Maybe (Text, Text))
   -> Dynamic t Bool
+  -> Dynamic t Bool
   -> m a
-  -> m ((Event t Text, Event t Text), Dynamic t (Maybe Text, Maybe Text), a)
-carSelector grid shown noLap liveOn leaders vsNext beside = divClass "car-selector" $ mdo
+  -> m ((Event t [Text], Event t Text), Dynamic t [Text], a)
+carSelector grid shown fromGroups noLap liveOn leaders vsNext long beside = divClass "car-selector" $ mdo
   pb <- getPostBuild
-  let indexed = indexedGrid <$> grid
-      labels  = Map.map driverLabel <$> indexed
-      -- El prefill de un lado: la posición que ocupa hoy el coche del que habla
-      -- el gráfico. 'updated' sobre las __dos__ fuentes y no un 'Event' de la
-      -- respuesta, porque parrilla y comparación son dos peticiones y llegan en
-      -- cualquier orden: con solo la respuesta, la que se adelante a la parrilla
-      -- buscaría el coche en una lista vacía y el prefill se perdería para
-      -- siempre.
-      prefill i = gate (not <$> current liveOn)
-                    (fmapMaybe id (updated (zipDynWith (positionFor (carOf i)) indexed shown)))
-      kept      = attachWith keptAt (current cars) (updated indexed)
-      switched  = leftmost [updated indexed, tag (current indexed) pb]
-      opening   = attachWithMaybe openAt (current shown) (tagPromptlyDyn ((,) <$> indexed <*> leaders) switched)
-      sideOf i  = if i == 0 then fst else snd
-      setPos i  = leftmost [fmapMaybe (sideOf i) opening, fmapMaybe (sideOf i) kept, prefill i]
-      refCar    = zipDynWith carAt indexed posRef
-      otherCar  = zipDynWith carAt indexed posOther
-  (refDrop, otherDrop) <- elDynAttr "div" (pairAttrs <$> vsNext) $ do
-    r <- carDropdown 1 labels (setPos (0 :: Int)) (carSelectAttrs <$> refCar <*> noLap)
+  let indexed  = indexedGrid <$> grid
+      labels   = Map.map driverLabel <$> indexed
+      -- El prefill: los coches de los que habla el gráfico, en su orden, sin los que añaden los grupos.
+      prefill  = gate (not <$> current liveOn)
+                   (attachWithMaybe (\gs c -> filter (`notElem` gs) . map ceCar . lcEntries <$> c) fromGroups (updated shown))
+      kept     = attachWith (\cs idx -> keepCars (map deNumber (Map.elems idx)) cs) (current chosen) (updated indexed)
+      switched = leftmost [updated indexed, tag (current indexed) pb]
+      opening  = attachWithMaybe openAt (current shown) (tagPromptlyDyn leaders switched)
+      -- El desplegable de la referencia sigue a la lista cuando la cambia otra cosa que él
+      -- mismo: lo que elige el usuario ya lo enseña, y seguirlo cerraría un ciclo sin 'hold'
+      -- con su evento de cambio, que en 'dropdown' depende de 'setValue'.
+      fromTags = attachWith (flip ($)) (current chosen) (leftmost [removeCar <$> removed, addCar <$> added])
+      setRef   = attachPromptlyDynWithMaybe (\idx cs -> positionOf idx =<< listToMaybe cs) indexed
+                   (leftmost [opening, kept, prefill, fromTags])
+      refCar   = zipDynWith carAt indexed posRef
+      edits    = leftmost [pickReference <$> attachWithMaybe carAt (current indexed) chRef, removeCar <$> removed, addCar <$> added]
+      byUser   = attachWith (flip ($)) (current chosen) edits
+  ((posRef, chRef), (removed, added)) <- elDynAttr "div" (pairAttrs <$> vsNext) $ do
+    r <- carDropdown 1 labels setRef (carSelectAttrs <$> refCar <*> noLap)
     elClass "span" "car-selector__vs" $ text "vs"
-    o <- carDropdown 0 labels (setPos 1) (carSelectAttrs <$> otherCar <*> noLap)
+    o <- divClass "car-selector__tags" $ do
+      x <- switchHold never =<< dyn (carTags <$> long <*> indexed <*> (drop 1 <$> chosen) <*> noLap)
+      p <- switchHold never =<< dyn (addSelect <$> indexed <*> chosen)
+      pure (x, p)
     pure (r, o)
-  let (posRef, chRef)     = refDrop
-      (posOther, chOther) = otherDrop
-  cars <- holdUniqDyn (zipDyn refCar otherCar)
+  chosen <- holdUniqDyn =<< holdDyn [] (leftmost [opening, kept, prefill, byUser])
   a <- divClass "comparison__actions" beside
-  let chosenByUser = gate (not <$> current liveOn) (tagPromptlyDyn cars (leftmost [() <$ chRef, () <$ chOther]))
+  let chosenByUser = gate (not <$> current liveOn) byUser
       live = leftmost
-        [ attachWithMaybe (\on c -> if on then Just c else Nothing) (current liveOn) (updated cars)
-        , tagPromptlyDyn cars (ffilter id (updated liveOn))
+        [ attachWithMaybe (\on c -> if on then Just c else Nothing) (current liveOn) (updated chosen)
+        , tagPromptlyDyn chosen (ffilter id (updated liveOn))
         ]
-  pure ((fmapMaybe driversFor chosenByUser, fmapMaybe driversFor live), cars, a)
+  -- 'fmapMaybe' es lo que hace que una selección vacía o con algo que no es un número
+  -- __no dispare nada__: un 'Nothing' que llegara a 'comparisonPathFor' daría el path
+  -- __sin__ coches, la comparación por defecto presentada como la que se pidió.
+  pure ((chosenByUser, fmapMaybe driversListParam live), chosen, a)
   where
-    keptAt (Just r, Just o) idx =
-      let (r', o') = keepChosen (map deNumber (Map.elems idx)) (r, o)
-       in (positionOf idx =<< r', positionOf idx =<< o')
-    keptAt _ _ = (Nothing, Nothing)
-    openAt Nothing (idx, Just (p1, p2)) = Just (positionOf idx p1, positionOf idx p2)
-    openAt _ _                          = Nothing
-    -- 'fmapMaybe' es lo que hace que una selección incompleta __no dispare
-    -- nada__, en vez de disparar y confiar en el degradado: un 'Nothing' que llegara
-    -- a 'comparisonPathFor' daría el path __sin__ coches — la comparación por
-    -- defecto presentada como la que se pidió.
-    --
-    -- Los dos 'Nothing' que hay que absorber son el mismo: parrilla vacía. Pasa
-    -- entre el arranque y la respuesta de @\/api\/drivers@, y ahí elegir no
-    -- puede significar nada.
-    driversFor :: (Maybe Text, Maybe Text) -> Maybe Text
-    driversFor (mref, mother) = do
-      ref   <- mref
-      other <- mother
-      driversParam ref other
+    openAt Nothing (Just (p1, p2)) = Just [p1, p2]
+    openAt _ _                     = Nothing
 
--- | La parrilla indexada por __posición__, que es la clave de los dos
--- 'dropdown'.
---
--- __La clave es la posición y no el número de coche, y no es un detalle:__
--- 'dropdown' ordena las opciones por la clave del 'Map' (su propia fuente lo
--- reconoce con un @TODO@), así que un @'Map' 'Text'@ sobre @deNumber@ daría el
--- orden lexicográfico @1, 10, 11, 12, 14, 16, 3, 44…@ y un @'Map' 'Int'@ del
--- número obligaría a parsear @deNumber@ y a decidir qué hacer con lo que no
--- parsee. Con la posición, el orden del 'Map' __es__ el que dio FastF1 —medido
--- el 2026-08-07: @1 3 12 16 44 6 63 30 27 41 5 10 18 14 43 31 23 55 87 81 11
--- 77@, que en una carrera cargada es el de clasificación— y que
--- la decisión del 2026-08-06 registra como información del servicio:
--- reordenar aquí la destruiría.
---
--- El precio es que la selección no lleva el número encima y hay que buscarlo
--- ('carAt') contra la misma parrilla.
-indexedGrid :: [DriverEntry] -> Map Int DriverEntry
-indexedGrid = Map.fromList . zip [0 ..]
-
--- | El número de coche de una posición, o 'Nothing' si la parrilla no la tiene.
---
--- Devuelve el __número__ y no el 'DriverEntry' entero porque es lo único que
--- sale del widget: el acrónimo es para mirar, el número es lo que la API
--- entiende (2026-08-01).
-carAt :: Map Int DriverEntry -> Int -> Maybe Text
-carAt indexed = fmap deNumber . flip Map.lookup indexed
-
--- | La posición que ocupa un número de coche en la parrilla, o 'Nothing' si no
--- está. Es 'carAt' al revés, y hace falta porque el widget habla dos idiomas: el
--- 'dropdown' se maneja por posición ('indexedGrid') y la respuesta trae números.
---
--- Recorre la lista en vez de mantener un índice inverso: son 22 entradas y se
--- consulta dos veces por respuesta.
-positionOf :: Map Int DriverEntry -> Text -> Maybe Int
-positionOf indexed car =
-  fst <$> find ((== car) . deNumber . snd) (Map.toAscList indexed)
-
--- | La posición a la que hay que llevar un selector, dada la parrilla vigente y
--- lo que el gráfico está pintando. 'Nothing' —y por tanto ningún @setValue@— en
--- los dos casos en que mover el selector sería mentir: todavía no hay
--- comparación, o el coche del que habla __no está en la parrilla__.
---
--- El segundo caso no es hipotético: con el microservicio apagado la comparación
--- es el dummy (@16@ y @1@) y la parrilla puede ser la real de otra sesión
--- cacheada. Que el selector se quede donde estaba y el @#n@ de 'lapLabel'
--- discrepe es justo la señal de que lo pintado no es lo pedido.
-positionFor
-  :: (LapComparison -> Maybe Text)
-  -> Map Int DriverEntry
-  -> Maybe LapComparison
-  -> Maybe Int
-positionFor car indexed shown = positionOf indexed =<< (car =<< shown)
-
--- | El número del coche @i@ de la comparación (0, la referencia), si lo hay.
-carOf :: Int -> LapComparison -> Maybe Text
-carOf i = fmap ceCar . listToMaybe . drop i . lcEntries
-
--- | La etiqueta de una opción: @\"1 · NOR — McLaren\"@.
---
--- Los tres campos de 'Common.Types.DriverEntry', y @deTeam@ entró al DTO en la
--- 2026-08-06 precisamente para esto. El __número__ va delante porque es lo que
--- permite cotejar de un vistazo lo elegido con el @#n@ que 'lapLabel' pinta en
--- la cabecera del gráfico: sin él no habría forma de ver que la respuesta
--- corresponde a lo pedido.
---
--- Con @deTeam@ vacío se omite el guion largo en vez de dejarlo colgando. Vacío
--- es lo que devuelve un microservicio que no resolvió el equipo, y también lo
--- que da @.:? … .!= \"\"@ ante uno anterior a que el campo existiera
--- (2026-08-06).
-driverLabel :: DriverEntry -> Text
-driverLabel d
-  | T.null (deTeam d) = core
-  | otherwise         = core <> " — " <> deTeam d
+-- | Los coches elegidos tras la referencia, cada uno con sus siglas —con el primer
+-- argumento, con número y equipo, como en el desplegable ('driverLabel')— y un ✕ que lo
+-- quita; con uno solo no hay ✕ ('Common.Comparison.removeCar'). Un coche que sale sin
+-- barras lleva el aviso de 'carSelectAttrs'. Devuelve el número del que se quita.
+carTags :: MonadWidget t m => Bool -> Map Int DriverEntry -> [Text] -> (Text -> Maybe Text) -> m (Event t Text)
+carTags long idx others noLap =
+  fmap leftmost . forM others $ \car ->
+    elAttr "span" (tagAttrs car) $ do
+      elClass "span" "car-selector__tag-name" $ text (nameOf car)
+      if length others > 1
+        then do
+          (x, _) <- elAttr' "button" (Map.fromList [("type", "button"), ("class", "car-selector__tag-x"), ("title", "Quitar")]) $ text "✕"
+          pure (car <$ domEvent Click x)
+        else pure never
   where
-    core = deNumber d <> " · " <> deCode d
+    nameOf car = maybe car (if long then driverLabel else deCode) (find ((== car) . deNumber) (Map.elems idx))
+    tagAttrs car = case noLap car of
+      Just note -> Map.fromList [("class", "car-selector__tag car-selector__tag--nolap"), ("title", note)]
+      Nothing   -> Map.singleton "class" "car-selector__tag"
+
+-- | «+ ▾»: el desplegable nativo de los coches de la parrilla que no están elegidos,
+-- mientras quepa otro ('Common.Comparison.maxCars'). Devuelve el número del que se
+-- elige; se vuelve a montar con cada cambio de la lista, y vuelve a «+».
+addSelect :: MonadWidget t m => Map Int DriverEntry -> [Text] -> m (Event t Text)
+addSelect idx cars
+  | length cars >= maxCars || null free = pure never
+  | otherwise = do
+      let cfg = def
+            & selectElementConfig_initialValue .~ ""
+            & selectElementConfig_elementConfig . elementConfig_initialAttributes
+                .~ Map.fromList [("class", "car-selector__select car-selector__add"), ("title", "Añadir un piloto")]
+      (sel, _) <- selectElement cfg $ do
+        elAttr "option" ("value" =: "") $ text "+"
+        forM_ free $ \d -> elAttr "option" ("value" =: deNumber d) $ text (driverLabel d)
+      pure (ffilter (not . T.null) (_selectElement_change sel))
+  where
+    free = [d | d <- Map.elems idx, deNumber d `notElem` cars]
 
 -- | Un selector de coche: la posición inicial y las opciones, que __cambian__
 -- cuando llega la parrilla sin remontar el @\<select\>@, así que no se pierde lo
@@ -903,23 +936,23 @@ modeSelect start fits shown = do
     optionAttrs m f =
       ("value" =: modeKey m) <> if modeEnabled f m then mempty else "disabled" =: "disabled"
 
--- | Los dos primeros coches con su tiempo de vuelta, la referencia primero. El
--- tiempo llega ya formateado (@M:SS.mmm@) por el microservicio, y un coche sin
--- vuelta dice «sin vuelta» ('Common.Comparison.lapShown'). En directo, el texto de
--- cada coche es el suyo ('Common.Comparison.liveLapLines'). Tras el tiempo, el
--- desplegable corto de su vuelta ('Common.Comparison.LapPick'); devuelve la que se
--- elige en cada uno, por su posición (0, la referencia).
+-- | Cada coche con su tiempo de vuelta, uno por fila y la referencia primero
+-- (2026-11-21 (ad)). El tiempo llega ya formateado (@M:SS.mmm@) por el microservicio,
+-- y un coche sin vuelta dice «sin vuelta» ('Common.Comparison.lapShown'). En directo,
+-- el texto de cada coche es el suyo ('Common.Comparison.liveLapLines'). Tras el
+-- tiempo, el desplegable corto de su vuelta ('Common.Comparison.LapPick'); devuelve la
+-- que se elige en cada uno, por su posición (0, la referencia). Entre los dos primeros
+-- va el «vs», que la hoja de estilos esconde en columna. Las filas son las de lo que se
+-- pinta, en su orden ('Widgets.Comparison.Helper.shownItemsOf'); las que añaden los
+-- grupos van tenues (2026-11-21 (ad)).
 lapHeader
-  :: MonadWidget t m => Maybe [LiveEntry] -> [LapPick] -> LapComparison -> m (Event t (Int, LapChoice))
-lapHeader les ps c = divClass "comparison__header" $
-  case lcEntries c of
-    ref : other : _ -> do
-      a <- lapLabel ref (linesOf 0 ref) (pickAt 0)
-      elClass "span" "comparison__vs" $ text "vs"
-      b <- lapLabel other (linesOf 1 other) (pickAt 1)
-      pure (leftmost [(,) 0 <$> a, (,) 1 <$> b])
-    [ref] -> fmap ((,) 0) <$> lapLabel ref (linesOf 0 ref) (pickAt 0)
-    []    -> pure never
+  :: MonadWidget t m => Maybe [LiveEntry] -> [LapPick] -> [Item] -> m (Event t (Int, LapChoice))
+lapHeader les ps items = divClass "comparison__header" $ do
+  picked <- forM (zip [0 ..] items) $ \(i, it) -> do
+    when (i == 1) $ elClass "span" "comparison__vs" $ text "vs"
+    let e = itEntry it
+    fmap ((,) i) <$> lapLabel (itGroup it) (itHead it) (itCar it) (linesOf i e) (pickAt i)
+  pure (leftmost picked)
   where
     linesOf i e = maybe (lapShown e, Nothing) liveLapLines (listToMaybe . drop i =<< les)
     pickAt i = listToMaybe (drop i ps)
@@ -933,12 +966,13 @@ lapHeader les ps c = divClass "comparison__header" $
 -- @44@ y leer @#16@ es exactamente la señal de que el microservicio no contestó.
 --
 -- El tiempo va en una línea y, si hay, la nota debajo, más pequeña; después, si lo
--- hay, el desplegable corto de su vuelta.
-lapLabel :: MonadWidget t m => ComparisonEntry -> (Text, Maybe Text) -> Maybe LapPick -> m (Event t LapChoice)
-lapLabel e (time, note) pick = divClass "comparison__lap" $ do
+-- hay, el desplegable corto de su vuelta. El primer argumento la pinta tenue: lo que añade
+-- un grupo. Sin número (la vuelta de otra sesión), solo el nombre.
+lapLabel :: MonadWidget t m => Bool -> Text -> Text -> (Text, Maybe Text) -> Maybe LapPick -> m (Event t LapChoice)
+lapLabel faint name car (time, note) pick = divClass ("comparison__lap" <> if faint then " comparison__lap--group" else "") $ do
   elClass "span" "comparison__who" $ do
-    elClass "span" "comparison__driver" $ text (ceDriver e)
-    elClass "span" "comparison__car" $ text ("#" <> ceCar e)
+    elClass "span" "comparison__driver" $ text name
+    unless (T.null car) $ elClass "span" "comparison__car" $ text ("#" <> car)
   elClass "span" "comparison__time" $ do
     text time
     forM_ note $ \n -> el "br" blank >> elClass "span" "comparison__time-note" (text n)
@@ -972,56 +1006,66 @@ data RowMode t = RowMode
   , rmBand   :: Dynamic t Bool
   }
 
--- | La gráfica según el reparto, el lado del eje y el modo de la fila: la curva, el
--- eje vertical (en su columna o dentro, según 'clAxisInside') y la fila de
--- fronteras. El primer argumento se pinta encima de la curva, dentro de su lienzo:
+-- | La gráfica según el reparto, el lado del eje y el modo de la fila: las curvas, con
+-- las vueltas de otras sesiones que suman los grupos ('Common.Comparison.curvesWith'), el
+-- eje vertical (en su columna o dentro, según 'clAxisInside') y la fila de fronteras, la
+-- del frente. El primer argumento se pinta encima de la curva, dentro de su lienzo:
 -- el aviso de la petición. Si la referencia no tiene vuelta, en lugar de todo eso va
 -- el aviso de 'Common.Comparison.missingReference' (en directo, el de
--- 'Common.Comparison.liveMissingReference'). Devuelve los clics en la fila ('never'
--- sin fila).
+-- 'Common.Comparison.liveMissingReference'). Lo que no es gráfica —ese aviso, la carga y
+-- los fallos— va por el segundo argumento, que recibe si ninguno de los elegidos tiene
+-- vuelta ('Common.Comparison.noneHasLap') y el estado que pintar. Devuelve los clics en la
+-- fila ('never' sin fila).
 plotView
   :: MonadWidget t m
-  => m () -> RowMode t -> CardLayout -> Side -> View -> Maybe [LiveEntry] -> CState -> m (Event t ())
-plotView _ _ _ _ _ _ Loading =
-  never <$ elClass "p" "status status--loading" (text "Cargando…")
-plotView _ _ _ _ _ _ Failed =
-  never <$ elClass "p" "status status--error" (text "Error al cargar /api/comparison")
-plotView overlay rm l axis v les (Loaded c)
+  => m () -> (Bool -> m () -> m ()) -> RowMode t -> CardLayout -> Side -> View -> Maybe [LiveEntry]
+  -> [(SessionKey, ComparisonEntry)] -> Blend -> CState -> m (Event t ())
+plotView _ instead _ _ _ _ _ _ _ Loading =
+  never <$ instead False (elClass "p" "status status--loading" (text "Cargando…"))
+plotView _ instead _ _ _ _ _ _ _ Failed =
+  never <$ instead False (elClass "p" "status status--error" (text "Error al cargar /api/comparison"))
+plotView _ instead _ _ _ _ _ _ _ NotFound =
+  never <$ instead False (elClass "p" "status status--empty" (text notFoundNotice))
+plotView overlay instead rm l axis v les laps b (Loaded c)
   | Just note <- maybe (missingReference (vBase v) c) (liveMissingReference (vBase v)) les =
-      never <$ elClass "p" "status status--empty" (text note)
-  | chartTypeTraces (vType v) = tracesView overlay rm v c
+      never <$ instead (noneHasLap c) (elClass "p" "status status--empty" (text note))
+  | chartTypeTraces (vType v) = tracesView overlay rm v b c
   | otherwise =
       elAttr "div" (plotRowAttrs axis) $ do
         clicks <- divClass "comparison__plotarea" $ do
           elAttr "div" canvasAttrs $ do
-            deltaChart series
+            deltaChart b curves
+            mapM_ edgeNote (zip [0 ..] (edgeNotes curves))
             when (clAxisInside l) $
-              mapM_ insideTick (insideAxisLabels axis (clChart l) series)
+              mapM_ insideTick (insideAxisLabels axis (clChart l) values)
             overlay
-          frontierRow rm series
-        unless (clAxisInside l) $ axisColumn axis series
+          frontierRow rm (maybe [] cvDelta (find ((== Front) . cvLayer) curves))
+        unless (clAxisInside l) $ axisColumn axis values
         pure clicks
   where
-    series = seriesOf (vBase v) c
+    -- La base es la línea del cero: no lleva curva.
+    curves = [cv | cv <- curvesWith (vBase v) (vFront v) c laps, cvLayer cv /= Behind, not (null (cvDelta cv))]
+    values = axisValues curves
 
 -- | Las trazas de los dos primeros coches: los canales del tipo
 -- ('Common.Traces.traceChannels') en el eje elegido, con las fronteras de cada coche
--- si van y, debajo, la fila Δ en las fronteras de la referencia. La referencia en rojo y el
--- otro en blanco, encima la referencia (2026-10-02). Un coche sin traza —sin vuelta,
--- o el dummy— no se pinta, y sin ninguna quedan los canales vacíos.
+-- si van y, debajo, la fila Δ en las fronteras de la referencia. Cada coche con la pareja
+-- de su piloto y la mezcla @b@ ('inkedCurve'), al 'traceOpacity' para que donde coinciden se vean
+-- los dos, encima la referencia; quien no está en la
+-- tabla, con su color de siempre: rojo la referencia, blanco el otro. Un coche sin traza
+-- —sin vuelta, o el dummy— no se pinta, y sin ninguna quedan los canales vacíos.
 --
 -- El lienzo va en trozos ('Common.Traces.traceLayout'): cada fila es un @\<svg\>@ que
--- recorta con su @viewBox@ su franja del dibujo entero, y las fronteras van en otro
--- encima de las filas. Lo que crece la tarjeta lo reparte el navegador con el @flex@
--- de cada trozo, sin volver a pintar. El trazo no se estira; los rótulos van en HTML,
--- en porcentaje del ancho. El lienzo y la fila entran
--- 'Common.ComparisonCard.tracesInset'.
+-- pinta en px su franja del dibujo entero ('pxSvg'), y las fronteras van en otro encima
+-- de las filas, estirado. Lo que crece la tarjeta lo reparte el navegador con el @flex@
+-- de cada trozo, y cada fila se repinta a su nuevo tamaño. Los rótulos van en HTML, en
+-- porcentaje del ancho. El lienzo y la fila entran 'Common.ComparisonCard.tracesInset'.
 tracesView
-  :: MonadWidget t m => m () -> RowMode t -> View -> LapComparison -> m (Event t ())
-tracesView overlay rm v c = case lcEntries c of
+  :: MonadWidget t m => m () -> RowMode t -> View -> Blend -> LapComparison -> m (Event t ())
+tracesView overlay rm v b c = case lcEntries c of
   ref : other : _ -> do
     let axis  = vAxis v
-        cars  = [(other, traceOtherColor), (ref, traceRefColor)]
+        cars  = [(other, inksOr traceOtherColor (ceDriver other)), (ref, inksOr traceRefColor (ceDriver ref))]
         xMax  = maximum [axisEnd axis ref e | e <- [ref, other]]
         delta = seriesOf (vBase v) c
         cells = case boundaryXs axis ref of
@@ -1032,34 +1076,37 @@ tracesView overlay rm v c = case lcEntries c of
       elAttr "div" (Map.fromList [("class", "comparison__traces-span"), ("style", pieceFlex (spanPiece (tlSpan layout)))]) $ do
         forM_ (tlSpan layout) $ \p -> piece p $ forM_ (tpChannel p) $ \ch -> do
           let range@(lo, hi) = channelRange ch [ref, other]
-          svgEl "svg" (traceRowAttrs rows ch) $ do
-            forM_ [lo, hi] $ \y -> svgEl "line" (traceGridAttrs (rowY ch range y)) blank
-            forM_ cars $ \(e, color) -> do
-              let pts = tracePoints rows ch range xMax (traceXs axis ref e) (ceTrace e)
-              unless (T.null pts) $ svgEl "polyline" (tracePolylineAttrs color pts) blank
+              vb = (0, channelTop rows ch, tracesWidth, channelHeight rows ch)
+          pxSvg (traceRowAttrs ch) $ \box -> do
+            let toBox = toPixels vb box
+            forM_ [lo, hi] $ \y -> svgEl "line" (traceGridAttrs (fst box) (snd (toBox (0, rowY ch range y)))) blank
+            forM_ cars $ \(e, ink) ->
+              svgEl "g" (Map.singleton "opacity" traceOpacity) $
+                inkedCurve b ink (map toBox (traceVertices rows ch range xMax (traceXs axis ref e) (ceTrace e)))
           traceLabel "left: 0; top: -13px" (channelCaption ch range)
         when (vFrontiers v) $
           svgEl "svg" (traceFrontiersAttrs rows) $
-            forM_ cars $ \(e, color) ->
+            forM_ cars $ \(e, ink) ->
               forM_ (frontierPair (frontierXs axis ref e)) $ \x ->
-                svgEl "line" (traceFrontierAttrs rows color (tracesWidth * xPercent xMax x / 100)) blank
+                svgEl "line" (traceFrontierAttrs rows (inkTeam ink) (tracesWidth * xPercent xMax x / 100)) blank
       piece (tlBottom layout) $ do
         traceLabel "left: 0; top: calc(100% - 13px)" "0"
         traceLabel "right: 0; top: calc(100% - 13px)" (axisEndLabel axis xMax)
       when (vFrontiers v) $
-        forM_ (zip [0 :: Int ..] cars) $ \(row, (e, _)) ->
+        forM_ (zip [0 :: Int ..] cars) $ \(row, (e, ink)) ->
           forM_ (zip ["S1", "S2"] (frontierPair (frontierXs axis ref e))) $ \(name, x) ->
             traceLabelColored (if row == 0 then "comparison__trace-label--other" else "comparison__trace-label--ref")
-              ("left: calc(" <> formatFixed 3 (xPercent xMax x) <> "% + 2px); top: " <> px (if row == 0 then 10 else 0))
+              ("left: calc(" <> formatFixed 3 (xPercent xMax x) <> "% + 2px); top: " <> px (if row == 0 then 10 else 0)
+                 <> "; color: " <> inkTeam ink)
               name
       overlay
     frontierRowAt tracesInset rm delta cells
   _ -> pure never
   where
-    rows   = TraceRows (traceChannels (vType v))
+    rows   = TraceRows (traceChannels (vType v) (vCharts v))
     layout = traceLayout rows
     piece p = elAttr "div" (Map.fromList [("class", "comparison__trace-piece"), ("style", pieceFlex p)])
-    frontierPair = maybe [] (\(a, b) -> [a, b])
+    frontierPair = maybe [] (\(s1, s2) -> [s1, s2])
     rowY ch (lo, hi) y = channelTop rows ch + channelHeight rows ch * (1 - (y - lo) / (hi - lo))
     px x = formatFixed 1 x <> "px"
     traceLabel style = traceLabelColored "" style
@@ -1072,15 +1119,122 @@ traceRefColor, traceOtherColor :: Text
 traceRefColor   = "#e10600"
 traceOtherColor = "#e7e9ee"
 
--- | El @\<svg\>@ de la fila de un canal: su @viewBox@ recorta del dibujo entero justo
--- esa fila, y se estira a lo que mida su trozo.
-traceRowAttrs :: TraceRows -> Channel -> Map Text Text
-traceRowAttrs rows ch =
+-- | El @\<svg\>@ de la fila de un canal, que llena su trozo.
+traceRowAttrs :: Channel -> Map Text Text
+traceRowAttrs ch =
   Map.fromList
     [ ("class", "comparison__traces comparison__traces--row")
-    , ("viewBox", "0 " <> num (channelTop rows ch) <> " " <> num tracesWidth <> " " <> num (channelHeight rows ch))
-    , ("preserveAspectRatio", "none")
+    , ("data-channel", T.toLower (T.pack (show ch)))
     ]
+
+-- | Un @\<svg\>@ sin @viewBox@, en px de su caja, con lo que pinte @draw@ para el ancho y
+-- el alto de la caja; se repinta cada vez que la caja cambia de tamaño. Nada mientras
+-- mide 0.
+pxSvg :: MonadWidget t m => Map Text Text -> ((Double, Double) -> m ()) -> m ()
+pxSvg attrs draw = mdo
+  (e, _) <- elDynAttrNS' svgNamespace "svg" (constDyn attrs) $ dyn_ (maybe blank draw <$> box)
+  changes  <- boxChanges (_element_raw e)
+  measured <- performEvent (measure e <$ changes)
+  box      <- holdUniqDyn =<< holdDyn Nothing (Just <$> ffilter (\(w, h) -> w > 0 && h > 0) measured)
+  pure ()
+  where
+    measure e = DOM.liftJSM $ do
+      r <- DOM.getBoundingClientRect (_element_raw e)
+      (,) <$> DOM.getWidth r <*> DOM.getHeight r
+
+-- | Un evento cada vez que el navegador ve cambiar el tamaño del elemento, ya pintado
+-- (@ResizeObserver@), y al empezar a observarlo. Deja de observarlo cuando sale de la
+-- página.
+boxChanges :: MonadWidget t m => DOM.Element -> m (Event t ())
+boxChanges e = do
+  (changes, fire) <- newTriggerEvent
+  DOM.liftJSM $ do
+    cb  <- JS.function $ \_ _ args -> case args of
+      _ : obs : _ -> do
+        connected <- JS.valToBool =<< (JS.toJSVal e JS.! ("isConnected" :: Text))
+        if connected then liftIO (fire ()) else () <$ (obs JS.# ("disconnect" :: Text) $ ())
+      _ -> liftIO (fire ())
+    obs <- JS.new (JS.jsg ("ResizeObserver" :: Text)) [JS.toJSVal cb]
+    () <$ (obs JS.# ("observe" :: Text) $ [JS.toJSVal e])
+  pure changes
+
+-- | La opacidad de cada coche en las trazas, su línea y sus trazos juntos (2026-11-23 (k)).
+traceOpacity :: Text
+traceOpacity = "0.6"
+
+-- | Una curva en px con la pareja de su piloto: la línea entera en la tinta del equipo y
+-- encima la del casco, según la mezcla ('Common.Blend.blendOverlay'); los trazos sueltos,
+-- recortados por la línea con una @\<mask\>@. Con las dos tintas iguales, la línea sola.
+-- Nada con menos de dos puntos.
+inkedCurve :: MonadWidget t m => Blend -> Inks -> [Point] -> m ()
+inkedCurve = inkedCurveWide lineWidth
+
+-- | Una curva tenue de 3 a 5 coches (2026-11-21 (l)): la de 'inkedCurve' a 2 px y al 35 %.
+faintCurve :: MonadWidget t m => Blend -> Inks -> [Point] -> m ()
+faintCurve b ink pts = svgEl "g" (Map.singleton "opacity" "0.35") $ inkedCurveWide 2 b ink pts
+
+-- | La vuelta de otra sesión (2026-11-21 (af)): a puntos con las dos tintas de su piloto, la
+-- del casco en los huecos de la del equipo; al frente a 'Common.Blend.lineWidth' y si no,
+-- tenue, a 2,5 px y a la mitad. Nada con menos de dos puntos.
+dottedCurve :: MonadWidget t m => Bool -> Inks -> [Point] -> m ()
+dottedCurve atFront ink pts = when (length pts >= 2) $
+  svgEl "g" (Map.singleton "opacity" (if atFront then "1" else "0.5")) $ do
+    svgEl "polyline" (dots (inkTeam ink) "0") blank
+    svgEl "polyline" (dots (inkHelmet ink) (formatFixed 2 (gap / 2 + 0.5))) blank
+  where
+    w   = if atFront then lineWidth else 2.5
+    gap = 2 * w
+    dots color offset =
+      curveLineAttrs w color pts
+        <> Map.fromList [("stroke-dasharray", "1 " <> formatFixed 2 gap), ("stroke-dashoffset", offset), ("stroke-linecap", "round")]
+
+-- | Una curva de la gráfica según cómo se pinta ('Common.Comparison.Curve'): la de otra
+-- sesión, a puntos; la del frente, entera; las demás, tenues.
+drawCurve :: MonadWidget t m => Blend -> Inks -> Curve -> [Point] -> m ()
+drawCurve b ink cv
+  | isJust (cvFrom cv)  = dottedCurve (cvLayer cv == Front) ink
+  | cvLayer cv == Faint = faintCurve b ink
+  | otherwise           = inkedCurve b ink
+
+-- | 'inkedCurve' con la línea, y la máscara que recorta los trazos, del ancho dado en px.
+inkedCurveWide :: MonadWidget t m => Double -> Blend -> Inks -> [Point] -> m ()
+inkedCurveWide w b ink pts = when (length pts >= 2) $ do
+  svgEl "polyline" (curveLineAttrs w (inkTeam ink) pts) blank
+  when (inkHelmet ink /= inkTeam ink) $ case blendOverlay b pts of
+    Dashed d ->
+      svgEl "polyline" (curveLineAttrs w (inkHelmet ink) pts <> Map.singleton "stroke-dasharray" (num2 d <> " " <> num2 d)) blank
+    Marks ms -> do
+      mid <- ("pareja-" <>) . T.pack . show . hashUnique <$> liftIO newUnique
+      svgEl "mask" (Map.fromList [("id", mid), ("maskUnits", "userSpaceOnUse")]) $
+        svgEl "polyline" (curveLineAttrs w "#ffffff" pts) blank
+      svgEl "g" (Map.singleton "mask" ("url(#" <> mid <> ")")) $
+        forM_ ms $ \m -> svgEl "polyline" (markAttrs (inkHelmet ink) m) blank
+  where
+    num2 = formatFixed 2
+    markAttrs color m =
+      Map.fromList
+        [ ("points", pointsAttr (markPoints m)), ("fill", "none"), ("stroke", color)
+        , ("stroke-width", num2 (markWidth m)), ("stroke-linejoin", "miter") ]
+
+-- | La muestra de una curva en la leyenda: un trozo recto de 28 px con su pareja y la
+-- mezcla.
+keySwatch :: MonadWidget t m => Blend -> Inks -> m ()
+keySwatch b ink =
+  svgEl "svg" (Map.fromList [("class", "comparison__swatch"), ("width", "28"), ("height", "8")]) $
+    inkedCurve b ink [(0, 4), (28, 4)]
+
+-- | La muestra de una curva como se pinta ('drawCurve').
+curveSwatch :: MonadWidget t m => Blend -> Inks -> Curve -> m ()
+curveSwatch b ink cv =
+  svgEl "svg" (Map.fromList [("class", "comparison__swatch"), ("width", "28"), ("height", "8")]) $
+    drawCurve b ink cv [(0, 4), (28, 4)]
+
+-- | La línea de una curva en px, del grosor dado.
+curveLineAttrs :: Double -> Text -> [Point] -> Map Text Text
+curveLineAttrs w color pts =
+  Map.fromList
+    [ ("points", pointsAttr pts), ("fill", "none"), ("stroke", color)
+    , ("stroke-width", formatFixed 2 w), ("stroke-linejoin", "round") ]
 
 -- | El @\<svg\>@ de las fronteras, encima de las filas: su @viewBox@ va de punta a punta
 -- de ellas ('Common.Traces.channelsSpan').
@@ -1094,24 +1248,12 @@ traceFrontiersAttrs rows =
   where
     (top, bottom) = channelsSpan rows
 
--- | La curva de un coche en un canal.
-tracePolylineAttrs :: Text -> Text -> Map Text Text
-tracePolylineAttrs color pts =
+-- | Las líneas tenues del mínimo y el máximo de un canal, en px: de 0 a @w@ a la altura @y@.
+traceGridAttrs :: Double -> Double -> Map Text Text
+traceGridAttrs w y =
   Map.fromList
-    [ ("points", pts)
-    , ("fill", "none")
-    , ("stroke", color)
-    , ("stroke-width", "1.3")
-    , ("stroke-opacity", if color == traceRefColor then "1" else "0.85")
-    , ("vector-effect", "non-scaling-stroke")
-    ]
-
--- | Las líneas tenues del mínimo y el máximo de un canal.
-traceGridAttrs :: Double -> Map Text Text
-traceGridAttrs y =
-  Map.fromList
-    [ ("x1", "0"), ("x2", num tracesWidth), ("y1", formatFixed 1 y), ("y2", formatFixed 1 y)
-    , ("stroke", "#888888"), ("stroke-opacity", "0.3"), ("vector-effect", "non-scaling-stroke")
+    [ ("x1", "0"), ("x2", formatFixed 1 w), ("y1", formatFixed 1 y), ("y2", formatFixed 1 y)
+    , ("stroke", "#888888"), ("stroke-opacity", "0.3")
     ]
 
 -- | La raya discontinua de una frontera de un coche, de arriba abajo de los canales.
@@ -1158,6 +1300,18 @@ insideTick (x, y, label) =
         , ("style", "left: " <> formatFixed 1 x <> "px; " <> topAt y)
         ]
 
+-- | La cifra de una curva de otra sesión que se sale del eje, en el borde por donde sale y a
+-- la derecha; la @i@-ésima, una línea más adentro.
+edgeNote :: DomBuilder t m => (Int, (Bool, Double)) -> m ()
+edgeNote (i, (up, v)) =
+  elAttr "span" attrs $ text ((if up then "↑ " else "↓ ") <> formatDelta v)
+  where
+    attrs =
+      Map.fromList
+        [ ("class", "comparison__tick comparison__edge")
+        , ("style", (if up then "top: " else "bottom: ") <> formatFixed 1 (4 + valueHeight * fromIntegral i) <> "px; right: " <> formatFixed 1 curveInset <> "px")
+        ]
+
 -- | La posición vertical de un número centrado en la Y de su línea, con la Y del
 -- @viewBox@ en tanto por ciento del alto: el lienzo y la columna del eje crecen
 -- juntos con la tarjeta.
@@ -1165,23 +1319,35 @@ topAt :: Double -> Text
 topAt y =
   "top: calc(" <> formatFixed 3 (y / chartHeight * 100) <> "% - " <> formatFixed 3 (valueHeight / 2) <> "px)"
 
--- | El delta acumulado como @\<polyline\>@ sobre un @viewBox@ fijo, con la línea
--- del cero dibujada aparte y una línea tenue por cada número del eje salvo el cero.
--- Todo con el rango de 'Common.Chart.axisRange'. Las líneas van de borde a borde
--- en un lienzo; la curva, en otro encima que entra 'curveInset' por lado.
+-- | El delta acumulado de cada curva, con la línea del cero dibujada aparte y una línea
+-- tenue por cada número del eje salvo el cero. Todo con el rango de
+-- 'Common.Chart.axisRange' sobre 'Common.Comparison.axisValues': lo que se sale se corta en el
+-- borde del lienzo. Las líneas van de
+-- borde a borde en un lienzo de @viewBox@ fijo; las curvas, en px en otro encima que
+-- entra 'curveInset' por lado ('pxSvg'), en el orden de la lista, cada una con la pareja
+-- de su piloto y la mezcla @b@: la tenue con 'faintCurve' y la demás con 'inkedCurve'.
 --
--- La línea del cero se pinta __siempre__, incluso sin serie: es la referencia que
--- da sentido al eje ("iban empatados"), no una decoración de los datos. Sin serie
--- —el comparado no tiene vuelta— no se emite @\<polyline\>@ ni se dice nada: lo
--- dice su cabecera, «sin vuelta» (2026-10-02).
-deltaChart :: MonadWidget t m => [Double] -> m ()
-deltaChart series = do
+-- La línea del cero se pinta __siempre__, incluso sin curvas: es la referencia que
+-- da sentido al eje ("iban empatados"), no una decoración de los datos. Un coche sin
+-- vuelta no trae curva y no se dice nada: lo dice su cabecera, «sin vuelta»
+-- (2026-10-02).
+deltaChart :: MonadWidget t m => Blend -> [Curve] -> m ()
+deltaChart b curves = do
   svgEl "svg" chartAttrs $ do
     mapM_ (\y -> svgEl "line" (gridLineAttrs y) blank)
-      [y | (v, y, _) <- axisTicks series, v /= 0]
-    svgEl "line" (zeroLineAttrs series) blank
-  unless (null series) $
-    svgEl "svg" curveAttrs $ svgEl "polyline" (polylineAttrs series) blank
+      [y | (v, y, _) <- axisTicks values, v /= 0]
+    svgEl "line" (zeroLineAttrs values) blank
+  unless (null curves) $
+    pxSvg curveAttrs $ \box ->
+      forM_ curves $ \cv ->
+        drawCurve b (inksOr deltaColor (ceDriver (cvEntry cv))) cv
+          (map (toPixels (0, 0, chartWidth, chartHeight) box) (axisPointsAmong [values] (cvDelta cv)))
+  where
+    values = axisValues curves
+
+-- | El color de la curva Δ cuando el comparado no está en la tabla de parejas.
+deltaColor :: Text
+deltaColor = "#e10600"
 
 -- | Debajo del gráfico, el nombre y el valor de cada frontera —o solo uno de los
 -- dos, según el modo que se ve—, cada uno centrado en la X de su punto
@@ -1264,31 +1430,53 @@ frontierCell names values (x, name, value) =
         , ("style", "left: " <> formatFixed 3 x <> "%")
         ]
 
--- | Qué es cada línea: la discontinua (el cero) es la base, y la roja el otro coche
--- contra ella ('Common.Comparison.pairWith'). Por encima del cero, el otro va por
--- detrás, porque la serie es comparado − base.
+-- | Qué es cada línea: la discontinua (el cero) es la base, y cada curva con la pareja
+-- de su piloto, ese coche contra ella ('Common.Comparison.curvesWith'), en el orden de las
+-- filas (@items@). La del frente dice que por encima del cero va por detrás, porque la
+-- serie es comparado − base; las tenues, solo su nombre y su muestra tenue, y la de otra
+-- sesión, su muestra a puntos. Lo que añade un grupo dice «, del grupo», y al final van,
+-- en gris, lo de los grupos que no cabe (2026-11-21 (ae)). Cada curva se pulsa para
+-- llevarla al frente, y eso es lo que devuelve: su clave ('Common.Comparison.curveKey').
 --
--- Sin serie no hay línea roja que explicar, y queda solo la base; si va contra la
+-- Sin series no hay curva que explicar, y queda solo la base; si va contra la
 -- referencia y es ella la que no tiene vuelta no hay gráfica, y no se pinta nada.
-legend :: DomBuilder t m => Baseline -> LapComparison -> m ()
-legend b c = case pairWith b c of
-  Just p | Nothing <- missingReference b c -> do
-    elClass "span" "comparison__key comparison__key--ref" $ text "- - -"
-    text (" " <> ceDriver (pairBase p) <> " (" <> baselineRole b <> ")")
-    unless (null (pairDelta p)) $ do
-      elClass "span" "comparison__key comparison__key--delta" $ text "——"
-      text (" " <> ceDriver (pairOther p) <> ": por encima, va por detrás")
-  _ -> blank
+legend
+  :: MonadWidget t m
+  => Blend -> Baseline -> Maybe Text -> WithGroups -> [Item] -> [(SessionKey, ComparisonEntry)] -> Maybe SessionKey
+  -> LapComparison -> m (Event t Text)
+legend bl b front g items laps viewed c = case curvesWith b front c laps of
+  cvs@(_ : _) | Nothing <- missingReference b c -> do
+    forM_ [cvEntry cv | cv <- cvs, cvLayer cv == Behind] $ \e -> do
+      elClass "span" "comparison__key comparison__key--ref" $ text "- - -"
+      text (" " <> ceDriver e <> " (" <> baselineRole b <> ")")
+    let drawn = [cv | cv <- cvs, cvLayer cv /= Behind, not (null (cvDelta cv))]
+    picks <- forM [(it, cv) | it <- items, cv <- drawn, curveKey cv == itKey it] $ \(it, cv) -> do
+      let ink    = inksOr deltaColor (ceDriver (cvEntry cv))
+          front' = cvLayer cv == Front
+      (e, _) <- elAttr' "span" (keyAttrs front') $ do
+        curveSwatch bl ink cv
+        text (" " <> itLegend it <> if front' then ": por encima, va por detrás" else "")
+      pure (itKey it <$ domEvent Click e)
+    forM_ (wgLeftOut g) $ \a ->
+      elClass "span" "comparison__left-out" $ text ("· " <> leftOutLabel viewed a <> ", del grupo, no cabe")
+    pure (leftmost picks)
+  _ -> pure never
+  where
+    keyAttrs isFront =
+      Map.fromList
+        [ ("class", "comparison__key-curve" <> if isFront then " comparison__key-curve--front" else "")
+        , ("title", "Pulsa para llevarla al frente")
+        ]
 
--- | La leyenda de las trazas: el color de cada coche, la referencia en rojo, y qué
--- resta la fila Δ (@«Δ = NOR − LEC»@, el otro menos la base). Sin la Δ, solo los
--- colores; con el aviso de la referencia sin vuelta, nada.
-traceLegend :: DomBuilder t m => Baseline -> LapComparison -> m ()
-traceLegend b c = case (lcEntries c, pairWith b c) of
+-- | La leyenda de las trazas: la pareja de cada coche y qué resta la fila Δ
+-- (@«Δ = NOR − LEC»@, el otro menos la base). Sin la Δ, solo las parejas; con el aviso
+-- de la referencia sin vuelta, nada.
+traceLegend :: MonadWidget t m => Blend -> Baseline -> LapComparison -> m ()
+traceLegend bl b c = case (lcEntries c, pairWith b c) of
   (ref : other : _, Just p) | Nothing <- missingReference b c -> do
-    elClass "span" "comparison__key comparison__key--trace-ref" $ text "——"
+    keySwatch bl (inksOr traceRefColor (ceDriver ref))
     text (" " <> ceDriver ref <> " (referencia)")
-    elClass "span" "comparison__key comparison__key--trace-other" $ text "——"
+    keySwatch bl (inksOr traceOtherColor (ceDriver other))
     text (" " <> ceDriver other)
     unless (null (pairDelta p)) $
       elClass "span" "comparison__formula" $ text ("Δ = " <> deltaFormula p)
@@ -1338,13 +1526,11 @@ chartAttrs =
     ]
 
 -- | La curva, en su propio lienzo encima del de las líneas: entra 'curveInset' por
--- cada lado, con el mismo @viewBox@ y el mismo alto.
+-- cada lado, con el mismo alto y en px.
 curveAttrs :: Map Text Text
 curveAttrs =
   Map.fromList
     [ ("class", "comparison__curve")
-    , ("viewBox", "0 0 " <> num chartWidth <> " " <> num chartHeight)
-    , ("preserveAspectRatio", "none")
     , ( "style"
       , "left: " <> formatFixed 1 curveInset <> "px; width: calc(100% - "
           <> formatFixed 1 (2 * curveInset) <> "px)" )
@@ -1382,20 +1568,6 @@ zeroLineAttrs series =
     ]
   where
     y = num (axisZeroY series)
-
--- | La serie. @fill=\"none\"@ es obligatorio: por defecto un @\<polyline\>@ se
--- rellena en negro y el gráfico sale como una mancha.
-polylineAttrs :: [Double] -> Map Text Text
-polylineAttrs series =
-  Map.fromList
-    [ ("class", "comparison__delta")
-    , ("points", axisPolyline series)
-    , ("fill", "none")
-    , ("stroke", "#e10600")
-    , ("stroke-width", "2")
-    , ("stroke-linejoin", "round")
-    , ("vector-effect", "non-scaling-stroke")
-    ]
 
 -- | Un número del lienzo como texto de atributo. Entero por el mismo motivo que
 -- las coordenadas de 'Common.Chart.axisPolyline': 'show' sobre 'Double' emite

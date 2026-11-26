@@ -27,26 +27,43 @@
 --
 module Pages.Dashboard where
 
-import           Common.Carry                  (Board (..), Grip (..),
-                                                Hand (..), Held (..),
-                                                Scene (..), boardOf, heldStyle,
+import           Client                        (fetchJson)
+import           Common.Blend                  (Blend, blendFromKey, blendKey,
+                                                blendLabel, blendOnOpen,
+                                                blendStoreKey, blendsInOrder)
+import           Common.Carry                 (Board (..), Grip (..),
+                                                Hand (..), Scene (..), boardOf,
                                                 scene, stepBoard)
 import           Common.ComparisonCard         (CardControl, defaultControl)
+import           Common.FixedLayouts           (qualy, raceOverview, strategy)
 import           Common.Format                 (ClockForm (..), formatClock)
-import           Common.Layout                 (slotStyle, touchesTopRight)
+import           Common.Group                  (GroupEdit, applyGroupEdit)
+import           Common.Layout                 (slotStyle)
 import           Common.Origin                 (Sourced (..))
-import           Common.Saved                  (Restored (..), atFactory,
-                                                factoryControls, restoreLayout,
+import           Common.Route                  (circuitSeasonsPathFor, seasonPath)
+import           Common.Saved                  (Restored (..), Shown (..),
+                                                atFactory, factoryShown,
+                                                resetQuestion, restoreLayout,
                                                 sameShown, saveLayout, savedKey,
                                                 unfitNote)
+import           Common.Session                (SeasonRace (..),
+                                                SeasonSession (..),
+                                                SessionKey (..),
+                                                SessionPick (..),
+                                                latestStartedKey, queryWith,
+                                                renderSessionKey,
+                                                rollingKey, selectorLabel,
+                                                selectorRaces, sessionCodeText,
+                                                sessionFromUrl)
 import           Common.Shown                  (Kept (..), Poll (..),
-                                                delayDefaultSeconds,
-                                                delayFromUrl, keepLast,
-                                                keptNothing, landed, readDelay)
+                                                delayFromUrl, delayKey,
+                                                delayOnOpen, delayQuery,
+                                                keepLast, keptNothing, landed,
+                                                readDelay)
 import           Common.Types                  (BandFlag (..), BandPiece,
                                                 Countdown, Layout (..),
-                                                LayoutId (..), LiveTable (..),
-                                                SessionClock, SessionInfo (..),
+                                                LiveTable (..), SessionClock,
+                                                SessionInfo (..),
                                                 StateReading (..),
                                                 TrackCondition, UpNext (..),
                                                 WidgetConfig (..),
@@ -54,16 +71,15 @@ import           Common.Types                  (BandFlag (..), BandPiece,
                                                 bandMark, bandNote, bandPieces,
                                                 bandRight, catchUp,
                                                 countdownAfter, countdownText,
-                                                flagName, isDerived, noParams,
-                                                pieceFlag, pieceSeparator,
-                                                pieceWord, sessionTitle,
-                                                shownClock, shownNext,
-                                                tickClock)
+                                                flagName, isDerived, pieceFlag,
+                                                pieceSeparator, pieceWord,
+                                                sessionTitle, shownClock,
+                                                shownNext, tickClock)
 import           Control.Exception             (SomeException, try)
+import           Control.Monad                 (forM_, when)
 import           Control.Monad.IO.Class        (liftIO)
 import           Data.IORef                    (IORef, newIORef, readIORef,
                                                 writeIORef)
-import           Data.List                     (find)
 import           Data.Map                      (Map)
 import qualified Data.Map                      as Map
 import           Data.Maybe                    (fromMaybe, isJust, isNothing,
@@ -71,6 +87,7 @@ import           Data.Maybe                    (fromMaybe, isJust, isNothing,
 import           Data.Text                     (Text)
 import qualified Data.Text                     as T
 import           Data.Time.Clock               (UTCTime (..), getCurrentTime)
+import           Data.Time.Clock.POSIX         (utcTimeToPOSIXSeconds)
 import qualified GHCJS.DOM                     as DOM (currentWindowUnchecked)
 import qualified GHCJS.DOM.DOMRectReadOnly     as DOM (getHeight, getWidth)
 import qualified GHCJS.DOM.Element             as DOM (closest,
@@ -80,22 +97,39 @@ import qualified GHCJS.DOM.EventM              as DOM (event, mouseClientXY, on,
 import qualified GHCJS.DOM.GlobalEventHandlers as DOM (click, keyDown, keyUp,
                                                        mouseDown, mouseMove,
                                                        mouseUp)
+import qualified GHCJS.DOM.History             as History (pushState,
+                                                           replaceState)
+import qualified GHCJS.DOM.HTMLInputElement    as Input (getValue)
 import qualified GHCJS.DOM.KeyboardEvent       as Key (getKey)
+import qualified GHCJS.DOM.Location            as Location (getHref,
+                                                            getPathname,
+                                                            getSearch)
 import qualified GHCJS.DOM.MouseEvent          as Mouse (getAltKey, getButton)
 import qualified GHCJS.DOM.Storage             as Storage (getItem, setItem)
 import qualified GHCJS.DOM.Types               as DOM (Element (..),
                                                        HTMLElement (..),
+                                                       History, JSVal,
                                                        MouseEvent (..),
                                                        uncheckedCastTo)
-import qualified GHCJS.DOM.Window              as Window (getLocalStorage)
-import           Language.Javascript.JSaddle   (JSM, eval, liftJSM, valToNumber)
+import qualified GHCJS.DOM.Window              as Window (getHistory,
+                                                          getLocalStorage,
+                                                          getLocation)
+import qualified GHCJS.DOM.WindowEventHandlers as DOM (popState)
+import           Language.Javascript.JSaddle   (JSM, eval, jsNull, liftJSM,
+                                                valToNumber)
+import           Pages.Dashboard.Helper        (slotAttrs)
 import           Reflex.Dom
+import           Widgets.Card                  (CardExtras (..))
 import           Widgets.Comparison            (comparisonWidget)
+import           Widgets.Groups                (GroupContext (..), cardExtras,
+                                                rowTitle)
 import           Widgets.Historical            (constructorStatsWidget,
                                                 driverStatsWidget)
-import           Widgets.Live                  (LiveView (..), delayedLive,
-                                                livePoll)
-import           Widgets.Live.Helper           (sessionOf)
+import           Widgets.Live                  (LiveView (..), chosenPoll,
+                                                delayedLive, livePoll,
+                                                shownView)
+import           Widgets.Live.Helper           (liveAside, missingTitle,
+                                                sessionOf)
 import           Widgets.LiveTiming            (liveTimingWidget)
 import           Widgets.TyreStrategy          (tyreStrategyWidget)
 
@@ -123,25 +157,48 @@ import           Widgets.TyreStrategy          (tyreStrategyWidget)
 -- __Es 'mdo' porque la cabecera lee de las capas__: «Restablecer» necesita saber si la
 -- capa que se ve ya es la de fábrica, y «Cancelar» si alguna cambió desde que se entró
 -- en la edición, y las capas se montan después de la cabecera.
+--
+-- __La sesión sale de la dirección__ (@?sesion=@): al abrir, cada vez que el navegador
+-- vuelve atrás o adelante ('addressChanges') y al elegirla en la banda, que la escribe en
+-- el historial ('pushAddress'); un paso que no la cambia no la vuelve a pedir.
 dashboardPage :: MonadWidget t m => m ()
 dashboardPage = divClass "page page--dashboard" $ mdo
   toggleClick <- headerToggle
   openDyn     <- toggle True toggleClick
+  url         <- getLocationUrl
+  moved       <- addressChanges
+  let chosen = attachWithMaybe (\cur k -> if k == cur then Nothing else Just k) (current session) picked
+  performEvent_ (liftJSM . pushAddress <$> chosen)
+  session     <- holdUniqDyn =<< holdDyn (sessionFromUrl url) (leftmost [chosen, sessionFromUrl <$> moved])
+  saved       <- liftJSM (readStored delayKey)
+  let initial = delayOnOpen url saved
+  savedBlend  <- liftJSM (readStored blendStoreKey)
+  pb          <- getPostBuild
+  when (isNothing (delayFromUrl url)) $
+    performEvent_ (liftJSM (setAddress History.replaceState (delayQuery initial)) <$ pb)
   poll        <- livePoll
-  initial     <- fromMaybe delayDefaultSeconds . delayFromUrl <$> getLocationUrl
+  chosenP     <- chosenPoll session
   restored    <- mapM (\l -> (,) l <$> liftJSM (readSaved l)) [raceOverview, qualy, strategy]
   let unfit l = lookup l restored == Just Unfit
-  (layoutDyn, live, edit) <- divClass "top-bar" $ do
-    (active, delay, editing) <- dashboardHeader initial openDyn unfit shownAtFactory anyMoved
-    delayed <- delayedLive delay poll
-    sessionBand openDyn (lvPoll delayed) (lvAge delayed)
-    pure (active, delayed, editing)
+  (layoutDyn, live, edit, picked, blend) <- divClass "top-bar" $ do
+    (active, delay, blendNow, editing) <-
+      dashboardHeader initial (blendOnOpen savedBlend) (isJust <$> session) openDyn unfit shownAtFactory anyMoved
+        shownGroupCount
+    performEvent_ (liftJSM . rememberDelay <$> updated delay)
+    performEvent_ (liftJSM . writeStored blendStoreKey . blendKey <$> updated blendNow)
+    delayed <- delayedLive never delay poll
+    chosenV <- delayedLive (() <$ updated session) (constDyn 0) chosenP
+    let shown = shownView session delayed chosenV
+    p <- sessionBand openDyn session (lvPoll delayed) (lvPoll shown) (lvAge shown)
+    pure (active, shown, editing, p, blendNow)
   layers <- elDynClass "div" (canvasClass <$> openDyn <*> editOn edit) $
-    mapM (\(l, r) -> (,) (layoutId l) <$> layer live layoutDyn edit l r) restored
-  let shownAtFactory =
-        (\l fs -> fromMaybe True (lookup (layoutId l) fs))
-          <$> layoutDyn <*> traverse (\(i, (f, _)) -> (,) i <$> f) layers
-      anyMoved = or <$> traverse (snd . snd) layers
+    mapM (\(l, r) -> (,) (layoutId l) <$> layer blend session live layoutDyn edit l r) restored
+  let ofActive none pick =
+        (\l vs -> fromMaybe none (lookup (layoutId l) vs))
+          <$> layoutDyn <*> traverse (\(i, out) -> (,) i <$> pick out) layers
+      shownAtFactory  = ofActive True layerAtFactory
+      shownGroupCount = ofActive 0 layerGroupCount
+      anyMoved = or <$> traverse (layerMoved . snd) layers
   pure ()
   where
     -- __El lienzo dice si la cabecera está plegada y si se está editando__, para
@@ -159,6 +216,36 @@ dashboardPage = divClass "page page--dashboard" $ mdo
         ["canvas"]
           <> ["canvas--header-hidden" | not open]
           <> ["canvas--editing" | editing]
+
+-- | Escribe en el historial la dirección con esa sesión ('Common.Session.queryWith'), sin
+-- recargar; 'Nothing' la quita.
+pushAddress :: Maybe SessionKey -> JSM ()
+pushAddress k = setAddress History.pushState (queryWith k)
+
+-- | El retraso aplicado en el campo: a la dirección, en su sitio y sin una entrada más en
+-- «atrás» ('Common.Shown.delayQuery'), y al navegador ('Common.Shown.delayKey').
+rememberDelay :: Int -> JSM ()
+rememberDelay n = do
+  setAddress History.replaceState (delayQuery n)
+  writeStored delayKey (formatClock ClockCompact n)
+
+-- | Cambia la query de la dirección con @f@, sin recargar, con @write@:
+-- 'History.pushState' la añade al historial y 'History.replaceState' la cambia en su sitio.
+setAddress :: (DOM.History -> DOM.JSVal -> Text -> Maybe Text -> JSM ()) -> (Text -> Text) -> JSM ()
+setAddress write f = do
+  win    <- DOM.currentWindowUnchecked
+  loc    <- Window.getLocation win
+  path   <- Location.getPathname loc
+  search <- Location.getSearch loc
+  hist   <- Window.getHistory win
+  write hist jsNull "" (Just (path <> f search))
+
+-- | La dirección de la página cada vez que el navegador vuelve atrás o adelante en su
+-- historial (@popstate@).
+addressChanges :: MonadWidget t m => m (Event t Text)
+addressChanges = do
+  win <- liftJSM DOM.currentWindowUnchecked
+  wrapDomEvent win (`DOM.on` DOM.popState) (Location.getHref =<< Window.getLocation win)
 
 -- | Botón que pliega y despliega la cabecera. __Es hermano de ella y no hijo__,
 -- que es lo único que le permite seguir visible cuando ella no lo está: metido
@@ -178,12 +265,15 @@ headerToggle = do
   (e, _) <- elClass' "button" "header-toggle" $ text "☰"
   pure (domEvent Click e)
 
--- | La cabecera: título, conmutación de layouts, el modo edición y el retraso del
--- directo, que se pliegan __juntos__ (2026-09-07). Devuelve el layout activo, el
--- retraso en segundos y si se está editando, porque los tres viven dentro; el
--- retraso arranca en @initial@. @atFactoryNow@ y @movedNow@ dicen si el layout que se
+-- | La cabecera: título, conmutación de layouts, el modo edición, la mezcla de las dos
+-- tintas de cada curva y el retraso del directo, que se pliegan __juntos__ (2026-09-07).
+-- Devuelve el layout activo, el retraso en segundos, la mezcla y si se está editando,
+-- porque viven dentro; el retraso arranca en @initial@ y la mezcla en @initialBlend@.
+-- @chosenNow@ dice si hay una sesión elegida, a la que el
+-- retraso no se aplica ('delayField'). @atFactoryNow@ y @movedNow@ dicen si el layout que se
 -- ve ya es el de fábrica y si algo cambió desde que se entró en la edición, para que
--- «Restablecer» y «Cancelar» no pregunten en balde.
+-- «Restablecer» y «Cancelar» no pregunten en balde; @groupsNow@, cuántos grupos tiene,
+-- para que «Restablecer» diga cuántos quita.
 --
 -- __Se pliega con una clase y no desmontando__, y la diferencia importa: con
 -- 'dyn' el contenido se re-monta en cada cambio, así que 'layoutSwitcher'
@@ -191,37 +281,60 @@ headerToggle = do
 -- desplegara. Con 'elDynClass' el DOM se queda montado y solo cambia si se pinta;
 -- por lo mismo, plegarla no saca de la edición.
 dashboardHeader :: MonadWidget t m
-                => Int -> Dynamic t Bool -> (Layout -> Bool) -> Dynamic t Bool -> Dynamic t Bool
-                -> m (Dynamic t Layout, Dynamic t Int, Edit t)
-dashboardHeader initial openDyn unfit atFactoryNow movedNow =
+                => Int -> Blend -> Dynamic t Bool -> Dynamic t Bool -> (Layout -> Bool) -> Dynamic t Bool
+                -> Dynamic t Bool -> Dynamic t Int -> m (Dynamic t Layout, Dynamic t Int, Dynamic t Blend, Edit t)
+dashboardHeader initial initialBlend chosenNow openDyn unfit atFactoryNow movedNow groupsNow =
   elDynClass "div" (headerClass <$> openDyn) $ do
     el "h1" $ text "F1 Functional Dashboard"
     divClass "dashboard-header__controls" $ do
-      (active, edit) <- layoutSwitcher unfit atFactoryNow movedNow
-      delay <- delayField initial
-      pure (active, delay, edit)
+      (active, edit) <- layoutSwitcher unfit atFactoryNow movedNow groupsNow
+      (blend, delay) <- divClass "dashboard-header__options" $
+        (,) <$> blendField initialBlend <*> delayField initial chosenNow
+      pure (active, delay, blend, edit)
   where
     headerClass open
       | open      = "dashboard-header"
       | otherwise = "dashboard-header dashboard-header--hidden"
 
+-- | El desplegable de la mezcla, nativo, con las tres en el orden de
+-- 'Common.Blend.blendsInOrder'; arranca en @initial@. Vale para todas las gráficas
+-- (2026-11-20 (z) y (ab)).
+blendField :: MonadWidget t m => Blend -> m (Dynamic t Blend)
+blendField initial = elClass "label" "blend-field" $ do
+  elClass "span" "blend-field__label" $ text "Mezcla"
+  let cfg = def
+        & selectElementConfig_initialValue .~ blendKey initial
+        & selectElementConfig_elementConfig . elementConfig_initialAttributes
+            .~ ("class" =: "car-selector__select blend-field__select")
+  (sel, _) <- selectElement cfg $ forM_ blendsInOrder $ \b ->
+    elAttr "option" ("value" =: blendKey b) $ text (blendLabel b)
+  pure (fromMaybe initial . blendFromKey <$> _selectElement_value sel)
+
 -- | El campo del retraso, en @m:ss@. Lo tecleado se aplica __al pulsar Enter o al
 -- salir del campo__, nunca tecla a tecla: camino de @0:41@ se pasa por @0@, que
--- quitaría el retraso. Lo que no vale ('Common.Shown.readDelay') no cambia nada, y
--- al aplicarse el campo vuelve a escribir el retraso vigente.
-delayField :: MonadWidget t m => Int -> m (Dynamic t Int)
-delayField initial = elClass "label" "delay-field" $ mdo
+-- quitaría el retraso. Lo que se aplica es lo que hay en la caja en ese momento, leído del
+-- elemento. Lo que no vale ('Common.Shown.readDelay') no cambia nada, y al aplicarse el
+-- campo vuelve a escribir el retraso vigente.
+--
+-- Con una sesión elegida (@chosen@) se atenúa y dice «(solo para el directo)»: el retraso
+-- se le aplica solo al directo, y se puede seguir cambiando (2026-11-13 (n), 11b).
+delayField :: MonadWidget t m => Int -> Dynamic t Bool -> m (Dynamic t Int)
+delayField initial chosen = elDynClass "label" (fieldClass <$> chosen) $ mdo
   elClass "span" "delay-field__label" $ text "Diferido"
   input <- inputElement $
     def
       & inputElementConfig_initialValue .~ formatClock ClockCompact initial
       & inputElementConfig_setValue     .~ (formatClock ClockCompact <$> applied)
       & initialAttributes               .~ ("class" =: "delay-field__input" <> "size" =: "5")
+  elDynAttr "span" (noteAttrs <$> chosen) $ text "(solo para el directo)"
   let committed = leftmost [() <$ ffilter (== 13) (domEvent Keypress input), domEvent Blur input]
-      typed     = tag (current (_inputElement_value input)) committed
-      applied   = attachWith (\old t -> fromMaybe old (readDelay t)) (current delay) typed
+  typed <- performEvent (liftJSM (Input.getValue (_inputElement_raw input)) <$ committed)
+  let applied = attachWith (\old t -> fromMaybe old (readDelay t)) (current delay) typed
   delay <- holdDyn initial applied
   pure delay
+  where
+    fieldClass c = T.unwords (["delay-field"] <> ["delay-field--idle" | c])
+    noteAttrs c  = "class" =: "delay-field__note" <> (if c then mempty else "hidden" =: "")
 
 -- | La banda que dice __de qué sesión__ habla la página, y no una tarjeta
 -- (2026-09-15 (h)).
@@ -238,20 +351,35 @@ delayField initial = elClass "label" "delay-field" $ mdo
 -- recargar (2026-09-15 (n)).
 --
 -- Enseña la última sesión que vino con nombre, no la de la última respuesta
--- ('Common.Shown.keepLast', 2026-09-22 (b)).
+-- ('Common.Shown.keepLast', 2026-09-22 (b)); al elegir otra, la olvida.
 --
 -- Un solo tic de un segundo mueve los dos relojes de la banda —la cuenta atrás y la
 -- edad de lo conservado—, para que no se desincronicen.
+--
+-- Una sesión elegida que no existe lo dice a la izquierda, con su clave
+-- ('Widgets.Live.Helper.missingTitle'); el aviso va en un @span@ con @hidden@ mientras
+-- está vacío, para que sin él la banda no cambie.
+--
+-- __El título es el selector__ ('sessionPicker'): devuelve cada sesión que se elige en él.
+--
+-- Con una sesión elegida y el directo rodando, el aviso «● EN DIRECTO: … [Volver]» ocupa el
+-- sitio de la cuenta atrás (2026-11-13 (l); 'Widgets.Live.Helper.liveAside'), leído de
+-- @live@, el directo con su diferido. «Volver» se devuelve como «Ahora» ('Nothing').
 sessionBand :: MonadWidget t m
-            => Dynamic t Bool -> Dynamic t (Poll (Sourced LiveTable)) -> Dynamic t (Maybe Int)
-            -> m ()
-sessionBand openDyn poll lag = mdo
+            => Dynamic t Bool -> Dynamic t (Maybe SessionKey) -> Dynamic t (Poll (Sourced LiveTable))
+            -> Dynamic t (Poll (Sourced LiveTable)) -> Dynamic t (Maybe Int) -> m (Event t (Maybe SessionKey))
+sessionBand openDyn session live poll lag = mdo
   tick    <- tickLossyFromPostBuildTime 1
   day     <- localTimeOfDay tick
   let arrived = sessionOf <$> ffilter (isJust . landed) (updated poll)
-  kept    <- foldDyn keepLast keptNothing arrived
+  -- Al volver al directo la llegada cae en el mismo frame que el cambio: primero se olvida
+  -- lo anterior y luego se guarda lo que llega.
+  kept    <- foldDyn ($) keptNothing $
+               mergeWith (\forget keep -> keep . forget) [const keptNothing <$ updated session, keepLast <$> arrived]
   age     <- sessionAge tick arrived
   title   <- holdUniqDyn (maybe "" sessionTitle . keptValue <$> kept)
+  missing <- holdUniqDyn (missingTitle <$> session <*> poll)
+  aside   <- holdUniqDyn (liveAside <$> session <*> live)
   reading <- holdUniqDyn ((\k -> siState =<< keptValue k) <$> kept)
   track   <- holdUniqDyn ((\k -> siTrack =<< keptValue k) <$> kept)
   next    <- countdown tick lag (shownNext . fmap srcValue . pollShown <$> poll)
@@ -261,14 +389,27 @@ sessionBand openDyn poll lag = mdo
   let laps = (siLaps =<<) . sessionOf <$> poll
       restartText = (\d -> fmap (countdownText d)) <$> day <*> restart
   asCard  <- toggle True lookClick
-  lookClick <- elDynClass "div" (bandClass <$> openDyn <*> asCard) $ do
-    dynText title
+  (lookClick, picked) <- elDynClass "div" (bandClass <$> openDyn <*> asCard) $ do
+    p <- sessionPicker session live title
+    elDynAttr "span" (missingAttrs <$> missing) $ dynText missing
     sessionState reading track restartText (keptStale <$> kept) age
-    elClass "span" "session-band__next" $
+    elDynAttr "span" (shownUnless "session-band__next" . isJust <$> aside) $
       dynText (bandRight <$> day <*> next <*> laps <*> clock)
-    lookSwitch asCard
-  pure ()
+    back <- elDynAttr "span" (shownUnless "session-band__live" . isNothing <$> aside) $ do
+      elClass "span" "session-band__live-text" $ do
+        elClass "span" "session-band__live-dot" $ text "●"
+        text " "
+        el "b" $ text "EN DIRECTO:"
+        text " "
+        dynText (fromMaybe "" <$> aside)
+      (b, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "session-band__back") $ text "Volver"
+      pure (domEvent Click b)
+    l <- lookSwitch asCard
+    pure (l, leftmost [p, Nothing <$ back])
+  pure picked
   where
+    shownUnless cls hide = "class" =: cls <> (if hide then "hidden" =: "" else mempty)
+
     bandClass open card =
       T.unwords $
         ["session-band", lookClass card]
@@ -277,6 +418,9 @@ sessionBand openDyn poll lag = mdo
     lookClass card
       | card      = "session-band--card"
       | otherwise = "session-band--bar"
+
+    missingAttrs t =
+      "class" =: "session-band__missing" <> (if T.null t then "hidden" =: "" else mempty)
 
     -- El botón nombra __a dónde lleva__ y no dónde estás: leído sobre una banda
     -- que ya se ve, «barra» a secas no dice si es lo que hay o lo que habrá.
@@ -289,6 +433,84 @@ sessionBand openDyn poll lag = mdo
     lookLabel card
       | card      = "Ver como barra"
       | otherwise = "Ver como tarjeta"
+
+-- | El selector de sesión: el título de la banda como botón y, al pulsarlo, la lista por
+-- gran premio de la temporada (@\/api\/season@, pedida una vez al montarse), con «Ahora»
+-- arriba (2026-11-17 (o)). Devuelve cada elección: 'Nothing' es «Ahora», sin sesión elegida.
+-- La lista se cierra al elegir, con Escape y al pulsar fuera de ella.
+--
+-- La sesión que rueda en @live@, el directo con su diferido ('Common.Session.rollingKey'),
+-- lleva «●», y elegirla es elegir «Ahora». La lista solo se vuelve a montar cuando cambia.
+sessionPicker :: MonadWidget t m
+              => Dynamic t (Maybe SessionKey) -> Dynamic t (Poll (Sourced LiveTable)) -> Dynamic t Text
+              -> m (Event t (Maybe SessionKey))
+sessionPicker session live title = elClass "div" "session-band__picker" $ mdo
+  pb      <- getPostBuild
+  asked   <- fetchJson (seasonPath <$ pb)
+  season  <- holdDyn [] (fromMaybe [] <$> asked)
+  start   <- liftIO getCurrentTime
+  minute  <- tickLossyFromPostBuildTime 60
+  now     <- holdDyn (seconds start) (seconds . _tickInfo_lastUTC <$> minute)
+  (btn, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "session-band__pick") $
+                dynText ((<> " ▾") <$> (selectorLabel <$> title <*> session <*> season))
+  outside <- clicksOutside ".session-band__picker"
+  escape  <- escapeKeys
+  open    <- foldDyn ($) False $ leftmost
+               [ const False <$ leftmost [() <$ picked, outside, escape]
+               , not <$ domEvent Click btn ]
+  picked  <- elDynAttr "div" (panelAttrs <$> open) $ do
+    elClass "p" "session-band__season" $ dynText (heading <$> season)
+    (ahora, _) <- elAttr' "button" ("type" =: "button" <> "class" =: "session-band__now") $
+                    text "Ahora (lo último y el directo)"
+    liveKey <- holdUniqDyn (rollingKey <$> now <*> season <*> (sessionOf <$> live))
+    races   <- holdUniqDyn (selectorRaces <$> now <*> session <*> liveKey <*> season)
+    rows <- switchHold never =<< dyn (raceList <$> races)
+    elClass "p" "session-band__legend" $
+      text "rojo lleno = la elegida · ● = en directo · gris = aún no se ha corrido"
+    pure (leftmost [Nothing <$ domEvent Click ahora, rows])
+  pure picked
+  where
+    seconds :: UTCTime -> Int
+    seconds = floor . utcTimeToPOSIXSeconds
+
+    panelAttrs o = "class" =: "session-band__panel" <> (if o then mempty else "hidden" =: "")
+
+    heading races = case concatMap raceSessions races of
+      s : _ -> "Temporada " <> T.pack (show (skYear (ssnKey s))) <> " · la más reciente arriba"
+      []    -> "Cargando la temporada…"
+
+    raceList :: MonadWidget t m => [(SeasonRace, [SessionPick])] -> m (Event t (Maybe SessionKey))
+    raceList races = leftmost <$> mapM raceRow races
+
+    raceRow :: MonadWidget t m => (SeasonRace, [SessionPick]) -> m (Event t (Maybe SessionKey))
+    raceRow (r, picks) =
+      elClass "div" (rowClass picks) $ do
+        elClass "span" "session-band__race-name" $
+          text ("R" <> T.pack (show (raceRound r)) <> " " <> raceName r)
+        leftmost <$> mapM pickButton picks
+
+    -- La que rueda lleva «●» y pulsarla es «Ahora».
+    pickButton :: MonadWidget t m => SessionPick -> m (Event t (Maybe SessionKey))
+    pickButton p = do
+      (b, _) <- elAttr' "button" (pickAttrs p) $ do
+        when (spLive p) $ elClass "span" "session-band__live-dot" (text "●") >> text " "
+        text (sessionCodeText (skCode (spKey p)))
+      pure ((if spLive p then Nothing else Just (spKey p)) <$ domEvent Click b)
+
+    pickAttrs p =
+      "type" =: "button"
+        <> "class" =: T.unwords (["session-band__code"] <> ["session-band__code--chosen" | spChosen p])
+        <> (if spStarted p then mempty else "disabled" =: "")
+
+    rowClass ps =
+      T.unwords (["session-band__race"] <> ["session-band__race--chosen" | any spChosen ps])
+
+-- | Cada Escape que se pulsa en la ventana.
+escapeKeys :: MonadWidget t m => m (Event t ())
+escapeKeys = do
+  win  <- liftJSM DOM.currentWindowUnchecked
+  keys <- wrapDomEvent win (`DOM.on` DOM.keyDown) (Key.getKey =<< DOM.event)
+  pure (() <$ ffilter (== ("Escape" :: Text)) keys)
 
 -- | En qué punto está la sesión y su pista ('bandPieces'), con la marca que la
 -- califica y su aviso.
@@ -452,57 +674,89 @@ sessionClock tick served = do
 -- montar nada: solo cambian el estilo y la clase de los slots.
 --
 -- Arranca de lo guardado si encaja ('Common.Saved.restoreLayout') y si no, del de
--- fábrica, con los rectángulos y lo de cada Lap Comparison (lado, banda y modo). Al
--- terminar la edición guarda lo que se ve, esté activa o no, y al cancelarla vuelve a
--- como estaba al entrar, sin guardar; «Restablecer» devuelve al de fábrica solo la
--- activa, Lap Comparison incluida, y se guarda al terminar como lo demás. Fuera de la
--- edición, lo que se turna en Lap Comparison se guarda al momento, salvo si lo
--- guardado no encajó: eso espera al siguiente «Terminar». Devuelve si lo que enseña es el
--- de fábrica ('Common.Saved.atFactory') y si cambió desde que se entró en la edición
--- ('Common.Saved.sameShown').
+-- fábrica, con los rectángulos, lo de cada Lap Comparison (lado, banda y modo) y los
+-- grupos. Al terminar la edición guarda lo que se ve, esté activa o no, y al cancelarla
+-- vuelve a como estaba al entrar, sin guardar; «Restablecer» devuelve al de fábrica solo
+-- la activa, Lap Comparison y grupos incluidos, y se guarda al terminar como lo demás.
+-- Fuera de la edición, lo que se turna en Lap Comparison se guarda al momento, salvo si
+-- lo guardado no encajó: eso espera al siguiente «Terminar».
 layer :: MonadWidget t m
-      => LiveView t -> Dynamic t Layout -> Edit t -> Layout -> Restored
-      -> m (Dynamic t Bool, Dynamic t Bool)
-layer live layoutDyn edit l restored = mdo
+      => Dynamic t Blend -> Dynamic t (Maybe SessionKey) -> LiveView t -> Dynamic t Layout -> Edit t -> Layout -> Restored
+      -> m (LayerState t)
+layer blend session live layoutDyn edit l restored = mdo
   active <- holdUniqDyn (((== layoutId l) . layoutId) <$> layoutDyn)
   let revealed = () <$ ffilter id (updated active)
       held     = isJust . boardCarry <$> board
-      (start, startControls) = case restored of
-        FromSaved ws c -> (ws, c)
-        _              -> (widgets l, factoryControls (widgets l))
+      factory  = factoryShown l
+      begin    = case restored of
+        FromSaved s -> s
+        _           -> factory
+      startControls = shownControls begin
       reset    = gate (current active) (editReset edit)
       undone   = tag (current entry) (editCancel edit)
       controlOf w = Map.findWithDefault defaultControl (widgetId w)
-      putControl w = leftmost [defaultControl <$ reset, controlOf w . fst <$> undone]
+      putControl w = leftmost [defaultControl <$ reset, controlOf w . shownControls <$> undone]
       outside  =(\editing waits -> not editing && not waits) <$> editOn edit <*> unfitWaits
-  entry <- holdDyn (startControls, start) (tag (current saved) (ffilter id (updated (editOn edit))))
+  entry <- holdDyn begin (tag (current saved) (ffilter id (updated (editOn edit))))
   unfitWaits <- holdDyn (restored == Unfit) (False <$ editFinish edit)
   carrying <- liftIO (newIORef False)
-  (layerEl, (presses, turns)) <- elDynClass' "div" (layerClass <$> active) $ do
-    outs <- mapM (\w -> slot live revealed (controlOf w startControls) (putControl w) shown w) (widgets l)
+  pb       <- getPostBuild
+  asked    <- fetchJson (seasonPath <$ pb)
+  season   <- holdDyn [] (fromMaybe [] <$> asked)
+  opened   <- liftIO getCurrentTime
+  viewed   <- holdUniqDyn
+                ((\chosen ss info -> maybe (latestStartedKey (floor (utcTimeToPOSIXSeconds opened)) ss info) Just chosen)
+                   <$> session <*> season <*> (sessionOf <$> lvPoll live))
+  circuit  <- fetchJson (circuitSeasonsPathFor . fmap renderSessionKey <$> leftmost [updated viewed, tag (current viewed) pb])
+  rounds   <- holdDyn [] (fromMaybe [] <$> circuit)
+  let ctx = GroupContext
+        { gcEditing = editOn edit
+        , gcGroups  = groups
+        , gcCards   = boardLayout <$> board
+        , gcSession = session
+        , gcLive    = sessionOf <$> lvPoll live
+        , gcViewed  = viewed
+        , gcRounds  = rounds
+        }
+  (layerEl, (presses, turns, groupEdits)) <- elDynClass' "div" (layerClass <$> active) $ do
+    outs <- mapM (\w -> slot blend session live revealed (controlOf w startControls) (putControl w) ctx shown w) (widgets l)
     targetOutline shown
-    pure (leftmost (map fst outs), mconcat (map snd outs))
+    pure ( leftmost [p | (p, _, _) <- outs]
+         , mconcat [t | (_, t, _) <- outs]
+         , leftmost [g | (_, _, g) <- outs] )
+  let edited = attachWith (\(gs, ws) (wid, e) -> applyGroupEdit wid e (gs, ws))
+                 ((,) <$> current groups <*> current (boardLayout <$> board)) groupEdits
   pressed <- performEvent (measure layerEl <$> gate (current (editOn edit)) presses)
   hands   <- windowHands carrying
   performEvent_ (liftIO . writeIORef carrying <$> updated held)
-  board <- foldDyn ($) (boardOf start) $ leftmost
-             [ const (boardOf (widgets l)) <$ reset
-             , const . boardOf . snd <$> undone
+  board <- foldDyn ($) (boardOf (shownCards begin)) $ leftmost
+             [ const (boardOf (shownCards factory)) <$ reset
+             , const . boardOf . shownCards <$> undone
+             , (\ws b -> b { boardLayout = ws }) . snd <$> edited
              , (\(magnet, hand) -> stepBoard magnet hand)
                  <$> attach (current (editMagnet edit)) (leftmost [pressed, gate (current held) hands])
              ]
   shown <- holdUniqDyn (scene <$> editMagnet edit <*> board)
   controls <- foldDyn ($) startControls $ leftmost
-                [ const (factoryControls (widgets l)) <$ reset
-                , const . fst <$> undone
+                [ const (shownControls factory) <$ reset
+                , const . shownControls <$> undone
                 , Map.union <$> turns
                 ]
-  let saved = (,) <$> controls <*> (boardLayout <$> board)
-  performEvent_ (liftJSM . uncurry (writeSaved l) <$> leftmost
+  groups <- holdDyn (shownGroups begin) $ leftmost
+              [ shownGroups factory <$ reset
+              , shownGroups <$> undone
+              , fst <$> edited
+              ]
+  let saved = Shown <$> controls <*> groups <*> (boardLayout <$> board)
+  performEvent_ (liftJSM . writeSaved l <$> leftmost
     [ tag (current saved) (editFinish edit)
     , gate (current outside) (updated saved)
     ])
-  pure (uncurry (atFactory (widgets l)) <$> saved, (\e s -> not (sameShown e s)) <$> entry <*> saved)
+  pure LayerState
+    { layerAtFactory  = atFactory l <$> saved
+    , layerMoved      = (\e s -> not (sameShown e s)) <$> entry <*> saved
+    , layerGroupCount = length . shownGroups <$> saved
+    }
   where
     layerClass a
       | a         = "canvas__layer"
@@ -515,21 +769,39 @@ layer live layoutDyn edit l restored = mdo
       h <- DOM.getHeight r
       pure (Press wid grip p (w, h))
 
+-- | Lo que una capa le dice a la cabecera.
+data LayerState t = LayerState
+  { layerAtFactory  :: Dynamic t Bool
+    -- ^ Si lo que enseña es el de fábrica ('Common.Saved.atFactory').
+  , layerMoved      :: Dynamic t Bool
+    -- ^ Si cambió desde que se entró en la edición ('Common.Saved.sameShown').
+  , layerGroupCount :: Dynamic t Int
+    -- ^ Cuántos grupos tiene.
+  }
+
 -- | De dónde sale un layout al abrir la página, según lo guardado en el navegador. Si
 -- el navegador no deja leer, como si no hubiera nada guardado.
 readSaved :: Layout -> JSM Restored
-readSaved l = restoreLayout (widgets l) . either unreadable id <$> try (do
+readSaved l = restoreLayout (widgets l) <$> readStored (savedKey (layoutId l))
+
+-- | Guarda en el navegador lo que se ve de un layout. Si no deja escribir, no pasa nada.
+writeSaved :: Layout -> Shown -> JSM ()
+writeSaved l = writeStored (savedKey (layoutId l)) . saveLayout
+
+-- | Lo guardado en el navegador con esa clave. Si no deja leer, como si no hubiera nada.
+readStored :: Text -> JSM (Maybe Text)
+readStored key = either unreadable id <$> try (do
   storage <- Window.getLocalStorage =<< DOM.currentWindowUnchecked
-  Storage.getItem storage (savedKey (layoutId l)))
+  Storage.getItem storage key)
   where
     unreadable :: SomeException -> Maybe Text
     unreadable _ = Nothing
 
--- | Guarda en el navegador lo que se ve de un layout. Si no deja escribir, no pasa nada.
-writeSaved :: Layout -> Map WidgetId CardControl -> [WidgetConfig] -> JSM ()
-writeSaved l controls ws = either unwritable pure =<< try (do
+-- | Guarda en el navegador ese valor con esa clave. Si no deja escribir, no pasa nada.
+writeStored :: Text -> Text -> JSM ()
+writeStored key content = either unwritable pure =<< try (do
   storage <- Window.getLocalStorage =<< DOM.currentWindowUnchecked
-  Storage.setItem storage (savedKey (layoutId l)) (saveLayout controls ws))
+  Storage.setItem storage key content)
   where
     unwritable :: SomeException -> JSM ()
     unwritable _ = pure ()
@@ -610,43 +882,24 @@ targetOutline shown =
 -- razón: quien sabe dónde está la tarjeta es quien la coloca. Marca a la tarjeta
 -- que ocupa la esquina donde vive el botón de plegar, que es @fixed@ contra la
 -- ventana (2026-09-07 b); a quién le toca lo dice 'touchesTopRight'.
+--
+-- Devuelve también cada cambio de grupos que se pide desde su fila, con su id.
 slot :: MonadWidget t m
-     => LiveView t -> Event t () -> CardControl -> Event t CardControl -> Dynamic t Scene
-     -> WidgetConfig
-     -> m (Event t (WidgetId, Grip, (Double, Double)), Event t (Map WidgetId CardControl))
-slot live revealed control put shown wc = do
+     => Dynamic t Blend -> Dynamic t (Maybe SessionKey) -> LiveView t -> Event t () -> CardControl -> Event t CardControl
+     -> GroupContext t -> Dynamic t Scene -> WidgetConfig
+     -> m (Event t (WidgetId, Grip, (Double, Double)), Event t (Map WidgetId CardControl), Event t (WidgetId, GroupEdit))
+slot blend session live revealed control put ctx shown wc = do
   attrs  <- holdUniqDyn (slotAttrs wc <$> shown)
-  (e, turns) <- elDynAttr' "div" attrs $ do
-    t <- renderWidget live revealed control put wc
+  let extras = maybe (CardExtras blank (pure never) (constDyn []) (constDyn (Nothing, [])) (constDyn [])) (\title -> cardExtras title (widgetId wc) ctx)
+                 (rowTitle (widgetType wc))
+  (e, (turns, edits)) <- elDynAttr' "div" attrs $ do
+    t <- renderWidget blend session live revealed control put extras wc
     divClass "widget-slot__grip" $ text "◢"
     pure t
   grabs  <- slotPresses (DOM.uncheckedCastTo DOM.HTMLElement (_element_raw e))
-  pure ((\(g, p) -> (widgetId wc, g, p)) <$> grabs, Map.singleton (widgetId wc) <$> turns)
-
--- | Clase y estilo del slot según lo que se pinta: la que se lleva sigue al puntero
--- ('heldStyle') y se marca si ahí no se deja; las demás, en su rectángulo.
-slotAttrs :: WidgetConfig -> Scene -> Map Text Text
-slotAttrs wc s = case sceneHeld s of
-  Just h | heldId h == widgetId wc -> "class" =: heldClass h <> "style" =: heldStyle h
-  _ -> "class" =: slotClass r <> "style" =: slotStyle r
-  where
-    r = fromMaybe wc (find ((== widgetId wc) . widgetId) (sceneCards s))
-    heldClass h
-      | heldFits h = "widget-slot widget-slot--held"
-      | otherwise  = "widget-slot widget-slot--held widget-slot--blocked"
-
--- | Clase del slot: el bloque, y el modificador solo cuando hay algo que
--- modificar — mismo criterio que el @rowClass@ de 'Widgets.LiveTiming'
--- (2026-08-27). De los seis slots de los layouts fijos lo llevan dos.
---
--- __El modificador no pinta nada hoy:__ la hoja dejó de dibujar la muesca cuando
--- la banda de sesión bajó las tarjetas fuera del alcance del botón. Se emite igual,
--- porque la esquina vuelve a estar en disputa en cuanto la banda pueda anclarse
--- abajo.
-slotClass :: WidgetConfig -> T.Text
-slotClass wc
-  | touchesTopRight wc = "widget-slot widget-slot--top-right"
-  | otherwise          = "widget-slot"
+  pure ( (\(g, p) -> (widgetId wc, g, p)) <$> grabs
+       , Map.singleton (widgetId wc) <$> turns
+       , (,) (widgetId wc) <$> edits )
 
 -- | El modo edición: si se está editando, si el imán está encendido, y cuándo se
 -- restablece, se termina (y se guarda) o se cancela (y no se guarda nada).
@@ -666,12 +919,13 @@ data Edit t = Edit
 -- asterisco, y hay __una sola nota__ para todos, bajo el primero, abierta al cargar.
 -- Pulsarla la cierra y pasar el ratón por un botón con asterisco la vuelve a
 -- enseñar; asteriscos y nota se quitan al entrar en edición y vuelven si se cancela.
--- «Restablecer» pregunta si lo que se ve no es el de fábrica (@atFactoryNow@);
--- «Cancelar», si algo cambió desde que se entró (@movedNow@).
+-- «Restablecer» pregunta si lo que se ve no es el de fábrica (@atFactoryNow@), y dice
+-- cuántos grupos quita (@groupsNow@); «Cancelar», si algo cambió desde que se entró
+-- (@movedNow@).
 layoutSwitcher :: MonadWidget t m
-               => (Layout -> Bool) -> Dynamic t Bool -> Dynamic t Bool
+               => (Layout -> Bool) -> Dynamic t Bool -> Dynamic t Bool -> Dynamic t Int
                -> m (Dynamic t Layout, Edit t)
-layoutSwitcher unfit atFactoryNow movedNow = divClass "layout-switcher" $ mdo
+layoutSwitcher unfit atFactoryNow movedNow groupsNow = divClass "layout-switcher" $ mdo
   let entering = () <$ ffilter id (updated editing)
   notedAtEntry <- holdDyn True (tag (current noted) entering)
   noted <- holdDyn True $ leftmost [False <$ entering, tag (current notedAtEntry) cancel]
@@ -695,8 +949,8 @@ layoutSwitcher unfit atFactoryNow movedNow = divClass "layout-switcher" $ mdo
   cancel <- confirmButton cancelConfirm editing movedNow
   pure (active, Edit editing magnet reset finish cancel)
   where
-    resetConfirm  = Confirm "reset" "↺ Restablecer" "¿Volver a la configuración predeterminada?"
-    cancelConfirm = Confirm "cancel" "✗ Cancelar" "¿Descartar los cambios?"
+    resetConfirm  = Confirm "reset" "↺ Restablecer" (resetQuestion <$> groupsNow)
+    cancelConfirm = Confirm "cancel" "✗ Cancelar" (constDyn "¿Descartar los cambios?")
 
 -- | El botón de un layout: con asterisco mientras @noted@ si su guardado no encajó
 -- (@unfit@), y con la nota debajo si es quien la lleva (@holds@), enseñada mientras
@@ -729,21 +983,21 @@ layoutButton noted shown unfit holds note label = elClass "span" "layout-switche
 
 -- | Un botón de la edición que pregunta antes de actuar: su clase (@reset@ da
 -- @confirm--reset@ y @reset-button@), su texto y su pregunta.
-data Confirm = Confirm
+data Confirm t = Confirm
   { confirmKind     :: Text
   , confirmLabel    :: Text
-  , confirmQuestion :: Text
+  , confirmQuestion :: Dynamic t Text
   }
 
 -- | Un botón solo visible en edición. Si @risky@ no lo es, actúa sin más; si lo es,
 -- en su sitio pregunta «… Sí · No», y solo «Sí» actúa. Cualquier clic fuera de la
 -- pregunta, y salir de la edición, cuentan como «No».
-confirmButton :: MonadWidget t m => Confirm -> Dynamic t Bool -> Dynamic t Bool -> m (Event t ())
+confirmButton :: MonadWidget t m => Confirm t -> Dynamic t Bool -> Dynamic t Bool -> m (Event t ())
 confirmButton c editing risky = mdo
   (pressed, yes, no) <- elClass "span" ("confirm confirm--" <> confirmKind c) $ do
     (b, _) <- elDynAttr' "button" (buttonAttrs <$> editing <*> asking) $ text (confirmLabel c)
     (y, n) <- elDynAttr "span" (questionAttrs <$> editing <*> asking) $ do
-      text (confirmQuestion c)
+      dynText (confirmQuestion c)
       (y, _) <- elClass' "button" "switcher__btn confirm__yes" $ text "Sí"
       (n, _) <- elClass' "button" "switcher__btn" $ text "No"
       pure (domEvent Click y, domEvent Click n)
@@ -827,103 +1081,23 @@ editToggle cancel = mdo
 -- widget: quien conoce el dato es quien monta, y darlo solo a la rama que lo pide
 -- exigiría que el @case@ devolviera funciones de tipos distintos. Solo Lap Comparison
 -- devuelve sus cambios; las demás, 'never'.
+--
+-- @extras@ es lo que los grupos le ponen a la tarjeta ('Widgets.Groups.cardExtras'): los
+-- puntos, la fila bajo la cabecera y lo que destaca; lo que pide la fila se devuelve junto a
+-- lo demás. Constructores no lo monta.
 renderWidget :: MonadWidget t m
-             => LiveView t -> Event t () -> CardControl -> Event t CardControl -> WidgetConfig
-             -> m (Event t CardControl)
-renderWidget live revealed control put wc = case widgetType wc of
-  LiveTiming       -> never <$ liveTimingWidget live
-  LapComparison    -> comparisonWidget live revealed control put
-  TyreStrategy     -> never <$ tyreStrategyWidget live
-  HistoricalStats  -> never <$ driverStatsWidget
-  ConstructorStats -> never <$ constructorStatsWidget
-  Custom           -> never <$ placeholderWidget "Custom"
+             => Dynamic t Blend -> Dynamic t (Maybe SessionKey) -> LiveView t -> Event t () -> CardControl -> Event t CardControl
+             -> CardExtras t m (Event t GroupEdit) -> WidgetConfig -> m (Event t CardControl, Event t GroupEdit)
+renderWidget blend session live revealed control put extras wc = case widgetType wc of
+  LiveTiming       -> (,) never <$> liveTimingWidget session live extras
+  LapComparison    -> comparisonWidget blend session live revealed control put extras
+  TyreStrategy     -> (,) never <$> tyreStrategyWidget session live extras
+  HistoricalStats  -> (,) never <$> driverStatsWidget session extras
+  ConstructorStats -> (never, never) <$ constructorStatsWidget session
+  Custom           -> (never, never) <$ placeholderWidget "Custom"
 
 -- | Widget aún no disponible: recuadro con etiqueta del tipo.
 placeholderWidget :: DomBuilder t m => T.Text -> m ()
 placeholderWidget name = divClass "widget widget--placeholder" $ do
   divClass "widget__head" $ el "h2" $ text name
   elClass "p" "status status--placeholder" $ text "Widget no disponible"
-
--- | 'WidgetConfig' con su sitio en el lienzo: el 'WidgetId' y el rectángulo
--- __los pone quien llama__, y el resto va en su valor neutro — 'noParams' (cada
--- endpoint con su default), visible y sin grupo—.
---
--- El id es argumento y no derivado del tipo desde el 2026-09-01: derivarlo de
--- @show wt@ hacía que la identidad __fuera__ el tipo, y entonces dos widgets del
--- mismo tipo compartían id. Decidido el 2026-09-01.
---
--- __El rectángulo también es argumento, y no puede no serlo__: con el lienzo
--- libre (2026-09-03) la colocación es dato del widget, así
--- que un valor neutro sería apilar los siete en @0,0@. La tupla es
--- @(x, y, ancho, alto)@ en __1\/120 del contenedor__ (2026-09-04), no en
--- píxeles ni en centésimas.
-cfg :: WidgetId -> WidgetType -> (Int, Int, Int, Int) -> WidgetConfig
-cfg wid wt (x, y, w, h) = WidgetConfig
-  { widgetId      = wid
-  , widgetType    = wt
-  , params        = noParams
-  , widgetVisible = True
-  , widgetGroup   = Nothing
-  , wcX           = x
-  , wcY           = y
-  , wcW           = w
-  , wcH           = h
-  }
-
--- | Layout "Race Overview": live timing, comparación de vueltas y las dos
--- clasificaciones históricas, cada una en su sitio.
---
--- La colocación, en unidades de 120 (2026-09-03 y 2026-09-04):
---
--- > 0            60           120
--- > ┌────────────┬────────────┐  0
--- > │            │            │
--- > │            │            │
--- > │ live-timing│ lap-compar │
--- > │            │            │
--- > │            │            │
--- > │            ├╌╌╌╌╌╌╌╌╌╌╌╌┤ 85
--- > ├────────────┼────────────┤ 90
--- > │ driver-st  │ constr-st  │
--- > └────────────┴────────────┘ 120
---
--- Las cinco unidades bajo @lap-comparison@ quedan __vacías a propósito__:
--- comprueban que el lienzo no rellena los huecos solo. Todos los números son
--- múltiplos de 5, o sea celda del imán de 24×24.
---
--- Un typo en los ids no lo caza el compilador, y por eso los cinco rectángulos de
--- este módulo los ejercita @backend-test@ contra "Common.Layout".
-raceOverview :: Layout
-raceOverview = Layout
-  { layoutId = LayoutId "race-overview"
-  , widgets  =
-      [ cfg (WidgetId "live-timing")       LiveTiming       (  0,  0, 60, 90)
-      , cfg (WidgetId "lap-comparison")    LapComparison    ( 60,  0, 60, 85)
-      , cfg (WidgetId "driver-stats")      HistoricalStats  (  0, 90, 60, 30)
-      , cfg (WidgetId "constructor-stats") ConstructorStats ( 60, 90, 60, 30)
-      ]
-  }
-
--- | Layout "Qualy": solo live timing (conjunto distinto → valida la conmutación).
---
--- Su live timing lleva id __propio__ y no el de 'raceOverview': la unicidad solo
--- se pide dentro de un 'Layout', pero un id por layout es lo que permite que los
--- dos guarden estado distinto del mismo tipo de widget.
---
--- Ocupa el lienzo entero, que es el caso límite del rectángulo: @0,0@ y 120×120.
-qualy :: Layout
-qualy = Layout
-  { layoutId = LayoutId "qualy"
-  , widgets  = [cfg (WidgetId "qualy-live-timing") LiveTiming (0, 0, 120, 120)]
-  }
-
--- | Layout "Strategy": live timing y Tyre Strategy, mitad y mitad y a todo el alto, para
--- que las filas de las dos tarjetas queden a la par.
-strategy :: Layout
-strategy = Layout
-  { layoutId = LayoutId "strategy"
-  , widgets  =
-      [ cfg (WidgetId "strategy-live-timing") LiveTiming   ( 0, 0, 60, 120)
-      , cfg (WidgetId "tyre-strategy")        TyreStrategy (60, 0, 60, 120)
-      ]
-  }

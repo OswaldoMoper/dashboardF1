@@ -154,9 +154,10 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
       ``Handler.Live.Helper.assembleRows``: la tabla no puede decir dos cosas
       distintas según de dónde venga el dato.
     * **``KnockedOut`` no es un abandono.** Un eliminado de Q1 terminó su
-      sesión; marcarlo haría creer en un incidente. Solo ``Retired`` y
-      ``Stopped`` dan ``Dnf``, y el feed no publica nada que distinga ``Dns`` de
-      ``Dsq``.
+      sesión; marcarlo haría creer en un incidente. ``Retired`` da ``Dnf``;
+      ``Stopped`` solo cuando ``SessionInfo`` no dice libres ni clasificación
+      (en carrera, y si la foto no dice la sesión), porque ahí un coche parado
+      vuelve a salir. El feed no publica nada que distinga ``Dns`` de ``Dsq``.
     * **Un coche sin ``Position`` se omite**, por lo mismo que en
       ``assembleRows``: sin posición no hay fila que ordenar.
     """
@@ -164,6 +165,9 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
     timing = snapshot.get("TimingData") or {}
     lines = timing.get("Lines") or {}
     part = timing.get("SessionPart")
+    session = snapshot.get("SessionInfo")
+    kind = _text(session.get("Type")) if isinstance(session, dict) else ""
+    stopped_ends = kind not in ("Practice", "Qualifying")
 
     rows: List[Dict[str, Any]] = []
     for number, line in lines.items():
@@ -187,7 +191,9 @@ def _feed_rows(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "ltLastLap": _feed_text(line.get("LastLapTime")),
                 "ltLastSectors": _feed_last_sectors(line),
                 "ltStatus": (
-                    "Dnf" if line.get("Retired") or line.get("Stopped") else "Running"
+                    "Dnf"
+                    if line.get("Retired") or (stopped_ends and line.get("Stopped"))
+                    else "Running"
                 ),
                 "ltBestLap": _feed_text(line.get("BestLapTime")),
                 "ltPartBestLap": _feed_part_best(line, part),

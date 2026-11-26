@@ -1,12 +1,12 @@
 -- | Lo puro que comparten los consumidores del microservicio FastF1
--- ('Handler.Comparison' y 'Handler.Drivers'): la lectura
--- de los @QueryParam@ que viajan como segmentos de su URL, y la escalera con procedencia
--- de las áreas que guardan lo traído por clave ('fastf1Step'). Y, para quien juzga la
--- cuenta de F1TV con la que FastF1 abre el archivo, lo que dice el fichero del token.
+-- ('Handler.Comparison' y 'Handler.Drivers'): la escalera con procedencia de las áreas
+-- que guardan lo traído por clave ('fastf1Step'). Y, para quien juzga la cuenta de F1TV
+-- con la que FastF1 abre el archivo, lo que dice el fichero del token. La lectura de sus
+-- @QueryParam@ vive en 'Handler.Query.Helper', con la de las demás áreas.
 module Handler.FastF1.Helper
-  ( queryParam
-  , sessionParam
-  , fastf1Step
+  ( fastf1Step
+  , sessionTimeout
+  , chosenSessionTimeout
   , TokenFile (..)
   , tokenExpiry
   , tokenFile
@@ -22,29 +22,9 @@ import qualified Data.ByteString       as BS
 import           Data.Map.Strict       (Map)
 import qualified Data.Map.Strict       as Map
 import           Data.Text             (Text)
-import qualified Data.Text             as T
 import           Data.Time.Clock       (NominalDiffTime, UTCTime, addUTCTime)
 import           Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import           Outcome               (Rejection (..))
 import           Provenance            (Provenanced (..), isoInstant)
-
--- | Un @QueryParam@ opcional, resuelto: ausente → el valor por defecto; escrito
--- pero vacío (@?name=@) → 'BadRequest', porque viajaría como segmento vacío de
--- la URL del microservicio; con contenido → tal cual.
---
--- Solo es vacío la cadena vacía: un valor de espacios pasa como cualquier otro.
---
--- El motivo del rechazo es @«name está vacío: omítelo para …»@, completado con
--- @hint@.
-queryParam :: Text -> Text -> Text -> Maybe Text -> Either Rejection Text
-queryParam _ _ def Nothing = Right def
-queryParam name hint _ (Just value)
-  | T.null value = Left (BadRequest (name <> " está vacío: omítelo para " <> hint))
-  | otherwise    = Right value
-
--- | El @?session=@ de las tres áreas, con su motivo de rechazo.
-sessionParam :: Text -> Maybe Text -> Either Rejection Text
-sessionParam = queryParam "session" "usar la sesión por defecto"
 
 -- | El peldaño de la escalera de un consumidor de FastF1 y la cache que queda, para una
 -- clave: lo traído ('Nothing' si el fetch falló) que pasa @valid@ se sirve fresco y se
@@ -64,6 +44,19 @@ fastf1Step valid now key (Just x) cache
 fastf1Step _ _ key _ cache = (fromEntry <$> Map.lookup key cache, cache)
   where
     fromEntry (fetchedAt, x) = Provenanced Cached (Just FastF1) (Just fetchedAt) x
+
+-- | El techo de un intento al microservicio para una sesión, en segundos: con @latest@, el
+-- de la configuración; con una sesión elegida, 'chosenSessionTimeout', o el de la
+-- configuración si es mayor (2026-11-17 (f)).
+sessionTimeout :: Int -> Text -> Int
+sessionTimeout configured key
+  | key == "latest" = configured
+  | otherwise       = max configured chosenSessionTimeout
+
+-- | El techo con sesión elegida: FastF1 carga una sesión que no tiene en memoria en
+-- 8–13 s, y la página espera 35 (2026-11-12 (d)).
+chosenSessionTimeout :: Int
+chosenSessionTimeout = 30
 
 -- | Lo que hay en @f1auth_token.json@, el fichero en que FastF1 guarda el token de F1TV.
 data TokenFile

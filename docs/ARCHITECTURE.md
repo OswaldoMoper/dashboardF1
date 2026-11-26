@@ -47,7 +47,7 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   (se degrada a cache o dummy). El criterio vive en el `Context`; el handler solo traduce
   con `Outcome.serve` (2026-08-14). Lo usan las dos áreas que leen el microservicio con
   parámetros: `Comparison` y `Drivers`; las demás no rechazan nada y devuelven `IO a`.
-- **Procedencia del dato:** `/api/live`, `/api/tyre-strategy`, `/api/comparison` y `/api/drivers` emiten
+- **Procedencia del dato:** `/api/live`, `/api/comparison` y `/api/drivers` emiten
   `X-Data-Origin` (`fresh`/`recent`/`cached`/`sample`; solo `/api/live` tiene `recent`), `X-Data-Source`
   (`feed`/`openf1`/`fastf1`; falta con el dato de ejemplo) y, con los que salen de lo guardado —`recent` y
   `cached`—, `X-Data-Fetched-At` en ISO 8601 UTC; el cuerpo JSON no cambia. Cabeceras en `Provenance`; tipo y
@@ -58,6 +58,10 @@ Módulos (top-level, sin prefijo `Backend.`; convención del 2026-07-16):
   `Handler.OpenF1.Manager.fetchListWith`, y con `OPENF1_LOG` deja una línea por petición. El backend no
   vuelve a bajar a OpenF1 si lo que guardó tiene menos de 15 s y lo sirve como `recent`; el feed, que es
   propio, no se frena.
+- **Jolpica:** no publica su límite y contesta 429. Cada petición deja siempre una línea `[jolpica]` en el log
+  (`Handler.Historical.Manager`), que el automatismo no cuenta. Las clasificaciones se piden con la barra final,
+  sin la que Jolpica redirige, y las que llegan a la vez con la misma clave salen una sola vez
+  (`App.envHistoricalFlights`).
 - **NEGOCIO (`Handler/`) por área:** `Handler.<Área>{,.Context,.Helper,.Manager}` (interfaz → orquestación → efectos → pureza). Áreas: `Live`, `Historical`, `Comparison`, `Drivers`, `TyreStrategy`; luego `OpenF1`/`Jolpica`/`FastF1` como `Manager`s. Cache en memoria (STM) como infra cuando llegue (Fase 3).
 - **AUTOMATISMO (`Auto/`):** `Auto.Helper` (puro) y `Auto.Context` (efectos) para el comando `dashboardF1-auto`
   (`backend/auto/`), que programa con temporizadores de `systemd-run --user` las comprobaciones de un día de GP. No es

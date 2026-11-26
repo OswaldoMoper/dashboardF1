@@ -253,6 +253,7 @@ comparison = MkLapComparison
   , lcSamples   = 0
   , lcNotice    = ""
   , lcTelemetry = Nothing
+  , lcCut       = Nothing
   }
   where
     entry car code lap s1 s2 = MkComparisonEntry

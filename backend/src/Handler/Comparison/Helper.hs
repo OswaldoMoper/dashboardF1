@@ -9,15 +9,17 @@
 -- La identidad de cada coche (@ceCar@, @ceDriver@) es obligatoria (@.:@); el
 -- resto va con @.:?@ y su valor vacío, porque __un coche sin vuelta es una
 -- respuesta válida__: llega sin sectores, y decidir si eso tumba la comparación
--- es del 'Handler.Comparison.Context' ('comparable'), no del parseo.
+-- es de la escalera ('comparisonStep'), no del parseo.
 module Handler.Comparison.Helper
   ( -- * Envoltura cruda del microservicio FastF1
     RawComparison (..)
   , RawEntry (..)
   , RawGap (..)
+  , RawCut (..)
     -- * Transformación pura
   , assembleComparison
   , comparable
+  , comparisonStep
   , withNotice
     -- * Parámetros de la petición
   , defaultSession
@@ -26,22 +28,28 @@ module Handler.Comparison.Helper
   , resolveParams
   ) where
 
-import           Common.Types          (ComparisonEntry (..),
+import           Common.Origin         (Origin (..), Source (..))
+import           Common.Types          (ArchiveCut (..), ComparisonEntry (..),
                                         LapComparison (..), TelemetryGap (..),
                                         TracePoint)
 import           Data.Aeson            (FromJSON (..), withObject, (.!=), (.:),
                                         (.:?))
+import           Data.Map.Strict       (Map)
 import           Data.Maybe            (isJust)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
-import           Handler.FastF1.Helper (queryParam, sessionParam)
+import           Data.Time.Clock       (UTCTime)
+import           Handler.FastF1.Helper (fastf1Step)
+import           Handler.Query.Helper  (queryParam, sessionParam)
 import           Outcome               (Rejection)
+import           Provenance            (Provenanced (..))
 
 -- | La comparación tal como la emite el microservicio.
 data RawComparison = RawComparison
   { rcEntries   :: [RawEntry]
   , rcSamples   :: Int
   , rcTelemetry :: Maybe RawGap
+  , rcCut       :: Maybe RawCut
   }
   deriving (Eq, Show)
 
@@ -51,6 +59,19 @@ instance FromJSON RawComparison where
       <$> o .:  "lcEntries"
       <*> o .:? "lcSamples" .!= 0
       <*> o .:? "lcTelemetry"
+      <*> o .:? "lcCut"
+
+-- | Dónde acaba el archivo de F1, tal como lo emite el microservicio si la sesión no
+-- llegó entera; @laps@ nulo o ausente si no se sabe cuántas tuvo.
+data RawCut = RawCut
+  { rkLastLap :: Int
+  , rkLaps    :: Maybe Int
+  }
+  deriving (Eq, Show)
+
+instance FromJSON RawCut where
+  parseJSON = withObject "RawCut" $ \o ->
+    RawCut <$> o .: "lastLap" <*> o .:? "laps"
 
 -- | Lo que falta de la telemetría, tal como lo emite el microservicio con trazas y la
 -- telemetría de la sesión incompleta.
@@ -100,9 +121,11 @@ assembleComparison raw =
     , lcSamples   = rcSamples raw
     , lcNotice    = ""
     , lcTelemetry = gap <$> rcTelemetry raw
+    , lcCut       = cut <$> rcCut raw
     }
   where
     gap g = MkTelemetryGap {tgCoverage = rgCoverage g, tgRetryAt = rgRetryAt g}
+    cut k = MkArchiveCut {acLastLap = rkLastLap k, acLaps = rkLaps k}
     entry e =
       MkComparisonEntry
         { ceCar       = reCar e
@@ -118,6 +141,21 @@ assembleComparison raw =
 -- ninguno no hay Δ que calcular, contra la referencia ni contra el más rápido.
 comparable :: LapComparison -> Bool
 comparable = any (isJust . ceSectors) . lcEntries
+
+-- | El peldaño de la escalera de la comparación: el de 'Handler.FastF1.Helper.fastf1Step'
+-- con 'comparable', salvo que lo traído tenga coches y ninguno con vuelta. Eso se sirve
+-- tal cual, fresco y sin guardarlo, para que la página diga «sin vuelta» de cada uno en
+-- vez de enseñar lo guardado o el ejemplo como si fueran de esos coches.
+comparisonStep
+  :: Ord k
+  => UTCTime
+  -> k
+  -> Maybe LapComparison
+  -> Map k (UTCTime, LapComparison)
+  -> (Maybe (Provenanced LapComparison), Map k (UTCTime, LapComparison))
+comparisonStep _ _ (Just c) cache
+  | not (null (lcEntries c)), not (comparable c) = (Just (Provenanced Fresh (Just FastF1) Nothing c), cache)
+comparisonStep now key fetched cache = fastf1Step comparable now key fetched cache
 
 -- | La comparación con el aviso de lo que se ajustó de la petición.
 withNotice :: Text -> LapComparison -> LapComparison
@@ -162,7 +200,7 @@ adjustSamples n = (used, notice)
 -- entradas— junto con el aviso de 'adjustSamples'. Sin @?samples=@, 0 y sin aviso.
 --
 -- Un parámetro de texto escrito pero vacío se rechaza
--- ('Handler.FastF1.Helper.queryParam').
+-- ('Handler.Query.Helper.queryParam').
 resolveParams
   :: Maybe Text -> Maybe Text -> Maybe Int -> Either Rejection ((Text, Text, Int), Text)
 resolveParams session drivers samples = do

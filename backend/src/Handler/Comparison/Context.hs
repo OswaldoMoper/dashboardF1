@@ -5,10 +5,9 @@
 -- (@try@ → cache → dummy, 2026-07-22) pero el criterio de
 -- fallo no puede ser el habitual: no hay lista vacía que mirar.
 --
--- El criterio es 'Handler.Comparison.Helper.comparable': que __algún__ coche tenga
--- sus tres sectores (2026-08-03; redecidido con los coches sin vuelta, 2026-10-02).
--- Un coche sin vuelta se sirve como tal y lo dice la página; solo una comparación
--- en la que ninguno tiene vuelta cae a lo guardado o al dummy.
+-- El criterio es el de 'Handler.Comparison.Helper.comparisonStep': lo que contesta el
+-- microservicio con coches se sirve, tengan vuelta o no, y la página dice «sin vuelta»
+-- de los que no la tienen; solo lo que no llega cae a lo guardado o al dummy.
 module Handler.Comparison.Context where
 
 import           App                        (Env (..))
@@ -21,10 +20,9 @@ import           Control.Exception          (SomeException, try)
 import           Data.Maybe                 (fromMaybe)
 import           Data.Text                  (Text)
 import           Data.Time.Clock            (getCurrentTime)
-import           Handler.Comparison.Helper  (assembleComparison, comparable,
+import           Handler.Comparison.Helper  (assembleComparison, comparisonStep,
                                              resolveParams, withNotice)
 import qualified Handler.Comparison.Manager as Manager
-import           Handler.FastF1.Helper      (fastf1Step)
 import           Outcome                    (Outcome (..), classify)
 import           Provenance                 (Provenanced (..))
 
@@ -33,10 +31,11 @@ import           Provenance                 (Provenanced (..))
 --
 -- * el fetch trae algún coche con vuelta ('comparable') → se guarda en la cache con
 --   la hora y se sirve ('Fresh');
+-- * el fetch trae coches y ninguno con vuelta → se sirve ('Fresh') sin guardarlo;
 -- * la excepción es culpa del cliente ('Outcome.classify') → se rechaza sin tocar
 --   la cache (2026-08-14);
 -- * cualquier otra cosa —servicio apagado, techo vencido, @5xx@, JSON con otra
---   forma, o ningún coche con vuelta— → la última respuesta buena __de esa misma
+--   forma, o ningún coche— → la última respuesta buena __de esa misma
 --   clave__ ('Cached', con su hora) y, sin ninguna, el dummy ('Sample').
 --
 -- Las tres ramas que sirven llevan el aviso de lo que se ajustó de @samples@. La
@@ -60,7 +59,7 @@ getComparison env session drivers samples =
           now <- getCurrentTime
           served <- atomically $ do
             cached <- readTVar (envComparisonCache env)
-            let (shown, kept) = fastf1Step comparable now key (either (const Nothing) Just result) cached
+            let (shown, kept) = comparisonStep now key (either (const Nothing) Just result) cached
             writeTVar (envComparisonCache env) kept
             pure shown
           let shownWith p = p {pvBody = withNotice notice (pvBody p)}
@@ -94,6 +93,7 @@ dummy =
     , lcSamples   = 0
     , lcNotice    = ""
     , lcTelemetry = Nothing
+    , lcCut       = Nothing
     }
   where
     entry car driver lap sectors =

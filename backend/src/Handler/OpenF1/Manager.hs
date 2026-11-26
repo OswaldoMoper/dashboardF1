@@ -4,8 +4,7 @@
 -- cliente @req@: base de URL, las opciones que seleccionan de qué se habla y el GET
 -- genérico que decodifica un arreglo JSON — 'fetchListWith' para cualquier
 -- selección y 'fetchList' para la sesión en curso, que es la mayoría. Reúne también
--- 'fetchDrivers' (@/drivers@), compartido por 'Handler.Live' y
--- 'Handler.TyreStrategy'. Los GET específicos de un área viven en el @Manager@ de
+-- 'fetchDrivers' (@/drivers@). Los GET específicos de un área viven en el @Manager@ de
 -- esa área, reusando estos dos.
 --
 -- La __política de fallo__ (techo por intento y número de intentos) no está aquí
@@ -18,6 +17,7 @@ import           Control.Concurrent        (threadDelay)
 import           Control.Concurrent.MVar   (MVar, modifyMVar)
 import           Control.Exception         (throwIO, try)
 import           Control.Monad             (when)
+import           Control.Retry             (RetryPolicyM (..))
 import           Data.Aeson                (FromJSON)
 import qualified Data.ByteString           as BS
 import           Data.Text                 (Text)
@@ -38,6 +38,10 @@ openf1Base = https "api.openf1.org" /: "v1"
 -- | La mayoría de los endpoints se piden para la sesión en curso.
 latestSession :: Option 'Https
 latestSession = "session_key" =: ("latest" :: Text)
+
+-- | Una sesión concreta, por su @session_key@.
+sessionKey :: Int -> Option 'Https
+sessionKey = ("session_key" =:)
 
 -- | @\/meetings@ no se pide por sesión sino por la clave del gran premio, que
 -- llega dentro de otras respuestas.
@@ -95,13 +99,14 @@ endsAfter instant = queryFlag ("date_end>=" <> instant)
 -- así que el @try@ de quien llama ve lo mismo que sin la línea. La línea sale en una
 -- sola escritura: dos peticiones a la vez no mezclan las suyas.
 --
--- __Antes de salir espera su turno__ ('takeTurn'), así que ninguna área puede pasarse
--- del límite por segundo de OpenF1. Los reintentos de @req@ por techo vencido salen
--- sin turno.
+-- __Antes de salir espera su turno__ ('takeTurn'), y cada reintento de @req@ también
+-- ('openf1Config'), así que ninguna área puede pasarse del límite por segundo de
+-- OpenF1. La línea es de la petición entera: su hora es la del primer turno.
 fetchListWith :: FromJSON a => Config -> Text -> Option 'Https -> IO [a]
 fetchListWith cfg path opts = do
   sent <- takeTurn (cfgOpenF1Brake cfg)
-  result <- try $ runReq publicApiConfig $ do
+  config <- openf1Config (cfgOpenF1Brake cfg)
+  result <- try $ runReq config $ do
     res <-
       req
         GET
@@ -130,9 +135,28 @@ takeTurn brake = modifyMVar brake $ \recent -> do
   sent <- getCurrentTime
   pure (take brakeBurst (sent : recent), sent)
 
+-- | 'publicApiConfig' con un paso más antes de cada reintento de @req@: esperar el
+-- turno del freno ('takeTurn'). Cubre los dos bucles de @req@, el de los status y el
+-- de las excepciones, porque los dos usan la misma política. Un reintento que la
+-- cuenta de 'publicApiConfig' ya no permite no pide turno.
+--
+-- El turno se toma antes de la pausa de 50 ms, así que la salida real va hasta 50 ms
+-- detrás de la hora apuntada: cabe en el margen de 'Handler.OpenF1.Helper.brakeWindow'.
+openf1Config :: MVar [UTCTime] -> IO HttpConfig
+openf1Config brake = do
+  base <- publicApiConfig
+  pure base
+    { httpConfigRetryPolicy =
+        httpConfigRetryPolicy base <> RetryPolicyM (\_ -> Just 0 <$ takeTurn brake)
+    }
+
 -- | 'fetchListWith' para la sesión en curso, que es el caso mayoritario.
 fetchList :: FromJSON a => Config -> Text -> IO [a]
 fetchList cfg path = fetchListWith cfg path latestSession
 
 fetchDrivers :: Config -> IO [Of1Driver]
-fetchDrivers cfg = fetchList cfg "drivers"
+fetchDrivers cfg = fetchDriversOf cfg latestSession
+
+-- | La parrilla de la sesión que diga la opción ('latestSession' o 'sessionKey').
+fetchDriversOf :: Config -> Option 'Https -> IO [Of1Driver]
+fetchDriversOf cfg = fetchListWith cfg "drivers"

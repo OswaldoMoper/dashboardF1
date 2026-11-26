@@ -75,47 +75,77 @@ module Handler.Live.Helper
   , formatLap
   , classificationTime
   , classificationGaps
+    -- * Una sesión pasada
+  , Of1Listed (..)
+  , matchSession
+  , FastF1Stints (..)
+  , needsOpenF1Stints
+  , pastStints
+  , PastKeep (..)
+  , pastKeep
+  , PendingStep (..)
+  , settlePending
+  , driverEntryOf
+  , entryDriverOf1
+  , FastF1Session (..)
+  , fastf1Session
+  , sessionTypeOf
+  , FastF1Lap (..)
+  , fastf1Lap
+  , rawDriverOf1
+  , orderedPositions
   ) where
 
-import           App                   (ScheduledSession (..),
-                                        SectorMemory (..))
-import           Common.Origin         (Origin (..), Source (..))
-import           Common.Types          (Countdown (..), DriverStatus (..),
-                                        LapProgress (..), LiveTable (..),
-                                        LiveTimingRow (..), SessionClock (..),
-                                        SessionInfo (..), SessionState (..),
-                                        StartNotice (..), StateBasis (..),
-                                        StateReading (..), TrackCondition (..),
-                                        UpNext (..), lapSeconds, partLabel,
-                                        sessionInProgress, sessionIsLive,
-                                        sessionStateFrom)
-import           Control.Applicative   ((<|>))
-import           Control.Monad         (mfilter)
-import           Data.Aeson            (FromJSON (..), ToJSON, Value (..),
-                                        withObject, (.!=), (.:), (.:?))
-import           Data.Aeson.Types      (Parser)
-import           Data.Foldable         (toList)
-import           Data.Function         (on)
-import           Data.List             (find, maximumBy, minimumBy, sortOn)
-import           Data.List.NonEmpty    (nonEmpty)
-import qualified Data.List.NonEmpty    as NE
-import qualified Data.Map.Strict       as Map
-import           Data.Maybe            (fromMaybe, isJust, listToMaybe,
-                                        mapMaybe)
-import           Data.Ord              (Down (..), comparing)
-import           Data.Text             (Text)
-import qualified Data.Text             as T
-import           Data.Text.Read        (decimal)
-import           Data.Time.Clock       (NominalDiffTime, UTCTime (..),
-                                        addUTCTime, diffUTCTime)
-import           Data.Time.Format      (defaultTimeLocale, parseTimeM)
-import           GHC.Generics          (Generic)
-import           Handler.Feed.Helper   (FeedFlag (..), FeedLive (..),
-                                        FeedNotice (..), FeedRow (..),
-                                        FeedSession (..), FeedTrack (..))
-import           Handler.OpenF1.Helper (Of1Driver (..))
-import           Provenance            (isoInstant)
-import           Text.Printf           (printf)
+import           App                         (PastPending (..),
+                                              ScheduledSession (..),
+                                              SectorMemory (..))
+import           Common.Origin               (Origin (..), Source (..))
+import           Common.Session              (SessionCode (..), SessionKey (..),
+                                              feedName)
+import           Common.Types                (Countdown (..), DriverEntry (..),
+                                              DriverStatus (..),
+                                              LapProgress (..), LiveTable (..),
+                                              LiveTimingRow (..),
+                                              SessionClock (..),
+                                              SessionInfo (..),
+                                              SessionState (..),
+                                              StartNotice (..), StateBasis (..),
+                                              StateReading (..),
+                                              TrackCondition (..), UpNext (..),
+                                              lapSeconds, partLabel,
+                                              sessionIsLive, sessionRolling,
+                                              sessionStateFrom)
+import           Control.Applicative         ((<|>))
+import           Control.Monad               (mfilter)
+import           Data.Aeson                  (FromJSON (..), ToJSON, Value (..),
+                                              withObject, (.!=), (.:), (.:?))
+import           Data.Aeson.Types            (Parser)
+import           Data.Foldable               (toList)
+import           Data.Function               (on)
+import           Data.List                   (find, maximumBy, minimumBy,
+                                              sortOn)
+import           Data.List.NonEmpty          (nonEmpty)
+import qualified Data.List.NonEmpty          as NE
+import qualified Data.Map.Strict             as Map
+import           Data.Maybe                  (fromMaybe, isJust, listToMaybe,
+                                              mapMaybe)
+import           Data.Ord                    (Down (..), comparing)
+import           Data.Text                   (Text)
+import qualified Data.Text                   as T
+import           Data.Text.Read              (decimal)
+import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
+                                              addUTCTime, diffUTCTime)
+import           Data.Time.Format            (defaultTimeLocale, parseTimeM)
+import           GHC.Generics                (Generic)
+import           Handler.Drivers.Helper      (RawDriver (..))
+import           Handler.Feed.Helper         (FeedFlag (..), FeedLive (..),
+                                              FeedNotice (..), FeedRow (..),
+                                              FeedSession (..), FeedTrack (..))
+import           Handler.OpenF1.Helper       (Of1Driver (..), Of1Stint,
+                                              assembleStints)
+import           Handler.Season.Helper       (JolpicaRace (..))
+import           Provenance                  (isoInstant)
+import           Text.Printf                 (printf)
 
 -- | @/position@: posición del piloto en un instante (@date@).
 data Of1Position = Of1Position
@@ -146,7 +176,7 @@ data Of1Interval = Of1Interval
 -- Los dos campos de gap van con @.:?@ y no con @.:@: el nulo ya lo absorbía
 -- 'gapText', pero la __clave ausente__ tumbaba el decode del arreglo entero y con
 -- él @\/api\/live@, que degradaba al dummy de tres filas con la red viva. Es el
--- mismo modo de fallo que @compound@ en 'Handler.TyreStrategy.Helper'
+-- mismo modo de fallo que @compound@ en 'Handler.OpenF1.Helper.Of1Stint'
 -- (2026-08-25) y entra por la misma puerta: @.!= Null@ hace
 -- que la clave ausente y el nulo compartan rama.
 instance FromJSON Of1Interval where
@@ -807,16 +837,13 @@ feedWindowLead = 15 * 60
 -- publica, y el instante en que se vio por última vez que el feed daba una sesión
 -- por finalizada.
 --
--- __Sin calendario se pregunta__ (la lista vacía), y es deliberado: no saber cuándo
--- empieza la siguiente no es saber que no hay ninguna. El precio es el de hoy —una
--- foto de 16-23 s por refresco— y el beneficio es que un reinicio en pleno fin de
--- semana no deja la pantalla sin directo, que es para lo que existe el dashboard.
+-- __Sin calendario se pregunta__ (la lista vacía): cada refresco paga la foto de
+-- 16-23 s (2026-09-15 (d)).
 --
--- __La ventana abre por reloj y cierra por señal.__ Abre 'feedWindowLead' antes de
--- la hora prevista; no cierra a una hora sino cuando el feed dice que la sesión
--- acabó (la deducida no cuenta: 'closesFeedWindow'), así que __una carrera alargada
--- por bandera roja sigue cubierta__ sin que nadie haya tenido que inventar cuánto
--- puede alargarse.
+-- __La ventana abre por reloj y cierra por señal__ (2026-09-15 (c)). Abre
+-- 'feedWindowLead' antes de la hora prevista; no cierra a una hora sino cuando el feed
+-- dice que la sesión acabó (la deducida no cuenta: 'closesFeedWindow'), así que __una
+-- carrera alargada por bandera roja sigue cubierta__.
 --
 -- __La señal se compara contra la hora prevista de arranque de la sesión vigente__,
 -- y no contra su apertura: ninguna sesión acaba antes de empezar, así que una
@@ -825,8 +852,7 @@ feedWindowLead = 15 * 60
 --
 -- __Y no se consume__, que es lo que hace que la repetición no muerda: el campo de
 -- estado emite @Finalised@ más de una vez (2026-09-14 (k)), y aplicar esto dos veces
--- da lo mismo que aplicarlo una. Un «avanza a la siguiente» se habría saltado una
--- sesión.
+-- da lo mismo que aplicarlo una.
 --
 -- __Y se reabre sola:__ cuando la sesión siguiente cruza su apertura, su hora de
 -- arranque es posterior a la finalización vista, así que vuelve a dar abierto sin
@@ -976,15 +1002,18 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 
 -- | Qué viene después de la sesión que se está enseñando, en ese instante.
 --
--- __Los cinco casos salen de cinco decisiones distintas y por eso no se
+-- __Los seis casos salen de seis decisiones distintas y por eso no se
 -- simplifican:__
 --
 -- * __Rodando, la derecha calla__ ('Common.Types.NextSilent'): en carrera el ancho
 --   hace falta para lo que está pasando, y la siguiente sería el gran premio de
 --   dentro de quince días. Qué cuenta como rodando lo decide
---   'Common.Types.sessionInProgress', que es el mismo criterio que enciende la
---   etiqueta del directo en la página. __Con bandera a cuadros o roja también
---   calla__, aunque la etiqueta se apague: la derecha sigue con el reloj, parado.
+--   'Common.Types.sessionRolling': la sesión en marcha, el criterio que enciende la
+--   etiqueta del directo en la página, y __también con bandera a cuadros o roja__,
+--   aunque la etiqueta se apague: la derecha sigue con el reloj, parado.
+-- * __Salvo la última bandera a cuadros__, que cuenta ya a la siguiente sin esperar
+--   al @Finalised@: la de una práctica o una carrera, y la de la última parte de una
+--   clasificación. Una clasificación sin parte conocida no la tiene por última.
 -- * __Sin calendario, no se sabe__ ('Common.Types.NextUnknown'): es el estado con el
 --   que arranca el proceso, y dura lo que tarde la primera petición.
 -- * __Sin empezar, se cuenta a ELLA__ ('Common.Types.NextStartsIn'): con la parrilla
@@ -1000,13 +1029,14 @@ meetingNames meetings = Map.fromList [(omKey m, omName m) | m <- meetings]
 -- y no la primera de la lista: el calendario llega ordenado, pero depender de ese
 -- orden ataría esto a una promesa de OpenF1 que nadie ha comprobado.
 --
--- __La etiqueta es el gran premio, salvo dentro de su propio fin de semana__, donde
--- repetirlo no diría nada nuevo —la sesión de la izquierda ya lo lleva— y el nombre
--- de la sesión sí. Sin nombre de gran premio se cae al de la sesión, que siempre hay.
+-- __La etiqueta es el gran premio, salvo dentro de su propio fin de semana__, donde es
+-- el nombre de la sesión (2026-09-17 (e)). Sin nombre de gran premio se cae al de la
+-- sesión, que siempre hay.
 upNext :: UTCTime -> Maybe SessionInfo -> [ScheduledSession] -> UpNext
 upNext now shown sessions
   | null sessions                   = NextUnknown
-  | silences state                  = NextSilent
+  | sessionRolling state
+  , not lastFlag                    = NextSilent
   | Just StartDelayed <- late       = NextDelayed
   | Just (StartAnnounced c) <- late = NextAnnounced c
   | otherwise                       = maybe NextUnknown answer soonest
@@ -1019,9 +1049,17 @@ upNext now shown sessions
 
     state = srState <$> (siState =<< shown)
 
-    silences s = sessionInProgress s || s `elem` [Just SessionChequered, Just SessionRedFlag]
+    lastFlag = state == Just SessionChequered && maybe False lastPart shown
 
-    soonest = listToMaybe (sortOn ssStart (filter ((> now) . ssStart) sessions))
+    lastPart s = case siPart s of
+      Nothing -> T.strip (siType s) /= "Qualifying"
+      Just p  -> p >= partsOf s
+
+    partsOf s
+      | null (siEntries s) = 3
+      | otherwise          = length (siEntries s)
+
+    soonest =listToMaybe (sortOn ssStart (filter ((> now) . ssStart) sessions))
 
     answer next
       | state == Just SessionInactive = NextStartsIn (secondsTo next)
@@ -1386,7 +1424,7 @@ formatLap secs =
 -- 2026-08-27 sobre la sesión 11353: @\/position@ publica los 22 coches de la
 -- parrilla, los 6 abandonos incluidos y con posición (el coche 3, con 0 vueltas,
 -- sale en P22). O sea que esta rama solo la ejercita el fixture, igual que la del
--- @compound@ nulo de 'Handler.TyreStrategy.Helper'. Vive para la sesión __en
+-- @compound@ nulo de 'Handler.OpenF1.Helper.Of1Stint'. Vive para la sesión __en
 -- curso__, donde un coche puede no tener posición publicada todavía.
 --
 -- @\/session_result@ es la única de las cinco cuya ausencia __no__ pierde filas:
@@ -1457,3 +1495,187 @@ assembleRows drivers positions intervals laps results =
           , ltBestSectors = []
           , ltPartBestSectors = []
           }
+
+-- | Una sesión de la lista de un año de OpenF1 (@\/sessions?year=@): su clave, si se
+-- canceló y la sesión misma.
+data Of1Listed = Of1Listed
+  { lsKey       :: Int   -- ^ @session_key@.
+  , lsCancelled :: Bool  -- ^ @is_cancelled@; ausente, no cancelada.
+  , lsSession   :: Of1Session
+  }
+  deriving (Eq, Show)
+
+instance FromJSON Of1Listed where
+  parseJSON v = withObject "Of1Listed" listed v
+    where
+      listed o =
+        Of1Listed
+          <$> o .: "session_key"
+          <*> o .:? "is_cancelled" .!= False
+          <*> parseJSON v
+
+-- | La sesión de OpenF1 que nombra una clave: la de su nombre de sesión y el día UTC en
+-- que Jolpica la pone, sin las canceladas. 'Nothing' si Jolpica no tiene esa sesión o
+-- si no hay exactamente una que case.
+matchSession :: SessionKey -> [JolpicaRace] -> [Of1Listed] -> Maybe Of1Listed
+matchSession key races listed = do
+  race <- find (\r -> jrYear r == skYear key && jrRound r == skRound key) races
+  start <- lookup (skCode key) (jrSessions race)
+  case filter (same start) listed of
+    [one] -> Just one
+    _     -> Nothing
+  where
+    same start l =
+      not (lsCancelled l)
+        && osName (lsSession l) == feedName (skCode key)
+        && utctDay (osStart (lsSession l)) == utctDay start
+
+-- | Lo que da @\/fastf1\/stints@: si la sesión llegó entera y sus stints, con la forma
+-- de OpenF1 @\/stints@.
+data FastF1Stints = FastF1Stints
+  { fsComplete :: Bool
+  , fsStints   :: [Of1Stint]
+  }
+  deriving (Eq, Show)
+
+instance FromJSON FastF1Stints where
+  parseJSON = withObject "FastF1Stints" $ \o ->
+    FastF1Stints <$> o .: "complete" <*> o .: "stints"
+
+-- | Si hace falta preguntar los stints a OpenF1: cuando FastF1 no contestó o no llegó
+-- entera.
+needsOpenF1Stints :: Maybe FastF1Stints -> Bool
+needsOpenF1Stints = maybe True (not . fsComplete)
+
+-- | Los stints de una sesión pasada (2026-11-14 (a)) a partir de lo que contestó
+-- FastF1 y de lo que contestó OpenF1 ('Nothing', no contestó o no se preguntó), y si
+-- valen para guardarse.
+--
+-- FastF1 entera, los suyos. Si no, los de OpenF1 si trajo alguno, y si tampoco, los de
+-- FastF1 aunque venga cortada. Solo valen para guardarse los de FastF1 entera y los de
+-- OpenF1 con FastF1 cortada: con FastF1 sin contestar, la próxima vez puede contestar.
+pastStints :: Maybe FastF1Stints -> Maybe [Of1Stint] -> ([Of1Stint], Bool)
+pastStints (Just f) _ | fsComplete f = (fsStints f, True)
+pastStints fast (Just open@(_ : _))  = (open, isJust fast)
+pastStints fast _                    = (maybe [] fsStints fast, False)
+
+-- | Qué se guarda de una sesión pasada de OpenF1, a partir de lo mismo que 'pastStints':
+-- entera, para siempre; con FastF1 sin contestar, a medias, con los pilotos que armarán
+-- sus stints ('settlePending'); si no, nada.
+data PastKeep
+  = KeepWhole
+  | KeepPending [DriverEntry]
+  | KeepNone
+  deriving (Eq, Show)
+
+pastKeep :: [Of1Driver] -> Maybe FastF1Stints -> Maybe [Of1Stint] -> PastKeep
+pastKeep drivers fast open
+  | snd (pastStints fast open) = KeepWhole
+  | Nothing <- fast            = KeepPending (map driverEntryOf drivers)
+  | otherwise                  = KeepNone
+
+-- | Qué se hace con una sesión guardada a medias según lo que contesta ahora FastF1.
+data PendingStep
+  = StillPending        -- ^ Sigue sin contestar: se sirve lo guardado a medias.
+  | Settled LiveTable   -- ^ La tabla entera, que ya se guarda.
+  | Dropped             -- ^ Cortada y sin stints de OpenF1: se vuelve a pedir todo.
+  deriving (Eq, Show)
+
+-- | Con FastF1 entera, la tabla con sus stints; cortada, con los de OpenF1 que ya lleva,
+-- como 'pastStints'; si no lleva ninguno, 'Dropped'.
+settlePending :: Maybe FastF1Stints -> PastPending -> PendingStep
+settlePending Nothing _ = StillPending
+settlePending (Just f) p
+  | fsComplete f                  = Settled table {liveStints = assembleStints drivers (fsStints f)}
+  | not (null (liveStints table)) = Settled table
+  | otherwise                     = Dropped
+  where
+    table = ppTable p
+    drivers = mapMaybe entryDriverOf1 (ppDrivers p)
+
+-- | Un piloto de OpenF1 @\/drivers@ con el tipo de @common@; 'entryDriverOf1' lo devuelve.
+driverEntryOf :: Of1Driver -> DriverEntry
+driverEntryOf d =
+  MkDriverEntry {deNumber = T.pack (show (odNumber d)), deCode = odAcronym d, deTeam = odTeam d}
+
+entryDriverOf1 :: DriverEntry -> Maybe Of1Driver
+entryDriverOf1 d = (\n -> Of1Driver n (deCode d) (deTeam d)) <$> carNumber (deNumber d)
+
+-- | Lo que da @\/fastf1\/session@: el nombre del gran premio y el de la sesión, y si su
+-- estado llegó al final del archivo («Finalised» o «Ends»).
+data FastF1Session = FastF1Session
+  { fiMeeting  :: Text
+  , fiName     :: Text
+  , fiFinished :: Bool
+  }
+  deriving (Eq, Show)
+
+instance FromJSON FastF1Session where
+  parseJSON = withObject "FastF1Session" $ \o ->
+    FastF1Session <$> o .: "meeting" <*> o .: "name" <*> o .: "finished"
+
+-- | La sesión que nombra una clave con lo que dijo FastF1 (2026-11-14 (g) y (h)): el tipo
+-- por el código de la clave ('sessionTypeOf'), el nombre y el gran premio del
+-- microservicio, y «Finalizada» deducida de 'fiFinished'; sin eso, sin estado.
+fastf1Session :: SessionKey -> FastF1Session -> SessionInfo
+fastf1Session key info =
+  SessionInfo
+    { siType    = sessionTypeOf (skCode key)
+    , siName    = fiName info
+    , siMeeting = fiMeeting info
+    , siCircuit = Nothing
+    , siState   = if fiFinished info then Just (StateReading SessionFinalised Derived) else Nothing
+    , siLaps    = Nothing
+    , siClock   = Nothing
+    , siPart    = Nothing
+    , siTrack   = Nothing
+    , siCountdown = Nothing
+    , siStart   = Nothing
+    , siEntries = []
+    , siCutOffTime = Nothing
+    }
+
+-- | El tipo de sesión tal como lo nombra el feed, por el código de la clave.
+sessionTypeOf :: SessionCode -> Text
+sessionTypeOf code = case code of
+  Race             -> "Race"
+  Sprint           -> "Race"
+  Qualifying       -> "Qualifying"
+  SprintQualifying -> "Qualifying"
+  _                -> "Practice"
+
+-- | Una vuelta de @\/fastf1\/laps@: el número de coche (texto), la vuelta y el tiempo
+-- (@M:SS.mmm@, o vacío si no está cronometrada).
+data FastF1Lap = FastF1Lap
+  { flNumber :: Text
+  , flLap    :: Int
+  , flTime   :: Text
+  }
+  deriving (Eq, Show)
+
+instance FromJSON FastF1Lap where
+  parseJSON = withObject "FastF1Lap" $ \o ->
+    FastF1Lap <$> o .: "leNumber" <*> o .: "leLap" <*> o .:? "leTime" .!= ""
+
+-- | La vuelta de FastF1 con la forma de OpenF1 @\/laps@; 'Nothing' si el coche no es un
+-- número. Sin tiempo, 'olDuration' en 'Nothing', como una vuelta de boxes de OpenF1.
+fastf1Lap :: FastF1Lap -> Maybe Of1Lap
+fastf1Lap l = do
+  n <- carNumber (flNumber l)
+  pure (Of1Lap n (flLap l) (lapSeconds (flTime l)))
+
+-- | Un coche de @\/fastf1\/drivers@ con la forma de OpenF1 @\/drivers@; 'Nothing' si el
+-- número no es un número.
+rawDriverOf1 :: RawDriver -> Maybe Of1Driver
+rawDriverOf1 d = (\n -> Of1Driver n (rdCode d) (rdTeam d)) <$> carNumber (rdNumber d)
+
+carNumber :: Text -> Maybe Int
+carNumber t = case decimal (T.strip t) of
+  Right (n, rest) | T.null rest -> Just n
+  _                             -> Nothing
+
+-- | Las posiciones que 'assembleRows' necesita, por el orden de la clasificación de
+-- @\/fastf1\/results@ (que ya viene ordenada): el primero de la lista es el 1.
+orderedPositions :: [Of1Result] -> [Of1Position]
+orderedPositions results =
+  [Of1Position (orNumber r) p "" | (p, r) <- zip [1 ..] results]

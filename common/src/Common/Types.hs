@@ -15,6 +15,11 @@ newtype WidgetId = WidgetId Text
   deriving stock (Eq, Ord, Show, Generic)
   deriving newtype (ToJSON, FromJSON)
 
+-- | Identificador de un 'CardGroup' dentro de un 'Layout'.
+newtype GroupId = GroupId Text
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (ToJSON, FromJSON)
+
 -- | Identificador de un 'Layout'.
 newtype LayoutId = LayoutId Text
   deriving stock (Eq, Show, Generic)
@@ -321,6 +326,12 @@ sessionInProgress = maybe False inProgress
     inProgress SessionChequered = False
     inProgress SessionRedFlag   = False
     inProgress s                = sessionIsLive s
+
+-- | Si la sesión sigue en pista: en marcha ('sessionInProgress'), con bandera roja o a
+-- cuadros, hasta «Finalizada». Mientras, la derecha de la banda calla
+-- ('NextSilent') y, con otra sesión elegida, la banda avisa del directo.
+sessionRolling :: Maybe SessionState -> Bool
+sessionRolling s = sessionInProgress s || s `elem` [Just SessionChequered, Just SessionRedFlag]
 
 -- | De dónde salió un estado.
 --
@@ -684,14 +695,27 @@ countdownAfter k c = c {cdSeconds = max 0 (cdSeconds c - max 0 k)}
 -- __La sesión que aún no empieza no se nombra__: está escrita al lado, en la misma
 -- banda, y repetirla gastaría el ancho en decir dos veces lo mismo.
 --
+-- __Con la cuenta en 0 dice «arrancando…»__, en 'NextStartsIn' y en 'NextAfter': la
+-- cuenta llega a 0 a la hora del calendario y la sesión arranca cuando lo dice el feed,
+-- con su diferido. 'NextAnnounced' sigue con su cuenta y su hora.
+--
 -- Recibe los segundos del día locales de ahora, para la hora de 'NextAnnounced'.
 upNextLabel :: Int -> UpNext -> Text
 upNextLabel _ NextSilent        = ""
 upNextLabel _ NextUnknown       = "Próxima: …"
-upNextLabel _ (NextStartsIn n)  = "empieza en " <> formatCountdown n
-upNextLabel _ (NextAfter l n)   = l <> " · en " <> formatCountdown n
+upNextLabel _ (NextStartsIn n)
+  | n <= 0                      = startingLabel
+  | otherwise                   = "empieza en " <> formatCountdown n
+upNextLabel _ (NextAfter l n)
+  | n <= 0                      = l <> " · " <> startingLabel
+  | otherwise                   = l <> " · en " <> formatCountdown n
 upNextLabel _ NextDelayed       = "Salida retrasada"
 upNextLabel t (NextAnnounced c) = countdownText t c
+
+-- | Lo que dice la banda cuando la cuenta hacia una sesión ya llegó a 0 y la sesión aún no
+-- ha arrancado ('upNextLabel').
+startingLabel :: Text
+startingLabel = "arrancando…"
 
 -- | La misma cuenta atrás un segundo después.
 --
@@ -826,13 +850,16 @@ data LapComparison = MkLapComparison
   , lcTelemetry :: Maybe TelemetryGap
     -- ^ Con trazas y la telemetría de la sesión incompleta, cuánto cubre y cuándo se
     -- vuelve a pedir; 'Nothing' sin trazas o con ella entera.
+  , lcCut       :: Maybe ArchiveCut
+    -- ^ Si el archivo de F1 de la sesión está cortado, dónde acaba; 'Nothing' si llegó
+    -- entera.
   }
   deriving stock (Eq, Show, Generic)
 
 instance ToJSON LapComparison
 
--- | Sin @lcTelemetry@, o con @null@, es 'Nothing': lo grabado antes de que existiera
--- se sigue leyendo.
+-- | Sin @lcTelemetry@ o @lcCut@, o con @null@, es 'Nothing': lo grabado antes de que
+-- existieran se sigue leyendo.
 instance FromJSON LapComparison where
   parseJSON = withObject "LapComparison" $ \o ->
     MkLapComparison
@@ -840,6 +867,23 @@ instance FromJSON LapComparison where
       <*> o .:  "lcSamples"
       <*> o .:  "lcNotice"
       <*> o .:? "lcTelemetry"
+      <*> o .:? "lcCut"
+
+-- | Dónde acaba el archivo de F1 de una sesión que no llegó entera: su última vuelta y,
+-- si su resultado trae más, cuántas tuvo ('Nothing' si no se sabe, como en una Q). En
+-- JSON, @lastLap@ y @laps@, como lo emite el microservicio.
+data ArchiveCut = MkArchiveCut
+  { acLastLap :: Int
+  , acLaps    :: Maybe Int
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON ArchiveCut where
+  toJSON c = object ["lastLap" .= acLastLap c, "laps" .= acLaps c]
+
+instance FromJSON ArchiveCut where
+  parseJSON = withObject "ArchiveCut" $ \o ->
+    MkArchiveCut <$> o .: "lastLap" <*> o .:? "laps"
 
 -- | La telemetría incompleta de una sesión: qué fracción del tramo de sus vueltas
 -- cubre, de 0 a 1, y la hora UTC (ISO 8601, sin fracción) a la que el microservicio
@@ -1113,14 +1157,11 @@ data WidgetConfig = WidgetConfig
     -- el lienzo__, que es la razón de que sea un campo y no una lista aparte en
     -- 'Layout': el desplegable puede listar todas las opciones recorriendo una
     -- sola lista.
-  , widgetGroup   :: Maybe Text
-    -- ^ Etiqueta del grupo al que pertenece, o 'Nothing' si va suelto. La
-    -- membresía es __arbitraria y la declara el autor__ —por piloto, por tipo, o
-    -- por juntar una clasificación con una telemetría porque se miran a la vez—:
-    -- ni se deriva del tipo de widget ni de la adyacencia. Dentro del grupo el
-    -- tamaño de los miembros queda __acoplado__ (el borde entre dos es un
-    -- separador arrastrable, y el grupo se mueve y escala como un bloque), que es
-    -- justo lo que el lienzo niega fuera del grupo. Decidido el 2026-09-03 (b).
+  , widgetGroups  :: [GroupId]
+    -- ^ Los grupos del 'Layout' en los que está, __en el orden en que se
+    -- muestran__; vacía si va suelto. La membresía la declara el autor y no
+    -- depende de dónde esté la tarjeta. Un id que no esté en 'layoutGroups' no
+    -- es ningún grupo: "Common.Group" lo ignora.
   , wcX           :: Int
     -- ^ Borde izquierdo, en 1\/120 del __ancho__ del contenedor.
   , wcY           :: Int
@@ -1135,10 +1176,31 @@ data WidgetConfig = WidgetConfig
 instance ToJSON WidgetConfig
 instance FromJSON WidgetConfig
 
+-- | Un grupo de tarjetas: las que están en él comparten sus parámetros, estén
+-- donde estén en el lienzo. Lo que una tarjeta hace con ellos lo calcula
+-- "Common.Group".
+data CardGroup = CardGroup
+  { groupId      :: GroupId
+  , groupName    :: Text
+  , groupDrivers :: [Text]
+    -- ^ Siglas de los pilotos que destaca (p. ej. @["LEC"]@), como
+    -- "Common.Pilots"; vacía si no destaca a nadie.
+  , groupSession :: Maybe Text
+    -- ^ La sesión que se suma a las que la tarjeta ya enseña: un código (@FP1@,
+    -- relativa al GP que se ve) o una clave (@2026-21-FP1@, fija), como los lee
+    -- "Common.Group"; 'Nothing' si no suma ninguna.
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON CardGroup
+instance FromJSON CardGroup
+
 -- | Conjunto de widgets organizados en una pantalla.
 data Layout = Layout
-  { layoutId :: LayoutId
-  , widgets  :: [WidgetConfig]
+  { layoutId     :: LayoutId
+  , widgets      :: [WidgetConfig]
+  , layoutGroups :: [CardGroup]
+    -- ^ Los grupos que las tarjetas pueden nombrar en 'widgetGroups'.
   }
   deriving stock (Eq, Show, Generic)
 

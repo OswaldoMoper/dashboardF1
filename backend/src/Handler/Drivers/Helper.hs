@@ -34,12 +34,12 @@ module Handler.Drivers.Helper
   , resolveParams
   ) where
 
-import           Common.Types          (DriverEntry (..))
-import           Data.Aeson            (FromJSON (..), withObject, (.!=), (.:),
-                                        (.:?))
-import           Data.Text             (Text)
-import           Handler.FastF1.Helper (sessionParam)
-import           Outcome               (Rejection)
+import           Common.Types         (DriverEntry (..))
+import           Data.Aeson           (FromJSON (..), withObject, (.!=), (.:),
+                                       (.:?))
+import           Data.Text            (Text)
+import           Handler.Query.Helper (sessionParam)
+import           Outcome              (Rejection)
 
 -- | Un coche de la parrilla tal como lo emite el microservicio.
 data RawDriver = RawDriver
@@ -93,6 +93,6 @@ defaultSession = "latest"
 -- Resuelve una sola clave y no un par, que es la diferencia de forma con las otras
 -- dos áreas parametrizadas: aquí solo hay un parámetro que resolver.
 --
--- Un parámetro escrito pero vacío se rechaza ('Handler.FastF1.Helper.queryParam').
+-- Un parámetro escrito pero vacío se rechaza ('Handler.Query.Helper.queryParam').
 resolveParams :: Maybe Text -> Either Rejection Text
 resolveParams = sessionParam defaultSession

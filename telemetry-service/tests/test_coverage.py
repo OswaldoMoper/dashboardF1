@@ -142,10 +142,11 @@ def respuesta(main, monkeypatch):
     monkeypatch.setattr(main, "_qualifying_parts", lambda _: [])
     monkeypatch.setattr(main, "_comparison_entry", lambda _s, n, *_: {"ceCar": n})
 
-    def pedir(samples, incompleta):
+    def pedir(samples, incompleta, corte=None):
         if incompleta:
             hora = datetime(2026, 11, 7, 0, 40, 5, tzinfo=timezone.utc)
             main._incomplete[id(sesion)] = (0.0, None, 0.04213, hora)
+        monkeypatch.setattr(main, "_session_cut", lambda s: corte if s is sesion else None)
         return main.comparison("2026-20-R", "1,16", samples)
 
     return pedir
@@ -158,3 +159,26 @@ def test_con_trazas_y_la_telemetria_incompleta_lleva_su_cobertura_y_la_hora(resp
 @pytest.mark.parametrize("samples, incompleta", [(0, True), (100, False), (0, False)])
 def test_sin_trazas_o_entera_no_lleva_nada(respuesta, samples, incompleta):
     assert "lcTelemetry" not in respuesta(samples, incompleta)
+
+
+@pytest.mark.parametrize("samples", [0, 100])
+def test_cortada_lleva_donde_acaba_con_trazas_o_sin_ellas(respuesta, samples):
+    assert respuesta(samples, False, {"lastLap": 56, "laps": 71})["lcCut"] == {"lastLap": 56, "laps": 71}
+
+
+def test_entera_no_lleva_corte(respuesta):
+    assert "lcCut" not in respuesta(0, False)
+
+
+def sesion_de(vueltas, estados, del_resultado):
+    """Una sesión falsa con lo que ``_session_cut`` lee: las vueltas de ``laps`` (coche,
+    número y stint), los estados y las vueltas del resultado."""
+    filas = [{"DriverNumber": "16", "LapNumber": float(n), "Stint": 1.0, "Compound": "HARD", "TyreLife": float(n)}
+             for n in range(1, vueltas + 1)]
+    return SimpleNamespace(laps=pd.DataFrame(filas), session_status={"Status": estados},
+                           results={"Laps": [float(del_resultado), float(del_resultado - 1)]})
+
+
+def test_el_corte_de_la_sesion_sale_de_sus_vueltas_su_estado_y_su_resultado(main):
+    assert main._session_cut(sesion_de(56, ["Started"], 71)) == {"lastLap": 56, "laps": 71}
+    assert main._session_cut(sesion_de(71, ["Started", "Finished", "Finalised", "Ends"], 71)) is None

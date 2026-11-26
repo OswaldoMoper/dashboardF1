@@ -1,17 +1,17 @@
 -- | Cliente OpenF1 — tipos crudos compartidos y la línea del registro de peticiones
--- (lógica pura).
+-- (lógica pura). 'Answer' y 'answerOf' son los de 'Handler.PublicApi.Helper'.
 --
--- Modela los campos de OpenF1 comunes a varias áreas de negocio. Hoy alberga
--- 'Of1Driver' (@/drivers@), consumido por 'Handler.Live' (identidad + equipo del
--- piloto) y por 'Handler.TyreStrategy' (cruce @driver_number → name_acronym@
--- para poblar 'Common.Types.TyreStint'). Los tipos crudos específicos de un área
--- siguen viviendo en el @Helper@ de esa área.
+-- Modela los campos de OpenF1 que consume más de un módulo de 'Handler.Live':
+-- 'Of1Driver' (@/drivers@, identidad y equipo del piloto) y 'Of1Stint' (@/stints@),
+-- y su cruce 'assembleStints' en 'Common.Types.TyreStint'.
 --
 -- Y lo que 'Handler.OpenF1.Manager.fetchListWith' escribe de cada petición: cómo
 -- acabó ('Answer'), si se escribe sin @OPENF1_LOG@ ('alwaysWritten') y la línea
 -- ('requestLine'); y cuánto espera antes de salir ('brakeWait').
 module Handler.OpenF1.Helper
   ( Of1Driver (..)
+  , Of1Stint (..)
+  , assembleStints
   , Answer (..)
   , answerOf
   , alwaysWritten
@@ -21,21 +21,17 @@ module Handler.OpenF1.Helper
   , brakeWait
   ) where
 
-import           Control.Exception        (toException)
+import           Common.Types             (TyreStint (..))
 import           Data.Aeson               (FromJSON (..), withObject, (.!=), (.:),
                                            (.:?))
-import           Data.ByteString          (ByteString)
+import           Data.List                (find, sortOn)
+import           Data.Maybe               (mapMaybe)
 import           Data.Text                (Text)
 import qualified Data.Text                as T
-import           Data.Text.Encoding       (decodeUtf8With)
-import           Data.Text.Encoding.Error (lenientDecode)
 import           Data.Time.Clock          (NominalDiffTime, UTCTime (..),
                                            diffUTCTime)
-import           Data.Time.Format         (defaultTimeLocale, formatTime)
-import qualified Network.HTTP.Client      as Client
-import           Network.HTTP.Req         (HttpException (..))
-import           Outcome                  (httpStatusOf)
-import           Text.Printf              (printf)
+import           Handler.PublicApi.Helper (Answer (..), answerOf)
+import qualified Handler.PublicApi.Helper as PublicApi
 
 -- | @/drivers@: identidad y equipo del piloto. El número y el acrónimo son
 -- obligatorios: sin uno de ellos no decodifica la lista entera. El equipo, nulo o
@@ -54,24 +50,75 @@ instance FromJSON Of1Driver where
       <*> o .: "name_acronym"
       <*> o .:? "team_name" .!= ""
 
--- | Cómo acabó una petición.
-data Answer
-  = Answered Int ByteString -- ^ Contestó: el código y, si fue un rechazo, su cuerpo.
-  | Unanswered Text         -- ^ No hubo código: la causa.
+-- | @/stints@: periodo con un mismo compuesto para un piloto.
+--
+-- __'osCompound' y 'osLapEnd' admiten ausencia, 'osNumber' y 'osLapStart' no__ ('osAge'
+-- tampoco la exige: sin edad cuenta 0, la misma regla que el feed). Un @lap_end@ nulo no
+-- se ha visto nunca; admitirlo es una precaución para que un stint no tumbe el arreglo.
+-- En el compuesto es una observación: OpenF1 emite @compound: null@ en un stint
+-- que __acaba de empezar__ —la vuelta ya está registrada y el compuesto todavía
+-- no—, y con @o .: "compound"@ sobre 'Text' ese único objeto tumbaba el decode
+-- del arreglo __completo__. Es el cuarto no-dato que entra por la misma clase de
+-- puerta (el @NaN@ de 2026-07-31, el @'None'@ de 2026-08-13, el @tpBrake@ de
+-- 2026-08-19).
+--
+-- El null __no está en el dato archivado__: medido el 2026-08-25 sobre 2268
+-- stints de 44 sesiones, los cuatro campos llegan siempre y ninguno es nulo. Vive
+-- solo en la sesión en curso, así que la rama de omisión solo la ejercita
+-- @backend\/test\/Spec.hs@ (2026-08-25).
+data Of1Stint = Of1Stint
+  { osNumber   :: Int          -- ^ @driver_number@.
+  , osCompound :: Maybe Text   -- ^ SOFT/MEDIUM/HARD/INTER/WET, o 'Nothing' en un
+                               --   stint aún sin compuesto publicado.
+  , osLapStart :: Int
+  , osLapEnd   :: Maybe Int    -- ^ 'Nothing' si llega nulo o sin clave.
+  , osAge      :: Int          -- ^ @tyre_age_at_start@; 0 si llega nulo o sin clave.
+  }
   deriving (Eq, Show)
 
--- | El desenlace de una excepción de @req@.
+instance FromJSON Of1Stint where
+  parseJSON = withObject "Of1Stint" $ \o ->
+    Of1Stint
+      <$> o .: "driver_number"
+      <*> o .:? "compound"
+      <*> o .: "lap_start"
+      <*> o .:? "lap_end"
+      <*> (o .:? "tyre_age_at_start" .!= 0)
+
+-- | Ensambla los stints uniendo por @driver_number@ para resolver el acrónimo
+-- del piloto. El resultado se ordena por acrónimo y luego por vuelta de inicio.
 --
--- __La causa es solo el motivo__ (@ResponseTimeout@, @ConnectionFailure …@): el texto
--- entero de la excepción vuelca también la petición, y la ruta ya va en la línea.
-answerOf :: HttpException -> Answer
-answerOf e =
-  maybe (Unanswered (cause e)) (uncurry Answered) (httpStatusOf (toException e))
+-- __Se omite el stint__ que no resuelve: ni el que trae un piloto ausente de
+-- @/drivers@ (desde el 2026-08-11) ni el que llega sin compuesto (desde el
+-- 2026-08-25) ni el que llega sin vuelta de fin (desde el 2026-11-20). Los tres
+-- descartes comparten el 'Maybe' del bloque @do@, que es el mecanismo que el
+-- 'mapMaybe' ya proporcionaba.
+--
+-- __Se omite en vez de degradar__, al revés que 'Common.Types.hsWins' —que admite
+-- ausencia para no perder la entidad entera—, porque la unidad de la fila es otra:
+-- allí es la entidad y aquí el stint, uno entre decenas, de modo que omitirlo
+-- cuesta un tramo de una barra y no un piloto. Ni se inventa un @\"UNKNOWN\"@ que
+-- OpenF1 no publicó. El contraste, en las decisiones del 2026-08-25 y 2026-08-24.
+assembleStints :: [Of1Driver] -> [Of1Stint] -> [TyreStint]
+assembleStints drivers stints =
+  sortOn (\t -> (tsDriver t, tsStartLap t)) (mapMaybe toStint stints)
   where
-    cause (VanillaHttpException (Client.HttpExceptionRequest _ content)) =
-      T.pack (show content)
-    cause (VanillaHttpException (Client.InvalidUrlException _ why)) = T.pack why
-    cause (JsonHttpException why) = T.pack why
+    toStint s = do
+      d        <- find ((== osNumber s) . odNumber) drivers
+      compound <- osCompound s
+      lapEnd   <- osLapEnd s
+      pure
+        TyreStint
+          { tsDriver   = odAcronym d
+          , tsCar      = T.pack (show (osNumber s))
+          , tsCompound = compound
+          , tsStartLap = osLapStart s
+          , tsEndLap   = lapEnd
+          , tsLaps     = lapEnd - osLapStart s + 1
+          , tsAge      = osAge s
+          , tsNew      = Nothing
+          , tsSameSet  = Nothing
+          }
 
 -- | Si la línea sale aunque @OPENF1_LOG@ no esté puesta: todo fallo menos el @404@,
 -- que es como OpenF1 dice «aún no hay datos» (@\/intervals@ fuera de carrera, en cada
@@ -80,42 +127,11 @@ alwaysWritten :: Answer -> Bool
 alwaysWritten (Answered code _) = not (code >= 200 && code < 300) && code /= 404
 alwaysWritten (Unanswered _)    = True
 
--- | La línea de una petición: el instante del envío con milisegundos, la ruta con sus
--- parámetros, el código (@---@ si no lo hubo), la duración y, si lo hay, el texto del
--- rechazo o la causa.
---
--- __Siempre una sola línea__, para que al contarlas una petición sea una línea: los
--- saltos del texto se vuelven espacios, y se corta a 200 caracteres.
---
--- __Una línea es una llamada, no un intento__: los reintentos de @req@ por techo
--- vencido ('Handler.PublicApi.Manager.publicApiConfig') quedan dentro de ella, como
--- una duración larga.
+-- | La línea de una petición a OpenF1: 'Handler.PublicApi.Helper.requestLine' con la
+-- etiqueta @[openf1]@.
 requestLine
   :: UTCTime -> Text -> [(Text, Maybe Text)] -> NominalDiffTime -> Answer -> Text
-requestLine sent path params took answer =
-  millisInstant sent <> " [openf1] " <> route <> " " <> code <> " "
-    <> T.pack (printf "%.3f" (realToFrac took :: Double)) <> " s" <> detail
-  where
-    route
-      | null params = path
-      | otherwise   = path <> "?" <> T.intercalate "&" (map param params)
-    param (k, v) = maybe k (\x -> k <> "=" <> x) v
-    (code, said) = case answer of
-      Answered c body -> (T.pack (show c), decodeUtf8With lenientDecode body)
-      Unanswered why  -> ("---", why)
-    detail
-      | T.null said = ""
-      | otherwise   = ": " <> T.take 200 (T.map flatten said)
-    flatten c = if c == '\n' || c == '\r' then ' ' else c
-
--- | ISO 8601 con milisegundos, truncados. No es 'Provenance.isoInstant', que va en
--- segundos enteros.
-millisInstant :: UTCTime -> Text
-millisInstant t =
-  T.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S" t)
-    <> T.pack (printf ".%03dZ" millis)
-  where
-    millis = (floor (toRational (utctDayTime t) * 1000) :: Integer) `mod` 1000
+requestLine = PublicApi.requestLine "openf1"
 
 -- | Cuántas salidas deja pasar el freno dentro de cada 'brakeWindow'.
 brakeBurst :: Int

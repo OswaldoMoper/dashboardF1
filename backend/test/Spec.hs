@@ -1,6 +1,6 @@
 -- | Invariantes de la lógica pura de las áreas Historical
 -- ('Handler.Historical.Helper'), Comparison ('Handler.Comparison.Helper', con la
--- resolución de parámetros), Drivers (ídem), TyreStrategy ('Handler.TyreStrategy.Helper'), Live
+-- resolución de parámetros), Drivers (ídem), Live
 -- ('Handler.Live.Helper' y las cabeceras de procedencia de 'Handler.Live') y los
 -- tipos crudos compartidos de OpenF1 ('Handler.OpenF1.Helper'). Con el último no
 -- queda ninguna función pura del backend sin cubrir.
@@ -30,9 +30,8 @@
 --   __widget__ probada aquí: sin esto, lo único que impide mandar un acrónimo a
 --   un endpoint que lo absorbe en silencio estaría solo revisado a ojo.
 -- * 'Common.Layout' — la aritmética del lienzo y la traducción del rectángulo a
---   CSS (2026-09-07), más los cinco rectángulos de los
---   layouts fijos, que son una __copia__ de @Pages.Dashboard@ porque @frontend@ no
---   está en @cabal.project@ y la suite no puede importarlo.
+--   CSS (2026-09-07), más los rectángulos de los layouts fijos
+--   ('Common.FixedLayouts').
 -- * 'Common.Origin' — la procedencia del dato que viaja en cabecera
 --   (2026-09-06). Quinto por la misma puerta, y el más
 --   claramente repartido entre los dos extremos: el backend escribe la etiqueta y
@@ -46,21 +45,31 @@
 -- precisamente los campos opcionales, que viven en el decode.
 module Main (main) where
 
-import           App                         (ScheduledSession (..),
+import           App                         (PastPending (..),
+                                              ScheduledSession (..),
                                               emptySectorMemory)
 import           Auto.Context                (pieceProcess)
 import qualified Auto.Helper                 as Auto
 import           Common.Account              (Foot (..), Notice (..),
                                               Stamp (..), accountFoot,
                                               accountNotice, cardNotice,
-                                              localStamp, retryDue)
+                                              cutNotice, cutSentence,
+                                              localStamp, noLapsNotice,
+                                              retryDue)
+import           Common.Blend                (Blend (..), Mark (..), Overlay (..),
+                                              blendFromKey, blendKey, blendOnOpen,
+                                              blendOverlay, blendStoreKey,
+                                              blendsInOrder, dashLength,
+                                              defaultBlend, lineWidth, markPeriod,
+                                              pointsAlong, pointsAttr, toPixels)
 import           Common.Carry                (Board (..), Carry (..), Grip (..),
                                               Hand (..), Held (..), Scene (..),
                                               boardOf, heldStyle,
                                               magnetDivisions, scene, stepBoard)
 import           Common.Chart                (SectorPace (..), SectorSpan (..),
-                                              axisPoints, axisPolyline,
-                                              axisRange, axisTicks, axisZeroY,
+                                              axisPoints, axisPointsAmong,
+                                              axisPolyline, axisRange,
+                                              axisTicks, axisZeroY,
                                               chartHeight, chartPad, chartWidth,
                                               deltaPoints, deltaPolyline,
                                               deltaRange, frontierCells,
@@ -71,6 +80,8 @@ import           Common.Columns              (LiveColumn (..), canClose,
                                               liveColumnsInOrder, menuColumns,
                                               shownColumns, toggleColumn)
 import           Common.Comparison           (Axis (..), Baseline (..),
+                                              Curve (..), Layer (..), curveKey,
+                                              curvesOf, curvesWith, axisValues,
                                               ChartType (..), LapChoice (..),
                                               LapGeometry (..), LapPick (..),
                                               LiveCard (..), LiveEntry (..),
@@ -87,7 +98,12 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               comparisonIsLive, defaultAxis,
                                               defaultChartType, deltaFormula,
                                               deltasAgainst, endedNotice,
-                                              keepChosen, lapButtons,
+                                              addCar, frontSeries, keepCars,
+                                              lapButtons, maxCars,
+                                              pickReference, removeCar,
+                                              Added (..), GroupPick (..),
+                                              WithGroups (..), addedCars,
+                                              addedLaps, lapAgainst, withGroups,
                                               lapChoiceFromKey, lapChoiceKey,
                                               lapChoiceLabel, lapChoiceShort,
                                               lapChoicesOffered, lapFor,
@@ -97,10 +113,12 @@ import           Common.Comparison           (Axis (..), Baseline (..),
                                               liveLapLines,
                                               liveMissingReference,
                                               liveNoLapFor, missingReference,
-                                              noLapFor, pairWith)
+                                              noLapFor, noneHasLap, pairWith)
 import           Common.ComparisonCard       (CardControl (..), CardLayout (..),
-                                              ChartMode (..), Side (..),
-                                              carSelectWidth, cardLayout,
+                                              ChartFirst (..), ChartMode (..),
+                                              Side (..), carSelectWidth,
+                                              cardLayout, chartFirstAreas,
+                                              chartFirstFor, chartFirstSideMin,
                                               columnGap, controlMaxWidth,
                                               controlWidth, curveInset,
                                               defaultControl,
@@ -111,10 +129,30 @@ import           Common.ComparisonCard       (CardControl (..), CardLayout (..),
                                               otherSide, rowHeight, rowTitle,
                                               shownMode, showsNames,
                                               showsValues, singleRowHeight,
+                                              stackedLayout,
                                               tracesInset, valueHeight,
                                               valueWidth, valuesFit,
                                               valuesFitMeasured, valuesRowFits,
                                               valuesRowHeight, vsBeside)
+import qualified Common.FixedLayouts         as Fixed
+import           Common.Group                (ComparisonPick (..),
+                                              GroupDraft (..), GroupEdit (..),
+                                              GroupSession (..), SeasonOption (..),
+                                              SeasonPick (..), gpLabel, seasonHint, seasonOptions,
+                                              SessionChoice (..), addedSessions,
+                                              applyGroupEdit, autoName, bestPerSession,
+                                              fromTag,
+                                              cardCountText, cardGroups,
+                                              cardsInGroup, choicesHint,
+                                              chosenName, gpShortName,
+                                              sessionTag,
+                                              comparisonLimit, comparisonPick,
+                                              draftReady, freshGroupId,
+                                              groupDraft, highlightedDrivers,
+                                              readGroupSession,
+                                              isAutoName, otherDrivers,
+                                              renderGroupSession,
+                                              sessionChoices, uniqueName)
 import           Common.Format               (ClockForm (..), formatClock,
                                               formatCountdown, formatDelta,
                                               formatFixed, formatTrimmed,
@@ -130,28 +168,51 @@ import           Common.Origin               (Origin (..), Source (..),
                                               sourceFrom, sourceHeader,
                                               sourceLabel, sourceName,
                                               sourcedFrom, sourcedHeaders)
+import           Common.Pilots               (Inks (..), highlightEdge,
+                                              highlightFill, inksOr, pilotInks,
+                                              pilotTable, pilotTeams)
 import           Common.Push                 (Drag (..), applyDrag)
-import           Common.Route                (comparisonPathFor, driversParam,
-                                              driversPathFor, f1tvPath)
-import           Common.Saved                (Restored (..), atFactory,
-                                              factoryControls, restoreLayout,
+import           Common.Route                (comparisonPathFor,
+                                              driverCodesParam, driversListParam,
+                                              driversParam,
+                                              driversPathFor, f1tvPath,
+                                              historicalPathFor, livePathFor,
+                                              seasonPath)
+import           Common.Saved                (Restored (..), Shown (..),
+                                              atFactory, factoryControls,
+                                              resetQuestion, restoreLayout,
                                               sameShown, saveLayout, savedKey,
                                               unfitNote)
-import           Common.Shown                (Arrivals, Indicator (..),
-                                              Kept (..), Poll (..),
-                                              PollEvent (..), canRequest,
-                                              delayDefaultSeconds, delayFromUrl,
-                                              delayMaxSeconds, delayNote,
-                                              delayWait, delayWaitLabel,
-                                              delayedPoll, delayedShown,
-                                              fetchedAtLabel, indicatorClass,
-                                              indicatorFrom, indicatorTooltip,
-                                              keepLast, keptNothing, landed,
+import           Common.Session              (CircuitRound (..), SeasonRace (..), sameCircuit,
+                                              SeasonSession (..),
+                                              SessionCode (..), SessionKey (..),
+                                              SessionPick (..), feedName,
+                                              latestStartedKey, notRunShown,
+                                              notRunYet, queryWith,
+                                              readSessionCode, readSessionKey,
+                                              renderSessionKey, rollingKey,
+                                              selectorLabel, selectorRaces,
+                                              sessionCodeText, sessionFromUrl,
+                                              sessionQuery, sessionStarted)
+import           Common.Shown                (Arrivals, Fetched (..),
+                                              Indicator (..), Kept (..),
+                                              Poll (..), PollEvent (..),
+                                              canRequest, delayDefaultSeconds,
+                                              delayFromUrl, delayMaxSeconds,
+                                              delayOnOpen, delayQuery,
+                                              delayNote, delayWait,
+                                              delayWaitLabel, delayedPoll,
+                                              delayedShown, fetchedAtLabel,
+                                              fetchedEvent,
+                                              historicalRetrySeconds,
+                                              indicatorClass, indicatorFrom,
+                                              indicatorTooltip, keepLast,
+                                              keptNothing, landed,
                                               liveRefreshSeconds,
                                               liveRequestTimeoutSeconds,
-                                              nextRequest, pollIdle,
-                                              pollStep, readDelay,
-                                              recordArrival, shownAge)
+                                              nextRequest, pollIdle, pollStep,
+                                              readDelay, recordArrival,
+                                              shownAge)
 import           Common.Traces               (Channel (..), TraceLayout (..),
                                               TracePiece (..), TraceRows (..),
                                               axisEnd, axisEndLabel, boundaryXs,
@@ -162,17 +223,20 @@ import           Common.Traces               (Channel (..), TraceLayout (..),
                                               pieceFlex, readSamples,
                                               samplesStart, spanPiece,
                                               traceChannels, traceLayout,
-                                              tracePoints, traceXs,
-                                              tracesHeight, xPercent)
-import           Common.Types                (BandFlag (..), BandPiece (..),
+                                              toggleChannel, tracePoints,
+                                              traceVertices, traceXs, tracesHeight,
+                                              xPercent)
+import           Common.Types                (ArchiveCut (..), BandFlag (..),
+                                              BandPiece (..), CardGroup (..),
                                               ComparisonEntry (..),
                                               Countdown (..), DriverEntry (..),
+                                              GroupId (..),
                                               DriverStatus (..),
                                               F1TVAccount (..),
                                               HistoricalStat (..),
                                               LapComparison (..),
-                                              LapProgress (..), LayoutId (..),
-                                              LiveTable (..),
+                                              LapProgress (..), Layout (..),
+                                              LayoutId (..), LiveTable (..),
                                               LiveTimingRow (..), RowBreak (..),
                                               SessionClock (..),
                                               SessionInfo (..),
@@ -194,7 +258,7 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               pieceFlag, pieceSeparator,
                                               pieceWord, rowBreaks,
                                               sessionInProgress, sessionIsLive,
-                                              sessionStateFrom,
+                                              sessionRolling, sessionStateFrom,
                                               sessionStateLabel,
                                               sessionStateWord, sessionTitle,
                                               shownClock, shownNext, showsClock,
@@ -202,29 +266,38 @@ import           Common.Types                (BandFlag (..), BandPiece (..),
                                               upNextLabel, waitingSession,
                                               waitingTable)
 import           Common.TyreStrategy         (SetBar (..), SetRow (..),
-                                              barNotches, compoundClass,
-                                              compoundLegend, gridLines,
-                                              lapTicks, leftStyle, notOutYet,
-                                              rowLabel, scaleLabel, setRows,
-                                              setStyle, stintScale,
+                                              barNotches, carriesStints,
+                                              compoundClass, compoundLegend,
+                                              gridLines, lapTicks, leftStyle,
+                                              notOutYet, rowLabel, scaleLabel,
+                                              setRows, setStyle, stintScale,
                                               stintTitle, tyreSets)
-import           Config                      (openF1Log, telemetrySocket)
-import           Control.Exception           (bracket, evaluate)
+import           Config                      (Config (..), openF1Log,
+                                              telemetrySocket)
+import           Control.Concurrent          (ThreadId, forkIO, threadDelay)
+import           Control.Concurrent.MVar     (MVar, newEmptyMVar, newMVar,
+                                              putMVar, readMVar, takeMVar)
+import           Control.Exception           (ErrorCall (..), SomeException,
+                                              bracket, evaluate, fromException,
+                                              throwIO, try)
 import           Data.Aeson                  (FromJSON (..), Value (..),
                                               decodeStrictText, eitherDecode,
                                               eitherDecodeStrict, encode,
-                                              toJSON)
+                                              object, toJSON, (.=))
 import qualified Data.Aeson.KeyMap           as KM
 import           Data.Aeson.Types            (parseEither)
 import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import qualified Data.ByteString.Lazy        as LBS
 import           Data.Either                 (isLeft)
-import           Data.List                   (find, isPrefixOf, nub)
+import           Data.IORef                  (atomicModifyIORef', newIORef,
+                                              readIORef)
+import           Data.List                   (find, isPrefixOf, isSubsequenceOf,
+                                              nub)
 import qualified Data.List.NonEmpty          as NE
 import qualified Data.Map.Strict             as Map
 import           Data.Maybe                  (fromMaybe, isJust, isNothing,
-                                              listToMaybe)
+                                              listToMaybe, mapMaybe)
 import           Data.Proxy                  (Proxy (..))
 import qualified Data.Set                    as Set
 import qualified Data.Text                   as T
@@ -233,6 +306,7 @@ import           Data.Time.Calendar          (Day, fromGregorian)
 import           Data.Time.Clock             (NominalDiffTime, UTCTime (..),
                                               addUTCTime)
 import           E2eDatos                    (feedP3, harJson)
+import           GHC.Conc                    (ThreadStatus (..), threadStatus)
 import           GHC.TypeLits                (symbolVal)
 import qualified Handler.Comparison.Context  as Comparison
 import           Handler.Comparison.Helper   (RawComparison, assembleComparison,
@@ -247,49 +321,74 @@ import           Handler.Feed.Helper         (FeedFlag (..), FeedLive (..),
                                               FeedNotice (..), FeedRow (..),
                                               FeedSession (..), FeedTrack (..))
 import           Handler.Feed.Manager        (feedTimeoutSeconds)
-import           Handler.Historical.Helper   (Root, assembleConstructorStats,
-                                              assembleStats, parseNum)
+import           Handler.Historical.Helper   (Root, StandingsAt (..),
+                                              assembleConstructorStats,
+                                              assembleStats, historicalFreshFor,
+                                              keptStandings, keptToday,
+                                              parseNum, resolveStandings,
+                                              servedToday)
+import           Handler.Historical.Manager  (jolpicaRoute, standingsUrl)
 import           Handler.Live.Helper         (Announced (..),
                                               CalendarEntry (..),
-                                              ClockVerdict (..),
+                                              ClockVerdict (..), FastF1Lap (..),
+                                              FastF1Session (..),
+                                              FastF1Stints (..),
                                               FeedVerdict (..), Notice (..),
-                                              Of1Interval, Of1Lap,
-                                              Of1Meeting (..), Of1Position,
-                                              Of1Result (..), Of1Session (..),
-                                              advanceClock, announcedAt,
-                                              assembleRows, calendarEntries,
-                                              chequeredGrace,
+                                              Of1Interval, Of1Lap (..),
+                                              Of1Listed (..), Of1Meeting (..),
+                                              Of1Position (..), Of1Result (..),
+                                              Of1Session (..), PastKeep (..),
+                                              PendingStep (..), advanceClock,
+                                              announcedAt, assembleRows,
+                                              calendarEntries, chequeredGrace,
                                               classificationGaps,
                                               classificationTime, clockVerdict,
                                               closesFeedWindow, derivedState,
-                                              endMargin, feedRows, feedSession,
-                                              feedStatus, feedVerdict,
-                                              feedWindowLead, feedWindowOpen,
-                                              fetchFailure, finaliseBox,
-                                              formatLap, freezeClock,
-                                              inheritFinalised, lapProgress,
-                                              latestByDriver, meetingNames,
+                                              driverEntryOf, endMargin,
+                                              entryDriverOf1, fastf1Lap,
+                                              fastf1Session, feedRows,
+                                              feedSession, feedStatus,
+                                              feedVerdict, feedWindowLead,
+                                              feedWindowOpen, fetchFailure,
+                                              finaliseBox, formatLap,
+                                              freezeClock, inheritFinalised,
+                                              lapProgress, latestByDriver,
+                                              matchSession, meetingNames,
+                                              needsOpenF1Stints,
                                               openf1ClockIdle,
                                               openf1ClockPeriod, openf1MinGap,
-                                              openf1Session, parseFeedInstant,
-                                              parseNotice, parseRemaining,
+                                              openf1Session, orderedPositions,
+                                              parseFeedInstant, parseNotice,
+                                              parseRemaining, pastKeep,
+                                              pastStints, rawDriverOf1,
                                               rememberSectors, schedule,
                                               sectorsAddingUp, servedFromBox,
                                               sessionBestLap, sessionClock,
+                                              sessionTypeOf, settlePending,
                                               stillRecent, trackCondition,
                                               upNext, withLapSectors)
+import qualified Handler.Live.Manager        as LiveManager
 import           Handler.OpenF1.Helper       (Answer (..), Of1Driver (..),
-                                              alwaysWritten, answerOf,
+                                              Of1Stint (..), alwaysWritten,
+                                              answerOf, assembleStints,
                                               brakeWait, brakeWindow,
                                               requestLine)
-import           Handler.OpenF1.Manager      (endsAfter, latestSession)
-import           Handler.TyreStrategy.Helper (Of1Stint, assembleStints,
-                                              tyreStep)
+import           Handler.OpenF1.Manager      (endsAfter, latestSession,
+                                              openf1Config)
+import qualified Handler.PublicApi.Helper    as PublicApi
+import           Handler.PublicApi.Manager   (publicApiConfig)
+import           Handler.Query.Helper        (sessionKeyParam)
+import           Handler.Season.Helper       (FastF1Event (..),
+                                              JolpicaRace (..), readJolpica,
+                                              seasonHasStarted, seasonRaces,
+                                              seasonYear, withFastF1Names)
 import qualified Network.HTTP.Client         as Client
 import           Network.HTTP.Req            (HttpException (..),
-                                              queryParamToList)
+                                              queryParamToList, renderUrl)
+import qualified Network.HTTP.Req            as Req
 import qualified Network.Socket              as Socket
-import           Outcome                     (Rejection (..), rejectionFor)
+import qualified Network.Socket.ByteString   as SocketBS
+import           Outcome                    (Rejection (..), rejectionFor)
 import           Provenance                  (FetchedAtHeaderName,
                                               OriginHeaderName,
                                               Provenanced (..),
@@ -298,15 +397,19 @@ import           Provenance                  (FetchedAtHeaderName,
                                               withProvenance)
 import           Servant.API                 (ResponseHeader (..), getResponse,
                                               lookupResponseHeader)
+import           Sync                        (joinFlight, newFlights)
 import           System.IO                   (hGetContents)
 import           System.Process              (CreateProcess (..),
                                               StdStream (..), createProcess,
                                               proc, waitForProcess)
+import           System.Timeout              (timeout)
 import           Test.Hspec
 import           Test.Hspec.QuickCheck       (prop)
 import           Test.QuickCheck             (Gen, NonNegative (..), Positive (..),
-                                              Property, arbitrary, choose, elements,
-                                              forAll, vectorOf, (.&&.), (===), (==>))
+                                              Property, arbitrary, choose,
+                                              counterexample, elements, forAll,
+                                              listOf, sublistOf, vectorOf,
+                                              (.&&.), (===), (==>))
 
 main :: IO ()
 main = hspec $ do
@@ -429,11 +532,16 @@ main = hspec $ do
             , lcSamples = 2
             , lcNotice = ""
             , lcTelemetry = Nothing
+            , lcCut = Nothing
             }
 
     it "pasa tal cual lo que falta de la telemetría, si el microservicio lo manda" $
       lcTelemetry (comparisonOf comparisonWithGap)
         `shouldBe` Just (MkTelemetryGap 0.0421 "2026-11-07T00:40:05Z")
+
+    it "pasa tal cual dónde acaba el archivo cortado; sin saber cuántas tuvo, sin ellas" $
+      map (lcCut . comparisonOf) [comparisonCut, comparisonCutUnknown, comparisonWithGap]
+        `shouldBe` [Just (MkArchiveCut 56 (Just 71)), Just (MkArchiveCut 23 Nothing), Nothing]
 
     it "decodifica un coche sin vuelta en vez de tumbar el objeto" $ do
       -- El caso medido en Monza (el 16) y Zandvoort (el 87 y el 3): el servicio
@@ -447,15 +555,21 @@ main = hspec $ do
       comparable (comparisonOf comparisonWithoutLaps) `shouldBe` False
 
   describe "LapComparison en JSON" $ do
-    let bare = MkLapComparison {lcEntries = [], lcSamples = 0, lcNotice = "", lcTelemetry = Nothing}
+    let bare = MkLapComparison {lcEntries = [], lcSamples = 0, lcNotice = "", lcTelemetry = Nothing, lcCut = Nothing}
     it "sin lcTelemetry o con null se lee como Nothing, como lo grabado de antes" $ do
       eitherDecodeStrict "{\"lcEntries\":[],\"lcSamples\":0,\"lcNotice\":\"\"}" `shouldBe` Right bare
       eitherDecodeStrict "{\"lcEntries\":[],\"lcSamples\":0,\"lcNotice\":\"\",\"lcTelemetry\":null}"
+        `shouldBe` Right bare
+      eitherDecodeStrict "{\"lcEntries\":[],\"lcSamples\":0,\"lcNotice\":\"\",\"lcCut\":null}"
         `shouldBe` Right bare
 
     it "lo que falta de la telemetría va y vuelve igual" $ do
       let c = bare {lcSamples = 100, lcTelemetry = Just (MkTelemetryGap 0.04 "2026-11-07T00:40:00Z")}
       eitherDecode (encode c) `shouldBe` Right c
+
+    it "dónde acaba el archivo cortado va y vuelve igual, sepa o no cuántas tuvo" $
+      [ eitherDecode (encode c) | k <- [Just 71, Nothing], let c = bare {lcCut = Just (MkArchiveCut 56 k)} ]
+        `shouldBe` [ Right (bare {lcCut = Just (MkArchiveCut 56 k)}) | k <- [Just 71, Nothing] ]
 
     it "sin lcNotice no se lee: lo de antes sigue siendo obligatorio" $
       (eitherDecodeStrict "{\"lcEntries\":[],\"lcSamples\":0}" :: Either String LapComparison)
@@ -498,6 +612,69 @@ main = hspec $ do
         `shouldBe` Left (BadRequest "session está vacío: omítelo para usar la sesión por defecto")
       Comparison.resolveParams Nothing (Just "") Nothing
         `shouldBe` Left (BadRequest "drivers está vacío: omítelo para comparar los coches por defecto")
+
+  describe "Sync.joinFlight" $ do
+    -- La acción cuenta sus ejecuciones y espera a que se la suelte. La segunda llamada se
+    -- lanza cuando la primera ya corre, y se suelta cuando la segunda está bloqueada: o
+    -- esperando a la primera, o —si no se juntaran— dentro de su propia acción.
+    let today = Nothing :: Maybe (Int, Int)
+        counting calls release finish = do
+          atomicModifyIORef' calls (\n -> (n + 1, ()))
+          _ <- readMVar release
+          finish
+
+    it "dos a la vez con la misma clave: la acción corre una vez y las dos reciben lo mismo" $ do
+      flights <- newFlights
+      calls   <- newIORef (0 :: Int)
+      release <- newEmptyMVar
+      let act = counting calls release (pure ["filas"])
+      (_, first) <- forkResult (joinFlight flights today act)
+      waitFor ((== 1) <$> readIORef calls)
+      (tid, second) <- forkResult (joinFlight flights today act)
+      waitFor (isBlocked tid)
+      putMVar release ()
+      a <- takeMVar first
+      b <- takeMVar second
+      readIORef calls `shouldReturn` 1
+      either (const Nothing) Just a `shouldBe` Just ["filas" :: T.Text]
+      either (const Nothing) Just b `shouldBe` Just ["filas"]
+
+    it "si la que corre falla, la que espera recibe el mismo fallo sin volver a intentarlo" $ do
+      flights <- newFlights
+      calls   <- newIORef (0 :: Int)
+      release <- newEmptyMVar
+      let act = counting calls release (throwIO (ErrorCall "jolpica") :: IO [T.Text])
+      (_, first) <- forkResult (joinFlight flights today act)
+      waitFor ((== 1) <$> readIORef calls)
+      (tid, second) <- forkResult (joinFlight flights today act)
+      waitFor (isBlocked tid)
+      putMVar release ()
+      a <- takeMVar first
+      b <- takeMVar second
+      readIORef calls `shouldReturn` 1
+      errorCallOf a `shouldBe` Just (ErrorCall "jolpica")
+      errorCallOf b `shouldBe` Just (ErrorCall "jolpica")
+
+    it "al acabar la clave queda libre: la siguiente llamada vuelve a correr la acción" $ do
+      flights <- newFlights
+      calls   <- newIORef (0 :: Int)
+      release <- newMVar ()
+      let act = counting calls release (pure ["filas" :: T.Text])
+      _ <- joinFlight flights today act
+      _ <- joinFlight flights today act
+      readIORef calls `shouldReturn` 2
+
+    it "con otra clave no espera a la que está en marcha" $ do
+      flights <- newFlights
+      calls   <- newIORef (0 :: Int)
+      release <- newEmptyMVar
+      (_, first) <- forkResult (joinFlight flights today (counting calls release (pure ["hoy" :: T.Text])))
+      waitFor ((== 1) <$> readIORef calls)
+      timeout 1000000 (joinFlight flights (Just (2026, 18)) (pure ["ronda"]))
+        `shouldReturn` Just ["ronda"]
+      putMVar release ()
+      _ <- takeMVar first
+      pure ()
 
   describe "Outcome.rejectionFor" $ do
     -- La parte pura del discriminador 400/503. Los cuerpos son los que el
@@ -690,6 +867,15 @@ main = hspec $ do
           , openF1Stint "NOR" "1" "HARD" 22 47
           ]
 
+    it "omite el stint sin vuelta de fin y conserva los demás del mismo piloto" $
+      -- 0 nulos en 2358 stints medidos (2026-08-25 y 2026-11-20): protege la lista
+      -- ante un dato nunca visto, por la misma puerta que el `compound` nulo.
+      stintsOf openF1Grid stintWithNullLapEnd
+        `shouldBe`
+          [ openF1Stint "NOR" "1" "MEDIUM" 1 2
+          , openF1Stint "NOR" "1" "HARD" 22 47
+          ]
+
     it "trata la clave `compound` ausente igual que el nulo" $
       -- OpenF1 la emite siempre (2268 de 2268), así que esto protege el decode
       -- ante un cambio de contrato, no ante un dato visto. Con `.:?` las dos
@@ -853,31 +1039,6 @@ main = hspec $ do
     it "la fila sin stints dice que el coche aún no salió" $
       notOutYet `shouldBe` "aún sin salir a pista"
 
-  -- La escalera de `/api/tyre-strategy` con su procedencia. Lo guardado lleva una
-  -- tanda distinta de la traída en todos los casos, para que servir la equivocada no
-  -- pueda pasar la prueba.
-  describe "tyreStep" $ do
-    it "con filas sirve lo traído como fresco de OpenF1 y lo guarda con la hora de ahora" $
-      tyreStep tyreNow (Just freshStints) (Just (fetchInstant, keptStints))
-        `shouldBe`
-          ( Just (Provenanced Fresh (Just OpenF1) Nothing freshStints)
-          , Just (tyreNow, freshStints) )
-
-    it "una respuesta vacía cae a lo guardado, con su hora, y no lo pisa" $
-      tyreStep tyreNow (Just []) (Just (fetchInstant, keptStints))
-        `shouldBe`
-          ( Just (Provenanced Cached (Just OpenF1) (Just fetchInstant) keptStints)
-          , Just (fetchInstant, keptStints) )
-
-    it "un fallo sirve lo guardado igual que una respuesta vacía" $
-      tyreStep tyreNow Nothing (Just (fetchInstant, keptStints))
-        `shouldBe`
-          ( Just (Provenanced Cached (Just OpenF1) (Just fetchInstant) keptStints)
-          , Just (fetchInstant, keptStints) )
-
-    it "sin nada guardado un fallo no tiene qué servir, y quien llama pone el ejemplo" $
-      tyreStep tyreNow Nothing Nothing `shouldBe` (Nothing, Nothing)
-
   -- La escalera de `/api/comparison` y `/api/drivers`, por clave. Lo guardado en la
   -- clave pedida es otra tanda que lo traído, y hay otra clave guardada, para que servir
   -- la equivocada no pueda pasar la prueba.
@@ -900,6 +1061,33 @@ main = hspec $ do
 
     it "nunca sirve lo de otra clave: sin nada en la suya, quien llama pone el ejemplo" $
       FastF1.fastf1Step valid tyreNow "2026-18-R" Nothing cache `shouldBe` (Nothing, cache)
+
+  -- La escalera de `/api/comparison` (2026-11-24): lo que contesta el servicio sin vuelta de
+  -- nadie se sirve como tal. Lo guardado en la clave es una comparación con vueltas, para que
+  -- servirlo no pueda pasar la prueba.
+  describe "comparisonStep" $ do
+    let good    = comparisonOf comparisonWithoutLap
+        noLaps  = comparisonOf comparisonWithoutLaps
+        noCars  = noLaps {lcEntries = []}
+        cache   = Map.fromList [("2026-21-FP1" :: T.Text, (fetchInstant, good))]
+    it "coches sin vuelta de ninguno: se sirven frescos, tal cual, y la cache no cambia" $
+      Comparison.comparisonStep tyreNow "2026-21-FP1" (Just noLaps) cache
+        `shouldBe` (Just (Provenanced Fresh (Just FastF1) Nothing noLaps), cache)
+
+    it "con alguno con vuelta, se sirve fresco y se guarda, como fastf1Step" $
+      Comparison.comparisonStep tyreNow "2026-21-FP1" (Just good) Map.empty
+        `shouldBe` ( Just (Provenanced Fresh (Just FastF1) Nothing good)
+                   , Map.fromList [("2026-21-FP1" :: T.Text, (tyreNow, good))] )
+
+    it "sin ningún coche, cae a lo guardado de esa clave" $
+      Comparison.comparisonStep tyreNow "2026-21-FP1" (Just noCars) cache
+        `shouldBe` (Just (Provenanced Cached (Just FastF1) (Just fetchInstant) good), cache)
+
+    it "un fallo cae a lo guardado, y sin nada guardado, a nada (quien llama pone el ejemplo)" $ do
+      Comparison.comparisonStep tyreNow "2026-21-FP1" Nothing cache
+        `shouldBe` (Just (Provenanced Cached (Just FastF1) (Just fetchInstant) good), cache)
+      Comparison.comparisonStep tyreNow ("2026-21-FP1" :: T.Text) Nothing Map.empty
+        `shouldBe` (Nothing, Map.empty)
 
   -- Segunda de las tres áreas que quedaban sin suite (queda
   -- 'Handler.OpenF1.Helper'), y la que más cruza del repo: __cinco__
@@ -1411,6 +1599,19 @@ main = hspec $ do
         [feedSessionRace, feedSessionQualy]
         `shouldBe` [Right (Just True), Right (Just False)]
 
+  describe "sessionRolling" $
+    it "sigue en pista en marcha, con bandera roja o a cuadros y en un estado nuevo; no antes ni finalizada" $
+      map sessionRolling
+          [ Just SessionStarted
+          , Just SessionRedFlag
+          , Just SessionChequered
+          , Just (SessionUnknown "Aborted")
+          , Just SessionInactive
+          , Just SessionFinalised
+          , Nothing
+          ]
+        `shouldBe` [True, True, True, True, False, False, False]
+
   describe "sessionInProgress" $ do
     it "solo consta que hay carrera con la sesión en marcha o en un estado nuevo" $
       -- La tabla entera de una vez. Son cinco valores para seis situaciones: el
@@ -1737,11 +1938,36 @@ main = hspec $ do
               , Just (StateReading SessionChequered Heard)
               ]
 
-    it "con bandera a cuadros la derecha de la banda calla, como rodando" $
-      upNext (malaysiaAt 9 1 0)
-          (Just raceSessionFixture { siState = Just (StateReading SessionChequered Heard) })
+    -- La bandera de una parte que no es la última deja el reloj parado; la última
+    -- cuenta ya a la siguiente, sin esperar al «Finalised» (4–10½ min después).
+    let chequered s = Just s {siState = Just (StateReading SessionChequered Heard)}
+        quali part entries =
+          raceSessionFixture {siType = "Qualifying", siPart = part, siEntries = entries}
+        bahrain =
           [ScheduledSession "Race" 1308 "Bahrain Grand Prix" (malaysiaAt 31 0 0) (malaysiaAt 33 0 0)]
+        next = NextAfter "Bahrain Grand Prix" (22 * 3600 - 60)
+
+    it "con la bandera a cuadros de Q1 o Q2 la derecha de la banda calla, como rodando" $
+      map (\p -> upNext (malaysiaAt 9 1 0) (chequered (quali (Just p) [22, 16, 10])) bahrain) [1, 2]
+        `shouldBe` [NextSilent, NextSilent]
+
+    it "con la ÚLTIMA bandera a cuadros cuenta ya a la siguiente" $
+      -- Una carrera, una práctica, la Q3 con sus partes y la tercera sin ellas.
+      map (\s -> upNext (malaysiaAt 9 1 0) (chequered s) bahrain)
+          [ raceSessionFixture
+          , raceSessionFixture {siType = "Practice", siName = "Practice 3", siLaps = Nothing}
+          , quali (Just 3) [22, 16, 10]
+          , quali (Just 3) []
+          ]
+        `shouldBe` replicate 4 next
+
+    it "una clasificación sin parte conocida no tiene su bandera por última" $
+      upNext (malaysiaAt 9 1 0) (chequered (quali Nothing [])) bahrain
         `shouldBe` NextSilent
+
+    it "y con la sesión en marcha, la misma carrera sigue callando" $
+      -- El control: lo que cuenta a la siguiente es la bandera, no el tipo de sesión.
+      upNext (malaysiaAt 9 1 0) (Just raceSessionFixture) bahrain `shouldBe` NextSilent
 
   -- El descanso alargado, con los avisos REALES de la clasificación Sprint de Singapur
   -- (2026-10-09, 20:30 locales, 12:30 UTC): la bandera de SQ1 a las 12:52:09, «START
@@ -2591,6 +2817,11 @@ main = hspec $ do
       requestLine fetchInstant "drivers" [] 0.5 (Answered 200 "")
         `shouldBe` "2026-09-11T14:03:22.123Z [openf1] drivers 200 0.500 s"
 
+    it "la de Jolpica, con su etiqueta y la ruta tras ergast/f1, con la barra final" $
+      PublicApi.requestLine "jolpica" fetchInstant
+        (jolpicaRoute (standingsUrl ["2026", "15"] "driverStandings")) [] 0.432 (Answered 200 "")
+        `shouldBe` "2026-09-11T14:03:22.123Z [jolpica] 2026/15/driverStandings/ 200 0.432 s"
+
     it "siempre una línea: los saltos del texto se vuelven espacios" $
       requestLine fetchInstant "laps" [] 1 (Answered 429 "{\n\"detail\": \"x\"\n}")
         `shouldBe` "2026-09-11T14:03:22.123Z [openf1] laps 429 1.000 s: { \"detail\": \"x\" }"
@@ -2649,6 +2880,37 @@ main = hspec $ do
 
     it "una hora del futuro (reloj que retrocede) no espera más que la ventana" $
       brakeWait fetchInstant [ago (-10), ago (-11), ago (-12)] `shouldBe` brakeWindow
+
+  -- Los reintentos de req también pasan por el freno. El GET va directo con
+  -- 'openf1Config', sin 'fetchListWith', así que el freno solo apunta los reintentos.
+  describe "openf1Config" $ do
+    let probe status = statusServer status $ \p hits -> do
+          brake <- newMVar []
+          config <- openf1Config brake
+          _ <- try (Req.runReq config $
+                 Req.req Req.GET (Req.http "127.0.0.1") Req.NoReqBody Req.ignoreResponse (Req.port p))
+                 :: IO (Either HttpException Req.IgnoreResponse)
+          (,) <$> readMVar hits <*> (length <$> readMVar brake)
+
+    it "un 504 se intenta 3 veces y cada reintento espera su turno" $
+      probe "504 Gateway Timeout" `shouldReturn` (3, 2)
+
+    it "control: un 200 sale una vez y no pide turno" $
+      probe "200 OK" `shouldReturn` (1, 0)
+
+  -- Los dos bucles de req —el de los status y el de los techos vencidos— comparten la
+  -- cuenta: 3 intentos en total también cuando se mezclan.
+  describe "publicApiConfig: 3 intentos en total" $ do
+    let attempts every = mixedServer every $ \p hits -> do
+          config <- publicApiConfig
+          _ <- try (Req.runReq config $
+                 Req.req Req.GET (Req.http "127.0.0.1") Req.NoReqBody Req.ignoreResponse
+                   (Req.port p <> Req.responseTimeout 300000))
+                 :: IO (Either HttpException Req.IgnoreResponse)
+          readMVar hits
+    it "todas callan: 3 techos vencidos" $ attempts 0 `shouldReturn` 3
+    it "todas dan 504" $ attempts 1 `shouldReturn` 3
+    it "callan dos y la tercera da 504, en bucle" $ attempts 3 `shouldReturn` 3
 
   -- Cuándo merece la pena pedirle la foto al feed, que cuesta 16-23 s. Todos los
   -- casos son sobre instantes fijos y sin reloj real: la función es pura justo para
@@ -3017,6 +3279,12 @@ main = hspec $ do
       upNextLabel 0 (NextAfter "Azerbaijan Grand Prix" (6 * 86400 + 19 * 3600))
         `shouldBe` "Azerbaijan Grand Prix · en 6 d 19 h"
 
+    it "con la cuenta en 0 dice que arranca, también la siguiente; un segundo antes, todavía cuenta" $ do
+      upNextLabel 0 (NextStartsIn 0) `shouldBe` "arrancando…"
+      upNextLabel 0 (NextAfter "Qualifying" 0) `shouldBe` "Qualifying · arrancando…"
+      upNextLabel 0 (NextStartsIn 1) `shouldBe` "empieza en 1 s"
+      upNextLabel 0 (NextAfter "Qualifying" 1) `shouldBe` "Qualifying · en 1 s"
+
     it "el tic descuenta un segundo de las dos que cuentan" $
       map tickDown [NextStartsIn 100, NextAfter "Baku" 100]
         `shouldBe` [NextStartsIn 99, NextAfter "Baku" 99]
@@ -3235,6 +3503,22 @@ main = hspec $ do
       fmap (\d -> comparisonPathFor Nothing (Just d) 0) (driversParam "44" "63")
         `shouldBe` Just "/api/comparison?drivers=44,63"
 
+    it "una lista de 1 a 5 números, la referencia primero; otra cantidad o un acrónimo, nada" $ do
+      driversListParam ["16", " 1", "3 ", "63", "81"] `shouldBe` Just "16,1,3,63,81"
+      driversListParam ["16"] `shouldBe` Just "16"
+      driverCodesParam ["LEC", "VER"] `shouldBe` Just "LEC,VER"
+      driverCodesParam [] `shouldBe` Nothing
+      driverCodesParam ["LEC", "16"] `shouldBe` Nothing
+      driverCodesParam ["lec"] `shouldBe` Nothing
+      driversListParam [] `shouldBe` Nothing
+      driversListParam ["16", "1", "3", "63", "81", "44"] `shouldBe` Nothing
+      driversListParam ["16", "NOR"] `shouldBe` Nothing
+
+    prop "con dos coches, lo mismo que driversParam" $
+      let raw = elements ["1", "16", " 63 ", "NOR", "", "  "]
+       in forAll ((,) <$> raw <*> raw) $ \(a, b) ->
+            driversListParam [a, b] === driversParam a b
+
     it "las muestras van en el query solo si son positivas" $ do
       comparisonPathFor Nothing (Just "16,1") 100 `shouldBe` "/api/comparison?drivers=16,1&samples=100"
       comparisonPathFor Nothing Nothing 0 `shouldBe` "/api/comparison"
@@ -3359,6 +3643,16 @@ main = hspec $ do
     prop "de arriba abajo, dentro del lienzo y sin dos etiquetas iguales" ticksReadable
     prop "el rango del eje contiene al de la curva" axisRangeContainsDelta
     prop "la curva del eje no se sale del viewBox" (staysInsideViewBox axisPoints)
+    prop "con una sola serie, una de varias es la curva del eje" $ \xs ->
+      axisPointsAmong [xs] xs === axisPoints xs
+    prop "una de varias no se sale del viewBox aunque otra llegue más lejos"
+      (staysInsideViewBox (\xs -> axisPointsAmong [map (* 3) xs, xs] xs))
+
+    it "con varias, la más corta se escala con el rango de todas: no llega al fondo" $ do
+      let near = [0, -0.1, -0.2, -0.3]
+          far  = [0, -0.4, -0.9, -0.8]
+      map snd (axisPointsAmong [near, far] near) `shouldSatisfy` all (< chartHeight / 2)
+      axisPointsAmong [near, far] far `shouldBe` axisPoints far
 
   -- Los sectores son los de la clasificación de Bakú 2026 (FastF1 3.8.3), con LEC de
   -- referencia; los valores esperados salen de GHC.
@@ -3460,6 +3754,61 @@ main = hspec $ do
     it "sin dos coches no hay par" $
       pairWith AgainstReference (pair [lec]) `shouldBe` Nothing
 
+    it "de 3 a 5 coches: los tenues primero, después la base y al final el del frente (l)" $ do
+      let car d s = lec { ceDriver = d, ceCar = d, ceSectors = Just s }
+          pia = car "PIA" (29.1, 31.1, 29.6)
+          ver = car "VER" (28.9, 30.9, 29.4)
+          five = pair [lec, nor, pia, ver]
+          lay b f c = map (\cv -> (ceDriver (cvEntry cv), cvLayer cv)) (curvesOf b f c)
+      lay AgainstReference Nothing five `shouldBe` [("PIA", Faint), ("VER", Faint), ("LEC", Behind), ("NOR", Front)]
+      lay AgainstReference (Just "VER") five `shouldBe` [("NOR", Faint), ("PIA", Faint), ("LEC", Behind), ("VER", Front)]
+      lay AgainstReference (Just "LEC") five `shouldBe` [("PIA", Faint), ("VER", Faint), ("LEC", Behind), ("NOR", Front)]
+      lay AgainstFastest Nothing five `shouldBe` [("NOR", Faint), ("PIA", Faint), ("VER", Behind), ("LEC", Front)]
+      lay AgainstReference Nothing Comparison.dummy `shouldBe` [("LEC", Behind), ("NOR", Front)]
+      lay AgainstReference Nothing (pair [lec]) `shouldBe` [("LEC", Behind)]
+      curvesOf AgainstReference Nothing (pair []) `shouldBe` []
+      map cvDelta (filter ((== Front) . cvLayer) (curvesOf AgainstReference (Just "VER") five))
+        `shouldSatisfy` (\ds -> case ds of
+                                  [d] -> nearAll d [0, -0.1, -0.2, -0.312]
+                                  _   -> False)
+      map cvDelta (curvesOf AgainstReference Nothing (pair [noLap lec, nor, pia])) `shouldBe` [[], [], []]
+
+    it "la fila y la banda son las del frente; con dos coches, la Δ del par" $ do
+      let car d s = lec { ceDriver = d, ceCar = d, ceSectors = Just s }
+          ver = car "VER" (28.9, 30.9, 29.4)
+          four = pair [lec, nor, ver]
+      frontSeries AgainstReference (Just "VER") four `shouldSatisfy` nearAll [0, -0.1, -0.2, -0.312]
+      frontSeries AgainstReference Nothing four `shouldBe` frontSeries AgainstReference (Just "NOR") four
+      frontSeries AgainstReference Nothing (pair [lec]) `shouldBe` []
+      frontSeries AgainstReference Nothing (pair [noLap lec, nor, ver]) `shouldBe` []
+      sequence_
+        [ frontSeries b Nothing c `shouldBe` delta b c
+        | b <- baselinesInOrder
+        , c <- [Comparison.dummy, pair [nor, lec], pair [noLap lec, nor], pair [lec, noLap nor]] ]
+
+    it "las vueltas de otras sesiones: detrás y tenues; al frente si se pulsan, y la de la sesión que se ve pasa a tenue" $ do
+      let p3  = SessionKey 2026 21 Practice3
+          lap = lec { ceSectors = Just (29.0, 31.0, 29.5) }
+          lay f = map (\cv -> (curveKey cv, cvLayer cv)) (curvesWith AgainstReference f Comparison.dummy [(p3, lap)])
+      lay Nothing `shouldBe` [("LEC · 2026-21-FP3", Faint), ("LEC", Behind), ("NOR", Front)]
+      lay (Just "LEC · 2026-21-FP3") `shouldBe` [("NOR", Faint), ("LEC", Behind), ("LEC · 2026-21-FP3", Front)]
+      curvesWith AgainstReference Nothing Comparison.dummy [] `shouldBe` curvesOf AgainstReference Nothing Comparison.dummy
+      map cvDelta (filter ((== Just p3) . cvFrom) (curvesWith AgainstReference Nothing Comparison.dummy [(p3, lap)]))
+        `shouldBe` [lapAgainst AgainstReference Comparison.dummy lap]
+
+    it "el eje: con todas, salvo que otra sesión lo multiplique por más de axisBlowUp; sin la que se ve, con todas" $ do
+      let p3  = SessionKey 2026 21 Practice3
+          far = lec { ceSectors = Just (40.0, 45.0, 40.0) }
+          cvs = curvesWith AgainstReference Nothing Comparison.dummy [(p3, far)]
+          own = [cv | cv <- cvs, cvFrom cv == Nothing]
+      axisValues cvs `shouldBe` concatMap cvDelta own
+      axisValues cvs `shouldSatisfy` (\vs -> maximum vs < maximum (concatMap cvDelta cvs))
+      axisValues [cv | cv <- cvs, cvFrom cv == Just p3] `shouldBe` concatMap cvDelta [cv | cv <- cvs, cvFrom cv == Just p3]
+      axisValues [] `shouldBe` []
+      let near  = lec { ceSectors = fmap (\(a, b, c') -> (a + 0.05, b + 0.05, c' + 0.05)) (ceSectors lec) }
+          cvs'  = curvesWith AgainstReference Nothing Comparison.dummy [(p3, near)]
+      axisValues cvs' `shouldBe` concatMap cvDelta cvs'
+
     it "el tiempo, o «sin vuelta» si le faltan los sectores aunque traiga texto" $ do
       map lapShown [lec, nor] `shouldBe` ["1:29.512", "1:29.345"]
       lapShown (lec { ceSectors = Nothing }) `shouldBe` "sin vuelta"
@@ -3471,6 +3820,20 @@ main = hspec $ do
       missingReference AgainstReference (pair [lec, noLap nor]) `shouldBe` Nothing
       missingReference AgainstReference Comparison.dummy `shouldBe` Nothing
       missingReference AgainstReference (pair []) `shouldBe` Nothing
+      missingReference AgainstFastest (pair []) `shouldBe` Nothing
+
+    it "con coches y ninguno con vuelta, el mismo aviso con las dos bases (2026-11-24)" $ do
+      let none = "Ninguno de los elegidos tiene vuelta en esta sesión: elige otro piloto."
+      missingReference AgainstFastest (pair [noLap lec, noLap nor]) `shouldBe` Just none
+      missingReference AgainstReference (pair [noLap lec, noLap nor]) `shouldBe` Just none
+      missingReference AgainstFastest (pair [noLap lec]) `shouldBe` Just none
+
+    it "ninguno con vuelta: con coches y todos sin ella; sin coches, no" $ do
+      noneHasLap (pair [noLap lec, noLap nor]) `shouldBe` True
+      noneHasLap (pair [noLap lec]) `shouldBe` True
+      noneHasLap (pair [noLap lec, nor]) `shouldBe` False
+      noneHasLap (pair [lec, nor]) `shouldBe` False
+      noneHasLap (pair []) `shouldBe` False
 
     it "el aviso de un coche por su número, solo si aparece sin vuelta" $ do
       noLapFor "1" (pair [lec, noLap nor]) `shouldBe` Just "NOR no tiene vuelta en esta sesión"
@@ -3484,14 +3847,14 @@ main = hspec $ do
       map (baselineFromKey . baselineKey) baselinesInOrder `shouldBe` map Just baselinesInOrder
       baselineFromKey "otra" `shouldBe` Nothing
 
-    it "el desplegable de tipos: los cuatro, en orden; abre en el de hoy y se eligen el 1, el 2 y el 3" $ do
+    it "el desplegable de tipos: los tres, en orden; abre en el de hoy y se eligen el 1 y el 2" $ do
       map chartTypeLabel chartTypesInOrder
-        `shouldBe` ["Delta por sectores", "Lap Speed Trace", "Telemetría comparativa", "Lap Delta"]
+        `shouldBe` ["Delta por sectores", "Telemetría comparativa", "Lap Delta"]
       defaultChartType `shouldBe` SectorDelta
-      filter chartTypeReady chartTypesInOrder `shouldBe` [SectorDelta, LapSpeedTrace, TelemetryTraces]
+      filter chartTypeReady chartTypesInOrder `shouldBe` [SectorDelta, TelemetryTraces]
       map (chartTypeFromKey . chartTypeKey) chartTypesInOrder `shouldBe` map Just chartTypesInOrder
       chartTypeFromKey "otro" `shouldBe` Nothing
-      filter chartTypeTraces chartTypesInOrder `shouldBe` [LapSpeedTrace, TelemetryTraces, LapDeltaBars]
+      filter chartTypeTraces chartTypesInOrder `shouldBe` [TelemetryTraces, LapDeltaBars]
 
     it "el desplegable del eje: sus claves de ida y vuelta" $ do
       map (axisFromKey . axisKey) axesInOrder `shouldBe` map Just axesInOrder
@@ -3641,12 +4004,98 @@ main = hspec $ do
       liveNoLapFor "1" [lec, nor] `shouldBe` Nothing
       endedNotice `shouldBe` "Sesión acabada: lo último del directo"
 
-    it "los elegidos en una lista nueva: el que está se queda; el que no, el primero libre" $ do
-      keepChosen ["1", "3", "16", "38"] ("16", "1") `shouldBe` (Just "16", Just "1")
-      keepChosen ["1", "3", "38"] ("16", "1") `shouldBe` (Just "3", Just "1")
-      keepChosen ["1", "3", "38"] ("1", "16") `shouldBe` (Just "1", Just "3")
-      keepChosen ["3", "38"] ("16", "1") `shouldBe` (Just "3", Just "38")
-      keepChosen [] ("16", "1") `shouldBe` (Nothing, Nothing)
+    it "los elegidos en una parrilla nueva: el que está se queda; el que no, el primero libre, y si no hay, sale" $ do
+      keepCars ["1", "3", "16", "38"] ["16", "1"] `shouldBe` ["16", "1"]
+      keepCars ["1", "3", "38"] ["16", "1"] `shouldBe` ["3", "1"]
+      keepCars ["1", "3", "38"] ["1", "16"] `shouldBe` ["1", "3"]
+      keepCars ["3", "38"] ["16", "1"] `shouldBe` ["3", "38"]
+      keepCars [] ["16", "1"] `shouldBe` []
+      keepCars ["3", "16"] ["16", "1", "44", "63"] `shouldBe` ["16", "3"]
+
+    prop "en una parrilla nueva: solo coches de ella, sin repetidos, sin crecer, y los que siguen en su orden" $
+      let grid = sublistOf ["1", "3", "16", "38", "44"]
+          pick = sublistOf ["1", "16", "44", "81", "63"]
+       in forAll ((,) <$> grid <*> pick) $ \(cs, chosen) ->
+            let kept = keepCars cs chosen
+             in counterexample (show kept) $
+                  all (`elem` cs) kept && nub kept == kept && length kept <= length chosen
+                    && filter (`elem` cs) chosen `isSubsequenceOf` kept
+
+    it "la referencia nueva: la vieja ocupa su sitio si estaba entre los demás; si no, sale" $ do
+      pickReference "1" ["16", "1", "3"] `shouldBe` ["1", "16", "3"]
+      pickReference "44" ["16", "1", "3"] `shouldBe` ["44", "1", "3"]
+      pickReference "16" ["16", "1"] `shouldBe` ["16", "1"]
+      pickReference "16" [] `shouldBe` ["16"]
+
+    it "añadir va al final, sin repetir y hasta cinco; quitar no toca la referencia ni la deja sola" $ do
+      addCar "3" ["16", "1"] `shouldBe` ["16", "1", "3"]
+      addCar "1" ["16", "1"] `shouldBe` ["16", "1"]
+      addCar "44" ["16", "1", "3", "63", "81"] `shouldBe` ["16", "1", "3", "63", "81"]
+      removeCar "1" ["16", "1", "3"] `shouldBe` ["16", "3"]
+      removeCar "16" ["16", "1", "3"] `shouldBe` ["16", "1", "3"]
+      removeCar "1" ["16", "1"] `shouldBe` ["16", "1"]
+      removeCar "44" ["16", "1", "3"] `shouldBe` ["16", "1", "3"]
+
+    prop "elegir, añadir y quitar: la referencia primero, sin repetidos, de 1 a 5" $
+      let car  = elements ["1", "3", "16", "44", "63", "81"]
+          edit = (,) <$> elements ["referencia", "añadir", "quitar"] <*> car
+          apply cars (op, c) = case (op :: String) of
+            "referencia" -> pickReference c cars
+            "añadir"     -> addCar c cars
+            _            -> removeCar c cars
+       in forAll ((,) <$> car <*> listOf edit) $ \(start, es) ->
+            let cars = foldl apply [start] es
+             in counterexample (show cars) $
+                  not (null cars) && length cars <= maxCars && length cars == length (nub cars)
+
+    it "con grupos: los de la tarjeta se quedan, los del grupo que no están entran detrás y el que no cabe, aparte" $ do
+      let grid = [ MkDriverEntry n c "" | (n, c) <- [("16", "LEC"), ("1", "NOR"), ("3", "VER"), ("44", "HAM"), ("63", "RUS"), ("81", "PIA")] ]
+          only ds = [GroupPick ds Nothing]
+          car n c = AddedCar n c
+      withGroups grid ["16", "1"] (only ["VER"]) `shouldBe` WithGroups ["16", "1", "3"] [car "3" "VER"] []
+      withGroups grid ["16", "1"] (only ["LEC"]) `shouldBe` WithGroups ["16", "1"] [] []
+      withGroups grid ["16", "1"] (only ["NOR", "VER", "VER", "ALO"]) `shouldBe` WithGroups ["16", "1", "3"] [car "3" "VER"] []
+      withGroups grid ["16", "1", "63"] (only ["VER", "HAM", "PIA"])
+        `shouldBe` WithGroups ["16", "1", "63", "3", "44"] [car "3" "VER", car "44" "HAM"] [car "81" "PIA"]
+      withGroups grid [] (only ["VER"]) `shouldBe` WithGroups [] [] []
+
+    it "con la sesión de un grupo: su vuelta tras sus pilotos; sin pilotos, la de la referencia; lo del final es lo que no cabe" $ do
+      let grid = [ MkDriverEntry n c "" | (n, c) <- [("16", "LEC"), ("1", "NOR"), ("3", "VER"), ("44", "HAM"), ("63", "RUS")] ]
+          p1   = SessionKey 2026 21 Practice1
+          p3   = SessionKey 2026 21 Practice3
+      withGroups grid ["16", "1"] [GroupPick ["VER"] (Just p1), GroupPick ["HAM"] Nothing]
+        `shouldBe` WithGroups ["16", "1", "3", "44"] [AddedCar "3" "VER", AddedLap p1 "VER", AddedCar "44" "HAM"] []
+      withGroups grid ["16", "1"] [GroupPick [] (Just p3)] `shouldBe` WithGroups ["16", "1"] [AddedLap p3 "LEC"] []
+      withGroups grid ["16", "1"] [GroupPick ["LEC"] (Just p3)] `shouldBe` WithGroups ["16", "1"] [AddedLap p3 "LEC"] []
+      withGroups grid ["16", "1", "63"] [GroupPick ["VER"] (Just p1), GroupPick ["HAM"] Nothing]
+        `shouldBe` WithGroups ["16", "1", "63", "3"] [AddedCar "3" "VER", AddedLap p1 "VER"] [AddedCar "44" "HAM"]
+      let g = withGroups grid ["16", "1"] [GroupPick ["VER"] (Just p1), GroupPick [] (Just p3), GroupPick ["NOR"] (Just p1)]
+      addedCars g `shouldBe` ["3"]
+      addedLaps g `shouldBe` [(p1, ["VER"]), (p3, ["LEC"])]
+      wgLeftOut g `shouldBe` [AddedLap p1 "NOR"]
+
+    it "la vuelta de otra sesión, contra la base de la que se ve" $ do
+      let e d s = MkComparisonEntry d d "" Nothing (Just s) Nothing []
+          c = Comparison.dummy {lcEntries = [e "LEC" (27.203, 32.235, 35.602), e "NOR" (26.783, 31.744, 35.717)]}
+          p3 = e "LEC" (27.193, 32.492, 35.506)
+          near xs ys = length xs == length ys && and (zipWith (\a b -> abs (a - b) < 1e-9) xs ys)
+      lapAgainst AgainstReference c p3 `shouldSatisfy` near [0, -0.010, 0.247, 0.151]
+      lapAgainst AgainstFastest c p3 `shouldSatisfy` near [0, 0.410, 1.158, 0.947]
+      lapAgainst AgainstReference c (p3 {ceSectors = Nothing}) `shouldBe` []
+      lapAgainst AgainstReference (c {lcEntries = []}) p3 `shouldBe` []
+
+    prop "con grupos: la tarjeta primero y entera, sin repetidos, hasta cinco, y nadie a la vez dentro y fuera" $
+      let grid  = [ MkDriverEntry n c "" | (n, c) <- [("16", "LEC"), ("1", "NOR"), ("3", "VER"), ("44", "HAM"), ("63", "RUS"), ("81", "PIA")] ]
+          own   = sublistOf ["16", "1", "3", "44", "63"]
+          pick  = GroupPick <$> listOf (elements ["LEC", "NOR", "VER", "HAM", "RUS", "PIA", "ALO"])
+                            <*> elements [Nothing, Just (SessionKey 2026 21 Practice1), Just (SessionKey 2025 22 Qualifying)]
+       in forAll ((,) <$> own <*> listOf pick) $ \(o, ps) ->
+            let WithGroups cars added out = withGroups grid o ps
+             in counterexample (show (cars, added, out)) $
+                  take (length o) cars == o && nub cars == cars && drop (length o) cars == [n | AddedCar n _ <- added]
+                    && nub (added <> out) == added <> out
+                    && (null o || length o + length added == min maxCars (length o + length added + length out))
+                    && all (`notElem` [n | AddedCar n _ <- out]) cars
 
     it "al abrir ya en directo: P1 contra P2, sin contar las filas sin número" $ do
       let at p c = emptyLiveRow {ltPosition = p, ltCar = c}
@@ -3685,7 +4134,7 @@ main = hspec $ do
 
     it "los cortos: con FastF1, apagados en «rápida»; en directo, la regla y la excepción que difiere" $ do
       map (\p -> (lpValue p, lpDiffers p, lpEnabled p)) (lapPicks Nothing LastLap (Just LastLap, Nothing))
-        `shouldBe` replicate 2 (FastestLap, False, False)
+        `shouldBe` replicate maxCars (FastestLap, False, False)
       map (\p -> (lpValue p, lpDiffers p, lpEnabled p)) (lapPicks (Just (Just race)) LastLap (Nothing, Just FastestLap))
         `shouldBe` [(LastLap, False, True), (FastestLap, True, True)]
       map (\p -> (lpValue p, lpDiffers p)) (lapPicks (Just (Just race)) (PartLap 2) (Nothing, Just LastLap))
@@ -3829,22 +4278,25 @@ main = hspec $ do
                 [tp 0 0 100 1 0, tp 50 2000 300 0.5 1, tp 100 4000 200 0 0]
         other = car "1" (35, 40, 35) (1300, 2900)
                   [tp 0 0 90 1 0, tp 60 2100 280 0.4 1, tp 110 4200 190 0 0]
-    it "tres filas de arriba abajo: velocidad 100, acelerador 50 y freno 20, con 19 de rótulo" $ do
+    it "tres filas de arriba abajo: velocidad 75, acelerador 50 y freno 20, con 19 de rótulo" $ do
       map channelLabel channelsInOrder `shouldBe` ["km/h", "Acelerador %", "Freno"]
-      map (channelHeight three) channelsInOrder `shouldBe` [100, 50, 20]
-      map (channelTop three) channelsInOrder `shouldBe` [19, 138, 207]
-      tracesHeight three `shouldBe` 243
-      channelsSpan three `shouldBe` (19, 227)
+      map (channelHeight three) channelsInOrder `shouldBe` [75, 50, 20]
+      map (channelTop three) channelsInOrder `shouldBe` [19, 113, 182]
+      tracesHeight three `shouldBe` 218
+      channelsSpan three `shouldBe` (19, 202)
 
-    it "los canales de cada tipo: el 3 los tres, el 2 la velocidad, el 1 y el 4 ninguno" $ do
-      map traceChannels chartTypesInOrder `shouldBe` [[], [Speed], channelsInOrder, []]
+    it "los canales: en «Telemetría comparativa», los elegidos de arriba abajo; en los demás, ninguno" $ do
+      map (`traceChannels` channelsInOrder) chartTypesInOrder `shouldBe` [[], channelsInOrder, []]
+      traceChannels TelemetryTraces [Brake, Speed] `shouldBe` [Speed, Brake]
+      traceChannels SectorDelta [Brake] `shouldBe` []
       channelTop speed Speed `shouldBe` 19
       tracesHeight speed `shouldBe` 185
       channelsSpan speed `shouldBe` (19, 169)
 
-    it "la velocidad mide 150 si va sola y 100 con otra fila" $ do
+    it "la velocidad mide 150 si va sola, 100 con otra fila y 75 con las otras dos" $ do
       channelHeight speed Speed `shouldBe` 150
       map (\o -> channelHeight (TraceRows [Speed, o]) Speed) [Throttle, Brake] `shouldBe` [100, 100]
+      channelHeight three Speed `shouldBe` 75
 
     it "los trozos sin crecer suman el alto del lienzo, con las filas en orden entre sus aires" $ do
       map (sum . map tpBasis . layoutPieces) [speed, three] `shouldBe` [tracesHeight speed, tracesHeight three]
@@ -3856,20 +4308,78 @@ main = hspec $ do
       map tpGrow (layoutPieces three) `shouldBe` [9.5, 100, 9.5, 50, 9.5, 20, 8]
       map tpGrow (layoutPieces speed) `shouldBe` [0, 1, 0]
       pieceFlex (TracePiece (Just Throttle) 50 50) `shouldBe` "flex: 50.000 0 50.0px"
-      spanPiece (tlSpan (traceLayout three)) `shouldBe` TracePiece Nothing 208 189
+      spanPiece (tlSpan (traceLayout three)) `shouldBe` TracePiece Nothing 183 189
 
-    prop "en el tipo 3, al crecer, las filas guardan el 100 : 50 : 20, cada aire crece la mitad que ellas y suman lo crecido" $
+    prop "con las tres, al crecer, las filas crecen 100 : 50 : 20, cada aire la mitad que ellas y suman lo crecido" $
       \(NonNegative s) ->
         let hs = grown s (layoutPieces three)
-            k = hs !! 1 / 100
-            air = (1 + k) / 2
+            t = s / 206.5
          in close (sum hs) (tracesHeight three + s)
-              && close (hs !! 3) (50 * k) && close (hs !! 5) (20 * k)
-              && all (\i -> close (hs !! i) (19 * air)) [0, 2, 4]
-              && close (hs !! 6) (16 * air)
+              && close (hs !! 1) (75 + 100 * t) && close (hs !! 3) (50 + 50 * t) && close (hs !! 5) (20 + 20 * t)
+              && all (\i -> close (hs !! i) (19 + 9.5 * t)) [0, 2, 4]
+              && close (hs !! 6) (16 + 8 * t)
 
-    prop "en el tipo 2, la velocidad se queda todo lo que crece" $ \(NonNegative s) ->
+    prop "la velocidad sola se queda todo lo que crece" $ \(NonNegative s) ->
       grown s (layoutPieces speed) == [19, 150 + s, 16]
+
+    it "una sola gráfica que no es la velocidad, con su alto de hoy (2026-11-23 (m))" $ do
+      map (\c -> channelHeight (TraceRows [c]) c) [Throttle, Brake] `shouldBe` [50, 20]
+      map (tracesHeight . TraceRows . pure) [Throttle, Brake] `shouldBe` [85, 55]
+      map tpGrow (layoutPieces (TraceRows [Brake])) `shouldBe` [0, 1, 0]
+
+    prop "una sola gráfica, la que sea, se queda todo lo que crece" $ \(NonNegative s) ->
+      all (\c -> grown s (layoutPieces (TraceRows [c])) == [19, channelHeight (TraceRows [c]) c + s, 16]) channelsInOrder
+
+    it "sin la velocidad, el acelerador y el freno guardan su 50 : 20" $
+      map tpGrow (layoutPieces (TraceRows [Throttle, Brake])) `shouldBe` [9.5, 50, 9.5, 20, 8]
+
+    it "«Gráficas ▾»: marcar pone el canal en su sitio, desmarcar lo quita, y la última no se desmarca" $ do
+      toggleChannel Speed [Throttle, Brake] `shouldBe` channelsInOrder
+      toggleChannel Throttle channelsInOrder `shouldBe` [Speed, Brake]
+      toggleChannel Brake [Brake] `shouldBe` [Brake]
+      toggleChannel Speed [Brake] `shouldBe` [Speed, Brake]
+
+    it "una sola gráfica que no es la velocidad: a la derecha si caben, si no debajo; con la velocidad o con más, nada (2026-11-24)" $ do
+      map (chartFirstFor 900 . pure) [Throttle, Brake] `shouldBe` [Just FirstSide, Just FirstSide]
+      chartFirstFor 608 [Brake] `shouldBe` Just FirstStacked
+      chartFirstFor chartFirstSideMin [Brake] `shouldBe` Just FirstSide
+      chartFirstFor (chartFirstSideMin - 1) [Throttle] `shouldBe` Just FirstStacked
+      map (chartFirstFor 900) [[Speed], [Throttle, Brake], channelsInOrder, []] `shouldBe` replicate 4 Nothing
+
+    it "el acomodo va apilado a cualquier ancho, con la tabla y la gráfica a todo el ancho" $ do
+      clStacked (cardLayout 1912) `shouldBe` False
+      stackedLayout 1912 `shouldSatisfy` \l -> clStacked l && clControl l == 1912 && clChart l == 1912
+      stackedLayout 300 `shouldBe` cardLayout 300
+
+    it "las zonas del acomodo: un renglón por piloto con su vuelta, «+» debajo, y los ajustes a la derecha o debajo" $ do
+      chartFirstAreas FirstSide 5 False 5 `shouldBe`
+        [ "chart chart chart chart chart", "legend legend legend legend legend"
+        , ". p0 l0 . list", ". p1 l1 . list", ". p2 l2 . list", ". p3 l3 . list", ". p4 l4 . list"
+        , "note note note note note" ]
+      chartFirstAreas FirstStacked 2 True 2 `shouldBe`
+        [ "chart chart chart chart", "legend legend legend legend"
+        , ". p0 l0 .", ". p1 l1 .", ". add . ."
+        , "adj adj adj adj", "note note note note" ]
+      -- Más tiempos que coches (la respuesta aún es la de antes) y nada todavía.
+      chartFirstAreas FirstStacked 1 False 2 `shouldBe`
+        ["chart chart chart chart", "legend legend legend legend", ". p0 l0 .", ". . l1 .", "adj adj adj adj", "note note note note"]
+      chartFirstAreas FirstSide 0 False 0 `shouldBe`
+        ["chart chart chart chart chart", "legend legend legend legend legend", ". . . . list", "note note note note note"]
+
+    prop "las zonas del acomodo: cada renglón con las mismas columnas, y cada piloto y cada vuelta una sola vez" $
+      forAll ((,,,) <$> elements [FirstSide, FirstStacked] <*> choose (0, 5) <*> arbitrary <*> choose (0, 5)) $ \(f, cars, add, laps) ->
+        let rows  = map T.words (chartFirstAreas f cars add laps)
+            names = concat (drop 2 rows)
+            once n = length (filter (== n) names) == 1
+         in all ((== length (concat (take 1 rows))) . length) rows
+              .&&. all (once . ("p" <>) . T.pack . show) [0 .. cars - 1]
+              .&&. all (once . ("l" <>) . T.pack . show) [0 .. laps - 1]
+              .&&. (length (filter (== "add") names) == fromEnum add)
+
+    prop "marcar y desmarcar nunca deja ninguna, ni repite, ni desordena" $
+      forAll (listOf (elements channelsInOrder)) $ \clicks ->
+        let end = foldl (flip toggleChannel) channelsInOrder clicks
+         in not (null end) && end == filter (`elem` end) channelsInOrder
 
     prop "repartir dentro del grupo de las filas da lo mismo que repartir entre todos" $ \(NonNegative s) ->
       all (\r ->
@@ -3946,11 +4456,405 @@ main = hspec $ do
         `shouldBe` [SectorSlower, SectorEven, SectorSlower]
 
     it "la curva: X hasta la mayor y la Y en la fila del canal; el freno, en escalones" $ do
-      tracePoints three Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,85.7 300.0,19.0 600.0,52.3"
+      tracePoints three Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,69.0 300.0,19.0 600.0,44.0"
       tracePoints three Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)
-        `shouldBe` "0.0,227.0 300.0,227.0 300.0,207.0 600.0,207.0 600.0,227.0"
+        `shouldBe` "0.0,202.0 300.0,202.0 300.0,182.0 600.0,182.0 600.0,202.0"
       tracePoints three Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` ""
       tracePoints speed Speed (0, 300) 100 [0, 50, 100] (ceTrace ref) `shouldBe` "0.0,119.0 300.0,19.0 600.0,69.0"
+
+    it "los vértices de la curva son los de su atributo, en números" $ do
+      traceVertices three Speed (0, 300) 100 [0, 50, 100] (ceTrace ref)
+        `shouldSatisfy` (\vs -> map fst vs == [0, 300, 600] && length vs == 3)
+      length (traceVertices three Brake (0, 1) 100 [0, 50, 100] (ceTrace ref)) `shouldBe` 5
+      traceVertices three Speed (0, 300) 100 [0, 50] (ceTrace ref) `shouldBe` []
+
+  describe "Common.Blend" $ do
+    let near a b = abs (a - b) < 1e-9
+        dist (x1, y1) (x2, y2) = sqrt ((x2 - x1) ^ (2 :: Int) + (y2 - y1) ^ (2 :: Int))
+        unitLen (tx, ty) = sqrt (tx * tx + ty * ty)
+        marksOf o = case o of
+          Marks ms -> ms
+          Dashed _ -> []
+        -- Una recta de largo @l@ que sale de @(x, y)@ con el ángulo @a@.
+        straight (x, y) a l = [(x, y), (x + l * cos a, y + l * sin a)]
+        genLine = do
+          x <- choose (-500, 500)
+          y <- choose (-500, 500)
+          a <- choose (0, 2 * pi)
+          l <- choose (0.5, 900)
+          pure (straight (x, y) a l, l)
+        genPoly = do
+          n <- choose (2, 8)
+          vectorOf n ((,) <$> choose (0, 600) <*> choose (0, 400))
+        polyLen ps = sum (zipWith dist ps (drop 1 ps))
+    it "tres mezclas, en orden; arranca en tramos y cada clave vuelve a la suya" $ do
+      blendsInOrder `shouldBe` [Tramos, Barbero, Espiga]
+      defaultBlend `shouldBe` Tramos
+      map (blendFromKey . blendKey) blendsInOrder `shouldBe` map Just blendsInOrder
+      blendFromKey "trenza" `shouldBe` Nothing
+
+    it "al abrir, la mezcla guardada; sin nada o con una clave que no es de ninguna, tramos" $ do
+      blendStoreKey `shouldBe` "dashboardF1.mezcla"
+      map (blendOnOpen . Just . blendKey) blendsInOrder `shouldBe` blendsInOrder
+      blendOnOpen Nothing `shouldBe` Tramos
+      blendOnOpen (Just "trenza") `shouldBe` Tramos
+      blendOnOpen (Just "Barbero") `shouldBe` Tramos
+
+    it "toPixels: las esquinas del viewBox caen en las de la caja, y el centro en el centro" $ do
+      let vb = (0, 19, 600, 100)
+      toPixels vb (300, 50) (0, 19) `shouldBe` (0, 0)
+      toPixels vb (300, 50) (600, 119) `shouldBe` (300, 50)
+      toPixels vb (300, 50) (300, 69) `shouldBe` (150, 25)
+
+    it "las medidas de la sesión 167: 3,5 px de grosor, tramos de 6 px, una marca cada 14 px" $ do
+      (lineWidth, dashLength, markPeriod) `shouldBe` (3.5, 6, 14)
+      blendOverlay Tramos [(0, 0), (100, 0)] `shouldBe` Dashed 6
+
+    prop "en una recta de cualquier dirección, las marcas caen cada 14 px de largo, ni en subida ni en llano miden distinto" $
+      forAll genLine $ \(ps, l) ->
+        let at = map fst (pointsAlong markPeriod ps)
+         in length at === ceiling (l / markPeriod) .&&. and (zipWith (\p q -> abs (dist p q - markPeriod) < 1e-6) at (drop 1 at))
+
+    prop "en una polilínea, tantas marcas como 14 px caben en su largo, y cada dirección es unitaria" $
+      forAll genPoly $ \ps ->
+        let along = pointsAlong markPeriod ps
+            l = polyLen ps
+         in l > 1e-6 ==>
+              (length along === ceiling (l / markPeriod - 1e-9) .&&. all (\(_, t) -> abs (unitLen t - 1) < 1e-9) along)
+
+    it "la primera marca va en el principio; un tramo de largo cero no cuenta; sin largo o sin periodo, ninguna" $ do
+      pointsAlong 14 [(0, 0), (0, 0), (30, 0)] `shouldBe` [((0, 0), (1, 0)), ((14, 0), (1, 0)), ((28, 0), (1, 0))]
+      pointsAlong 14 [(0, 0), (10, 0), (10, 10)] `shouldBe` [((0, 0), (1, 0)), ((10, 4), (0, 1))]
+      pointsAlong 14 [(5, 5)] `shouldBe` []
+      pointsAlong 0 [(0, 0), (30, 0)] `shouldBe` []
+
+    it "el barbero: una raya por marca, de borde a borde, centrada en la línea e inclinada 40° respecto a la perpendicular" $ do
+      let ms = marksOf (blendOverlay Barbero [(0, 0), (30, 0)])
+          tilt = 40 * pi / 180
+      length ms `shouldBe` 3
+      case ms of
+        Mark [(ax, ay), (bx, by)] w : _ -> do
+          near ((ax + bx) / 2) 0 `shouldBe` True
+          near ((ay + by) / 2) 0 `shouldBe` True
+          near (abs (atan2 (ax - bx) (ay - by))) tilt `shouldBe` True
+          near w (7 * cos tilt) `shouldBe` True
+        _ -> expectationFailure "la raya no son dos puntos"
+
+    it "la espiga: una uve por marca, con la punta hacia donde avanza la línea" $ do
+      let ms = marksOf (blendOverlay Espiga [(0, 0), (30, 0)])
+      length ms `shouldBe` 3
+      case ms of
+        Mark [(lx, ly), (px, py), (rx, ry)] w : _ -> do
+          (near px 3.15, near py 0, near lx (-3.15), near rx (-3.15)) `shouldBe` (True, True, True, True)
+          (near ly 3.5, near ry (-3.5)) `shouldBe` (True, True)
+          near w 4.2 `shouldBe` True
+        _ -> expectationFailure "la uve no son tres puntos"
+
+    it "el atributo points, en px con dos decimales" $
+      pointsAttr [(0, 0), (12.346, 6)] `shouldBe` "0.00,0.00 12.35,6.00"
+
+  describe "Common.Group" $ do
+    let grp i ds s = CardGroup (GroupId i) i ds s
+        lec = grp "leclerc" ["LEC"] Nothing
+        nor = grp "norris" ["NOR"] Nothing
+        ver = grp "verstappen" ["VER"] Nothing
+        p1  = grp "contra-p1" [] (Just "FP1")
+        vegasQ = SessionKey 2026 21 Qualifying
+        card gs = (rectNamed "lap-comparison" LapComparison (0, 0, 60, 60)) { widgetGroups = map GroupId gs }
+        layoutWith gs = Layout (LayoutId "prueba") [] gs
+        siglas = ["LEC", "NOR", "VER", "HAM", "PIA", "RUS", "ALO", "SAI"]
+        genDrivers = do
+          n <- choose (0, 6)
+          nub <$> vectorOf n (elements siglas)
+        genGroups = do
+          n <- choose (0, 4)
+          vectorOf n (grp "g" <$> genDrivers <*> pure Nothing)
+    it "los grupos de la tarjeta, en su orden; un id desconocido no cuenta y uno repetido, una vez" $ do
+      let l = layoutWith [lec, nor, p1]
+      map groupId (cardGroups l (card ["norris", "fantasma", "leclerc", "norris"]))
+        `shouldBe` [GroupId "norris", GroupId "leclerc"]
+      cardGroups l (card []) `shouldBe` []
+
+    it "destacar se suma y las sesiones también, sin repetir (h, i)" $ do
+      highlightedDrivers [lec, nor, grp "otro" ["NOR", "VER"] Nothing] `shouldBe` ["LEC", "NOR", "VER"]
+      addedSessions (Just vegasQ) [] [lec, p1, p1] `shouldBe` [SessionKey 2026 21 Practice1]
+      highlightedDrivers [p1] `shouldBe` []
+
+    it "la sesión de un grupo: relativa toma el GP que se ve, fija se queda; la que se ve no se suma (f)" $ do
+      let fija = grp "f" [] (Just "2025-21-Q")
+          rara = grp "r" [] (Just "P1")
+          mismaQ = grp "q" [] (Just "Q")
+      addedSessions (Just (SessionKey 2026 22 Qualifying)) [] [p1] `shouldBe` [SessionKey 2026 22 Practice1]
+      addedSessions (Just vegasQ) [] [fija, p1] `shouldBe` [SessionKey 2025 21 Qualifying, SessionKey 2026 21 Practice1]
+      addedSessions Nothing [] [p1, fija] `shouldBe` [SessionKey 2025 21 Qualifying]
+      addedSessions (Just vegasQ) [] [mismaQ, rara] `shouldBe` []
+      map (fmap renderGroupSession . readGroupSession) ["FP1", "2026-21-FP1", "P1"]
+        `shouldBe` [Just "FP1", Just "2026-21-FP1", Nothing]
+
+    it "la Best Lap en cada sesión sumada: la del piloto, en su orden, y si es la más rápida de esa sesión (z), (aa)" $ do
+      let at d best = emptyLiveRow {ltDriver = d, ltBestLap = best}
+          kp1 = SessionKey 2026 21 Practice1
+          q25 = SessionKey 2025 21 Qualifying
+          added = [(kp1, [at "NOR" "1:34.000", at "LEC" "1:32.900"]), (q25, [at "PIA" "1:33.151", at "LEC" "1:32.100"])]
+      bestPerSession added (at "LEC" "1:33.302") `shouldBe` [(kp1, Just ("1:32.900", True)), (q25, Just ("1:32.100", True))]
+      bestPerSession added (at "NOR" "1:33.000") `shouldBe` [(kp1, Just ("1:34.000", False)), (q25, Nothing)]
+      bestPerSession added (at "PIA" "1:33.151") `shouldBe` [(kp1, Nothing), (q25, Just ("1:33.151", False))]
+      bestPerSession [(kp1, [at "VER" "-", at "LEC" "1:35.000"])] (at "VER" "") `shouldBe` [(kp1, Nothing)]
+      bestPerSession [(kp1, [at "LEC" "1:33.000", at "NOR" "1:33.000"])] (at "NOR" "")
+        `shouldBe` [(kp1, Just ("1:33.000", True))]
+      bestPerSession [] (at "LEC" "1:33.302") `shouldBe` []
+
+    it "la etiqueta de la sesión de una cifra: su código, y el año si es de otro (n)" $ do
+      map (fromTag vegasQ) [vegasQ, SessionKey 2026 21 Practice1, SessionKey 2025 21 Qualifying]
+        `shouldBe` ["Q", "P1", "Q 2025"]
+
+    it "otra temporada: se lee y se escribe; N años antes o un año, sin ceros ni años de dos cifras (t); el 2.º del año (ab)" $ do
+      map (fmap renderGroupSession . readGroupSession) ["Q@-1", "FP1@2025", "Q@-0", "Q@25", "Q@x", "Q@", "X@-1"]
+        `shouldBe` [Just "Q@-1", Just "FP1@2025", Nothing, Nothing, Nothing, Nothing, Nothing]
+      readGroupSession "Q@-3" `shouldBe` Just (OtherSeason (YearsBack 3) 1 Qualifying)
+      map (fmap renderGroupSession . readGroupSession) ["R@2021#2", "Q@-5#2", "Q@2021#1", "Q@2021#", "Q@2021#x", "Q@2021#2#3"]
+        `shouldBe` [Just "R@2021#2", Just "Q@-5#2", Nothing, Nothing, Nothing, Nothing]
+      readGroupSession "R@2021#2" `shouldBe` Just (OtherSeason (InYear 2021) 2 Race)
+
+    it "otra temporada: el gran premio de ese año en el mismo circuito; si no se corrió, nada (t); el 1.º o el 2.º (ab)" $ do
+      let other p k c = grp "o" [] (Just (renderGroupSession (OtherSeason p k c)))
+          vegas = [CircuitRound 2025 22 "", CircuitRound 2024 22 "", CircuitRound 2023 21 ""]
+          austria = [CircuitRound 2021 9 "Austrian Grand Prix", CircuitRound 2021 8 "Styrian Grand Prix"]
+          spielbergR = SessionKey 2026 11 Race
+      addedSessions (Just vegasQ) vegas [other (YearsBack 1) 1 Qualifying] `shouldBe` [SessionKey 2025 22 Qualifying]
+      addedSessions (Just vegasQ) vegas [other (InYear 2023) 1 Practice1] `shouldBe` [SessionKey 2023 21 Practice1]
+      addedSessions (Just vegasQ) vegas [other (YearsBack 4) 1 Qualifying] `shouldBe` []
+      addedSessions (Just vegasQ) vegas [other (InYear 2026) 1 Qualifying] `shouldBe` []
+      addedSessions (Just vegasQ) vegas [other (InYear 2026) 1 Practice1] `shouldBe` [SessionKey 2026 21 Practice1]
+      addedSessions (Just spielbergR) austria [other (InYear 2021) 1 Race] `shouldBe` [SessionKey 2021 8 Race]
+      addedSessions (Just spielbergR) austria [other (YearsBack 5) 2 Race] `shouldBe` [SessionKey 2021 9 Race]
+      addedSessions (Just vegasQ) vegas [other (YearsBack 1) 2 Qualifying] `shouldBe` [SessionKey 2025 22 Qualifying]
+      addedSessions Nothing vegas [other (YearsBack 1) 1 Qualifying] `shouldBe` []
+
+    it "otra temporada: el nombre, la etiqueta, el desplegable y su pista (x); dos GP el mismo año, dos entradas (ab)" $ do
+      autoName 2026 id (const "Las Vegas") ["LEC"] (Just (OtherSeason (YearsBack 1) 1 Qualifying))
+        `shouldBe` "LEC contra Q, 1 año antes"
+      autoName 2026 id (const "Las Vegas") [] (Just (OtherSeason (InYear 2025) 1 Practice1)) `shouldBe` "Contra P1 2025"
+      map (sessionTag (Just 2026)) [OtherSeason (YearsBack 2) 1 Qualifying, OtherSeason (InYear 2025) 1 Race]
+        `shouldBe` ["Q 2024", "R 2025"]
+      sessionTag Nothing (OtherSeason (YearsBack 2) 1 Qualifying) `shouldBe` "Q −2"
+      let vegas = [CircuitRound 2025 22 "", CircuitRound 2024 22 "", CircuitRound 2023 21 ""]
+          opts = seasonOptions "Las Vegas" 2026 vegas
+      length opts `shouldBe` 1 + 5 + 8
+      map (\o -> (soLabel o, soOpen o)) (take 2 opts ++ take 1 (drop 4 opts) ++ take 1 (drop 6 opts) ++ take 1 (drop 9 opts))
+        `shouldBe` [ ("Esta temporada", True), ("1 año antes", True), ("4 años antes · aquí no se corrió", True)
+                   , ("Las Vegas 2025", True), ("Las Vegas 2022 · no se corrió", False) ]
+      map soPick (take 2 opts ++ drop 13 opts) `shouldBe` [Nothing, Just (YearsBack 1, 1), Just (InYear 2018, 1)]
+      seasonHint "Las Vegas" 2026 vegas (YearsBack 1, 1)
+        `shouldBe` "De este circuito, Las Vegas 2025. Viendo otro circuito, la de ese circuito 1 año antes."
+      seasonHint "Las Vegas" 2026 vegas (InYear 2021, 1)
+        `shouldBe` "Las Vegas 2021: no se corrió. Mientras se vea Las Vegas, el grupo no suma nada; viendo otro circuito, la de ese circuito en 2021 sí se corrió."
+      let austria = [CircuitRound 2021 9 "Austrian Grand Prix", CircuitRound 2021 8 "Styrian Grand Prix", CircuitRound 2022 11 ""]
+          dobles = seasonOptions "Spielberg" 2026 austria
+      length dobles `shouldBe` 1 + 6 + 9
+      [(soLabel o, soPick o) | o <- dobles, "2021" `T.isInfixOf` soLabel o || "5 años" `T.isPrefixOf` soLabel o]
+        `shouldBe` [ ("5 años antes · Styrian Grand Prix", Just (YearsBack 5, 1)), ("5 años antes · Austrian Grand Prix", Just (YearsBack 5, 2))
+                   , ("2021 · Styrian Grand Prix", Just (InYear 2021, 1)), ("2021 · Austrian Grand Prix", Just (InYear 2021, 2)) ]
+      seasonHint "Spielberg" 2026 austria (InYear 2021, 2)
+        `shouldBe` "De este circuito, Austrian Grand Prix 2021. Viendo otro circuito, la de ese circuito en 2021."
+      gpLabel 2 (CircuitRound 2021 9 "") `shouldBe` "el 2.º"
+
+    it "el mismo circuito en otros años: por circuitId, del más nuevo al más viejo; Sakhir 2020 aparte (t, v); con su nombre (ab)" $ do
+      let years = [ (2026, [(21, "vegas", "Las Vegas Grand Prix"), (16, "sepang", "")]), (2025, [(4, "bahrain", ""), (22, "vegas", "Las Vegas Grand Prix")])
+                  , (2020, [(4, "silverstone", "British Grand Prix"), (5, "silverstone", "70th Anniversary Grand Prix"), (15, "bahrain", ""), (16, "bahrain", "")])
+                  , (2021, [(1, "bahrain", ""), (10, "silverstone", "")]), (2015, [(2, "sepang", "")]) ]
+      sameCircuit (2026, 21) years `shouldBe` [CircuitRound 2025 22 "Las Vegas Grand Prix"]
+      sameCircuit (2021, 10) years `shouldBe` [CircuitRound 2020 4 "British Grand Prix", CircuitRound 2020 5 "70th Anniversary Grand Prix"]
+      sameCircuit (2025, 4) years `shouldBe` [CircuitRound 2021 1 "", CircuitRound 2020 15 ""]
+      sameCircuit (2020, 16) years `shouldBe` []
+      sameCircuit (2026, 16) years `shouldBe` [CircuitRound 2015 2 ""]
+      sameCircuit (2026, 99) years `shouldBe` []
+
+    it "el nombre automático: hasta dos apellidos, después siglas; contra la sesión, de qué GP y de qué año (g)" $ do
+      let apellido c = fromMaybe c (lookup c [("LEC", "Leclerc"), ("NOR", "Norris"), ("PIA", "Piastri")])
+          gp _ = "Las Vegas"
+          nombre = autoName 2026 apellido gp
+      nombre ["LEC"] Nothing `shouldBe` "Leclerc"
+      nombre ["LEC", "NOR"] Nothing `shouldBe` "Leclerc y Norris"
+      nombre ["LEC", "NOR", "PIA"] Nothing `shouldBe` "LEC, NOR y PIA"
+      nombre [] (Just (RelativeSession Practice1)) `shouldBe` "Contra P1"
+      nombre ["LEC"] (Just (RelativeSession Practice1)) `shouldBe` "Leclerc contra P1"
+      nombre ["LEC", "NOR"] (Just (RelativeSession Practice1)) `shouldBe` "Leclerc y Norris contra P1"
+      nombre [] (Just (FixedSession (SessionKey 2026 21 Practice1))) `shouldBe` "Contra P1 de Las Vegas"
+      nombre ["LEC"] (Just (FixedSession (SessionKey 2025 21 Qualifying))) `shouldBe` "Leclerc contra Q de Las Vegas 2025"
+      nombre [] Nothing `shouldBe` "Grupo"
+
+    it "un nombre repetido lleva el primer número libre desde el 2 (ae)" $ do
+      uniqueName ["Norris"] "Leclerc" `shouldBe` "Leclerc"
+      uniqueName ["Leclerc"] "Leclerc" `shouldBe` "Leclerc 2"
+      uniqueName ["Leclerc", "Leclerc 2", "Leclerc 4"] "Leclerc" `shouldBe` "Leclerc 3"
+
+    it "propiedad: el nombre único no está tomado y empieza por el pedido" $
+      forAll ((,) <$> listOf (elements ["A", "A 2", "A 3", "B"]) <*> elements ["A", "B", "C"]) $ \(taken, n) ->
+        let u = uniqueName taken n in u `notElem` taken && n `T.isPrefixOf` u
+
+    it "LEC contra NOR: el grupo Verstappen añade a VER; el de Leclerc o el de Norris no añade nada (u)" $ do
+      comparisonPick ["LEC", "NOR"] [ver] `shouldBe` ComparisonPick ["LEC", "NOR", "VER"] ["VER"] []
+      comparisonPick ["LEC", "NOR"] [lec] `shouldBe` ComparisonPick ["LEC", "NOR"] [] []
+      comparisonPick ["LEC", "NOR"] [nor, p1] `shouldBe` ComparisonPick ["LEC", "NOR"] [] []
+
+    it "al pasarse de 5, los de la tarjeta se quedan y los de los grupos entran por su orden; el que no cabe se dice (p)" $
+      comparisonPick ["LEC", "NOR"] [grp "a" ["VER", "PIA"] Nothing, grp "b" ["RUS", "HAM"] Nothing]
+        `shouldBe` ComparisonPick ["LEC", "NOR", "VER", "PIA", "RUS"] ["VER", "PIA", "RUS"] ["HAM"]
+
+    it "propiedad: la tarjeta va delante entera, nada se repite, el tope solo lo pasa la tarjeta y nada se pierde" $
+      forAll ((,) <$> genDrivers <*> genGroups) $ \(own, gs) ->
+        let ComparisonPick shown grouped out = comparisonPick own gs
+        in take (length own) shown == own
+             && shown == own ++ grouped
+             && nub shown == shown
+             && length shown <= max comparisonLimit (length own)
+             && grouped ++ out == filter (`notElem` own) (highlightedDrivers gs)
+
+    -- Editar los grupos desde la fila de una tarjeta (2026-11-21 (f), (i)).
+    let live    = rectNamed "live-timing" LiveTiming (0, 0, 60, 60)
+        lap     = rectNamed "lap-comparison" LapComparison (60, 0, 60, 60)
+        inGroups gs w = w { widgetGroups = map GroupId gs }
+        cards   = [inGroups ["leclerc"] live, inGroups ["leclerc", "contra-p1"] lap]
+        start   = ([lec, p1], cards)
+        edit w e = applyGroupEdit (WidgetId w) e
+        members (_, ws) = [(i, gs) | WidgetConfig { widgetId = WidgetId i, widgetGroups = gs } <- ws]
+        draft n ds s = GroupDraft n ds s
+    it "meter y sacar tocan solo esa tarjeta; meter no repite, y sacar deja el grupo aunque se quede vacío" $ do
+      members (edit "live-timing" (JoinGroup (GroupId "contra-p1")) start)
+        `shouldBe` [("live-timing", map GroupId ["leclerc", "contra-p1"]), ("lap-comparison", map GroupId ["leclerc", "contra-p1"])]
+      edit "lap-comparison" (JoinGroup (GroupId "leclerc")) start `shouldBe` start
+      let out = edit "lap-comparison" (LeaveGroup (GroupId "contra-p1")) start
+      members out `shouldBe` [("live-timing", [GroupId "leclerc"]), ("lap-comparison", [GroupId "leclerc"])]
+      fst out `shouldBe` [lec, p1]
+
+    it "un grupo nuevo: el primer id libre, al final, con la tarjeta dentro y un nombre que no se repite" $ do
+      freshGroupId [] `shouldBe` GroupId "g1"
+      freshGroupId [grp "g1" [] Nothing, grp "g3" [] Nothing] `shouldBe` GroupId "g2"
+      let (gs, ws) = edit "live-timing" (NewGroup (draft "leclerc" ["LEC", "NOR"] (Just (RelativeSession Practice2)))) start
+      gs `shouldBe` [lec, p1, CardGroup (GroupId "g1") "leclerc 2" ["LEC", "NOR"] (Just "FP2")]
+      members (gs, ws) `shouldBe` [("live-timing", map GroupId ["leclerc", "g1"]), ("lap-comparison", map GroupId ["leclerc", "contra-p1"])]
+
+    it "editar cambia el grupo en su sitio, con sus tarjetas; su propio nombre no cuenta como tomado" $ do
+      let (gs, ws) = edit "live-timing" (ChangeGroup (GroupId "leclerc") (draft "leclerc" ["LEC", "HAM"] (Just (FixedSession vegasQ)))) start
+      gs `shouldBe` [grp "leclerc" ["LEC", "HAM"] (Just "2026-21-Q"), p1]
+      ws `shouldBe` cards
+      fst (edit "live-timing" (ChangeGroup (GroupId "leclerc") (draft "contra-p1" ["LEC"] Nothing)) start)
+        `shouldBe` [CardGroup (GroupId "leclerc") "contra-p1 2" ["LEC"] Nothing, p1]
+
+    it "borrar lo quita de la lista y de todas las tarjetas" $
+      edit "live-timing" (DeleteGroup (GroupId "leclerc")) start
+        `shouldBe` ([p1], [inGroups [] live, inGroups ["contra-p1"] lap])
+
+    it "un grupo que no está, o un formulario que no fija nada, no cambian nada" $
+      map (\e -> edit "live-timing" e start)
+          [ JoinGroup (GroupId "fantasma"), LeaveGroup (GroupId "fantasma"), DeleteGroup (GroupId "fantasma")
+          , NewGroup (draft "Grupo" [] Nothing), ChangeGroup (GroupId "leclerc") (draft "x" [] Nothing)
+          , ChangeGroup (GroupId "fantasma") (draft "x" ["LEC"] Nothing)
+          ]
+        `shouldBe` replicate 6 start
+
+    it "el formulario: listo con un piloto o una sesión; arranca de lo que fija el grupo; el nombre vacío es el automático" $ do
+      map draftReady [draft "a" [] Nothing, draft "a" ["LEC"] Nothing, draft "a" [] (Just (RelativeSession Race))]
+        `shouldBe` [False, True, True]
+      groupDraft p1 `shouldBe` draft "contra-p1" [] (Just (RelativeSession Practice1))
+      groupDraft (grp "r" [] (Just "P1")) `shouldBe` draft "r" [] Nothing
+      fst (edit "live-timing" (ChangeGroup (GroupId "contra-p1") (groupDraft p1)) start) `shouldBe` [lec, p1]
+      map (chosenName "Leclerc") ["", "   ", " Mi grupo "] `shouldBe` ["Leclerc", "Leclerc", "Mi grupo"]
+
+    it "en cuántas tarjetas está un grupo, y cómo se dice" $ do
+      map (\g -> cardsInGroup (GroupId g) cards) ["leclerc", "contra-p1", "fantasma"] `shouldBe` [2, 1, 0]
+      map cardCountText [0, 1, 3] `shouldBe` ["0 tarjetas", "1 tarjeta", "3 tarjetas"]
+
+    it "propiedad: tras cualquier serie de cambios, ids y nombres únicos y cada tarjeta solo en grupos que existen, sin repetir" $
+      let genEdit = do
+            g <- GroupId <$> elements ["leclerc", "contra-p1", "g1", "g2", "fantasma"]
+            w <- elements ["live-timing", "lap-comparison"]
+            d <- draft <$> elements ["Leclerc", "Contra P1", "leclerc", ""] <*> genDrivers
+                   <*> elements [Nothing, Just (RelativeSession Practice1)]
+            e <- elements [JoinGroup g, LeaveGroup g, NewGroup d, ChangeGroup g d, DeleteGroup g]
+            pure (w, e)
+      in forAll (listOf genEdit) $ \es ->
+           let (gs, ws) = foldl (\acc (w, e) -> edit w e acc) start es
+               ids = map groupId gs
+           in nub ids == ids
+                && nub (map groupName gs) == map groupName gs
+                && all (\w -> all (`elem` ids) (widgetGroups w) && nub (widgetGroups w) == widgetGroups w) ws
+
+    it "los botones de la sesión: las del GP que se ve, y se eligen las ya empezadas que no son la que se ve (f)" $ do
+      let ses c t = SeasonSession (SessionKey 2026 21 c) t
+          vegas = SeasonRace 21 "Las Vegas Grand Prix" [ses Practice1 100, ses Practice2 200, ses Practice3 300, ses Qualifying 400, ses Race 500]
+          qatar = SeasonRace 22 "Qatar Grand Prix" [SeasonSession (SessionKey 2026 22 Practice1) 900]
+          choices now v = [(choiceCode c, choiceOpen c) | c <- sessionChoices now [qatar, vegas] v]
+      choices 450 (Just vegasQ)
+        `shouldBe` [(Practice1, True), (Practice2, True), (Practice3, True), (Qualifying, False), (Race, False)]
+      choices 500 (Just vegasQ) `shouldBe` [(Practice1, True), (Practice2, True), (Practice3, True), (Qualifying, False), (Race, True)]
+      choices 450 Nothing `shouldBe` []
+      choices 450 (Just (SessionKey 2025 21 Qualifying)) `shouldBe` []
+      choicesHint (Just vegasQ) (sessionChoices 450 [vegas] (Just vegasQ))
+        `shouldBe` "Las de este GP. La Q es la que ya se ve; la R aún no se ha corrido."
+      choicesHint (Just (SessionKey 2026 21 Practice1)) (sessionChoices 150 [vegas] (Just (SessionKey 2026 21 Practice1)))
+        `shouldBe` "Las de este GP. La FP1 es la que ya se ve; la FP2, la FP3, la Q y la R aún no se han corrido."
+      choicesHint (Just (SessionKey 2026 21 Race)) (sessionChoices 600 [vegas] (Just (SessionKey 2026 21 Race)))
+        `shouldBe` "Las de este GP. La R es la que ya se ve."
+      choicesHint Nothing [] `shouldBe` "Sin el calendario del GP que se ve no hay sesiones que sumar."
+
+    it "la fila «Otros»: los de la sesión que no están entre los 22, y los que el grupo ya fija (f)" $ do
+      otherDrivers [] ["LEC", "ARO", "33", "NOR", "ARO", ""] `shouldBe` ["ARO"]
+      otherDrivers ["XYZ", "LEC", "ARO"] ["ARO", "VER"] `shouldBe` ["ARO", "XYZ"]
+      otherDrivers [] ["LEC", "NOR"] `shouldBe` []
+
+    it "un nombre es el automático tal cual o con su número; uno escrito, no" $
+      map (isAutoName "Leclerc") ["Leclerc", "Leclerc 2", "Leclerc 12", "Leclerc y Norris", "Leclerc ", "Mi grupo", "Leclerc 2b"]
+        `shouldBe` [True, True, True, False, False, False, False]
+
+    it "la etiqueta de sesión y el nombre corto del GP, como en el nombre del grupo (g, o)" $ do
+      map (sessionTag (Just 2026)) [RelativeSession Practice1, RelativeSession Race, FixedSession (SessionKey 2025 3 SprintQualifying)]
+        `shouldBe` ["P1", "R", "SQ"]
+      map gpShortName ["Las Vegas Grand Prix", "Qatar Grand Prix", "Gran Premio"] `shouldBe` ["Las Vegas", "Qatar", "Gran Premio"]
+
+  describe "Common.Pilots" $ do
+    it "el destaque de una fila: el equipo al 10 % de fondo, y 3 px del equipo y 3 del casco en el borde (v)" $ do
+      highlightFill "LEC" `shouldBe` "background-color:rgba(237,17,49,0.1)"
+      highlightEdge "LEC" `shouldBe` "box-shadow:inset 3px 0 0 #ed1131,inset 6px 0 0 #ffffff"
+      highlightFill "NOR" `shouldBe` "background-color:rgba(244,118,0,0.1)"
+      highlightFill "16" `shouldBe` "background-color:rgba(125,130,140,0.1)"
+      highlightEdge "16" `shouldBe` "box-shadow:inset 3px 0 0 #7d828c,inset 6px 0 0 #7d828c"
+
+    it "los equipos por su nombre, con sus dos pilotos, en el orden de la tabla" $ do
+      length pilotTeams `shouldBe` 11
+      concatMap snd pilotTeams `shouldBe` map fst pilotTable
+      filter ((/= 2) . length . snd) pilotTeams `shouldBe` []
+      lookup "Haas" pilotTeams `shouldBe` Just ["BEA", "CAM"]
+
+    it "inksOr: la pareja de la tabla, o una sola tinta para quien no está" $ do
+      inksOr "#e10600" "LEC" `shouldBe` Inks "#ed1131" "#ffffff"
+      inksOr "#e10600" "16" `shouldBe` Inks "#e10600" "#e10600"
+
+    let codes = map fst pilotTable
+        inks = map snd pilotTable
+        isHex t = T.length t == 7 && T.head t == '#' && T.all (`elem` ("0123456789abcdef" :: String)) (T.drop 1 t)
+        swapped (Inks a b) = Inks b a
+    it "los 22 de 2026, sin repetir siglas; OCO ya no corre y CAM va en Haas" $ do
+      length pilotTable `shouldBe` 22
+      length (nub codes) `shouldBe` 22
+      pilotInks "OCO" `shouldBe` Nothing
+      pilotInks "CAM" `shouldBe` Just (Inks "#9c9fa2" "#2ecc71")
+      pilotInks "BEA" `shouldBe` Just (Inks "#9c9fa2" "#2164d1")
+
+    it "cada tinta en hex de seis cifras en minúsculas, y las dos de cada piloto distintas" $ do
+      filter (not . isHex) (concatMap (\(Inks a b) -> [a, b]) inks) `shouldBe` []
+      filter (\(Inks a b) -> a == b) inks `shouldBe` []
+
+    it "ninguna pareja se repite, ni al revés" $ do
+      length (nub inks) `shouldBe` 22
+      [c | (c, i) <- pilotTable, swapped i `elem` inks] `shouldBe` []
+
+    it "los compañeros comparten la tinta del equipo, salvo ANT, en plata + blanco, frente al turquesa de RUS" $ do
+      pilotInks "ANT" `shouldBe` Just (Inks "#c0c4c8" "#ffffff")
+      fmap inkTeam (pilotInks "RUS") `shouldBe` Just "#00d7b6"
+      let teams = [ (a, b) | (a, b) <- zip codes (drop 1 codes), even (length (takeWhile (/= a) codes)) ]
+      [ p | p@(a, b) <- teams, fmap inkTeam (pilotInks a) /= fmap inkTeam (pilotInks b) ] `shouldBe` [("ANT", "RUS")]
 
   describe "Common.ComparisonCard" $ do
     let near a b = abs (a - b) < 1e-9
@@ -4326,7 +5230,7 @@ main = hspec $ do
        in spanCss (wcY arriba + wcH arriba) `shouldBe` spanCss (wcY abajo)
 
     it "el widget que llena el lienzo va del 0 al 100 %" $
-      map slotStyle qualyFixture
+      map slotStyle qualyCards
         `shouldBe` [ "left: calc(0 * 100% / 120); top: calc(0 * 100% / 120); \
                      \width: calc(120 * 100% / 120); height: calc(120 * 100% / 120)" ]
 
@@ -4337,18 +5241,12 @@ main = hspec $ do
     it "el hueco bajo lap-comparison sobrevive a la traducción" $
       spanCss 85 `shouldNotBe` spanCss 90
 
-  -- __El caso que más vale de todo el bloque.__ Los cinco rectángulos de
-  -- `Pages.Dashboard` están escritos a mano y un typo NO lo caza el compilador —
+  -- __El caso que más vale de todo el bloque.__ Los rectángulos de
+  -- `Common.FixedLayouts` están escritos a mano y un typo NO lo caza el compilador —
   -- mismo riesgo que los `WidgetId` literales del 2026-09-01, con la misma
   -- consecuencia: se nota al mirar la página, no al compilar.
-  --
-  -- __Los layouts son una COPIA__ y esa es su debilidad: `frontend` no está en
-  -- `cabal.project`, así que la suite no puede importar los de verdad. Si alguien
-  -- toca las coordenadas de `Pages.Dashboard` y no toca estas, el test seguirá
-  -- verde midiendo un layout que ya no existe. Mientras sea copia, hay que
-  -- cambiar los dos sitios.
   describe "applyDrag" $ do
-    let onRace wid d = applyDrag gridDivisions raceOverviewFixture (d (WidgetId wid))
+    let onRace wid d = applyDrag gridDivisions raceOverviewCards (d (WidgetId wid))
         rects        = fmap (map (\w -> (wcX w, wcY w, wcW w, wcH w)))
         column       = [ rectNamed "c1" Custom (0,  0, 30, 40)
                        , rectNamed "c2" Custom (0, 40, 30, 40)
@@ -4368,7 +5266,7 @@ main = hspec $ do
     -- cabe, y en una columna no se prueba el otro eje.
     it "Pilotos a la columna derecha no se deja, con el imán y sin él" $ do
       onRace "driver-stats" (\w -> MoveTo w 60 35) `shouldBe` Nothing
-      applyDrag 0 raceOverviewFixture (MoveTo (WidgetId "driver-stats") 60 35) `shouldBe` Nothing
+      applyDrag 0 raceOverviewCards (MoveTo (WidgetId "driver-stats") 60 35) `shouldBe` Nothing
 
     it "estirar Lap Comparison empuja la columna, y Constructores encoge hasta su mínimo" $
       rects (onRace "lap-comparison" (\w -> ResizeTo w 60 100))
@@ -4379,10 +5277,10 @@ main = hspec $ do
         `shouldBe` Just [(60, 0, 60, 90), (0, 0, 60, 85), (0, 90, 60, 30), (60, 90, 60, 30)]
 
     it "soltar en el mismo sitio no cambia nada" $
-      onRace "lap-comparison" (\w -> MoveTo w 60 0) `shouldBe` Just raceOverviewFixture
+      onRace "lap-comparison" (\w -> MoveTo w 60 0) `shouldBe` Just raceOverviewCards
 
     it "lo que se sale del lienzo se queda en el borde" $
-      onRace "constructor-stats" (\w -> MoveTo w 200 200) `shouldBe` Just raceOverviewFixture
+      onRace "constructor-stats" (\w -> MoveTo w 200 200) `shouldBe` Just raceOverviewCards
 
     it "un widget que no está no se deja" $
       onRace "no-existe" (\w -> MoveTo w 0 0) `shouldBe` Nothing
@@ -4421,7 +5319,7 @@ main = hspec $ do
     prop "cada apartada se mueve en un solo eje: conserva x y ancho, o y y alto" $
       forAll reachableLayout (pushedKeepOneAxis . snd)
     prop "con el imán siempre y el gesto pegado, ninguna apartada crece en todo el recorrido" $
-      forAll (elements [raceOverviewFixture, strategyFixture]) $ \factory ->
+      forAll (elements [raceOverviewCards, strategyCards]) $ \factory ->
         forAll (choose (0, 6)) $ \n ->
           forAll (vectorOf n arbitrary) (snappedWalkNoneGrows factory)
     -- El control de la de arriba: con el gesto sin pegar, que la página no manda,
@@ -4445,7 +5343,7 @@ main = hspec $ do
   describe "Common.Carry" $ do
     let cs       = WidgetId "constructor-stats"
         canvas   = (1200, 600)
-        grabbed  = stepBoard True (Press cs ByTitle (700, 500) canvas) (boardOf raceOverviewFixture)
+        grabbed  = stepBoard True (Press cs ByTitle (700, 500) canvas) (boardOf raceOverviewCards)
         toY y alt = stepBoard True (Point (700, 500 + (y - 90) * 5) alt) grabbed
         rects    = map (\w -> (wcX w, wcY w, wcW w, wcH w))
 
@@ -4463,15 +5361,15 @@ main = hspec $ do
     it "en y = 37,25 no se deja: las demás se quedan en la foto y no hay contorno" $ do
       let s = scene True (toY 37.25 False)
       fmap heldFits (sceneHeld s) `shouldBe` Just False
-      sceneCards s `shouldBe` raceOverviewFixture
+      sceneCards s `shouldBe` raceOverviewCards
       sceneTarget s `shouldBe` Nothing
 
     it "soltar deja el empuje; soltar donde no se deja, Esc y un clic sin mover dejan la foto" $ do
       rects (boardLayout (stepBoard True Release (toY 2.25 False)))
         `shouldBe` [(0, 0, 60, 90), (60, 30, 60, 85), (0, 90, 60, 30), (60, 0, 60, 30)]
-      boardLayout (stepBoard True Release (toY 37.25 False)) `shouldBe` raceOverviewFixture
-      boardLayout (stepBoard True Cancel (toY 2.25 False)) `shouldBe` raceOverviewFixture
-      boardLayout (stepBoard True Release grabbed) `shouldBe` raceOverviewFixture
+      boardLayout (stepBoard True Release (toY 37.25 False)) `shouldBe` raceOverviewCards
+      boardLayout (stepBoard True Cancel (toY 2.25 False)) `shouldBe` raceOverviewCards
+      boardLayout (stepBoard True Release grabbed) `shouldBe` raceOverviewCards
       boardCarry (stepBoard True Cancel (toY 2.25 False)) `shouldBe` Nothing
 
     it "con Alt, el imán encendido redondea de 1 en 1: el contorno cae en 2" $ do
@@ -4483,7 +5381,7 @@ main = hspec $ do
       fmap (\h -> (heldX h, heldY h)) (sceneHeld (scene True far)) `shouldBe` Just (60, 0)
 
     it "sin nada cogido no pasa nada, y no se coge otra mientras se lleva una ni con el lienzo sin medir" $ do
-      let idle = boardOf raceOverviewFixture
+      let idle = boardOf raceOverviewCards
       map (\h -> stepBoard True h idle) [Point (1, 2) False, AltKey True, Release, Cancel]
         `shouldBe` replicate 4 idle
       stepBoard True (Press cs ByTitle (1, 2) (0, 600)) idle `shouldBe` idle
@@ -4494,7 +5392,7 @@ main = hspec $ do
     it "por la esquina, Lap Comparison a 96,25 de alto: el contorno en 95 y Constructores encoge a 25" $ do
       let lc = WidgetId "lap-comparison"
           s  = scene True (stepBoard True (Point (700, 500 + 11.25 * 5) False)
-                 (stepBoard True (Press lc ByCorner (700, 500) canvas) (boardOf raceOverviewFixture)))
+                 (stepBoard True (Press lc ByCorner (700, 500) canvas) (boardOf raceOverviewCards)))
       sceneHeld s `shouldBe` Just (Held lc 60 0 60 96.25 True)
       fmap (\t -> (wcX t, wcY t, wcW t, wcH t)) (sceneTarget s) `shouldBe` Just (60, 0, 60, 95)
       rects (sceneCards s)
@@ -4503,7 +5401,7 @@ main = hspec $ do
     it "por la esquina, de 105 en adelante no se deja; y no baja de su mínimo ni se sale del lienzo" $ do
       let lc       = WidgetId "lap-comparison"
           stretch p = scene True (stepBoard True (Point p False)
-                        (stepBoard True (Press lc ByCorner (700, 500) canvas) (boardOf raceOverviewFixture)))
+                        (stepBoard True (Press lc ByCorner (700, 500) canvas) (boardOf raceOverviewCards)))
       fmap heldFits (sceneHeld (stretch (700, 500 + 22.5 * 5))) `shouldBe` Just False
       fmap (\h -> (heldW h, heldH h)) (sceneHeld (stretch (-90000, -90000))) `shouldBe` Just (25, 50)
       fmap (\h -> (heldW h, heldH h)) (sceneHeld (stretch (90000, 90000))) `shouldBe` Just (60, 120)
@@ -4519,103 +5417,190 @@ main = hspec $ do
   describe "Common.Saved" $ do
     let place w (x, y, wd, ht) = w { wcX = x, wcY = y, wcW = wd, wcH = ht }
         -- Constructores sube arriba del todo y Lap Comparison baja a 30.
-        moved = zipWith place raceOverviewFixture
+        moved = zipWith place raceOverviewCards
                   [(0, 0, 60, 90), (60, 30, 60, 85), (0, 90, 60, 30), (60, 0, 60, 30)]
-        moving wid r = map (\w -> if widgetId w == WidgetId wid then place w r else w) raceOverviewFixture
-        raceSides  = factoryControls raceOverviewFixture
+        moving wid r = map (\w -> if widgetId w == WidgetId wid then place w r else w) raceOverviewCards
+        raceSides  = factoryControls raceOverviewCards
         lapCard f  = Map.adjust f (WidgetId "lap-comparison")
         rightSides = lapCard (\c -> c { ccSide = SideRight }) raceSides
-        save       = saveLayout raceSides
+        -- Sin grupos, como todo lo guardado antes de que existieran.
+        seen (c, ws)  = Shown c [] ws
+        saveWith c ws = saveLayout (seen (c, ws))
+        back ws c     = FromSaved (seen (c, ws))
+        factoryAt c ws = atFactory Fixed.raceOverview (seen (c, ws))
+        save       = saveWith raceSides
+        -- «Leclerc» en Live Timing y Lap Comparison, y «Contra P1», vacío.
+        leclerc   = CardGroup (GroupId "g1") "Leclerc" ["LEC"] Nothing
+        contraP1  = CardGroup (GroupId "g2") "Contra P1" [] (Just "FP1")
+        joining wid gs = map (\w -> if widgetId w == WidgetId wid then w { widgetGroups = map GroupId gs } else w)
+        grouped   = joining "live-timing" ["g1"] (joining "lap-comparison" ["g1", "g2"] moved)
+        withGroups = Shown rightSides [leclerc, contraP1] grouped
 
     it "sin nada guardado, el de fábrica y sin aviso" $
-      restoreLayout raceOverviewFixture Nothing `shouldBe` FromFactory
+      restoreLayout raceOverviewCards Nothing `shouldBe` FromFactory
 
     it "el de fábrica lo es en cualquier orden; una tarjeta movida o un lado cambiado, no" $
-      map (\(sides, shown) -> atFactory raceOverviewFixture sides shown)
-          [ (raceSides, raceOverviewFixture)
-          , (raceSides, reverse raceOverviewFixture)
+      map (\(sides, shown) -> factoryAt sides shown)
+          [ (raceSides, raceOverviewCards)
+          , (raceSides, reverse raceOverviewCards)
           , (raceSides, moved)
           , (raceSides, moving "lap-comparison" (60, 0, 60, 86))
-          , (rightSides, raceOverviewFixture)
+          , (rightSides, raceOverviewCards)
           ]
         `shouldBe` [True, True, False, False, False]
 
     it "lo movido y vuelto a su sitio es otra vez el de fábrica" $
-      atFactory raceOverviewFixture raceSides (moving "lap-comparison" (60, 0, 60, 85))
+      factoryAt raceSides (moving "lap-comparison" (60, 0, 60, 85))
         `shouldBe` True
 
     it "dos estados se ven igual con los mismos rectángulos y lados, y no si cambia uno" $
-      map (sameShown (rightSides, moved))
-          [(rightSides, reverse moved), (raceSides, moved), (rightSides, raceOverviewFixture)]
+      map (sameShown (seen (rightSides, moved)) . seen)
+          [(rightSides, reverse moved), (raceSides, moved), (rightSides, raceOverviewCards)]
         `shouldBe` [True, False, False]
 
+    it "con un grupo de más, una tarjeta en otro grupo o un grupo cambiado, ya no se ven igual" $
+      map (sameShown withGroups)
+          [ withGroups { shownCards = reverse grouped }
+          , withGroups { shownGroups = [leclerc] }
+          , withGroups { shownCards = joining "live-timing" [] grouped }
+          , withGroups { shownGroups = [leclerc { groupDrivers = ["LEC", "NOR"] }, contraP1] }
+          ]
+        `shouldBe` [True, False, False, False]
+
+    it "un layout con grupos no es el de fábrica, aunque las tarjetas estén en su sitio" $
+      map (atFactory Fixed.raceOverview)
+          [ Shown raceSides [contraP1] raceOverviewCards
+          , Shown raceSides [] (joining "live-timing" ["g1"] raceOverviewCards)
+          , Shown raceSides [] raceOverviewCards
+          ]
+        `shouldBe` [False, False, True]
+
+    it "los grupos y los de cada tarjeta se guardan y vuelven tal cual" $
+      restoreLayout raceOverviewCards (Just (saveLayout withGroups)) `shouldBe` FromSaved withGroups
+
+    it "lo guardado antes de los grupos (una lista de tarjetas) se lee, sin grupos" $ do
+      let old = "[{\"savedId\":\"lap-comparison\",\"savedX\":60,\"savedY\":0,\"savedW\":60,\"savedH\":85},\
+                \{\"savedId\":\"live-timing\",\"savedX\":0,\"savedY\":0,\"savedW\":60,\"savedH\":90},\
+                \{\"savedId\":\"driver-stats\",\"savedX\":0,\"savedY\":90,\"savedW\":60,\"savedH\":30},\
+                \{\"savedId\":\"constructor-stats\",\"savedX\":60,\"savedY\":90,\"savedW\":60,\"savedH\":30}]"
+      map widgetId raceOverviewCards
+        `shouldBe` map WidgetId ["live-timing", "lap-comparison", "driver-stats", "constructor-stats"]
+      restoreLayout raceOverviewCards (Just old) `shouldBe` back raceOverviewCards raceSides
+
+    it "sin grupos se sigue escribiendo la lista de tarjetas; con alguno, tarjetas y grupos" $ do
+      saveLayout (Shown raceSides [] moved) `shouldBe` save moved
+      save moved `shouldSatisfy` T.isPrefixOf "["
+      save moved `shouldSatisfy` (not . T.isInfixOf "savedGroups")
+      decodeStrictText (saveLayout (Shown (factoryControls qualyCards) [contraP1] qualyCards))
+        `shouldBe` (decodeStrictText
+          "{\"savedCards\":[{\"savedId\":\"qualy-live-timing\",\"savedX\":0,\"savedY\":0,\"savedW\":120,\"savedH\":120}],\
+          \\"savedLayoutGroups\":[{\"groupId\":\"g2\",\"groupName\":\"Contra P1\",\"groupDrivers\":[],\"groupSession\":\"FP1\"}]}"
+          :: Maybe Value)
+      decodeStrictText (saveLayout (Shown Map.empty [] (joining "qualy-live-timing" ["g1"] qualyCards)))
+        `shouldBe` (decodeStrictText
+          "{\"savedCards\":[{\"savedId\":\"qualy-live-timing\",\"savedX\":0,\"savedY\":0,\"savedW\":120,\"savedH\":120,\
+          \\"savedGroups\":[\"g1\"]}],\"savedLayoutGroups\":[]}"
+          :: Maybe Value)
+
+    it "con grupos, lo que no encaja no conserva nada, tampoco los grupos" $
+      map (restoreLayout raceOverviewCards . Just)
+        [ saveLayout withGroups { shownCards = moving "lap-comparison" (60, 35, 60, 45) }
+        , T.replace "\"savedLayoutGroups\"" "\"grupos\"" (saveLayout withGroups)
+        , T.replace "\"groupName\":\"Leclerc\"" "\"groupName\":7" (saveLayout withGroups)
+        ]
+        `shouldBe` replicate 3 Unfit
+
+    it "la pregunta de «Restablecer» dice cuántos grupos se quitan, si hay alguno" $
+      map resetQuestion [0, 1, 2, 5]
+        `shouldBe` [ "¿Volver a la configuración predeterminada?"
+                   , "¿Volver a la configuración predeterminada? Se quita 1 grupo."
+                   , "¿Volver a la configuración predeterminada? Se quitan 2 grupos."
+                   , "¿Volver a la configuración predeterminada? Se quitan 5 grupos."
+                   ]
+
     it "lo guardado vuelve tal cual, en los dos layouts" $ do
-      restoreLayout raceOverviewFixture (Just (save moved)) `shouldBe` FromSaved moved raceSides
-      restoreLayout qualyFixture (Just (saveLayout Map.empty qualyFixture)) `shouldBe` FromSaved qualyFixture Map.empty
+      restoreLayout raceOverviewCards (Just (save moved)) `shouldBe` back moved raceSides
+      restoreLayout qualyCards (Just (saveWith Map.empty qualyCards)) `shouldBe` back qualyCards Map.empty
 
     it "lo guardado pone solo el rectángulo y el lado: el resto y el orden son los de fábrica" $ do
-      let hidden = map (\w -> w { widgetVisible = False }) raceOverviewFixture
+      let hidden = map (\w -> w { widgetVisible = False }) raceOverviewCards
       restoreLayout hidden (Just (save (reverse moved)))
-        `shouldBe` FromSaved (zipWith (\h m -> h { wcX = wcX m, wcY = wcY m, wcW = wcW m, wcH = wcH m }) hidden moved) raceSides
+        `shouldBe` back (zipWith (\h m -> h { wcX = wcX m, wcY = wcY m, wcW = wcW m, wcH = wcH m }) hidden moved) raceSides
 
     it "el formato y la clave: un rectángulo por tarjeta, con su id" $ do
       let expected = decodeStrictText
             "[{\"savedId\":\"qualy-live-timing\",\"savedX\":0,\"savedY\":0,\"savedW\":120,\"savedH\":120}]"
       expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
-      decodeStrictText (saveLayout (factoryControls qualyFixture) qualyFixture) `shouldBe` expected
+      decodeStrictText (saveWith (factoryControls qualyCards) qualyCards) `shouldBe` expected
       savedKey (LayoutId "race-overview") `shouldBe` "dashboardF1.layout.race-overview"
 
     it "solo Lap Comparison lleva lado, banda y modo, los de fábrica, y los escribe siempre" $ do
       raceSides `shouldBe` Map.singleton (WidgetId "lap-comparison") defaultControl
-      defaultControl `shouldBe` CardControl {ccSide = SideLeft, ccBand = False, ccMode = ModeAxisValues, ccLap = FastestLap}
-      factoryControls qualyFixture `shouldBe` Map.empty
-      let lapOnly  = filter ((== LapComparison) . widgetType) raceOverviewFixture
+      defaultControl
+        `shouldBe` CardControl
+                     { ccSide = SideLeft, ccBand = False, ccMode = ModeAxisValues, ccLap = FastestLap
+                     , ccCharts = channelsInOrder }
+      factoryControls qualyCards `shouldBe` Map.empty
+      let lapOnly  = filter ((== LapComparison) . widgetType) raceOverviewCards
           expected = decodeStrictText
             "[{\"savedId\":\"lap-comparison\",\"savedX\":60,\"savedY\":0,\"savedW\":60,\"savedH\":85,\
-            \\"savedSide\":\"left\",\"savedBand\":false,\"savedMode\":\"axis-values\",\"savedLap\":\"fastest\"}]"
+            \\"savedSide\":\"left\",\"savedBand\":false,\"savedMode\":\"axis-values\",\"savedLap\":\"fastest\",\
+            \\"savedCharts\":[\"speed\",\"throttle\",\"brake\"]}]"
       expected `shouldSatisfy` (/= (Nothing :: Maybe Value))
       decodeStrictText (save lapOnly) `shouldBe` expected
 
     it "el lado guardado vuelve; sin él (guardado antes de que existiera), el de fábrica" $ do
-      restoreLayout raceOverviewFixture (Just (saveLayout rightSides moved)) `shouldBe` FromSaved moved rightSides
-      restoreLayout raceOverviewFixture (Just (saveLayout Map.empty moved)) `shouldBe` FromSaved moved raceSides
+      restoreLayout raceOverviewCards (Just (saveWith rightSides moved)) `shouldBe` back moved rightSides
+      restoreLayout raceOverviewCards (Just (saveWith Map.empty moved)) `shouldBe` back moved raceSides
 
     it "la banda y el modo guardados vuelven; sin ellos (guardado antes de que existieran), los de fábrica" $ do
       let banded = lapCard (\c -> c { ccBand = True, ccMode = ModeValues }) rightSides
-          noBand = T.replace ",\"savedBand\":true,\"savedMode\":\"values\"" "" (saveLayout banded moved)
-      restoreLayout raceOverviewFixture (Just (saveLayout banded moved)) `shouldBe` FromSaved moved banded
+          noBand = T.replace ",\"savedBand\":true,\"savedMode\":\"values\"" "" (saveWith banded moved)
+      restoreLayout raceOverviewCards (Just (saveWith banded moved)) `shouldBe` back moved banded
       noBand `shouldSatisfy` (not . T.isInfixOf "savedBand")
-      restoreLayout raceOverviewFixture (Just noBand) `shouldBe` FromSaved moved rightSides
+      restoreLayout raceOverviewCards (Just noBand) `shouldBe` back moved rightSides
 
     it "la regla de la vuelta guardada vuelve; sin ella (guardado antes de que existiera), la más rápida" $ do
       let partLap = lapCard (\c -> c { ccLap = PartLap 2 }) rightSides
-          noLap   = T.replace ",\"savedLap\":\"part-2\"" "" (saveLayout partLap moved)
-      restoreLayout raceOverviewFixture (Just (saveLayout partLap moved)) `shouldBe` FromSaved moved partLap
+          noLap   = T.replace ",\"savedLap\":\"part-2\"" "" (saveWith partLap moved)
+      restoreLayout raceOverviewCards (Just (saveWith partLap moved)) `shouldBe` back moved partLap
       noLap `shouldSatisfy` (not . T.isInfixOf "savedLap")
-      restoreLayout raceOverviewFixture (Just noLap) `shouldBe` FromSaved moved rightSides
+      restoreLayout raceOverviewCards (Just noLap) `shouldBe` back moved rightSides
+
+    it "las gráficas guardadas vuelven; sin ellas (guardado antes de que existieran) o sin ninguna, las tres" $ do
+      let brakeOnly = lapCard (\c -> c { ccCharts = [Brake] }) rightSides
+          saved     = saveWith brakeOnly moved
+          noCharts  = T.replace ",\"savedCharts\":[\"brake\"]" "" saved
+          noneLeft  = T.replace "[\"brake\"]" "[]" saved
+      restoreLayout raceOverviewCards (Just saved) `shouldBe` back moved brakeOnly
+      noCharts `shouldSatisfy` (not . T.isInfixOf "savedCharts")
+      restoreLayout raceOverviewCards (Just noCharts) `shouldBe` back moved rightSides
+      noneLeft `shouldSatisfy` T.isInfixOf "\"savedCharts\":[]"
+      restoreLayout raceOverviewCards (Just noneLeft) `shouldBe` back moved rightSides
 
     it "un lado en una tarjeta que no es Lap Comparison se ignora" $
-      restoreLayout raceOverviewFixture
-          (Just (saveLayout (Map.insert (WidgetId "driver-stats") defaultControl { ccSide = SideRight } rightSides) moved))
-        `shouldBe` FromSaved moved rightSides
+      restoreLayout raceOverviewCards
+          (Just (saveWith (Map.insert (WidgetId "driver-stats") defaultControl { ccSide = SideRight } rightSides) moved))
+        `shouldBe` back moved rightSides
 
-    it "un lado, una banda, un modo o una vuelta ilegibles no se leen, y lo que no encaja no conserva nada" $
-      map (restoreLayout raceOverviewFixture . Just)
-        [ T.replace "\"right\"" "\"up\"" (saveLayout rightSides moved)
-        , T.replace "\"savedBand\":false" "\"savedBand\":\"no\"" (saveLayout rightSides moved)
-        , T.replace "\"axis-values\"" "\"ejes\"" (saveLayout rightSides moved)
-        , T.replace "\"fastest\"" "\"part-0\"" (saveLayout rightSides moved)
-        , saveLayout rightSides (moving "lap-comparison" (60, 35, 60, 45))
+    it "un lado, una banda, un modo, una vuelta o una gráfica ilegibles no se leen, y lo que no encaja no conserva nada" $
+      map (restoreLayout raceOverviewCards . Just)
+        [ T.replace "\"right\"" "\"up\"" (saveWith rightSides moved)
+        , T.replace "\"savedBand\":false" "\"savedBand\":\"no\"" (saveWith rightSides moved)
+        , T.replace "\"axis-values\"" "\"ejes\"" (saveWith rightSides moved)
+        , T.replace "\"fastest\"" "\"part-0\"" (saveWith rightSides moved)
+        , T.replace "\"throttle\"" "\"rpm\"" (saveWith rightSides moved)
+        , saveWith rightSides (moving "lap-comparison" (60, 35, 60, 45))
         ]
-        `shouldBe` replicate 5 Unfit
+        `shouldBe` replicate 6 Unfit
 
     it "no encaja si no se lee, si las tarjetas no son las de fábrica, si alguna queda bajo su mínimo, fuera o encima de otra" $
-      map (restoreLayout raceOverviewFixture . Just)
+      map (restoreLayout raceOverviewCards . Just)
         [ "", "{", "null", "[]"
-        , save (init raceOverviewFixture)
-        , save (raceOverviewFixture <> [rectNamed "tyres" TyreStrategy (0, 0, 30, 20)])
-        , save (init raceOverviewFixture <> take 1 raceOverviewFixture)
-        , save (init raceOverviewFixture <> [rectNamed "constructores" ConstructorStats (60, 90, 60, 30)])
+        , save (init raceOverviewCards)
+        , save (raceOverviewCards <> [rectNamed "tyres" TyreStrategy (0, 0, 30, 20)])
+        , save (init raceOverviewCards <> take 1 raceOverviewCards)
+        , save (init raceOverviewCards <> [rectNamed "constructores" ConstructorStats (60, 90, 60, 30)])
         , save (moving "lap-comparison" (60, 35, 60, 45))
         , save (moving "constructor-stats" (70, 90, 60, 30))
         , save (moving "lap-comparison" (60, 0, 60, 95))
@@ -4639,21 +5624,21 @@ main = hspec $ do
 
   describe "los layouts fijos de Pages.Dashboard" $ do
     it "los cinco widgets caben donde dicen estar" $
-      filter (not . fitsAt) (raceOverviewFixture <> qualyFixture) `shouldBe` []
+      filter (not . fitsAt) (raceOverviewCards <> qualyCards) `shouldBe` []
 
     it "clampToMin no cambia ninguno: los cinco respetan ya su ancho mínimo" $
-      map clampToMin (raceOverviewFixture <> qualyFixture)
-        `shouldBe` (raceOverviewFixture <> qualyFixture)
+      map clampToMin (raceOverviewCards <> qualyCards)
+        `shouldBe` (raceOverviewCards <> qualyCards)
 
     it "ninguno baja de su alto mínimo" $
       filter (\w -> wcH w < minHeightFor (widgetType w))
-          (raceOverviewFixture <> qualyFixture)
+          (raceOverviewCards <> qualyCards)
         `shouldBe` []
 
     it "ningún par de Race Overview se encima" $
       [ (widgetId a, widgetId b)
-      | (i, a) <- zip [0 :: Int ..] raceOverviewFixture
-      , (j, b) <- zip [0 :: Int ..] raceOverviewFixture
+      | (i, a) <- zip [0 :: Int ..] raceOverviewCards
+      , (j, b) <- zip [0 :: Int ..] raceOverviewCards
       , i < j
       , overlaps a b
       ] `shouldBe` []
@@ -4663,7 +5648,7 @@ main = hspec $ do
     -- lo rellena solo. Si desaparece de `Pages.Dashboard`, esa comprobación se
     -- pierde en silencio.
     it "Race Overview deja libre el hueco de debajo de lap-comparison" $
-      filter (overlaps (rect Custom (60, 85, 60, 5))) raceOverviewFixture
+      filter (overlaps (rect Custom (60, 85, 60, 5))) raceOverviewCards
         `shouldBe` []
 
     -- Los mismos cinco rectángulos, ahora vistos por el lado que la página
@@ -4671,7 +5656,7 @@ main = hspec $ do
     -- este dice CUÁLES son, que es lo único que caza un 35 escrito donde iba
     -- un 30.
     it "los cinco slots traducen a su rectángulo" $
-      map slotStyle (raceOverviewFixture <> qualyFixture)
+      map slotStyle (raceOverviewCards <> qualyCards)
         `shouldBe` map expectedSlot
              [ (  0,  0,  60,  90)
              , ( 60,  0,  60,  85)
@@ -4682,7 +5667,7 @@ main = hspec $ do
 
     it "las coordenadas caen todas en celda del imán" $
       let coords w = [wcX w, wcY w, wcW w, wcH w]
-       in filter ((/= 0) . (`mod` 5)) (concatMap coords (raceOverviewFixture <> qualyFixture))
+       in filter ((/= 0) . (`mod` 5)) (concatMap coords (raceOverviewCards <> qualyCards))
             `shouldBe` []
 
     -- Quién queda debajo del botón de plegar la cabecera, que es `fixed` en la
@@ -4690,7 +5675,7 @@ main = hspec $ do
     -- mueve `lap-comparison` a x=55, el hueco se quedaría en un widget que ya no lo
     -- necesita y le faltaría al que sí, y eso no se ve compilando.
     it "solo lap-comparison y el live timing de Qualy tocan la esquina superior derecha" $
-      map widgetId (filter touchesTopRight (raceOverviewFixture <> qualyFixture))
+      map widgetId (filter touchesTopRight (raceOverviewCards <> qualyCards))
         `shouldBe` [WidgetId "lap-comparison", WidgetId "qualy-live-timing"]
 
     -- Las dos mitades de la condición, cada una por su lado: `live-timing`
@@ -4854,6 +5839,452 @@ main = hspec $ do
     it "el instante sale en UTC y sin fracción de segundo" $
       fetchedAtText fetchInstant `shouldBe` "2026-09-11T14:03:22Z"
 
+  -- La clave de sesión: una sola forma escrita para cada sesión, porque el microservicio
+  -- carga dos veces la misma si le llegan dos formas.
+  describe "Common.Session" $ do
+    let key y r c = Just (SessionKey y r c)
+        anyKey =
+          SessionKey <$> choose (1950, 9999) <*> choose (1, 99) <*> elements [minBound .. maxBound]
+
+    it "los siete códigos son los de FastF1, en el orden del tipo" $
+      map sessionCodeText [minBound .. maxBound]
+        `shouldBe` ["FP1", "FP2", "FP3", "SQ", "S", "Q", "R"]
+
+    it "un código se lee con cualquier mayúscula; SS (2023) y lo demás, no" $ do
+      map readSessionCode ["fp2", "Fp2", "sq", "r"] `shouldBe` map Just [Practice2, Practice2, SprintQualifying, Race]
+      map readSessionCode ["SS", "FP4", "", "Race", " R"] `shouldBe` replicate 5 Nothing
+
+    it "lee la clave con el código en cualquier mayúscula y la ronda con o sin cero" $
+      map readSessionKey ["2026-20-R", "2026-20-r", "2026-5-FP2", "2026-05-fp2", "2026-2-SQ"]
+        `shouldBe` [ key 2026 20 Race, key 2026 20 Race, key 2026 5 Practice2, key 2026 5 Practice2
+                   , key 2026 2 SprintQualifying ]
+
+    it "la escribe siempre igual: código en mayúsculas y ronda sin ceros" $
+      map (fmap renderSessionKey . readSessionKey) ["2026-20-r", "2026-05-fp2", "2026-13-q"]
+        `shouldBe` map Just ["2026-20-R", "2026-5-FP2", "2026-13-Q"]
+
+    it "rechaza lo que no es una clave" $
+      map readSessionKey
+        [ "", "latest", "2026-20", "2026-20-R-1", "26-20-R", "12026-20-R", "1949-1-R", "2026-0-R"
+        , "2026-00-R", "2026-100-R", "2026-20-SS", "2026--R", "2026- 20-R", "2026-20-R ", "2026-x-R"
+        , "2026-99999999999999999999-R" ]
+        `shouldBe` replicate 16 Nothing
+
+    prop "leer lo escrito devuelve la misma clave" $
+      forAll anyKey $ \k -> readSessionKey (renderSessionKey k) === Just k
+
+    it "la dirección da la sesión de ?sesion=, junto a otros parámetros y antes de #" $
+      map sessionFromUrl
+        [ "http://127.0.0.1:3000/?sesion=2026-20-R"
+        , "http://127.0.0.1:3000/?retraso=0:41&sesion=2026-13-q#arriba"
+        , "http://127.0.0.1:3000/?sesion=2026-13-Q&sesion=2026-20-R"
+        ]
+        `shouldBe` [key 2026 20 Race, key 2026 13 Qualifying, key 2026 13 Qualifying]
+
+    it "sin ?sesion=, vacío o con lo que no es una clave, nada" $
+      map sessionFromUrl
+        [ "http://127.0.0.1:3000/"
+        , "http://127.0.0.1:3000/?sesion"
+        , "http://127.0.0.1:3000/?sesion="
+        , "http://127.0.0.1:3000/?sesion=latest"
+        , "http://127.0.0.1:3000/?session=2026-20-R"
+        ]
+        `shouldBe` replicate 5 Nothing
+
+    it "la clave viaja como se escribe, y lo que no es una clave no se lee" $ do
+      encode (SessionKey 2026 17 Race) `shouldBe` "\"2026-17-R\""
+      (eitherDecode "\"2026-17-q\"" :: Either String SessionKey) `shouldBe` Right (SessionKey 2026 17 Qualifying)
+      isLeft (eitherDecode "\"latest\"" :: Either String SessionKey) `shouldBe` True
+
+    it "una sesión ha empezado desde su hora de inicio, incluida" $
+      map (\now -> sessionStarted now (SeasonSession (SessionKey 2026 17 Race) 1791720000)) [1791719999, 1791720000]
+        `shouldBe` [False, True]
+
+  describe "Common.Session (el selector)" $ do
+    let ssn r c t = SeasonSession (SessionKey 2026 r c) t
+        gp r name ts = SeasonRace r name [ssn r c t | (c, t) <- zip [Qualifying, Race] ts]
+        season = [gp 21 "Las Vegas Grand Prix" [300, 400], gp 19 "Mexico City Grand Prix" [100, 110],
+                  gp 20 "São Paulo Grand Prix" [200, 210], gp 22 "Qatar Grand Prix" [500, 600]]
+        rounds = map (raceRound . fst)
+    it "la lista, del más reciente al primero, hasta el primero con algo sin empezar" $ do
+      rounds (selectorRaces 350 Nothing Nothing season) `shouldBe` [21, 20, 19]
+      rounds (selectorRaces 250 Nothing Nothing season) `shouldBe` [21, 20, 19]
+      rounds (selectorRaces 700 Nothing Nothing season) `shouldBe` [22, 21, 20, 19]
+      rounds (selectorRaces 50 Nothing Nothing season) `shouldBe` [19]
+
+    it "cada botón dice si su sesión empezó, si es la elegida y si es la que rueda" $
+      lookup 21 [ (raceRound r, ps)
+                | (r, ps) <- selectorRaces 450 (Just (SessionKey 2026 20 Race)) (Just (SessionKey 2026 21 Race)) season ]
+        `shouldBe` Just [ SessionPick (SessionKey 2026 21 Qualifying) True False False
+                        , SessionPick (SessionKey 2026 21 Race) True False True ]
+
+    it "la elegida y la que rueda pueden ser la misma" $
+      lookup 21 [ (raceRound r, ps)
+                | (r, ps) <- selectorRaces 450 (Just (SessionKey 2026 21 Race)) (Just (SessionKey 2026 21 Race)) season ]
+        `shouldBe` Just [ SessionPick (SessionKey 2026 21 Qualifying) True False False
+                        , SessionPick (SessionKey 2026 21 Race) True True True ]
+
+    it "la que rueda: la última empezada si el directo rueda y su tipo casa" $ do
+      let directo st n = Just raceSessionFixture {siName = n, siState = Just (StateReading st Heard)}
+      map (\st -> rollingKey 450 season (directo st "Race")) [SessionStarted, SessionRedFlag, SessionChequered]
+        `shouldBe` replicate 3 (Just (SessionKey 2026 21 Race))
+      [ rollingKey 450 season (directo SessionFinalised "Race")
+        , rollingKey 450 season (directo SessionInactive "Race")
+        , rollingKey 450 season (directo SessionStarted "Qualifying")
+        , rollingKey 450 season Nothing ]
+        `shouldBe` replicate 4 Nothing
+
+    it "el botón: el título; si no, la elegida con su gran premio; si no, su clave; sin elegida, «Elegir sesión»" $ do
+      selectorLabel "São Paulo Grand Prix · Interlagos · Race" Nothing season
+        `shouldBe` "São Paulo Grand Prix · Interlagos · Race"
+      selectorLabel "" (Just (SessionKey 2026 19 Race)) season `shouldBe` "Mexico City Grand Prix · R"
+      selectorLabel "" (Just (SessionKey 2026 30 Race)) season `shouldBe` "2026-30-R"
+      selectorLabel "" (Just (SessionKey 2026 20 Race)) [] `shouldBe` "2026-20-R"
+      selectorLabel "" Nothing season `shouldBe` "Elegir sesión"
+      selectorLabel "" Nothing [] `shouldBe` "Elegir sesión"
+
+    it "la query con la sesión puesta o quitada, lo demás en su orden" $ do
+      queryWith (Just (SessionKey 2026 19 Race)) "?retraso=0&sesion=2026-20-R" `shouldBe` "?retraso=0&sesion=2026-19-R"
+      queryWith Nothing "?retraso=0&sesion=2026-20-R" `shouldBe` "?retraso=0"
+      queryWith (Just (SessionKey 2026 19 Race)) "" `shouldBe` "?sesion=2026-19-R"
+      queryWith Nothing "?sesion=2026-20-R" `shouldBe` ""
+      queryWith Nothing "?sesiones=2&retraso=0" `shouldBe` "?sesiones=2&retraso=0"
+
+  -- La temporada de Jolpica para la página, con la respuesta real de dos carreras.
+  describe "Handler.Season.Helper.withFastF1Names" $ do
+    let race n name = SeasonRace n name []
+    it "el nombre de FastF1 por ronda; la que no trae, el de Jolpica" $
+      map raceName
+          (withFastF1Names
+             [FastF1Event 16 "Bahrain Grand Prix", FastF1Event 20 "São Paulo Grand Prix"]
+             [race 16 "Bahrain Grand Prix in Malaysia", race 20 "Brazilian Grand Prix", race 21 "Las Vegas Grand Prix"])
+        `shouldBe` ["Bahrain Grand Prix", "São Paulo Grand Prix", "Las Vegas Grand Prix"]
+
+    it "sin calendario de FastF1, o con un nombre vacío, los de Jolpica" $ do
+      withFastF1Names [] [race 20 "Brazilian Grand Prix"] `shouldBe` [race 20 "Brazilian Grand Prix"]
+      withFastF1Names [FastF1Event 20 ""] [race 20 "Brazilian Grand Prix"] `shouldBe` [race 20 "Brazilian Grand Prix"]
+
+    it "lee la respuesta del microservicio" $
+      eitherDecode (encode [object ["round" .= (20 :: Int), "name" .= ("São Paulo Grand Prix" :: T.Text)]])
+        `shouldBe` Right [FastF1Event 20 "São Paulo Grand Prix"]
+
+  describe "Handler.Season.Helper.seasonYear" $
+    it "el año de la primera sesión; sin sesiones, ninguno" $ do
+      seasonYear [SeasonRace 1 "Australian Grand Prix" [], SeasonRace 2 "Chinese Grand Prix"
+                    [SeasonSession (SessionKey 2026 2 Race) 1000]]
+        `shouldBe` Just 2026
+      seasonYear [SeasonRace 1 "Australian Grand Prix" []] `shouldBe` Nothing
+      seasonYear [] `shouldBe` Nothing
+
+  describe "Handler.Season.Helper" $ do
+    let season = seasonRaces <$> readJolpica jolpicaRaces
+        startsOf = map (\r -> (raceRound r, raceName r, map (renderSessionKey . ssnKey) (raceSessions r)))
+
+    it "cada gran premio con su ronda, su nombre y sus sesiones en orden de hora" $
+      startsOf <$> season
+        `shouldBe` Right
+          [ (17, "Singapore Grand Prix", ["2026-17-FP1", "2026-17-SQ", "2026-17-S", "2026-17-Q", "2026-17-R"])
+          , (18, "United States Grand Prix", ["2026-18-FP1", "2026-18-FP2", "2026-18-FP3", "2026-18-Q", "2026-18-R"])
+          ]
+
+    it "la hora de inicio va en segundos desde 1970, UTC" $
+      map ssnStart . raceSessions <$> (listToMaybe =<< either (const Nothing) Just season)
+        `shouldBe` Just [1791534600, 1791549000, 1791622800, 1791637200, 1791720000]
+
+    it "la temporada ha empezado desde la primera sesión, incluida (la P1 de Singapur)" $
+      (\races -> map (`seasonHasStarted` races) [atUtc 9 8 29, atUtc 9 8 30]) <$> readJolpica jolpicaRaces
+        `shouldBe` Right [False, True]
+
+    it "una temporada sin carreras no ha empezado" $
+      seasonHasStarted (atUtc 9 8 30) [] `shouldBe` False
+
+    it "la temporada viaja y se vuelve a leer igual" $
+      (season >>= \s -> (,) s <$> eitherDecode (encode s)) `shouldSatisfy` either (const False) (uncurry (==))
+
+    it "el nombre de cada sesión es el del feed" $
+      map feedName [minBound .. maxBound]
+        `shouldBe` ["Practice 1", "Practice 2", "Practice 3", "Sprint Qualifying", "Sprint", "Qualifying", "Race"]
+
+    it "la ruta es /api/season" $
+      seasonPath `shouldBe` "/api/season"
+
+  -- Sin la barra final Jolpica contesta 301 a las clasificaciones, y el cliente lo sigue.
+  describe "Handler.Historical.Manager.standingsUrl" $ do
+    it "la temporada en curso, con la barra final" $
+      renderUrl (standingsUrl ["current"] "driverStandings")
+        `shouldBe` "https://api.jolpi.ca/ergast/f1/current/driverStandings/"
+
+    it "tras una ronda, con la barra final" $
+      renderUrl (standingsUrl ["2026", "15"] "constructorStandings")
+        `shouldBe` "https://api.jolpi.ca/ergast/f1/2026/15/constructorStandings/"
+
+  -- A qué ronda van las clasificaciones de una sesión: como se llegaba a ella.
+  describe "Handler.Historical.Helper (la ronda)" $ do
+    it "sin ?session=, la temporada a hoy" $
+      resolveStandings Nothing `shouldBe` Right StandingsToday
+
+    it "la carrera, tras su ronda; cualquier otra sesión, tras la anterior" $
+      map (resolveStandings . Just) ["2026-13-R", "2026-13-r", "2026-13-FP1", "2026-13-Q", "2026-13-SQ", "2026-13-S"]
+        `shouldBe` map Right
+          [ StandingsAfter 2026 13, StandingsAfter 2026 13, StandingsAfter 2026 12
+          , StandingsAfter 2026 12, StandingsAfter 2026 12, StandingsAfter 2026 12 ]
+
+    it "lo que no es carrera en la ronda 1 va tras la 0, antes de la primera" $
+      (resolveStandings (Just "2026-1-FP1"), resolveStandings (Just "2026-1-R"))
+        `shouldBe` (Right (StandingsAfter 2026 0), Right (StandingsAfter 2026 1))
+
+    it "vacío, con el mismo rechazo que las demás áreas" $
+      resolveStandings (Just "")
+        `shouldBe` Left (BadRequest "session está vacío: omítelo para usar la sesión por defecto")
+
+    it "latest o lo que no es una clave, 400 con la forma pedida" $
+      map (resolveStandings . Just) ["latest", "2026-13"]
+        `shouldBe` map (Left . BadRequest . ("session no es una clave AÑO-RONDA-SESIÓN (p. ej. 2026-13-R): " <>))
+          ["latest", "2026-13"]
+
+    it "la ruta lleva la sesión, u omitida" $
+      (historicalPathFor Nothing, historicalPathFor (Just "2026-13-R"))
+        `shouldBe` ("/api/historical", "/api/historical?session=2026-13-R")
+
+  -- Lo guardado se sirve sin volver a Jolpica durante los diez minutos de su max-age.
+  describe "Handler.Historical.Helper (lo guardado)" $ do
+    let at = raceStartsAt
+        later s = addUTCTime s at
+    it "diez minutos" $
+      historicalFreshFor `shouldBe` 600
+
+    it "la de hoy, mientras tiene menos de diez minutos; sin nada guardado, a Jolpica" $ do
+      map (\s -> keptToday (later s) (Just (at, "ab"))) [0, 599, 600, 3600]
+        `shouldBe` [Just "ab", Just "ab", Nothing, Nothing]
+      keptToday at (Nothing :: Maybe (UTCTime, String)) `shouldBe` Nothing
+
+    it "la de una ronda con filas, siempre; la vacía, mientras tiene menos de diez minutos" $ do
+      map (\s -> keptStandings (later s) (at, "ab")) [0, 600, 86400 * 365]
+        `shouldBe` [Just "ab", Just "ab", Just "ab"]
+      map (\s -> keptStandings (later s) (at, "")) [0, 599, 600]
+        `shouldBe` [Just "", Just "", Nothing]
+
+    it "lo de hoy cuando falla o viene vacía: lo guardado; sin nada, el fallo o la lista vacía, nunca un ejemplo" $ do
+      let kept = Just (at, "viejo")
+          none = Nothing :: Maybe (UTCTime, String)
+      servedToday kept (Right "nuevo" :: Either Int String) `shouldBe` Right "nuevo"
+      servedToday none (Right "nuevo" :: Either Int String) `shouldBe` Right "nuevo"
+      servedToday kept (Right "" :: Either Int String) `shouldBe` Right "viejo"
+      servedToday none (Right "" :: Either Int String) `shouldBe` Right ""
+      servedToday kept (Left 1 :: Either Int String) `shouldBe` Right "viejo"
+      servedToday none (Left 1 :: Either Int String) `shouldBe` Left 1
+
+  describe "Common.TyreStrategy.carriesStints" $ do
+    it "sin sesión elegida y sin stints, solo la tabla del feed" $
+      map (\s -> carriesStints False s []) [Just Feed, Just OpenF1, Just FastF1, Nothing]
+        `shouldBe` [True, False, False, False]
+
+    it "sin sesión elegida, una tabla que trae stints, venga de donde venga" $
+      map (\s -> carriesStints False s [carStint "16" "HARD" 1 5]) [Just Feed, Just OpenF1, Just FastF1, Nothing]
+        `shouldBe` replicate 4 True
+
+    it "con una sesión elegida, venga de donde venga" $
+      map (\s -> carriesStints True s []) [Just Feed, Just OpenF1, Just FastF1, Nothing]
+        `shouldBe` replicate 4 True
+
+  describe "Common.Session.notRunYet" $ do
+    it "con una sesión elegida, sin filas es que aún no se ha corrido" $
+      (notRunYet True ([] :: [Int]), notRunYet True [1 :: Int]) `shouldBe` (True, False)
+
+    it "sin sesión elegida nunca, tenga filas o no" $
+      (notRunYet False ([] :: [Int]), notRunYet False [1 :: Int]) `shouldBe` (False, False)
+
+  describe "Common.Session.notRunShown" $ do
+    it "mientras no ha llegado nada no es «sin correr», aunque haya sesión elegida" $
+      (notRunShown True (Nothing :: Maybe [Int]), notRunShown False (Nothing :: Maybe [Int]))
+        `shouldBe` (False, False)
+
+    it "con algo llegado, lo mismo que notRunYet" $
+      [notRunShown c (Just rows) | c <- [True, False], rows <- [[], [1 :: Int]]]
+        `shouldBe` [notRunYet c rows | c <- [True, False], rows <- [[], [1 :: Int]]]
+
+  -- La sesión de la página, de la dirección a lo que pide cada tarjeta.
+  describe "Common.Route.livePathFor y Common.Session.sessionQuery" $ do
+    it "sin sesión elegida, el directo sin parámetros" $
+      livePathFor (sessionQuery (sessionFromUrl "http://x/?retraso=0")) `shouldBe` "/api/live"
+
+    it "con ?sesion= en la dirección, la misma clave escrita de una sola forma" $
+      livePathFor (sessionQuery (sessionFromUrl "http://x/?retraso=0&sesion=2026-20-r"))
+        `shouldBe` "/api/live?session=2026-20-R"
+
+    it "un ?sesion= que no es una clave pide como sin elegir" $
+      map (livePathFor . sessionQuery . sessionFromUrl) ["http://x/?sesion=latest", "http://x/?sesion="]
+        `shouldBe` ["/api/live", "/api/live"]
+
+  -- El ?session= de /api/live: la clave de una sesión pasada, o nada.
+  describe "Handler.Query.Helper.sessionKeyParam" $ do
+    it "sin él, nada; con una clave, la clave con cualquier mayúscula" $
+      (sessionKeyParam Nothing, sessionKeyParam (Just "2026-19-r"))
+        `shouldBe` (Right Nothing, Right (Just (SessionKey 2026 19 Race)))
+
+    it "vacío, latest o lo que no es una clave, el rechazo de Historical" $
+      map (sessionKeyParam . Just) ["", "latest", "2026-13"]
+        `shouldBe` map (fmap (const Nothing)) (map (resolveStandings . Just) ["", "latest", "2026-13"])
+
+  -- De AÑO-RONDA-SESIÓN a la session_key de OpenF1: el nombre y el día UTC de Jolpica,
+  -- sin canceladas (medido en la 149: 115 de 115).
+  describe "Common.Session.latestStartedKey" $ do
+    let season =
+          [ SeasonRace 20 "Brazilian Grand Prix"
+              [SeasonSession (SessionKey 2026 20 Qualifying) 1000, SeasonSession (SessionKey 2026 20 Race) 2000]
+          , SeasonRace 21 "Las Vegas Grand Prix" [SeasonSession (SessionKey 2026 21 Practice1) 3000]
+          ]
+        named n = Just raceSessionFixture {siName = n}
+    it "la última que empezó, si su tipo es el de la tabla" $
+      latestStartedKey 2500 season (named "Race") `shouldBe` Just (SessionKey 2026 20 Race)
+
+    it "el inicio cuenta como empezada; antes, la anterior" $
+      map (\now -> latestStartedKey now season (named "Qualifying")) [1999, 2000]
+        `shouldBe` [Just (SessionKey 2026 20 Qualifying), Nothing]
+
+    it "la tabla aún de la carrera y el calendario ya en la FP1 siguiente: ninguna" $
+      latestStartedKey 3500 season (named "Race") `shouldBe` Nothing
+
+    it "sin sesión en la tabla, sin calendario o sin ninguna empezada: ninguna" $
+      [latestStartedKey 2500 season Nothing, latestStartedKey 2500 [] (named "Race"), latestStartedKey 500 season (named "Race")]
+        `shouldBe` [Nothing, Nothing, Nothing]
+
+  describe "Handler.Live.Helper.matchSession" $ do
+    it "São Paulo, carrera: 2026-20-R es la 11412" $
+      lsKey <$> matchSession (SessionKey 2026 20 Race) [saoPaulo] listedSaoPaulo `shouldBe` Just 11412
+
+    it "la FP1 y la clasificación del sprint del mismo día se separan por el nombre" $
+      map (fmap lsKey . (\c -> matchSession (SessionKey 2026 4 c) [saoPaulo, miami] listedMiami))
+          [Practice1, SprintQualifying, Sprint, Qualifying]
+        `shouldBe` [Just 401, Just 402, Just 403, Just 404]
+
+    it "otra hora el mismo día casa: la carrera de Miami, 20:00 en Jolpica y 17:00 en OpenF1" $
+      lsKey <$> matchSession (SessionKey 2026 4 Race) [saoPaulo, miami] listedMiami
+        `shouldBe` Just 405
+
+    it "el mismo nombre otro día no casa" $
+      matchSession (SessionKey 2026 20 Race) [saoPaulo] [listed 11412 False "Race" (utcAt 2026 11 11 17 0)]
+        `shouldBe` Nothing
+
+    it "una cancelada no cuenta, y dos que casan no se eligen" $
+      ( lsKey <$> matchSession (SessionKey 2026 20 Race) [saoPaulo]
+          [listed 1 True "Race" (utcAt 2026 11 8 17 0), listed 2 False "Race" (utcAt 2026 11 8 17 0)]
+      , matchSession (SessionKey 2026 20 Race) [saoPaulo]
+          [listed 1 False "Race" (utcAt 2026 11 8 17 0), listed 2 False "Race" (utcAt 2026 11 8 17 0)] )
+        `shouldBe` (Just 2, Nothing)
+
+    it "sin la ronda o sin la sesión en Jolpica, nada" $
+      ( matchSession (SessionKey 2026 21 Race) [saoPaulo] listedSaoPaulo
+      , matchSession (SessionKey 2026 20 Practice2) [saoPaulo] listedSaoPaulo )
+        `shouldBe` (Nothing, Nothing)
+
+    it "la lista de un año lee la clave y si se canceló; sin la marca, no cancelada" $
+      map (\l -> (lsKey l, lsCancelled l, osName (lsSession l)))
+          <$> (eitherDecodeStrict openF1YearSessions :: Either String [Of1Listed])
+        `shouldBe` Right [(11412, False, "Race"), (9999, True, "Race")]
+
+  -- Los stints de una sesión pasada (2026-11-14 (a)), con lo medido en la 151.
+  describe "Handler.Live.Helper.pastStints" $ do
+    it "lo que da el microservicio se lee, compuesto nulo y vida nula incluidos" $
+      (\f -> (fsComplete f, length (fsStints f), map osAge (fsStints f)))
+          <$> (eitherDecodeStrict fastF1StintsJson :: Either String FastF1Stints)
+        `shouldBe` Right (False, 2, [0, 0])
+
+    it "Australia: FastF1 entera, la suya y se guarda; OpenF1 ni se pregunta" $
+      (needsOpenF1Stints (Just australiaWhole), pastStints (Just australiaWhole) Nothing)
+        `shouldBe` (False, (fsStints australiaWhole, True))
+
+    it "México: FastF1 cortada, los de OpenF1 y se guarda" $
+      (needsOpenF1Stints (Just mexicoCut), pastStints (Just mexicoCut) (Just openMexico))
+        `shouldBe` (True, (openMexico, True))
+
+    it "México sin OpenF1: los de FastF1 cortados, y no se guarda" $
+      pastStints (Just mexicoCut) Nothing `shouldBe` (fsStints mexicoCut, False)
+
+    it "OpenF1 sin stints cuenta como no contestar" $
+      pastStints (Just mexicoCut) (Just []) `shouldBe` (fsStints mexicoCut, False)
+
+    it "FastF1 sin contestar: los de OpenF1, sin guardar; sin ninguno, vacío" $
+      ( needsOpenF1Stints Nothing
+      , pastStints Nothing (Just openMexico)
+      , pastStints Nothing Nothing )
+        `shouldBe` (True, (openMexico, False), ([], False))
+
+  -- Lo guardado a medias (2026-11-18 (n)): con FastF1 sin contestar, la tabla de OpenF1 se
+  -- guarda y la siguiente vez solo se pregunta a FastF1.
+  describe "Handler.Live.Helper.pastKeep y settlePending" $ do
+    let drivers = [Of1Driver 1 "VER" "Red Bull Racing", Of1Driver 4 "NOR" "McLaren"]
+        entries = map driverEntryOf drivers
+        tableWith s = LiveTable Nothing [] s NextUnknown
+        halfKept s = PastPending (utcAt 2026 11 18 21 41) (tableWith s) entries
+    it "entera, para siempre; con FastF1 sin contestar, a medias con sus pilotos; cortada sin OpenF1, nada" $
+      [ pastKeep drivers (Just australiaWhole) Nothing
+      , pastKeep drivers (Just mexicoCut) (Just openMexico)
+      , pastKeep drivers Nothing (Just openMexico)
+      , pastKeep drivers Nothing Nothing
+      , pastKeep drivers (Just mexicoCut) Nothing
+      ]
+        `shouldBe` [KeepWhole, KeepWhole, KeepPending entries, KeepPending entries, KeepNone]
+
+    it "a medias: sin contestar sigue igual; entera, con los stints de FastF1; cortada, con los de OpenF1" $ do
+      let open = assembleStints drivers openMexico
+      [ settlePending Nothing (halfKept open)
+        , settlePending (Just australiaWhole) (halfKept open)
+        , settlePending (Just mexicoCut) (halfKept open)
+        ]
+        `shouldBe` [ StillPending
+                   , Settled (tableWith (assembleStints drivers (fsStints australiaWhole)))
+                   , Settled (tableWith open)
+                   ]
+
+    it "a medias, cortada y sin stints de OpenF1: se vuelve a pedir todo" $
+      settlePending (Just mexicoCut) (halfKept []) `shouldBe` Dropped
+
+    prop "un piloto pasa al tipo de common y vuelve igual" $ \(NonNegative n) acronym team ->
+      let d = Of1Driver n (T.pack acronym) (T.pack team)
+      in entryDriverOf1 (driverEntryOf d) === Just d
+
+  -- La tabla de una sesión pasada de FastF1 (2026-11-14 (c), (g) y (h)): lo que da el
+  -- microservicio, con la forma que lee 'assembleRows'.
+  describe "Handler.Live.Helper (la tabla de FastF1)" $ do
+    it "la sesión: el tipo por el código, el nombre y el gran premio de FastF1, Finalizada deducida" $
+      (\i -> let s = fastf1Session (SessionKey 2026 20 Race) i
+             in (siType s, siName s, siMeeting s, siState s, siCircuit s))
+          <$> (eitherDecodeStrict (TE.encodeUtf8 fastF1SessionJson) :: Either String FastF1Session)
+        `shouldBe` Right ("Race", "Race", "São Paulo Grand Prix", Just (StateReading SessionFinalised Derived), Nothing)
+
+    it "sin Finished (cortada o aún no corrida), sin estado" $
+      siState (fastf1Session (SessionKey 2026 21 Race) (FastF1Session "Las Vegas Grand Prix" "Race" False))
+        `shouldBe` Nothing
+
+    it "los siete códigos dan los tres tipos del feed" $
+      map sessionTypeOf [minBound .. maxBound]
+        `shouldBe` ["Practice", "Practice", "Practice", "Qualifying", "Race", "Qualifying", "Race"]
+
+    it "las vueltas: el tiempo a segundos, sin tiempo ninguno, y un coche que no es un número se omite" $
+      mapMaybe fastf1Lap
+          <$> (eitherDecodeStrict fastF1LapsJson :: Either String [FastF1Lap])
+        `shouldBe` Right [Of1Lap 1 5 (Just 83.456), Of1Lap 44 6 Nothing, Of1Lap 16 7 (Just 59.5)]
+
+    it "la parrilla con la forma de OpenF1, en su orden" $
+      mapMaybe rawDriverOf1 (decodeDrivers driverGrid)
+        `shouldBe` [Of1Driver 1 "NOR" "McLaren", Of1Driver 3 "VER" "Red Bull Racing", Of1Driver 16 "LEC" "Ferrari"]
+
+    it "las posiciones salen del orden de la clasificación" $
+      map (\p -> (opNumber p, opPosition p)) . orderedPositions
+          <$> (eitherDecodeStrict fastF1ResultsJson :: Either String [Of1Result])
+        `shouldBe` Right [(3, 1), (1, 2), (16, 3)]
+
+    it "la tabla entera: posición por el orden, huecos de la clasificación, última vuelta de las vueltas" $
+      let results = either error id (eitherDecodeStrict fastF1ResultsJson) :: [Of1Result]
+          laps = mapMaybe fastf1Lap (either error id (eitherDecodeStrict fastF1LapsJson))
+          drivers = mapMaybe rawDriverOf1 (decodeDrivers driverGrid)
+          rows = assembleRows drivers (orderedPositions results) [] laps results
+      in map (\r -> (ltPosition r, ltDriver r, ltGap r, ltInterval r, ltLastLap r)) rows
+           `shouldBe` [ (1, "VER", "LEADER", "-", "-")
+                      , (2, "NOR", "+10.000", "+10.000", "1:23.456")
+                      , (3, "LEC", "+25.500", "+15.500", "0:59.500") ]
+
   -- Lo que puede salir mal en un reloj que pide solo —dos peticiones a la vez, una
   -- tabla que se borra por un fallo puntual— vive aquí y no en 'Widgets.LiveTiming',
   -- que es ciego.
@@ -4878,6 +6309,9 @@ main = hspec $ do
     it "el tope de una petición queda por encima de los 30 s del backend" $
       liveRequestTimeoutSeconds `shouldSatisfy` (> 30)
 
+    it "Historical vuelve a pedir a los 30 s de un fallo" $
+      historicalRetrySeconds `shouldBe` 30
+
     it "la respuesta de una petición dada por perdida no cambia nada" $ do
       let lost = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 Nothing]
       pollStep (Arrived 1 (Just 7)) lost `shouldBe` lost
@@ -4896,6 +6330,16 @@ main = hspec $ do
       let done = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 (Just 5)]
       pollStep (Arrived 1 Nothing) done `shouldBe` done
 
+    -- El tic solo envía si 'canRequest'; así, una llegada en el mismo instante que un
+    -- envío es siempre una que 'pollStep' ignora, y que el 'leftmost' de
+    -- 'Widgets.Live.pollOf' la descarte no pierde nada (punto 121).
+    it "si se puede pedir, ninguna llegada cambia el estado" $
+      let event = elements ([Sent, Restarted] <> [e n | n <- [0 .. 4], e <- [(`Arrived` Nothing), (`Arrived` Just 7), Missing]])
+          series = choose (0, 12) >>= (`vectorOf` event)
+       in forAll series $ \es -> forAll event $ \late ->
+            let p = foldl (flip pollStep) (pollIdle :: Poll Int) es
+             in canRequest p && late `notElem` [Sent, Restarted] ==> pollStep late p === p
+
     it "una respuesta buena sustituye lo enseñado y libera el reloj" $
       pollStep (Arrived 0 (Just (2 :: Int))) (pollOf True (Just 1) False)
         `shouldBe` pollOf False (Just 2) False
@@ -4911,6 +6355,34 @@ main = hspec $ do
     it "una respuesta buena tras un fallo limpia el fallo" $
       pollStep (Arrived 0 (Just (3 :: Int))) (pollOf True (Just 1) True)
         `shouldBe` pollOf False (Just 3) False
+
+    it "un 404 es un fallo que dice que lo pedido no existe, y conserva lo enseñado" $
+      pollStep (Missing 0) (pollOf True (Just (1 :: Int)) False)
+        `shouldBe` (pollOf False (Just 1) True) {pollNotFound = True}
+
+    it "tras un 404, un fallo sin respuesta lo deja; una respuesta buena lo borra" $ do
+      let missing = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Missing 1, Sent]
+      pollNotFound (pollStep (Arrived 2 Nothing) missing) `shouldBe` True
+      pollNotFound (pollStep (Arrived 2 (Just 4)) missing) `shouldBe` False
+
+    it "el 404 de otra petición no cambia nada" $ do
+      let asked = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 Nothing, Sent]
+      pollStep (Missing 1) asked `shouldBe` asked
+
+    it "cómo acabó la petición, como evento" $
+      map (fetchedEvent 3) [Got (5 :: Int), Absent, NotFetched]
+        `shouldBe` [Arrived 3 (Just 5), Missing 3, Arrived 3 Nothing]
+
+    it "pedir otra cosa olvida lo enseñado y los fallos, y pide con el número siguiente" $ do
+      let shown = (foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Arrived 1 (Just 5), Sent, Missing 2])
+      pollStep Restarted shown
+        `shouldBe` pollIdle {pollInFlight = True, pollSent = 3}
+
+    it "tras pedir otra cosa, la respuesta de lo anterior no cambia nada" $ do
+      let restarted = foldl (flip pollStep) (pollIdle :: Poll Int) [Sent, Restarted]
+      pollStep (Arrived 1 (Just 7)) restarted `shouldBe` restarted
+      pollStep (Missing 1) restarted `shouldBe` restarted
+      pollShown (pollStep (Arrived 2 (Just 8)) restarted) `shouldBe` Just 8
 
   -- El retraso contra el spoiler: qué se enseña con N segundos de retraso, qué se
   -- guarda, y cómo se lee lo tecleado. Los segundos cuentan desde que se abrió la
@@ -4978,6 +6450,22 @@ main = hspec $ do
         , "http://localhost:3000/?otro=41"
         ]
         `shouldBe` replicate 4 Nothing
+
+    it "al abrir manda la dirección, luego lo guardado y luego el de fábrica" $ do
+      delayOnOpen "http://localhost:3000/?retraso=1:30" (Just "2:00") `shouldBe` 90
+      delayOnOpen "http://localhost:3000/" (Just "2:00") `shouldBe` 120
+      delayOnOpen "http://localhost:3000/?retraso=1:5" (Just "2:00") `shouldBe` 120
+      delayOnOpen "http://localhost:3000/" (Just "basura") `shouldBe` delayDefaultSeconds
+      delayOnOpen "http://localhost:3000/" Nothing `shouldBe` delayDefaultSeconds
+
+    it "el retraso se escribe en la dirección como lo enseña el campo, lo demás en su orden" $ do
+      delayQuery 120 "?retraso=0&sesion=2026-20-R" `shouldBe` "?sesion=2026-20-R&retraso=2:00"
+      delayQuery 41 "" `shouldBe` "?retraso=0:41"
+      delayQuery 0 "?retrasos=3" `shouldBe` "?retrasos=3&retraso=0:00"
+
+    prop "lo que se escribe en la dirección se vuelve a leer igual" $
+      forAll (choose (0, delayMaxSeconds)) $ \n ->
+        delayFromUrl ("http://localhost:3000/" <> delayQuery n "?sesion=2026-20-R") === Just n
 
     it "la espera cuenta desde lo más viejo que llegó, o desde ahora si no llegó nada" $ do
       delayWait 41 30 arrivals `shouldBe` Just 11
@@ -5142,18 +6630,18 @@ main = hspec $ do
     it "recoge la procedencia, la fuente, el instante y el fallo de lo que se está enseñando" $
       indicatorFrom True True
         (pollOf False (Just (Sourced (Just Cached) (Just OpenF1) (Just fetchedAtIso) [1 :: Int])) True)
-        `shouldBe` Indicator True (Just Cached) (Just OpenF1) (Just fetchedAtIso) True True True
+        `shouldBe` Indicator True (Just Cached) (Just OpenF1) (Just fetchedAtIso) True True True False
 
     it "antes de la primera respuesta no hay nada que enseñar ni procedencia" $
       indicatorFrom False False (pollIdle :: Poll (Sourced [Int]))
-        `shouldBe` Indicator False Nothing Nothing Nothing False False False
+        `shouldBe` Indicator False Nothing Nothing Nothing False False False False
 
     it "la sesión rodando entra por argumento y no sale del refresco" $
       -- El mismo `Poll` con las dos respuestas: nada de lo que el refresco trae lo
       -- decide, que es lo que permite que `Common.Shown` no conozca el dominio.
       map (\r -> indicatorFrom r False (pollIdle :: Poll (Sourced [Int]))) [True, False]
-        `shouldBe` [ Indicator False Nothing Nothing Nothing False True False
-                   , Indicator False Nothing Nothing Nothing False False False
+        `shouldBe` [ Indicator False Nothing Nothing Nothing False True False False
+                   , Indicator False Nothing Nothing Nothing False False False False
                    ]
 
     it "con la sesión rodando, los seis estados del punto con su modificador" $
@@ -5270,6 +6758,18 @@ main = hspec $ do
         `shouldBe` ( "widget__badge widget__badge--idle"
                    , "Dato reciente: no se ha vuelto a preguntar (14:03 UTC)"
                    )
+
+    it "una sesión elegida ya corrida, fresca o reciente: que no cambia, con su hora" $
+      map (\o -> indicatorTooltip ((offAir (shownFrom OpenF1 (Just o) (Just fetchedAtIso) False)) {indPast = True}))
+          [Fresh, Recent]
+        `shouldBe` replicate 2 "OpenF1 · Sesión terminada: no cambia (14:03 UTC)"
+
+    it "una sesión elegida ya corrida que falla, o guardada porque no responde: el aviso de siempre" $ do
+      let past i = i {indPast = True}
+      indicatorTooltip (past (offAir (shownAs (Just Fresh) Nothing True)))
+        `shouldBe` indicatorTooltip (offAir (shownAs (Just Fresh) Nothing True))
+      indicatorTooltip (past (offAir (shownAs (Just Cached) (Just fetchedAtIso) False)))
+        `shouldBe` indicatorTooltip (offAir (shownAs (Just Cached) (Just fetchedAtIso) False))
 
     it "el dato guardado lleva la hora ya legible, y no el instante tal cual viaja" $
       indicatorTooltip (shownAs (Just Cached) (Just fetchedAtIso) False)
@@ -6020,6 +7520,14 @@ main = hspec $ do
     it "los 429 de OpenF1 y los cortes del feed no son errores (líneas de un log de GP)" $
       Auto.countLog gpLogLines `shouldBe` Auto.LogCount 0 1 6
 
+    it "las líneas de Jolpica no cuentan, aunque digan «error» o 429; las mismas de OpenF1, sí" $ do
+      let jolpica =
+            [ "backend | 2026-11-19T18:41:03.556Z [jolpica] 2026/15/driverStandings/ 429 0.120 s: {\"error\": \"rate\"}"
+            , "backend | 2026-11-19T18:41:04.001Z [jolpica] 2026/races.json --- 30.001 s: ConnectionFailure error"
+            ]
+      Auto.countLog jolpica `shouldBe` Auto.LogCount 0 0 0
+      Auto.countLog (map (T.replace "[jolpica]" "[openf1]") jolpica) `shouldBe` Auto.LogCount 1 1 0
+
     it "«Socket closed» es un corte del feed: sus cuatro líneas con «error», ninguna error" $
       Auto.countLog socketClosedLines `shouldBe` Auto.LogCount 0 0 4
 
@@ -6386,6 +7894,27 @@ main = hspec $ do
       ]
         `shouldBe` replicate 3 Nothing
 
+  describe "Common.Account: el aviso cuando nadie tiene vuelta (2026-11-25 (k))" $ do
+    let valid   = F1TVValid "2026-11-07T23:06:58Z"
+        expired = F1TVExpired "2026-11-07T23:06:58Z"
+    it "con la cuenta que no vale, su estado como causa, con el comando" $
+      [ noLapsNotice 360 False (Just expired)
+      , noLapsNotice 360 False (Just F1TVMissing)
+      , noLapsNotice 360 False (Just F1TVUnreadable)
+      ]
+        `shouldBe` [ Just (Notice "La cuenta de F1TV caducó el sáb 7 a las 17:06: sin ella no llegan las vueltas de las sesiones acabadas." True)
+                   , Just (Notice "No hay cuenta de F1TV: sin ella no llegan las vueltas de las sesiones acabadas." True)
+                   , Just (Notice "No se entiende el fichero de la cuenta de F1TV: sin él no llegan las vueltas de las sesiones acabadas." True)
+                   ]
+
+    it "con la cuenta que vale, sin saber de ella o en el directo, ninguno" $
+      [ noLapsNotice 360 False (Just valid)
+      , noLapsNotice 360 False Nothing
+      , noLapsNotice 360 True (Just expired)
+      , noLapsNotice 360 True (Just F1TVMissing)
+      ]
+        `shouldBe` replicate 4 Nothing
+
   describe "Common.Account: el aviso de la telemetría incompleta" $ do
     let valid   = F1TVValid "2026-11-07T23:06:58Z"
         expired = F1TVExpired "2026-11-07T23:06:58Z"
@@ -6419,11 +7948,44 @@ main = hspec $ do
                    , Nothing
                    ]
 
+    it "el archivo cortado: con cuántas tuvo, la vuelta en que acaba; sin saberlo, o sin más, sin números" $
+      map cutSentence [MkArchiveCut 56 (Just 71), MkArchiveCut 23 Nothing, MkArchiveCut 71 (Just 71)]
+        `shouldBe` [ "El archivo de F1 de esta carrera acaba en la vuelta 56 de 71: la más rápida es la de esas 56."
+                   , "El archivo de F1 de esta sesión está cortado: la más rápida es la de lo que trae."
+                   , "El archivo de F1 de esta sesión está cortado: la más rápida es la de lo que trae."
+                   ]
+
+    it "la línea del archivo cortado, fuera del directo y aunque la cuenta no valga; entera o en el directo, ninguna" $
+      [ cutNotice False (Just (MkArchiveCut 56 (Just 71)))
+      , cutNotice False Nothing
+      , cutNotice True (Just (MkArchiveCut 56 (Just 71)))
+      ]
+        `shouldBe` [Just (cutSentence (MkArchiveCut 56 (Just 71))), Nothing, Nothing]
+
     it "toca volver a pedirla el primer minuto después de su hora; con una hora que no se lee, nunca" $ do
       -- 2026-11-07T00:40:05Z es el minuto 29 900 200 desde 1970 (date -u +%s, entre 60).
       let g = MkTelemetryGap 0.04 "2026-11-07T00:40:05Z"
       map (`retryDue` g) [29900199 .. 29900202] `shouldBe` [False, False, True, True]
       retryDue maxBound (MkTelemetryGap 0.04 "luego") `shouldBe` False
+
+  describe "Handler.FastF1.Helper.sessionTimeout" $
+    it "latest, el configurado; una sesión elegida, 30 s o el configurado si es mayor" $ do
+      FastF1.sessionTimeout 5 "latest" `shouldBe` 5
+      FastF1.sessionTimeout 5 "2026-21-R" `shouldBe` FastF1.chosenSessionTimeout
+      FastF1.chosenSessionTimeout `shouldBe` 30
+      FastF1.sessionTimeout 60 "2026-21-R" `shouldBe` 60
+
+  -- Un microservicio que acepta la conexión y no contesta, como el colgado: con el techo de
+  -- la configuración a 1 s, los stints de la última sesión fallan antes de 3 s; los de una
+  -- sesión elegida, de control, siguen esperando a los 3 s (su techo es de 30). Solo se atrapa
+  -- 'HttpException': un @try@ más ancho se tragaría el corte del propio 'timeout'.
+  describe "Handler.Live.Manager: el techo de los stints de la última sesión" $ do
+    let stints fetch = silentService $ \cfg ->
+          timeout 3000000 (try (fetch cfg "2026-20-R") :: IO (Either HttpException FastF1Stints))
+    it "los de la última sesión, con el techo de la configuración" $
+      (fmap isLeft <$> stints LiveManager.fetchLatestStints) `shouldReturn` Just True
+    it "control: los de una sesión elegida siguen esperando" $
+      (fmap isLeft <$> stints LiveManager.fetchFastF1Stints) `shouldReturn` Nothing
 
   describe "Handler.FastF1: el estado de la cuenta para la página" $ do
     it "vale, caducó (también justo ahora, como en Auto), no hay o no se entiende" $
@@ -6934,6 +8496,12 @@ main = hspec $ do
       map (isLeft . Auto.jolpicaSlots) ["", "{}", "{\"MRData\":{\"RaceTable\":{\"Races\":[{\"date\":\"2026-10-25\"}]}}}"]
         `shouldBe` [True, True, True]
 
+    it "las horas de Jolpica salen por carrera: la carrera primero y después P1, P2, P3, Q, SQ y sprint" $
+      map Auto.slotName <$> Auto.jolpicaSlots jolpicaRaces
+        `shouldBe` Right
+          [ "Race", "Practice 1", "Qualifying", "Sprint Qualifying", "Sprint"
+          , "Race", "Practice 1", "Practice 2", "Practice 3", "Qualifying" ]
+
     it "el comando relleno con unas horas se vuelve a leer igual (ida y vuelta por --horas)" $
       ( Auto.horasFlag austinSlots
       , Auto.parseHoras austinFriday (Auto.horasFlag austinSlots)
@@ -6993,19 +8561,25 @@ main = hspec $ do
         `shouldBe` ["~/MOPER", "~", "/home/pilotos/MOPER", "/datos/f1", "/datos/f1"]
 
   describe "Auto.Context.pieceProcess" $ do
-    -- Los sockets que ve abiertos un hijo lanzado con ese proceso mientras la suite tiene
-    -- uno suyo abierto.
-    let listFds = "for f in /proc/$$/fd/*; do readlink \"$f\"; done"
+    -- Los sockets del 3 en adelante que ve abiertos un hijo lanzado con ese proceso mientras
+    -- la suite tiene uno suyo abierto, como «descriptor destino». El 0, el 1 y el 2 no
+    -- cuentan: el hijo los hereda a propósito de quien lanza la suite, que puede tener un
+    -- socket en la entrada estándar.
+    let listFds = "for f in /proc/$$/fd/*; do echo \"${f##*/} $(readlink \"$f\")\"; done"
+        fromThree l = case reads (takeWhile (/= ' ') l) :: [(Int, String)] of
+          [(n, "")] -> n >= 3
+          _         -> False
         socketsSeen spec =
           bracket (Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol) Socket.close $ \_ -> do
             (_, out, _, ph) <- createProcess spec {std_out = CreatePipe}
             fds <- maybe (pure "") hGetContents out
-            n <- evaluate (length (filter ("socket:" `isPrefixOf`) (lines fds)))
-            n <$ waitForProcess ph
+            seen <- evaluate (filter (\l -> fromThree l && ("socket:" `isPrefixOf` drop 1 (dropWhile (/= ' ') l))) (lines fds))
+            _ <- evaluate (length (concat seen))
+            seen <$ waitForProcess ph
     it "el hijo no hereda un socket abierto en quien lo lanza" $
-      socketsSeen (pieceProcess "sh" ["-c", listFds]) `shouldReturn` 0
+      socketsSeen (pieceProcess "sh" ["-c", listFds]) `shouldReturn` []
     it "control: lanzado sin ella, sí lo hereda" $
-      socketsSeen (proc "sh" ["-c", listFds]) >>= (`shouldSatisfy` (>= 1))
+      socketsSeen (proc "sh" ["-c", listFds]) >>= (`shouldSatisfy` (not . null))
     it "y le llega la salida que se le da" $ do
       (_, out, _, ph) <- createProcess (pieceProcess "sh" ["-c", "echo hola"]) {std_out = CreatePipe}
       said <- maybe (pure "") hGetContents out
@@ -7278,7 +8852,7 @@ snapStaysInCanvas d v = r >= 0 .&&. r <= canvasSpan
 -- tablero no deja se saltan. Solo salen layouts que un usuario puede tener.
 reachableLayout :: Gen ([WidgetConfig], [WidgetConfig])
 reachableLayout = do
-  factory  <- elements [raceOverviewFixture, qualyFixture]
+  factory  <- elements [raceOverviewCards, qualyCards]
   n        <- choose (0, 6)
   gestures <- vectorOf n arbitrary
   pure (factory, foldl step factory gestures)
@@ -7380,8 +8954,9 @@ carryShowsDrop start i corner magnet alt a b =
 savedDropRoundTrips
   :: [WidgetConfig] -> [WidgetConfig] -> Int -> Bool -> Bool -> Bool -> Int -> Int -> Bool -> Bool
 savedDropRoundTrips factory start i corner magnet alt a b right =
-  restoreLayout factory (Just (saveLayout sides dropped)) == FromSaved dropped sides
+  restoreLayout factory (Just (saveLayout shown)) == FromSaved shown
   where
+    shown        = Shown sides [] dropped
     (_, dropped) = dragOn start i corner magnet alt a b
     sides        = Map.map (\c -> if right then c { ccSide = otherSide (ccSide c) } else c)
                      (factoryControls factory)
@@ -7443,7 +9018,7 @@ rectNamed wid wt (x, y, w, h) = WidgetConfig
   , widgetType    = wt
   , params        = noParams
   , widgetVisible = True
-  , widgetGroup   = Nothing
+  , widgetGroups  = []
   , wcX           = x
   , wcY           = y
   , wcW           = w
@@ -7464,35 +9039,12 @@ expectedSlot (x, y, w, h) = T.intercalate "; "
   ]
   where n = T.pack . show
 
--- | __Copia__ de @Pages.Dashboard.raceOverview@, y no el valor de verdad: el
--- paquete @frontend@ no está en @cabal.project@ y solo se construye con GHCJS, así
--- que esta suite no puede importarlo.
---
--- __Es deuda, y conviene decirlo aquí donde se ve:__ si las coordenadas cambian
--- allí y no aquí, estos casos siguen verdes midiendo un layout que ya no existe.
--- Se acepta porque la alternativa —no probarlos— deja los cinco rectángulos
--- escritos a mano sin nada que cace un typo, que es el riesgo que este bloque
--- existe para cubrir.
-raceOverviewFixture :: [WidgetConfig]
-raceOverviewFixture =
-  [ rectNamed "live-timing"       LiveTiming       (  0,  0, 60, 90)
-  , rectNamed "lap-comparison"    LapComparison    ( 60,  0, 60, 85)
-  , rectNamed "driver-stats"      HistoricalStats  (  0, 90, 60, 30)
-  , rectNamed "constructor-stats" ConstructorStats ( 60, 90, 60, 30)
-  ]
-
--- | Copia de @Pages.Dashboard.qualy@, con la misma advertencia que
--- 'raceOverviewFixture'. Es el caso límite del rectángulo: el lienzo entero.
-qualyFixture :: [WidgetConfig]
-qualyFixture = [rectNamed "qualy-live-timing" LiveTiming (0, 0, 120, 120)]
-
--- | Copia de @Pages.Dashboard.strategy@, con la misma advertencia que
--- 'raceOverviewFixture'.
-strategyFixture :: [WidgetConfig]
-strategyFixture =
-  [ rectNamed "strategy-live-timing" LiveTiming   ( 0, 0, 60, 120)
-  , rectNamed "tyre-strategy"        TyreStrategy (60, 0, 60, 120)
-  ]
+-- | Los rectángulos de los layouts fijos de la página ('Common.FixedLayouts'). Qualy
+-- es el caso límite del rectángulo: el lienzo entero.
+raceOverviewCards, qualyCards, strategyCards :: [WidgetConfig]
+raceOverviewCards = widgets Fixed.raceOverview
+qualyCards = widgets Fixed.qualy
+strategyCards = widgets Fixed.strategy
 
 -- | El instante tal cual lo emite @\/api\/live@ en la cabecera @X-Data-Fetched-At@
 -- (2026-09-11 (b)): UTC, sin fracción de segundo. Es el mismo que produce
@@ -7518,6 +9070,7 @@ shownAs origin fetched failed =
     , indFailed    = failed
     , indRunning   = True
     , indFinalised = False
+    , indPast      = False
     }
 
 shownFrom :: Source -> Maybe Origin -> Maybe T.Text -> Bool -> Indicator
@@ -7794,7 +9347,7 @@ driverWithoutWins =
 
 -- | @StandingsList@ sin ninguna de las dos claves: decodifica (ambas son @.:?@ con
 -- defecto @[]@ desde el 2026-07-29) y aplana a @[]@. Con @.:@ esto habría lanzado
--- un fallo de parseo y el 'Handler.Historical.Context' degradaría a cache\/dummy.
+-- un fallo de parseo y el 'Handler.Historical.Context' degradaría a lo guardado o al error.
 standingsListWithoutKeys :: ByteString
 standingsListWithoutKeys = envelope ""
 
@@ -7839,6 +9392,15 @@ comparisonWithGap :: ByteString
 comparisonWithGap =
   "{\"lcSamples\":100,\"lcEntries\":[],\
   \\"lcTelemetry\":{\"coverage\":0.0421,\"retryAt\":\"2026-11-07T00:40:05Z\"}}"
+
+-- | México 2026 (@2026-19-R@), con el archivo de F1 cortado: el microservicio añade
+-- @lcCut@ con la vuelta en que acaba y las de su resultado (medido en la sesión 160).
+comparisonCut :: ByteString
+comparisonCut = "{\"lcSamples\":0,\"lcEntries\":[],\"lcCut\":{\"lastLap\":56,\"laps\":71}}"
+
+-- | Cortada sin saber cuántas tuvo: @laps@ nulo.
+comparisonCutUnknown :: ByteString
+comparisonCutUnknown = "{\"lcSamples\":0,\"lcEntries\":[],\"lcCut\":{\"lastLap\":23,\"laps\":null}}"
 
 -- | Recorte de @GET \/fastf1\/drivers\/{session_key}@ — los tres primeros coches
 -- de la parrilla real de la sesión del 2026-08-06, en el orden que los da
@@ -8098,6 +9660,63 @@ openF1GridNumberAsText :: ByteString
 openF1GridNumberAsText =
   "[{\"driver_number\":\"1\",\"name_acronym\":\"NOR\",\"team_name\":\"McLaren\"}]"
 
+-- | Un servidor HTTP en un puerto libre de 127.0.0.1 que contesta a cada conexión con
+-- @status@ y la cierra, y cuántas conexiones lleva.
+statusServer :: ByteString -> (Int -> MVar Int -> IO a) -> IO a
+statusServer status act =
+  bracket (Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol) Socket.close $ \s -> do
+    Socket.bind s (Socket.SockAddrInet 0 (Socket.tupleToHostAddress (127, 0, 0, 1)))
+    Socket.listen s 8
+    p <- Socket.socketPort s
+    hits <- newMVar 0
+    let answer = do
+          (c, _) <- Socket.accept s
+          _ <- SocketBS.recv c 4096
+          takeMVar hits >>= putMVar hits . (+ 1)
+          SocketBS.sendAll c ("HTTP/1.1 " <> status <> "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+          Socket.close c
+          answer
+    _ <- forkIO (() <$ (try answer :: IO (Either SomeException ())))
+    act (fromIntegral p) hits
+
+-- | Como 'statusServer', pero la conexión @n@ (desde 1) contesta @504@ si @every > 0@ y
+-- @n@ es múltiplo de @every@, y si no calla 2 s y cierra: con @0@ todas callan; con @1@
+-- todas dan @504@.
+mixedServer :: Int -> (Int -> MVar Int -> IO a) -> IO a
+mixedServer every act =
+  bracket (Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol) Socket.close $ \s -> do
+    Socket.bind s (Socket.SockAddrInet 0 (Socket.tupleToHostAddress (127, 0, 0, 1)))
+    Socket.listen s 16
+    p <- Socket.socketPort s
+    hits <- newMVar 0
+    let answer = do
+          (c, _) <- Socket.accept s
+          n <- takeMVar hits >>= \k -> putMVar hits (k + 1) >> pure (k + 1)
+          _ <- forkIO $ do
+            _ <- SocketBS.recv c 4096
+            if every > 0 && n `mod` every == 0
+              then SocketBS.sendAll c "HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+              else threadDelay 2000000
+            Socket.close c
+          answer
+    _ <- forkIO (() <$ (try answer :: IO (Either SomeException ())))
+    act (fromIntegral p) hits
+
+-- | Un socket Unix abstracto (sin fichero) que escucha y nunca contesta, y la 'Config' que
+-- habla con él con el techo de la configuración en 1 s.
+silentService :: (Config -> IO a) -> IO a
+silentService act =
+  bracket (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \s -> do
+    let name = "\0dashboardF1-backend-test-silencio"
+    Socket.bind s (Socket.SockAddrUnix name)
+    Socket.listen s 4
+    brake <- newMVar []
+    act Config
+      { cfgPort = 0, cfgStaticDir = "", cfgTelemetryHost = "127.0.0.1", cfgTelemetryPort = 0
+      , cfgTelemetrySocket = Just name, cfgTelemetryTimeout = 1, cfgPublicApiTimeout = 1
+      , cfgOpenF1Log = False, cfgOpenF1Brake = brake
+      }
+
 -- | La hora de arranque prevista de la carrera 11369, tal como OpenF1 la publica.
 raceStartsAt :: UTCTime
 raceStartsAt = UTCTime (fromGregorian 2026 9 13) (13 * 3600)
@@ -8329,6 +9948,16 @@ stintWithNullCompound =
     <> "," <> stint 1 3 22 47 "\"HARD\""
     <> "]"
 
+-- | Tres stints del coche 1; el del medio, con @lap_end@ nulo.
+stintWithNullLapEnd :: ByteString
+stintWithNullLapEnd =
+  "[" <> stint 1 1 1 2 "\"MEDIUM\""
+    <> ",{\"meeting_key\":1292,\"session_key\":11353,\"stint_number\":2,\
+       \\"driver_number\":1,\"lap_start\":3,\"lap_end\":null,\"compound\":\"SOFT\",\
+       \\"tyre_age_at_start\":0}"
+    <> "," <> stint 1 3 22 47 "\"HARD\""
+    <> "]"
+
 -- | La clave @compound@ __ausente__, no nula. OpenF1 la emite siempre (2268 de
 -- 2268 medidos), así que esto protege el decode ante un cambio de contrato: con
 -- @.:?@ las dos formas del no-dato entran por la misma rama y ninguna de las dos
@@ -8529,6 +10158,28 @@ result number pos dnf dns dsq duration =
     <> ",\"dsq\":" <> dsq
     <> ",\"duration\":" <> duration <> ",\"gap_to_leader\":0"
     <> ",\"meeting_key\":1292,\"session_key\":11353}"
+
+-- | @\/fastf1\/session@ de la carrera de São Paulo 2026 (con el acento, que viaja en
+-- UTF-8).
+fastF1SessionJson :: T.Text
+fastF1SessionJson = "{\"meeting\":\"São Paulo Grand Prix\",\"name\":\"Race\",\"finished\":true}"
+
+-- | Tres vueltas de @\/fastf1\/laps@ con las claves que 'FastF1Lap' consume y una de
+-- las que no, más una de un coche que no es un número.
+fastF1LapsJson :: ByteString
+fastF1LapsJson =
+  "[{\"leDriver\":\"NOR\",\"leNumber\":\"1\",\"leLap\":5,\"leTime\":\"1:23.456\",\"leCompound\":\"SOFT\"},\
+  \{\"leDriver\":\"HAM\",\"leNumber\":\"44\",\"leLap\":6,\"leTime\":\"\"},\
+  \{\"leDriver\":\"x\",\"leNumber\":\"x\",\"leLap\":1,\"leTime\":\"58.0\"},\
+  \{\"leDriver\":\"LEC\",\"leNumber\":\"16\",\"leLap\":7,\"leTime\":\"59.5\"}]"
+
+-- | @\/fastf1\/results@ de tres coches, ya ordenada (el 3 delante), con la forma de
+-- OpenF1 @\/session_result@: el 1 a 10 s y el 16 a 25,5 s del líder.
+fastF1ResultsJson :: ByteString
+fastF1ResultsJson =
+  "[" <> result 3 "1" "false" "false" "false" "5000.0"
+    <> "," <> result 1 "2" "false" "false" "false" "5010.0"
+    <> "," <> result 16 "3" "false" "false" "false" "5025.5" <> "]"
 
 -- | Igual que 'result' pero __sin las tres banderas__. Protege el decode ante un
 -- cambio de contrato: OpenF1 las emite en las 22 filas medidas.
@@ -8844,19 +10495,10 @@ fetchInstant = UTCTime (fromGregorian 2026 9 11) 50602.123456
 latest :: [(T.Text, Maybe T.Text)]
 latest = queryParamToList latestSession
 
--- | Un minuto después de 'fetchInstant': el «ahora» de 'tyreStep', distinto de la hora de
--- lo guardado para que no se puedan confundir.
+-- | Un minuto después de 'fetchInstant': el «ahora» de 'Handler.FastF1.Helper.fastf1Step', distinto
+-- de la hora de lo guardado para que no se puedan confundir.
 tyreNow :: UTCTime
 tyreNow = addUTCTime 60 fetchInstant
-
--- | Lo que trae OpenF1 en las pruebas de 'tyreStep'.
-freshStints :: [TyreStint]
-freshStints = [openF1Stint "NOR" "1" "MEDIUM" 1 20, openF1Stint "NOR" "1" "HARD" 21 44]
-
--- | Lo guardado en las pruebas de 'tyreStep': otra tanda, para que servir la equivocada
--- se note.
-keptStints :: [TyreStint]
-keptStints = [openF1Stint "LEC" "16" "SOFT" 1 12]
 
 -- | Las tres cabeceras de una respuesta con procedencia, buscadas por su nombre
 -- __de tipo__, que es el que Servant usa al serializarlas.
@@ -9240,3 +10882,96 @@ feedRefusedLines =
   , "fastf1  | 2026-10-23T17:33:25Z AuthHubConnection"
   , "fastf1  | 2026-10-23T17:33:25Z <urlopen error [SSL: UNEXPECTED_MESSAGE] unexpected message (_ssl.c:1010)>"
   ]
+
+-- | Una hora UTC: año, mes, día, hora y minuto.
+utcAt :: Integer -> Int -> Int -> Int -> Int -> UTCTime
+utcAt y m d h mi = UTCTime (fromGregorian y m d) (fromIntegral (h * 3600 + mi * 60))
+
+-- | São Paulo 2026 (ronda 20) en Jolpica, sin la FP2 ni la FP3.
+saoPaulo :: JolpicaRace
+saoPaulo =
+  JolpicaRace 2026 20 "Brazilian Grand Prix"
+    [(Race, utcAt 2026 11 8 17 0), (Practice1, utcAt 2026 11 6 14 30), (Qualifying, utcAt 2026 11 7 18 0)]
+
+-- | Una sesión de la lista de un año de OpenF1, de una hora.
+listed :: Int -> Bool -> T.Text -> UTCTime -> Of1Listed
+listed key cancelled name start =
+  Of1Listed key cancelled (Of1Session name name 1300 start (addUTCTime 3600 start) Nothing)
+
+-- | São Paulo 2026 en OpenF1, con sus claves medidas en la 149.
+listedSaoPaulo :: [Of1Listed]
+listedSaoPaulo =
+  [ listed 11405 False "Practice 1" (utcAt 2026 11 6 14 30)
+  , listed 11408 False "Qualifying" (utcAt 2026 11 7 18 0)
+  , listed 11412 False "Race" (utcAt 2026 11 8 17 0)
+  ]
+
+-- | Un fin de semana con sprint (Miami, ronda 4), con claves inventadas: la FP1 y la
+-- clasificación del sprint el mismo viernes.
+miami :: JolpicaRace
+miami =
+  JolpicaRace 2026 4 "Miami Grand Prix"
+    [ (Race, utcAt 2026 5 3 20 0), (Practice1, utcAt 2026 5 1 16 30), (SprintQualifying, utcAt 2026 5 1 20 30)
+    , (Sprint, utcAt 2026 5 2 16 0), (Qualifying, utcAt 2026 5 2 20 0) ]
+
+listedMiami :: [Of1Listed]
+listedMiami =
+  [ listed 401 False "Practice 1" (utcAt 2026 5 1 16 30)
+  , listed 402 False "Sprint Qualifying" (utcAt 2026 5 1 20 30)
+  , listed 403 False "Sprint" (utcAt 2026 5 2 16 0)
+  , listed 404 False "Qualifying" (utcAt 2026 5 2 20 0)
+  , listed 405 False "Race" (utcAt 2026 5 3 17 0)
+  ]
+
+-- | Dos sesiones de @/sessions?year=@: una entera y otra cancelada sin más campos que
+-- los obligatorios; la primera sin @is_cancelled@.
+openF1YearSessions :: ByteString
+openF1YearSessions =
+  "[{\"session_key\":11412,\"session_type\":\"Race\",\"session_name\":\"Race\",\
+  \\"date_start\":\"2026-11-08T17:00:00+00:00\",\
+  \\"date_end\":\"2026-11-08T19:00:00+00:00\",\"meeting_key\":1300},\
+  \{\"session_key\":9999,\"session_type\":\"Race\",\"session_name\":\"Race\",\
+  \\"date_start\":\"2026-04-12T15:00:00+00:00\",\
+  \\"date_end\":\"2026-04-12T17:00:00+00:00\",\"meeting_key\":1280,\
+  \\"is_cancelled\":true}]"
+
+-- | Lo que da @/fastf1/stints@ de una sesión cortada, con un compuesto y una vida nulos.
+fastF1StintsJson :: ByteString
+fastF1StintsJson =
+  "{\"complete\":false,\"stints\":[\
+  \{\"driver_number\":18,\"compound\":\"SOFT\",\"lap_start\":1,\"lap_end\":3,\"tyre_age_at_start\":0},\
+  \{\"driver_number\":11,\"compound\":null,\"lap_start\":22,\"lap_end\":46,\"tyre_age_at_start\":null}]}"
+
+-- | Australia 2026, el 1: entra en la 11 y sale en la 12 (OpenF1 pone el cambio una antes).
+australiaWhole :: FastF1Stints
+australiaWhole =
+  FastF1Stints True [Of1Stint 1 (Just "MEDIUM") 1 (Just 11) 0, Of1Stint 1 (Just "HARD") 12 (Just 58) 0]
+
+-- | México 2026 cortada en la 56 de 71; los stints, ilustrativos.
+mexicoCut :: FastF1Stints
+mexicoCut =
+  FastF1Stints False [Of1Stint 4 (Just "MEDIUM") 1 (Just 30) 0, Of1Stint 4 (Just "HARD") 31 (Just 56) 0]
+
+openMexico :: [Of1Stint]
+openMexico = [Of1Stint 4 (Just "MEDIUM") 1 (Just 30) 0, Of1Stint 4 (Just "HARD") 31 (Just 71) 0]
+
+-- | La acción en un hilo aparte: su hilo y dónde deja el resultado, también la excepción.
+forkResult :: IO a -> IO (ThreadId, MVar (Either SomeException a))
+forkResult io = do
+  box <- newEmptyMVar
+  tid <- forkIO (try io >>= putMVar box)
+  pure (tid, box)
+
+-- | Espera a que se cumpla, como mucho 2 s; si no, la prueba falla.
+waitFor :: IO Bool -> IO ()
+waitFor cond = timeout 2000000 loop `shouldReturn` Just ()
+  where
+    loop = cond >>= \ok -> if ok then pure () else threadDelay 1000 >> loop
+
+-- | El hilo está bloqueado, en lo que sea (una MVar o una transacción).
+isBlocked :: ThreadId -> IO Bool
+isBlocked tid = (\s -> case s of ThreadBlocked _ -> True; _ -> False) <$> threadStatus tid
+
+-- | El 'ErrorCall' con que acabó, o 'Nothing' si acabó bien o con otra excepción.
+errorCallOf :: Either SomeException a -> Maybe ErrorCall
+errorCallOf = either fromException (const Nothing)

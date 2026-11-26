@@ -26,16 +26,16 @@ El backend Haskell lo localiza con `TELEMETRY_HOST` (default `127.0.0.1`) y `TEL
 
 ## Pruebas
 
-Las de `tests/` cubren lo puro del feed (`feed.py`): la salida de `_feed_rows` sobre fotos reales del feed, comparada
-con la guardada en `tests/esperado/`, y sus reglas como propiedades con hypothesis. Desde la raíz del repositorio:
+Las de `tests/` cubren lo puro del feed (`feed.py`): sus reglas como propiedades con hypothesis, sobre fotos del feed
+generadas (`tests/generadores.py`: la forma de una foto real, con lo demás al azar). Desde la raíz del repositorio:
 
 ```sh
 dashboardF1-pytest
 ```
 
-`dashboardF1-test` las corre antes que las de Haskell. Las fotos salen de una grabación de `dashboardF1-record`, y un
-cambio intencionado de la salida se regenera, se prueba y se revisa en el diff; los dos usos, en la cabecera de
-`tests/fotos.py`. Hypothesis guarda en `.hypothesis/` los ejemplos que fallaron y los repite primero.
+`dashboardF1-test` las corre antes que las de Haskell. Para mirar en local un caso real, `tests/fotos.py` saca fotos de
+una grabación de `dashboardF1-record`; no se versionan ni las lee la suite (su cabecera dice cómo). Hypothesis guarda en
+`.hypothesis/` los ejemplos que fallaron y los repite primero.
 
 ## Variables de entorno
 
@@ -52,7 +52,7 @@ Contrato con el lado Haskell (decidido el 2026-07-31), común a los tres:
 - **Degradar es del backend.** Lo que falta no es un error: el `Context` de cada área es quien cae a su cache STM o al dummy.
 - Sesión irresoluble → `404`; parámetros mal formados → `400`.
 
-Nota operativa: las sesiones cargadas se memorizan en proceso, así que **`latest` se congela mientras `uvicorn` viva**. Reiniciarlo para volver a resolverlo. Una sesión que cargó vacía (sin token de F1TV, sin vueltas) no se congela: se vuelve a pedir en cuanto cambia el fichero del token o a los 10 min, lo que pase antes.
+Nota operativa: las sesiones cargadas se memorizan en proceso, así que **`latest` se congela mientras `uvicorn` viva**. Reiniciarlo para volver a resolverlo. Una sesión que cargó vacía (sin token de F1TV, sin vueltas) no se congela: se vuelve a pedir en cuanto cambia el fichero del token o a los 10 min, lo que pase antes. El memo guarda la sesión de `latest` y como mucho otras 4 (`MEMO_MAX`): al cargar una quinta sale la que lleva más rato sin pedirse, y si se vuelve a pedir se carga otra vez desde la caché en disco.
 
 ### `GET /fastf1/comparison/{session_key}?drivers=16,1&samples=0` — implementado
 

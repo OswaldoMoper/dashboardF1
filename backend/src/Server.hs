@@ -9,6 +9,7 @@
 module Server where
 
 import           App                            (Env (..))
+import           Common.Session                 (CircuitRound, SeasonRace)
 import           Common.Types                   (F1TVAccount, HistoricalStat)
 import           Config                         (cfgStaticDir)
 import           Data.Aeson                     (ToJSON)
@@ -20,7 +21,7 @@ import qualified Handler.F1TV                   as F1TV
 import qualified Handler.Historical             as Historical
 import qualified Handler.Live                   as Live
 import           Handler.Live.Helper            (CalendarEntry)
-import qualified Handler.TyreStrategy           as TyreStrategy
+import qualified Handler.Season                 as Season
 import           Network.HTTP.Types             (hContentType, status200)
 -- 'Application' no se importa aquí: lo reexporta 'Servant', y pedirlo también a
 -- 'Network.Wai' era el warning de @-Wall@ que este archivo arrastraba desde la
@@ -43,25 +44,31 @@ instance ToJSON Home
 -- delegando en 'spaApp' (bundle del frontend). Va al final: Servant prueba en
 -- orden, así que @/home@ y @/api/*@ ganan y el resto cae en el SPA.
 --
--- Los 'QueryParam' de @/api/comparison@ y @/api/drivers@ son __opcionales__ (sin
--- @Required@, así que el handler recibe 'Maybe'): sin parámetros cada endpoint
--- sirve su default, y es el @resolveParams@ del @Context@ de cada área quien lo
--- aplica. Los espejos del lado frontend son 'Common.Route.comparisonPathFor' y
--- 'Common.Route.driversPathFor'.
+-- Los 'QueryParam' de @/api/live@, @/api/comparison@, @/api/drivers@ y @/api/historical@ son
+-- __opcionales__ (sin @Required@, así que el handler recibe 'Maybe'): sin parámetros
+-- cada endpoint sirve su default, y es el @Helper@ de cada área quien lo aplica. Los
+-- espejos del lado frontend son 'Common.Route.comparisonPathFor',
+-- 'Common.Route.driversPathFor' y 'Common.Route.historicalPathFor'.
+-- El de @/api/circuit-seasons@ también, y sin sesión da la lista vacía; su espejo es
+-- 'Common.Route.circuitSeasonsPathFor'.
 --
 -- El parámetro de comparación es @drivers@: la comparación es de __1 a 5__ coches
 -- y el microservicio responde 400 a cualquier otra cantidad. @samples@ es un 'Int': lo que no es número lo rechaza Servant con 400, y lo que está
 -- fuera de rango lo ajusta 'Handler.Comparison.Helper.adjustSamples'.
 --
--- @/api/live@, @/api/tyre-strategy@, @/api/comparison@ y @/api/drivers@
+-- @/api/live@, @/api/comparison@ y @/api/drivers@
 -- responden con cabeceras propias: la
 -- procedencia del dato ('Provenance'). Cada tipo vive en su 'Handler' y no aquí
 -- porque este módulo importa aquéllos; el cuerpo JSON es el mismo de siempre.
 type Api =
        "home" :> Get '[JSON] Home
-  :<|> "api" :> "live" :> Get '[JSON] Live.LiveResponse
+  :<|> "api" :> "live"
+         :> QueryParam "session" Text
+         :> Get '[JSON] Live.LiveResponse
   :<|> "api" :> "calendar" :> Get '[JSON] [CalendarEntry]
-  :<|> "api" :> "historical" :> Get '[JSON] [HistoricalStat]
+  :<|> "api" :> "historical"
+         :> QueryParam "session" Text
+         :> Get '[JSON] [HistoricalStat]
   :<|> "api" :> "comparison"
          :> QueryParam "session" Text
          :> QueryParam "drivers" Text
@@ -70,8 +77,11 @@ type Api =
   :<|> "api" :> "drivers"
          :> QueryParam "session" Text
          :> Get '[JSON] Drivers.DriversResponse
-  :<|> "api" :> "tyre-strategy" :> Get '[JSON] TyreStrategy.TyreResponse
   :<|> "api" :> "f1tv" :> Get '[JSON] F1TVAccount
+  :<|> "api" :> "season" :> Get '[JSON] [SeasonRace]
+  :<|> "api" :> "circuit-seasons"
+         :> QueryParam "session" Text
+         :> Get '[JSON] [CircuitRound]
   :<|> Raw
 
 api :: Proxy Api
@@ -90,8 +100,9 @@ server env =
     :<|> Historical.historicalHandler env
     :<|> Comparison.comparisonHandler env
     :<|> Drivers.driversHandler env
-    :<|> TyreStrategy.tyreStrategyHandler env
     :<|> F1TV.f1tvHandler
+    :<|> Season.seasonHandler env
+    :<|> Season.circuitSeasonsHandler env
     :<|> Tagged (spaApp env)
   where
     homeH :: Handler Home

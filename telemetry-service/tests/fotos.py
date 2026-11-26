@@ -23,8 +23,11 @@ Uso, desde la raíz del repositorio::
     nix develop .#telemetry -c python telemetry-service/tests/fotos.py --esperado
 
 ``--esperado`` reescribe ``esperado/`` con la salida de ``_feed_rows`` del código de hoy
-sobre cada foto de ``fotos/``. Es para un cambio de comportamiento **intencionado**: se
-corre, se pasa la suite y se mira el diff antes de commitear.
+sobre cada foto de ``fotos/``.
+
+``fotos/`` y ``esperado/`` **no se versionan** (``.gitignore``) y la suite no los lee: son
+para mirar en local un caso real. Lo que la suite prueba son fotos generadas
+(``generadores.py``).
 """
 
 from __future__ import annotations

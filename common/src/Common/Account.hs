@@ -12,13 +12,17 @@ module Common.Account
   , Notice (..)
   , accountNotice
   , cardNotice
+  , noLapsNotice
+  , cutNotice
+  , cutSentence
   , gapSentence
   , retryDue
   , loginCommand
   ) where
 
 import           Common.Origin (Origin (..), originNotice)
-import           Common.Types  (F1TVAccount (..), TelemetryGap (..))
+import           Common.Types  (ArchiveCut (..), F1TVAccount (..),
+                                TelemetryGap (..))
 import           Control.Monad (guard)
 import           Data.Char     (isDigit)
 import           Data.Text     (Text)
@@ -161,6 +165,38 @@ cardNotice offset False account origin fetchedAt gap =
     (Just (Notice t False), Just g) -> Just (Notice (t <> ". " <> g) False)
     (Nothing, Just g)               -> Just (Notice g False)
     (n, Nothing)                    -> n
+
+-- | El aviso que sustituye a la gráfica cuando ninguno de los elegidos tiene vuelta
+-- ('Common.Comparison.noneHasLap') y la cuenta no vale: su estado, que es la causa, con el
+-- comando. Con la cuenta que vale, sin saber de ella o en el directo, 'Nothing', y va el
+-- de 'Common.Comparison.missingReference'.
+noLapsNotice :: Int -> Bool -> Maybe F1TVAccount -> Maybe Notice
+noLapsNotice _ True _ = Nothing
+noLapsNotice offset False account = do
+  a <- account
+  sentence <- accountSentence offset a
+  pure (Notice (sentence <> ": " <> without a <> " no llegan las vueltas de las sesiones acabadas.") True)
+  where
+    without F1TVUnreadable = "sin él"
+    without _              = "sin ella"
+
+-- | La línea del archivo de F1 cortado, que va en el mismo recuadro que 'cardNotice',
+-- debajo, también con la cuenta que no vale. En el directo, ninguna: la gráfica es del
+-- feed.
+cutNotice :: Bool -> Maybe ArchiveCut -> Maybe Text
+cutNotice True _  = Nothing
+cutNotice False c = cutSentence <$> c
+
+-- | La frase del archivo cortado: con la vuelta en que acaba y cuántas tuvo si se sabe
+-- que tuvo más, y si no, sin números.
+cutSentence :: ArchiveCut -> Text
+cutSentence c = case acLaps c of
+  Just n | acLastLap c < n ->
+    "El archivo de F1 de esta carrera acaba en la vuelta " <> showT (acLastLap c) <> " de " <> showT n
+      <> ": la más rápida es la de esas " <> showT (acLastLap c) <> "."
+  _ -> "El archivo de F1 de esta sesión está cortado: la más rápida es la de lo que trae."
+  where
+    showT = T.pack . show
 
 -- | La frase de la telemetría incompleta: cuánto cubre, en % redondeado (con 0 %, que
 -- no hay), y a qué hora local se vuelve a pedir; sin la hora si no se lee.

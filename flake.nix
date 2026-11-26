@@ -88,6 +88,7 @@
         hp = pkgs.haskellPackages.extend (hf: _hp: {
           common = hf.callCabal2nix "common" ./common { };
           backend = hf.callCabal2nix "backend" ./backend { };
+          frontend = hf.callCabal2nix "frontend" ./frontend { };
         });
 
         # ── Microservicio FastF1 ──
@@ -173,6 +174,8 @@
           install -m644 ${./telemetry-service/main.py} $out/main.py
           install -m644 ${./telemetry-service/feed.py} $out/feed.py
           install -m644 ${./telemetry-service/convert.py} $out/convert.py
+          install -m644 ${./telemetry-service/results.py} $out/results.py
+          install -m644 ${./telemetry-service/stints.py} $out/stints.py
         '';
 
         # Guard shared by the working-tree commands: they run code from $PWD, so
@@ -237,6 +240,11 @@
         # ── Backend Servant (Fase 1: /home + /api/* en :8080, override con PORT) ──
         packages.backend = hp.backend;
         packages.default = self'.packages.backend;
+
+        # frontend-test under native GHC; the output is empty, the build is the test run.
+        packages.frontend-test = pkgs.haskell.lib.overrideCabal hp.frontend (_: {
+          postInstall = "mkdir -p $out";
+        });
 
         # ── Frontend Reflex (GHCJS) ──
         packages.frontend = pkgs.runCommand "dashboardF1-frontend" { } ''

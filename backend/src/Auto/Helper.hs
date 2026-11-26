@@ -214,6 +214,7 @@ module Auto.Helper
   , viewLines
   ) where
 
+import           Common.Session        (feedName)
 import           Common.Types          (LapProgress (..), LiveTable (..),
                                         SessionInfo (..), SessionState (..),
                                         StateReading (..), sessionStateLabel)
@@ -221,14 +222,14 @@ import           Config                (startupMark)
 import           Data.Aeson            (FromJSON (..), Object, ToJSON (..),
                                         Value, eitherDecode, eitherDecodeStrict,
                                         object, withObject, (.:), (.:?), (.=))
-import           Data.Aeson.Types      (Parser, parseEither)
+import           Data.Aeson.Types      (Parser)
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Lazy  as BL
 import           Data.Char             (isDigit)
 import           Data.Function         (on)
 import           Data.List             (find, groupBy, nub, sortOn, stripPrefix,
                                         (\\))
-import           Data.Maybe            (catMaybes, fromMaybe, isJust, isNothing,
+import           Data.Maybe            (fromMaybe, isJust, isNothing,
                                         listToMaybe, mapMaybe)
 import           Data.Text             (Text)
 import qualified Data.Text             as T
@@ -244,6 +245,7 @@ import           Data.Time.LocalTime   (LocalTime (..), TimeZone, localDay,
                                         utcToLocalTime, utcToZonedTime)
 import           Handler.FastF1.Helper (TokenFile (..))
 import           Handler.Live.Helper   (CalendarEntry (..))
+import           Handler.Season.Helper (JolpicaRace (..), readJolpica)
 import           System.FilePath       (dropTrailingPathSeparator, joinPath,
                                         splitDirectories, (</>))
 import           Text.Printf           (printf)
@@ -583,12 +585,14 @@ sinceLastStart :: [Text] -> [Text]
 sinceLastStart = reverse . takeWhile (not . (T.pack startupMark `T.isInfixOf`)) . reverse
 
 -- | Sin distinguir mayúsculas. Cada línea con «error» de un corte del feed cuenta una: tres
--- en un @Broken pipe@, cuatro en un @Socket closed@.
+-- en un @Broken pipe@, cuatro en un @Socket closed@. Las de Jolpica (@[jolpica]@) no
+-- cuentan: no son de la grabación.
 countLog :: [Text] -> LogCount
 countLog = foldr (tally . T.toLower) (LogCount 0 0 0)
   where
     tally l c
       | not ("error" `T.isInfixOf` l)                      = c
+      | "[jolpica]" `T.isInfixOf` l                        = c
       | "[openf1]" `T.isInfixOf` l && " 429 " `T.isInfixOf` l = c {lcRateLimited = lcRateLimited c + 1}
       | any (`T.isInfixOf` l) feedCuts                     = c {lcFeedCuts = lcFeedCuts c + 1}
       | otherwise                                          = c {lcErrors = lcErrors c + 1}
@@ -1590,33 +1594,8 @@ parseHoras day spec
 -- feed, para cuando el calendario de la instancia falla. Una sesión que la carrera no
 -- trae (la P2 de un fin de semana con sprint) no sale.
 jolpicaSlots :: BL.ByteString -> Either String [Slot]
-jolpicaSlots body = eitherDecode body >>= parseEither season
-  where
-    season = withObject "Jolpica" $ \o -> do
-      mr <- o .: "MRData"
-      table <- mr .: "RaceTable"
-      races <- table .: "Races"
-      concat <$> mapM race (races :: [Value])
-    race = withObject "carrera" $ \r -> do
-      main <- slotAt "Race" r
-      sessions <-
-        mapM (\(key, name) -> traverse (withObject "sesión" (slotAt name)) =<< (r .:? key)) jolpicaSessions
-      pure (main : catMaybes sessions)
-    slotAt name o = do
-      date <- o .: "date"
-      time <- o .: "time"
-      maybe
-        (fail ("hora de Jolpica ilegible: " <> date <> " " <> time))
-        (pure . Slot name)
-        (parseTimeM False defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" (date <> "T" <> time))
-    jolpicaSessions =
-      [ ("FirstPractice", "Practice 1")
-      , ("SecondPractice", "Practice 2")
-      , ("ThirdPractice", "Practice 3")
-      , ("Qualifying", "Qualifying")
-      , ("SprintQualifying", "Sprint Qualifying")
-      , ("Sprint", "Sprint")
-      ]
+jolpicaSlots body =
+  concatMap (\r -> [Slot (feedName code) start | (code, start) <- jrSessions r]) <$> readJolpica body
 
 -- | Lo que contestó una instancia a @\/api\/calendar@.
 data CalendarAnswer

@@ -48,5 +48,5 @@ fetchComparison cfg sessionKey drivers samples = runFastF1 cfg $ do
       (comparisonBase (cfgTelemetryHost cfg) /: sessionKey)
       NoReqBody
       jsonResponse
-      (fastf1Options cfg <> "drivers" =: drivers <> "samples" =: samples)
+      (fastf1Options cfg sessionKey <> "drivers" =: drivers <> "samples" =: samples)
   pure (responseBody res)

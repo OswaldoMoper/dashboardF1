@@ -7,13 +7,21 @@ module Common.Route
   ( ApiRoute (..)
   , apiPath
   , livePath
+  , livePathFor
   , comparisonPath
   , comparisonPathFor
   , driversParam
+  , driversListParam
+  , driverCodesParam
   , driversPath
   , driversPathFor
   , historicalPath
+  , historicalPathFor
   , f1tvPath
+  , seasonPath
+  , circuitSeasonsPathFor
+  , urlParam
+  , queryParamSet
   ) where
 
 import           Data.Char  (isDigit)
@@ -27,8 +35,9 @@ data ApiRoute
   | HistoricalApi
   | ComparisonApi
   | DriversApi
-  | TyreStrategyApi
   | F1TVApi
+  | SeasonApi
+  | CircuitSeasonsApi
   deriving stock (Eq, Show)
 
 -- | Path (relativo, misma-origen) de cada endpoint.
@@ -38,12 +47,18 @@ apiPath = \case
   HistoricalApi   -> "/api/historical"
   ComparisonApi   -> "/api/comparison"
   DriversApi      -> "/api/drivers"
-  TyreStrategyApi -> "/api/tyre-strategy"
   F1TVApi         -> "/api/f1tv"
+  SeasonApi       -> "/api/season"
+  CircuitSeasonsApi -> "/api/circuit-seasons"
 
 -- | Atajo para el endpoint de live timing (primer consumidor).
 livePath :: Text
 livePath = apiPath LiveApi
+
+-- | El directo con la sesión en el query string, u omitida (la que rueda o la última).
+-- No escapa el query ('pathWith').
+livePathFor :: Maybe Text -> Text
+livePathFor session = pathWith livePath [("session", session)]
 
 -- | Atajo para el endpoint de comparación de vueltas.
 comparisonPath :: Text
@@ -100,6 +115,26 @@ driversParam a b = do
   carB <- carNumber b
   pure (carA <> "," <> carB)
 
+-- | 'driversParam' para una lista, la referencia primero: 'Nothing' si no son de 1 a 5
+-- o si alguno no es un número de coche. Tampoco comprueba que sean distintos.
+driversListParam :: [Text] -> Maybe Text
+driversListParam cars
+  | n < 1 || n > 5 = Nothing
+  | otherwise      = T.intercalate "," <$> traverse carNumber cars
+  where
+    n = length cars
+
+-- | El valor de @?drivers=@ por siglas, de 1 a 5 de tres letras mayúsculas: el de la
+-- vuelta de un piloto en otra sesión, donde su número puede ser otro y el microservicio
+-- traduce las siglas al de esa sesión. 'Nothing' con otra cantidad u otra cosa.
+driverCodesParam :: [Text] -> Maybe Text
+driverCodesParam codes
+  | n < 1 || n > 5 || not (all isCode codes) = Nothing
+  | otherwise                                = Just (T.intercalate "," codes)
+  where
+    n = length codes
+    isCode c = T.length c == 3 && T.all (`elem` ['A' .. 'Z']) c
+
 -- | Una entrada de usuario como número de coche: recortada, no vacía y solo
 -- dígitos. Recorta porque el espacio sobrante es un descuido de tecleo y no una
 -- intención; rechaza todo lo demás porque el único vocabulario que la API acepta
@@ -150,6 +185,41 @@ pathWith path params =
 historicalPath :: Text
 historicalPath = apiPath HistoricalApi
 
+-- | Las clasificaciones con la sesión en el query string, u omitida (la temporada a
+-- hoy). No escapa el query ('pathWith').
+historicalPathFor :: Maybe Text -> Text
+historicalPathFor session = pathWith historicalPath [("session", session)]
+
 -- | Atajo para el endpoint del estado de la cuenta de F1TV.
 f1tvPath :: Text
 f1tvPath = apiPath F1TVApi
+
+-- | Atajo para el endpoint de las sesiones de la temporada.
+seasonPath :: Text
+seasonPath = apiPath SeasonApi
+
+-- | Path de los grandes premios del mismo circuito en otros años, con la sesión que se ve en
+-- el query string.
+circuitSeasonsPathFor :: Maybe Text -> Text
+circuitSeasonsPathFor session = pathWith (apiPath CircuitSeasonsApi) [("session", session)]
+
+-- | El valor de @name@ en el query de una dirección, sin desescapar: el primero si se
+-- repite, @""@ si va sin @=@ y 'Nothing' si no está. El query empieza en el primer @?@
+-- y acaba en el @#@ siguiente.
+urlParam :: Text -> Text -> Maybe Text
+urlParam name url = lookup name params
+  where
+    query  = T.takeWhile (/= '#') (T.drop 1 (T.dropWhile (/= '?') url))
+    params = [(k, T.drop 1 v) | pair <- T.splitOn "&" query, let (k, v) = T.breakOn "=" pair]
+
+-- | La query @search@ (@?retraso=0&sesion=2026-20-R@) con @name@ puesto al final con ese
+-- valor, o quitado con 'Nothing'; los demás parámetros se quedan en su orden. Sin
+-- ninguno, @""@. El valor no se escapa.
+queryParamSet :: Text -> Maybe Text -> Text -> Text
+queryParamSet name value search
+  | null params = ""
+  | otherwise   = "?" <> T.intercalate "&" params
+  where
+    kept   = filter (\p -> not (T.null p) && T.takeWhile (/= '=') p /= name)
+               (T.splitOn "&" (T.dropWhile (== '?') search))
+    params = kept <> maybe [] (\v -> [name <> "=" <> v]) value

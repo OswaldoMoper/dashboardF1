@@ -27,9 +27,15 @@ module Common.ComparisonCard
   , otherSide
   , CardControl (..)
   , defaultControl
+    -- * Una sola gráfica que no es la velocidad
+  , ChartFirst (..)
+  , chartFirstFor
+  , chartFirstSideMin
+  , chartFirstAreas
     -- * Anchos
   , CardLayout (..)
   , cardLayout
+  , stackedLayout
   , controlWidth
   , vsBeside
   , valuesFit
@@ -54,12 +60,14 @@ module Common.ComparisonCard
 import           Common.Chart      (axisPoints, axisTicks, chartWidth,
                                     frontierCells)
 import           Common.Comparison (LapChoice (..))
+import           Common.Traces     (Channel (..), channelsInOrder)
 import           Data.Aeson        (FromJSON (..), ToJSON (..), Value (String),
                                     withText)
 import           Data.List         (find, sort, sortOn)
 import           Data.Maybe        (mapMaybe)
 import           Data.Ord          (Down (..))
 import           Data.Text         (Text)
+import qualified Data.Text         as T
 
 -- | Qué lleva la fila de fronteras, debajo de la gráfica. El eje vertical va
 -- siempre, en los tres.
@@ -181,20 +189,70 @@ otherSide SideLeft  = SideRight
 otherSide SideRight = SideLeft
 
 -- | Lo que se recuerda de una Lap Comparison: el lado de su tabla de mando, si la
--- banda de sectores está puesta, el modo elegido en el desplegable y la regla de la
--- vuelta (las excepciones de cada piloto, no).
+-- banda de sectores está puesta, el modo elegido en el desplegable, la regla de la
+-- vuelta (las excepciones de cada piloto, no) y las gráficas de «Gráficas ▾», al
+-- menos una ('Common.Traces.toggleChannel').
 data CardControl = CardControl
-  { ccSide :: Side
-  , ccBand :: Bool
-  , ccMode :: ChartMode
-  , ccLap  :: LapChoice
+  { ccSide   :: Side
+  , ccBand   :: Bool
+  , ccMode   :: ChartMode
+  , ccLap    :: LapChoice
+  , ccCharts :: [Channel]
   } deriving stock (Eq, Show)
 
--- | Como abre la tarjeta: la tabla a la izquierda, sin banda, en 'defaultMode' y con
--- la vuelta más rápida.
+-- | Como abre la tarjeta: la tabla a la izquierda, sin banda, en 'defaultMode', con
+-- la vuelta más rápida y las tres gráficas.
 defaultControl :: CardControl
 defaultControl =
-  CardControl {ccSide = defaultControlSide, ccBand = False, ccMode = defaultMode, ccLap = FastestLap}
+  CardControl
+    { ccSide = defaultControlSide, ccBand = False, ccMode = defaultMode, ccLap = FastestLap
+    , ccCharts = channelsInOrder }
+
+-- | El acomodo de la tarjeta cuando las trazas pintan una sola gráfica que no es la
+-- velocidad (2026-11-24): la gráfica arriba a todo el ancho, la leyenda debajo y, bajo
+-- ella, los pilotos elegidos en columna con su vuelta al lado. FirstSide: «Δ contra» y
+-- el modo, en lista a la derecha de los pilotos; FirstStacked: centrados debajo.
+data ChartFirst = FirstSide | FirstStacked
+  deriving stock (Eq, Show)
+
+-- | El acomodo para el ancho por dentro de la tarjeta y los canales que se pintan
+-- (Common.Traces.traceChannels); Nothing si no es una sola gráfica sin la velocidad.
+-- A la derecha solo si caben, desde chartFirstSideMin.
+chartFirstFor :: Double -> [Channel] -> Maybe ChartFirst
+chartFirstFor width [c]
+  | c /= Speed = Just (if width >= chartFirstSideMin then FirstSide else FirstStacked)
+chartFirstFor _ _ = Nothing
+
+-- | El ancho por dentro desde el que los pilotos y la lista de la derecha caben lado a
+-- lado, cada uno en su mitad: dos veces la tabla de pilotos y vueltas con cinco (~390 px
+-- medidos en Chromium) más el hueco.
+chartFirstSideMin :: Double
+chartFirstSideMin = 800
+
+-- | Las zonas de la rejilla del acomodo (@grid-template-areas@), un renglón por
+-- elemento, para los coches elegidos, si va «+» y las filas de tiempo: la gráfica
+-- (@chart@) y la leyenda (@legend@) a todo el ancho; un renglón por piloto (@p0@ la
+-- referencia, @p1@… los demás, @add@ el «+») con su vuelta al lado (@l0@…); «Δ contra»
+-- y el modo, en @list@ a la derecha de todos esos renglones (FirstSide) o en @adj@,
+-- un renglón debajo (FirstStacked); y la nota (@note@). Siempre al menos un renglón de
+-- pilotos.
+chartFirstAreas :: ChartFirst -> Int -> Bool -> Int -> [Text]
+chartFirstAreas first cars add laps =
+  [full "chart", full "legend"] <> map row [0 .. rows - 1] <> adjust <> [full "note"]
+  where
+    rows = maximum [1, cars + fromEnum add, laps]
+    pilot i
+      | i < cars       = "p" <> T.pack (show i)
+      | i == cars, add = "add"
+      | otherwise      = "."
+    lap i
+      | i < laps  = "l" <> T.pack (show i)
+      | otherwise = "."
+    row i = T.unwords $ [".", pilot i, lap i, "."] <> ["list" | first == FirstSide]
+    adjust = [full "adj" | first == FirstStacked]
+    full name = T.unwords (replicate (columns first) name)
+    columns FirstSide    = 5
+    columns FirstStacked = 4
 
 -- | El reparto de la tarjeta a lo ancho, en px.
 data CardLayout = CardLayout
@@ -216,17 +274,24 @@ data CardLayout = CardLayout
 --   estrecha que los valores no cabrían. Se decide igual en todos los modos.
 cardLayout :: Double -> CardLayout
 cardLayout inner
-  | valuesFit twoColumnChart = layout False (controlWidth inner) twoColumnChart
-  | otherwise                = layout True inner inner
+  | valuesFit twoColumnChart = layoutOf False (controlWidth inner) twoColumnChart
+  | otherwise                = stackedLayout inner
   where
     twoColumnChart = inner - controlWidth inner - columnGap
-    layout stacked control chart =
-      CardLayout
-        { clStacked    = stacked
-        , clControl    = control
-        , clChart      = chart
-        , clAxisInside = not (valuesFit (chart - axisColumnWidth))
-        }
+
+-- | La tarjeta apilada para un ancho por dentro, quepan o no las dos columnas: la del
+-- acomodo de 'chartFirstFor'.
+stackedLayout :: Double -> CardLayout
+stackedLayout inner = layoutOf True inner inner
+
+layoutOf :: Bool -> Double -> Double -> CardLayout
+layoutOf stacked control chart =
+  CardLayout
+    { clStacked    = stacked
+    , clControl    = control
+    , clChart      = chart
+    , clAxisInside = not (valuesFit (chart - axisColumnWidth))
+    }
 
 -- | Ancho de la tabla de mando con dos columnas: un tercio de la tarjeta, nunca
 -- menos que el desplegable de piloto ni más que 'controlMaxWidth'.

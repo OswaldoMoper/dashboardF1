@@ -15,6 +15,10 @@ __pycache__/
 venv/
 .hypothesis/
 
+# Fotos del feed que saca `telemetry-service/tests/fotos.py` de una grabación: solo en local.
+telemetry-service/tests/fotos/
+telemetry-service/tests/esperado/
+
 # Cache de FastF1.
 .fastf1-cache/
 
